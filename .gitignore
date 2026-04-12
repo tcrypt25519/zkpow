@@ -1,0 +1,15 @@
+# Build artifacts
+target/
+*.bin
+
+# Database
+bitcoin_headers.sqlite
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
