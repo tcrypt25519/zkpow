@@ -14,6 +14,9 @@ sp1_zkvm::entrypoint!(main);
 mod sha256;
 use sha256::double_sha256_80;
 
+// Bitcoin mainnet genesis block timestamp (2009-01-03 18:15:05 UTC).
+const GENESIS_TIMESTAMP: u32 = 1231006505;
+
 // ============================================================================
 // Error codes — committed to public values on failure.
 // The program exits cleanly (HALT 0) with a non-zero status, producing a
@@ -83,8 +86,11 @@ fn bits_to_target(bits: u32) -> [u8; 32] {
 }
 
 /// Extract bits from raw 80-byte header and convert to target.
-fn bits_to_target_from_header_bytes(header_bytes: &[u8]) -> [u8; 32] {
-    let bits = u32::from_le_bytes(header_bytes[72..76].try_into().unwrap());
+fn bits_to_target_from_header_bytes(header: &[u8; 80]) -> [u8; 32] {
+    let bits = header[72] as u32
+        | (header[73] as u32) << 8
+        | (header[74] as u32) << 16
+        | (header[75] as u32) << 24;
     bits_to_target(bits)
 }
 
@@ -446,20 +452,49 @@ pub fn main() {
         if prev_public_values.len() < 237 {
             panic!("Previous proof public values too short");
         }
+        let pv = &prev_public_values;
 
-        let prev_genesis: [u8; 32] = prev_public_values[0..32].try_into().unwrap();
-        let prev_final_hash: [u8; 32] = prev_public_values[32..64].try_into().unwrap();
-        let prev_num_headers = u64::from_le_bytes(prev_public_values[64..72].try_into().unwrap());
+        // Read PV fields with direct indexing — no unwrap, no slices.
+        // All ranges are provably within bounds because we checked pv.len() ≥ 237.
+        let prev_genesis: [u8; 32] = {
+            let mut a = [0u8; 32];
+            a.copy_from_slice(&pv[0..32]);
+            a
+        };
+        let prev_final_hash: [u8; 32] = {
+            let mut a = [0u8; 32];
+            a.copy_from_slice(&pv[32..64]);
+            a
+        };
+        let prev_num_headers = pv[64] as u64
+            | (pv[65] as u64) << 8
+            | (pv[66] as u64) << 16
+            | (pv[67] as u64) << 24
+            | (pv[68] as u64) << 32
+            | (pv[69] as u64) << 40
+            | (pv[70] as u64) << 48
+            | (pv[71] as u64) << 56;
 
         let prev_chain_work: [u64; 4] = [
-            u64::from_le_bytes(prev_public_values[152..160].try_into().unwrap()),
-            u64::from_le_bytes(prev_public_values[160..168].try_into().unwrap()),
-            u64::from_le_bytes(prev_public_values[168..176].try_into().unwrap()),
-            u64::from_le_bytes(prev_public_values[176..184].try_into().unwrap()),
+            pv[152] as u64 | (pv[153] as u64) << 8 | (pv[154] as u64) << 16 | (pv[155] as u64) << 24
+                | (pv[156] as u64) << 32 | (pv[157] as u64) << 40 | (pv[158] as u64) << 48 | (pv[159] as u64) << 56,
+            pv[160] as u64 | (pv[161] as u64) << 8 | (pv[162] as u64) << 16 | (pv[163] as u64) << 24
+                | (pv[164] as u64) << 32 | (pv[165] as u64) << 40 | (pv[166] as u64) << 48 | (pv[167] as u64) << 56,
+            pv[168] as u64 | (pv[169] as u64) << 8 | (pv[170] as u64) << 16 | (pv[171] as u64) << 24
+                | (pv[172] as u64) << 32 | (pv[173] as u64) << 40 | (pv[174] as u64) << 48 | (pv[175] as u64) << 56,
+            pv[176] as u64 | (pv[177] as u64) << 8 | (pv[178] as u64) << 16 | (pv[179] as u64) << 24
+                | (pv[180] as u64) << 32 | (pv[181] as u64) << 40 | (pv[182] as u64) << 48 | (pv[183] as u64) << 56,
         ];
-        let prev_epoch_ts = u32::from_le_bytes(prev_public_values[184..188].try_into().unwrap());
+        let prev_epoch_ts = pv[184] as u32
+            | (pv[185] as u32) << 8
+            | (pv[186] as u32) << 16
+            | (pv[187] as u32) << 24;
         let prev_median: [u32; WINDOW_SIZE] = core::array::from_fn(|i| {
-            u32::from_le_bytes(prev_public_values[(188 + i * 4)..(192 + i * 4)].try_into().unwrap())
+            let off = 188 + i * 4;
+            pv[off] as u32
+                | (pv[off + 1] as u32) << 8
+                | (pv[off + 2] as u32) << 16
+                | (pv[off + 3] as u32) << 24
         });
 
         // Derive median window state from total headers
@@ -488,7 +523,11 @@ pub fn main() {
             prev_final_hash,
             prev_chain_work,
             prev_epoch_ts,
-            bits_to_target_from_header_bytes(&prev_public_values[72..152]),
+            bits_to_target_from_header_bytes({
+                // SAFETY: pv.len() >= 237, so pv[72..152] is always exactly 80 bytes.
+                let slice: &[u8; 80] = pv[72..152].try_into().unwrap();
+                slice
+            }),
             prev_median,
             prev_median_head,
             prev_median_len,
@@ -548,14 +587,52 @@ pub fn main() {
         let current_height = start_height + i;
 
         println!("cycle-tracker-start: parse");
-        let prev_blockhash: [u8; 32] = header[4..36].try_into().unwrap();
-        let timestamp = u32::from_le_bytes(header[68..72].try_into().unwrap());
-        let bits = u32::from_le_bytes(header[72..76].try_into().unwrap());
+
+        // Parse header fields with direct indexing — no unwrap, no slices.
+        let mut prev_blockhash = [0u8; 32];
+        prev_blockhash.copy_from_slice(&header[4..36]);
+
+        let timestamp = header[68] as u32
+            | (header[69] as u32) << 8
+            | (header[70] as u32) << 16
+            | (header[71] as u32) << 24;
+
+        let bits = header[72] as u32
+            | (header[73] as u32) << 8
+            | (header[74] as u32) << 16
+            | (header[75] as u32) << 24;
+
+        // Validate bits range: exponent must be 3..=29 for a valid target.
+        let exponent = bits >> 24;
+        if !(3..=29).contains(&exponent) {
+            println!("cycle-tracker-end: parse");
+            commit_error_and_exit(
+                &prev_hash, cumulative_chain_work,
+                last_epoch_start_timestamp, median_timestamps,
+                start_height, num_headers,
+                STATUS_BITS_MISMATCH, i as u32,
+            );
+        }
+
+        // Validate timestamp is after genesis and before any reasonable future bound.
+        if timestamp < GENESIS_TIMESTAMP {
+            println!("cycle-tracker-end: parse");
+            commit_error_and_exit(
+                &prev_hash, cumulative_chain_work,
+                last_epoch_start_timestamp, median_timestamps,
+                start_height, num_headers,
+                STATUS_TIMESTAMP_TOO_OLD, i as u32,
+            );
+        }
+
         println!("cycle-tracker-end: parse");
 
         if current_height == 0 {
             println!("cycle-tracker-start: sha256d");
-            let computed_hash = double_sha256_80(&header.try_into().unwrap());
+            // SAFETY: headers_bytes.len() == num_headers * 80 was verified above.
+            // This slice is always exactly 80 bytes.
+            let header_array: &[u8; 80] = header.try_into().unwrap();
+            let computed_hash = double_sha256_80(header_array);
             println!("cycle-tracker-end: sha256d");
             if computed_hash != expected_genesis_hash {
                 commit_error_and_exit(
@@ -623,7 +700,8 @@ pub fn main() {
             }
 
             println!("cycle-tracker-start: sha256d");
-            let block_hash = double_sha256_80(&header.try_into().unwrap());
+            // SAFETY: header is &headers_bytes[offset..offset+80], always exactly 80 bytes.
+            let block_hash = double_sha256_80(header.try_into().unwrap());
             println!("cycle-tracker-end: sha256d");
             if !hash_meets_target(&block_hash, bits) {
                 commit_error_and_exit(
@@ -679,11 +757,20 @@ fn retarget_target(
     actual_timespan: u32,
     expected_timespan: u32,
 ) -> [u8; 32] {
+    // Convert [u8; 32] to [u64; 4] LE with direct indexing — no unwrap.
     let old_u64 = [
-        u64::from_le_bytes(old_target[0..8].try_into().unwrap()),
-        u64::from_le_bytes(old_target[8..16].try_into().unwrap()),
-        u64::from_le_bytes(old_target[16..24].try_into().unwrap()),
-        u64::from_le_bytes(old_target[24..32].try_into().unwrap()),
+        old_target[0] as u64 | (old_target[1] as u64) << 8 | (old_target[2] as u64) << 16
+            | (old_target[3] as u64) << 24 | (old_target[4] as u64) << 32
+            | (old_target[5] as u64) << 40 | (old_target[6] as u64) << 48 | (old_target[7] as u64) << 56,
+        old_target[8] as u64 | (old_target[9] as u64) << 8 | (old_target[10] as u64) << 16
+            | (old_target[11] as u64) << 24 | (old_target[12] as u64) << 32
+            | (old_target[13] as u64) << 40 | (old_target[14] as u64) << 48 | (old_target[15] as u64) << 56,
+        old_target[16] as u64 | (old_target[17] as u64) << 8 | (old_target[18] as u64) << 16
+            | (old_target[19] as u64) << 24 | (old_target[20] as u64) << 32
+            | (old_target[21] as u64) << 40 | (old_target[22] as u64) << 48 | (old_target[23] as u64) << 56,
+        old_target[24] as u64 | (old_target[25] as u64) << 8 | (old_target[26] as u64) << 16
+            | (old_target[27] as u64) << 24 | (old_target[28] as u64) << 32
+            | (old_target[29] as u64) << 40 | (old_target[30] as u64) << 48 | (old_target[31] as u64) << 56,
     ];
 
     let mut product = [0u64; 4];

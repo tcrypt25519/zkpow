@@ -177,109 +177,114 @@ async fn test_error_genesis_hash_mismatch() -> Result<(), String> {
 
 async fn test_error_prev_blockhash_mismatch() -> Result<(), String> {
     let genesis = genesis_hash();
-    let mut headers_bytes = util::load_headers_from_db(DB_PATH, 1, 1);
-    headers_bytes[4] ^= 0xFF; // corrupt prev_blockhash
-    headers_bytes[5] ^= 0xFF;
+    // Load blocks 0 and 1, corrupt block 1's prev_blockhash.
+    let mut headers_bytes = util::load_headers_from_db(DB_PATH, 0, 2);
+    // Block 1 starts at offset 80. Corrupt its prev_blockhash (bytes 4-35).
+    let off = 80 + 4;
+    headers_bytes[off] ^= 0xFF;
+    headers_bytes[off + 1] ^= 0xFF;
 
     let mut stdin = SP1Stdin::new();
     stdin.write::<[u8; 32]>(&genesis);
     stdin.write::<bool>(&false);
-    stdin.write::<u64>(&1);
-    stdin.write::<u64>(&1);
+    stdin.write::<u64>(&0); // Must start from genesis when no prev proof
+    stdin.write::<u64>(&2);
     stdin.write_vec(headers_bytes);
 
     let (code, detail) = run_and_get_status(stdin).await?;
     if code != STATUS_PREV_BLOCKHASH_MISMATCH {
         return Err(format!("expected PREV_BLOCKHASH_MISMATCH ({}), got {}", STATUS_PREV_BLOCKHASH_MISMATCH, code));
     }
-    if detail != 0 {
-        return Err(format!("expected detail 0, got {}", detail));
+    if detail != 1 {
+        return Err(format!("expected detail 1 (block 1), got {}", detail));
     }
     Ok(())
 }
 
 async fn test_error_timestamp_too_old() -> Result<(), String> {
-    // Load blocks 1-12 so the median buffer is full (11 blocks).
-    // Block 12's median check uses blocks 1-11.
+    // Load blocks 0-12 so the median buffer is full (11 blocks after genesis).
+    // Block 12's median check uses blocks 1-11 timestamps.
     // We'll corrupt block 12's timestamp to be older than the median.
-    let mut headers_bytes = util::load_headers_from_db(DB_PATH, 1, 12);
+    let mut headers_bytes = util::load_headers_from_db(DB_PATH, 0, 13);
 
-    // Median of blocks 1-11 timestamps: we need block 12's timestamp to be <= median.
-    // The genesis timestamp is 1231006505, which is before all block 1-11 timestamps.
-    // Set block 12's timestamp (offset 11*80 + 68) to genesis timestamp.
-    let offset = 11 * 80 + 68;
-    headers_bytes[offset] = 0x85; // 1231006505 in LE: 0x85 0x25 0x02 0x49
-    headers_bytes[offset + 1] = 0x25;
-    headers_bytes[offset + 2] = 0x02;
-    headers_bytes[offset + 3] = 0x49;
+    // Set block 12's timestamp (offset 12*80 + 68) to genesis timestamp,
+    // which is older than all block 1-11 timestamps.
+    let offset = 12 * 80 + 68;
+    let genesis_ts: u32 = 1231006505;
+    headers_bytes[offset] = (genesis_ts & 0xFF) as u8;
+    headers_bytes[offset + 1] = ((genesis_ts >> 8) & 0xFF) as u8;
+    headers_bytes[offset + 2] = ((genesis_ts >> 16) & 0xFF) as u8;
+    headers_bytes[offset + 3] = ((genesis_ts >> 24) & 0xFF) as u8;
 
     let genesis = genesis_hash();
     let mut stdin = SP1Stdin::new();
     stdin.write::<[u8; 32]>(&genesis);
     stdin.write::<bool>(&false);
-    stdin.write::<u64>(&1);
-    stdin.write::<u64>(&12);
+    stdin.write::<u64>(&0); // Must start from genesis
+    stdin.write::<u64>(&13);
     stdin.write_vec(headers_bytes);
 
     let (code, detail) = run_and_get_status(stdin).await?;
     if code != STATUS_TIMESTAMP_TOO_OLD {
         return Err(format!("expected TIMESTAMP_TOO_OLD ({}), got {}", STATUS_TIMESTAMP_TOO_OLD, code));
     }
-    // detail should be the header index that failed (11, since we started at height 1)
-    if detail != 11 {
-        return Err(format!("expected detail 11, got {}", detail));
+    // detail should be 12 (the corrupted block's index)
+    if detail != 12 {
+        return Err(format!("expected detail 12, got {}", detail));
     }
     Ok(())
 }
 
 async fn test_error_bits_mismatch() -> Result<(), String> {
-    // Load block 1. Change its bits field to a different valid-looking value.
+    // Load blocks 0-1. Change block 1's bits field to a different value.
     // The bits check comes before PoW, so we don't need valid PoW for the new bits.
-    let mut headers_bytes = util::load_headers_from_db(DB_PATH, 1, 1);
+    let mut headers_bytes = util::load_headers_from_db(DB_PATH, 0, 2);
 
-    // Change bits from 0x1d00ffff to 0x1c00ffff (easier target, different value)
-    // This will fail the bits check before PoW is checked.
-    headers_bytes[72] = 0xff;
-    headers_bytes[73] = 0xff;
-    headers_bytes[74] = 0x00;
-    headers_bytes[75] = 0x1c; // 0x1c instead of 0x1d
+    // Block 1 starts at offset 80. Change its bits from 0x1d00ffff to 0x1c00ffff.
+    let off = 80 + 72;
+    headers_bytes[off] = 0xff;
+    headers_bytes[off + 1] = 0xff;
+    headers_bytes[off + 2] = 0x00;
+    headers_bytes[off + 3] = 0x1c; // 0x1c instead of 0x1d
 
     let genesis = genesis_hash();
     let mut stdin = SP1Stdin::new();
     stdin.write::<[u8; 32]>(&genesis);
     stdin.write::<bool>(&false);
-    stdin.write::<u64>(&1);
-    stdin.write::<u64>(&1);
+    stdin.write::<u64>(&0); // Must start from genesis
+    stdin.write::<u64>(&2);
     stdin.write_vec(headers_bytes);
 
     let (code, detail) = run_and_get_status(stdin).await?;
     if code != STATUS_BITS_MISMATCH {
         return Err(format!("expected BITS_MISMATCH ({}), got {}", STATUS_BITS_MISMATCH, code));
     }
-    if detail != 0 {
-        return Err(format!("expected detail 0, got {}", detail));
+    if detail != 1 {
+        return Err(format!("expected detail 1 (block 1), got {}", detail));
     }
     Ok(())
 }
 
 async fn test_error_pow_insufficient() -> Result<(), String> {
     let genesis = genesis_hash();
-    let mut headers_bytes = util::load_headers_from_db(DB_PATH, 1, 1);
-    headers_bytes[76] ^= 0xFF; // corrupt nonce
+    // Load blocks 0-1, corrupt block 1's nonce.
+    let mut headers_bytes = util::load_headers_from_db(DB_PATH, 0, 2);
+    let off = 80 + 76;
+    headers_bytes[off] ^= 0xFF; // corrupt block 1's nonce
 
     let mut stdin = SP1Stdin::new();
     stdin.write::<[u8; 32]>(&genesis);
     stdin.write::<bool>(&false);
-    stdin.write::<u64>(&1);
-    stdin.write::<u64>(&1);
+    stdin.write::<u64>(&0); // Must start from genesis
+    stdin.write::<u64>(&2);
     stdin.write_vec(headers_bytes);
 
     let (code, detail) = run_and_get_status(stdin).await?;
     if code != STATUS_POW_INSUFFICIENT {
         return Err(format!("expected POW_INSUFFICIENT ({}), got {}", STATUS_POW_INSUFFICIENT, code));
     }
-    if detail != 0 {
-        return Err(format!("expected detail 0, got {}", detail));
+    if detail != 1 {
+        return Err(format!("expected detail 1 (block 1), got {}", detail));
     }
     Ok(())
 }

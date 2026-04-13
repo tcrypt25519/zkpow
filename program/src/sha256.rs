@@ -18,12 +18,30 @@ const SHA256_IV: [u64; 8] = [
 /// Extract a 32-byte hash from the SHA-256 state.
 /// The state stores 8 × u64; each contributes its low 32 bits in big-endian order.
 fn state_to_hash(state: &[u64; 8]) -> [u8; 32] {
-    let mut hash = [0u8; 32];
-    for (i, &val) in state.iter().enumerate() {
-        let bytes = val.to_be_bytes();
-        hash[i * 4..(i + 1) * 4].copy_from_slice(&bytes[4..8]);
-    }
-    hash
+    let b0 = state[0].to_be_bytes();
+    let b1 = state[1].to_be_bytes();
+    let b2 = state[2].to_be_bytes();
+    let b3 = state[3].to_be_bytes();
+    let b4 = state[4].to_be_bytes();
+    let b5 = state[5].to_be_bytes();
+    let b6 = state[6].to_be_bytes();
+    let b7 = state[7].to_be_bytes();
+    [
+        b0[4], b0[5], b0[6], b0[7], //
+        b1[4], b1[5], b1[6], b1[7], //
+        b2[4], b2[5], b2[6], b2[7], //
+        b3[4], b3[5], b3[6], b3[7], //
+        b4[4], b4[5], b4[6], b4[7], //
+        b5[4], b5[5], b5[6], b5[7], //
+        b6[4], b6[5], b6[6], b6[7], //
+        b7[4], b7[5], b7[6], b7[7], //
+    ]
+}
+
+/// Convert 4 bytes to a big-endian u64.
+#[inline]
+const fn be_u64(a: u8, b: u8, c: u8, d: u8) -> u64 {
+    ((a as u64) << 24) | ((b as u64) << 16) | ((c as u64) << 8) | (d as u64)
 }
 
 /// Compute SHA-256 of exactly 80 bytes.
@@ -36,22 +54,34 @@ pub fn sha256_80(data: &[u8; 80]) -> [u8; 32] {
 
     // ── Block 1: bytes 0–63 ──
     let mut w = [0u64; 64];
-    for (j, chunk) in data[0..64].chunks(4).enumerate() {
-        w[j] = u32::from_be_bytes(chunk.try_into().unwrap()) as u64;
-    }
+    w[0]  = be_u64(data[0],  data[1],  data[2],  data[3]);
+    w[1]  = be_u64(data[4],  data[5],  data[6],  data[7]);
+    w[2]  = be_u64(data[8],  data[9],  data[10], data[11]);
+    w[3]  = be_u64(data[12], data[13], data[14], data[15]);
+    w[4]  = be_u64(data[16], data[17], data[18], data[19]);
+    w[5]  = be_u64(data[20], data[21], data[22], data[23]);
+    w[6]  = be_u64(data[24], data[25], data[26], data[27]);
+    w[7]  = be_u64(data[28], data[29], data[30], data[31]);
+    w[8]  = be_u64(data[32], data[33], data[34], data[35]);
+    w[9]  = be_u64(data[36], data[37], data[38], data[39]);
+    w[10] = be_u64(data[40], data[41], data[42], data[43]);
+    w[11] = be_u64(data[44], data[45], data[46], data[47]);
+    w[12] = be_u64(data[48], data[49], data[50], data[51]);
+    w[13] = be_u64(data[52], data[53], data[54], data[55]);
+    w[14] = be_u64(data[56], data[57], data[58], data[59]);
+    w[15] = be_u64(data[60], data[61], data[62], data[63]);
     syscall_sha256_extend(&mut w);
     syscall_sha256_compress(&mut w, &mut state);
 
     // ── Block 2: bytes 64–79 + padding + length ──
     // Layout: [data 16 bytes | 0x80 | 47× 0x00 | 8-byte big-endian length 640 = 0x280]
     let mut w = [0u64; 64];
-    for (j, chunk) in data[64..80].chunks(4).enumerate() {
-        w[j] = u32::from_be_bytes(chunk.try_into().unwrap()) as u64;
-    }
-    // 0x80 byte at position 64+16=80, which is word index 4, byte 0
-    // w[4] = 0x80000000 (0x80 << 24)
+    w[0]  = be_u64(data[64], data[65], data[66], data[67]);
+    w[1]  = be_u64(data[68], data[69], data[70], data[71]);
+    w[2]  = be_u64(data[72], data[73], data[74], data[75]);
+    w[3]  = be_u64(data[76], data[77], data[78], data[79]);
+    // 0x80 byte at word index 4, byte 0 → 0x80000000
     w[4] = 0x80000000;
-    // w[14] = upper 32 bits of length = 0
     // w[15] = lower 32 bits of length = 640 = 0x280
     w[15] = 0x280;
 
@@ -70,12 +100,17 @@ pub fn sha256_32(data: &[u8; 32]) -> [u8; 32] {
 
     // ── Single block: 32 bytes + padding + length ──
     let mut w = [0u64; 64];
-    for (j, chunk) in data.chunks(4).enumerate() {
-        w[j] = u32::from_be_bytes(chunk.try_into().unwrap()) as u64;
-    }
-    // 0x80 at byte 32 → word index 8, byte 0 → 0x80000000
+    w[0]  = be_u64(data[0],  data[1],  data[2],  data[3]);
+    w[1]  = be_u64(data[4],  data[5],  data[6],  data[7]);
+    w[2]  = be_u64(data[8],  data[9],  data[10], data[11]);
+    w[3]  = be_u64(data[12], data[13], data[14], data[15]);
+    w[4]  = be_u64(data[16], data[17], data[18], data[19]);
+    w[5]  = be_u64(data[20], data[21], data[22], data[23]);
+    w[6]  = be_u64(data[24], data[25], data[26], data[27]);
+    w[7]  = be_u64(data[28], data[29], data[30], data[31]);
+    // 0x80 at word index 8, byte 0 → 0x80000000
     w[8] = 0x80000000;
-    // w[14] = 0, w[15] = length in bits = 256 = 0x100
+    // w[15] = length in bits = 256 = 0x100
     w[15] = 0x100;
 
     syscall_sha256_extend(&mut w);
