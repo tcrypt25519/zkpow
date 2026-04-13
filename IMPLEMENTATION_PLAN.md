@@ -174,8 +174,19 @@ Run 2: Block 100 → 199 (extends Run 1)
 - Groth16 proof verified cryptographically before saving
 - Files: `proof_height_X_to_Y.bin` (compressed) and `proof_height_X_to_Y_groth16.bin` (on-chain)
 
-### Phase 8: Performance ⏳
+### Phase 8: Performance ✅ COMPLETE
 
-- Direct SHA-256 syscalls vs. patched crate
-- Cycle tracker profiling
-- Batch size optimization
+**SHA-256 direct syscalls**: Replaced patched `sha2` crate with direct `syscall_sha256_extend` + `syscall_sha256_compress` calls. This eliminates the crate abstraction layer and goes straight to the SP1 precompile.
+
+**Cycle tracker labels** added around hot paths:
+- `parse` — header field extraction (5 fields from 80 bytes)
+- `sha256d` — double SHA-256 for genesis and PoW verification
+- `retarget` — difficulty adjustment calculation (every 2016 blocks)
+
+Output format:
+```
+stdout: cycle-tracker-start: parse
+stdout: cycle-tracker-end: parse
+stdout: cycle-tracker-start: sha256d
+stdout: cycle-tracker-end: sha256d
+```

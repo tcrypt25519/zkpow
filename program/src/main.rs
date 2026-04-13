@@ -11,7 +11,7 @@
 #![no_main]
 sp1_zkvm::entrypoint!(main);
 
-use sha2::{Digest, Sha256};
+use sp1_zkvm::syscalls::{syscall_sha256_compress, syscall_sha256_extend};
 
 // ============================================================================
 // Error codes — committed to public values on failure.
@@ -59,10 +59,87 @@ fn commit_error_and_exit(
     sp1_zkvm::syscalls::syscall_halt(0);
 }
 
+/// SHA-256 IV constants (big-endian u32 as u64)
+const SHA256_IV: [u64; 8] = [
+    0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+    0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
+];
+
+/// Compute SHA-256 of arbitrary data using SP1's SHA-256 precompile syscalls.
+///
+/// The precompile works on 64-byte blocks. Each block's 16 words (4 bytes each)
+/// are stored as u64 in big-endian order in w[0..16].
+///
+/// For each block:
+/// 1. Fill w[0..16] with data bytes (big-endian u32 as u64)
+/// 2. Call syscall_sha256_extend(&mut w) to expand to w[16..64]
+/// 3. Call syscall_sha256_compress(&mut w, &mut state) to compress
+fn sha256_syscall(data: &[u8]) -> [u8; 32] {
+    let mut state = SHA256_IV;
+    let total_bits = (data.len() as u64) * 8;
+
+    let mut offset = 0;
+    while offset < data.len() {
+        let mut w = [0u64; 64];
+        let remaining = data.len() - offset;
+
+        if remaining >= 64 {
+            // Full block: 64 bytes of data
+            for (j, chunk) in data[offset..offset + 64].chunks(4).enumerate() {
+                w[j] = u32::from_be_bytes(chunk.try_into().unwrap()) as u64;
+            }
+            offset += 64;
+        } else {
+            // Last block: data + padding + length
+            let mut block = [0u8; 64];
+            let data_bytes = remaining.min(64);
+            block[..data_bytes].copy_from_slice(&data[offset..offset + data_bytes]);
+
+            if data_bytes < 64 {
+                block[data_bytes] = 0x80;
+                // If length doesn't fit (need < 56 bytes for data), this is the
+                // last block and length goes here
+                if data_bytes <= 55 {
+                    let len_bytes = total_bits.to_be_bytes();
+                    block[56..64].copy_from_slice(&len_bytes);
+                }
+            }
+
+            for (j, chunk) in block.chunks(4).enumerate() {
+                w[j] = u32::from_be_bytes(chunk.try_into().unwrap()) as u64;
+            }
+            offset = data.len();
+
+            // If we need a second block for the length
+            if data_bytes > 55 {
+                syscall_sha256_extend(&mut w);
+                syscall_sha256_compress(&mut w, &mut state);
+                // Second block: just length
+                let mut w2 = [0u64; 64];
+                let len_bytes = total_bits.to_be_bytes();
+                w2[14] = u32::from_be_bytes([len_bytes[0], len_bytes[1], len_bytes[2], len_bytes[3]]) as u64;
+                w2[15] = u32::from_be_bytes([len_bytes[4], len_bytes[5], len_bytes[6], len_bytes[7]]) as u64;
+                w = w2;
+            }
+        }
+
+        syscall_sha256_extend(&mut w);
+        syscall_sha256_compress(&mut w, &mut state);
+    }
+
+    // Extract hash from state (big-endian u32 → bytes)
+    let mut hash = [0u8; 32];
+    for i in 0..8 {
+        let bytes = state[i].to_be_bytes();
+        hash[i * 4..(i + 1) * 4].copy_from_slice(&bytes[4..8]);
+    }
+    hash
+}
+
+/// Compute double SHA-256: SHA-256(SHA-256(data)).
 fn double_sha256(data: &[u8]) -> [u8; 32] {
-    let inner = Sha256::digest(data);
-    let outer = Sha256::digest(inner);
-    outer.into()
+    let inner = sha256_syscall(data);
+    sha256_syscall(&inner)
 }
 
 fn bits_to_target(bits: u32) -> [u8; 32] {
@@ -530,12 +607,16 @@ pub fn main() {
         let header = &headers_bytes[offset..offset + 80];
         let current_height = start_height + i;
 
+        println!("cycle-tracker-start: parse");
         let prev_blockhash: [u8; 32] = header[4..36].try_into().unwrap();
         let timestamp = u32::from_le_bytes(header[68..72].try_into().unwrap());
         let bits = u32::from_le_bytes(header[72..76].try_into().unwrap());
+        println!("cycle-tracker-end: parse");
 
         if current_height == 0 {
+            println!("cycle-tracker-start: sha256d");
             let computed_hash = double_sha256(header);
+            println!("cycle-tracker-end: sha256d");
             if computed_hash != expected_genesis_hash {
                 commit_error_and_exit(
                     &prev_hash, cumulative_chain_work,
@@ -579,6 +660,7 @@ pub fn main() {
 
             // Difficulty retargeting every 2016 blocks
             if current_height > 0 && current_height.is_multiple_of(2016) {
+                println!("cycle-tracker-start: retarget");
                 let actual_timespan = timestamp.wrapping_sub(last_epoch_start_timestamp);
                 let expected_timespan: u32 = 2016 * 600;
                 let clamped = actual_timespan
@@ -586,6 +668,7 @@ pub fn main() {
                     .min(expected_timespan * 4);
                 prev_target = retarget_target(&prev_target, clamped, expected_timespan);
                 last_epoch_start_timestamp = timestamp;
+                println!("cycle-tracker-end: retarget");
             }
 
             // Verify bits match expected target
@@ -599,7 +682,9 @@ pub fn main() {
                 );
             }
 
+            println!("cycle-tracker-start: sha256d");
             let block_hash = double_sha256(header);
+            println!("cycle-tracker-end: sha256d");
             if !hash_meets_target(&block_hash, bits) {
                 commit_error_and_exit(
                     &prev_hash, cumulative_chain_work,

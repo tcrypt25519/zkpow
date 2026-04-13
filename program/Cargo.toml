@@ -6,4 +6,3 @@ publish = false
 
 [dependencies]
 sp1-zkvm = { workspace = true, features = ["verify"] }
-sha2 = { workspace = true }
