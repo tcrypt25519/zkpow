@@ -421,6 +421,12 @@ pub fn main() {
                 }
             }
 
+            // Note: Bitcoin's "timestamp ≤ MTP + 2h" rule uses the network's adjusted
+            // time (median of peer clocks), not the previous block's timestamp. Since
+            // we don't have access to wall clock time in the zkVM, and the 2h rule is
+            // a network policy rather than a consensus rule, we omit this check here.
+            // The BIP113 median check (above) is the consensus-critical timestamp rule.
+
             // Difficulty retargeting every 2016 blocks
             if current_height > 0 && current_height % 2016 == 0 {
                 let actual_timespan = timestamp.wrapping_sub(last_epoch_start_timestamp);
