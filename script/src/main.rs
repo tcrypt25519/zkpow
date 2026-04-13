@@ -37,7 +37,7 @@ async fn main() {
         start_height, num_headers, prev_proof_path.as_deref().unwrap_or("none"));
 
     // Load raw headers
-    let headers_bytes = util::load_headers_from_db(&DB_PATH, start_height, num_headers);
+    let headers_bytes = util::load_headers_from_db(DB_PATH, start_height, num_headers);
     let loaded_count = (headers_bytes.len() / 80) as u64;
     tracing::info!("Loaded {} headers", loaded_count);
 
@@ -193,12 +193,10 @@ fn insert_nibble(packed: u64, pos: usize, val: u8, count: usize) -> u64 {
 fn rebuild_packed(timestamps: &[u32; WINDOW_SIZE], len: usize) -> u64 {
     let mut indices: [u8; WINDOW_SIZE] = [0; WINDOW_SIZE];
     let mut sorted_count = 0;
-    for i in 0..len {
-        let ts = timestamps[i];
+    for (i, ts) in timestamps.iter().take(len).enumerate() {
         let mut pos = sorted_count;
-        for j in 0..sorted_count {
-            let idx = indices[j] as usize;
-            if ts < timestamps[idx] {
+        for (j, idx) in indices.iter().take(sorted_count).enumerate() {
+            if *ts < timestamps[*idx as usize] {
                 pos = j;
                 break;
             }
@@ -210,8 +208,8 @@ fn rebuild_packed(timestamps: &[u32; WINDOW_SIZE], len: usize) -> u64 {
         sorted_count += 1;
     }
     let mut packed = 0u64;
-    for i in 0..sorted_count {
-        packed |= (indices[i] as u64) << (i * NIBBLE_BITS);
+    for (i, idx) in indices.iter().take(sorted_count).enumerate() {
+        packed |= (*idx as u64) << (i * NIBBLE_BITS);
     }
     packed
 }
@@ -293,15 +291,10 @@ fn compute_expected_state(
         work = util::u256_add(work, w);
 
         let height = start_height + i;
-        if height == 0 {
-            (median_head, median_len, median_packed) =
-                add_timestamp_window(&mut median, median_head, median_len, median_packed, timestamp);
-        } else {
-            (median_head, median_len, median_packed) =
-                add_timestamp_window(&mut median, median_head, median_len, median_packed, timestamp);
-        }
+        (median_head, median_len, median_packed) =
+            add_timestamp_window(&mut median, median_head, median_len, median_packed, timestamp);
 
-        if height > 0 && height % 2016 == 0 {
+        if height > 0 && height.is_multiple_of(2016) {
             epoch_ts = timestamp;
         }
     }

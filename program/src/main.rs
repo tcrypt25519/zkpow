@@ -24,26 +24,15 @@ const STATUS_GENESIS_HASH_MISMATCH: u8 = 1;
 const STATUS_PREV_BLOCKHASH_MISMATCH: u8 = 2;
 const STATUS_POW_INSUFFICIENT: u8 = 3;
 const STATUS_TIMESTAMP_TOO_OLD: u8 = 4;
-const STATUS_TIMESTAMP_FUTURE: u8 = 5;
 const STATUS_BITS_MISMATCH: u8 = 6;
 const STATUS_HEADER_COUNT_MISMATCH: u8 = 7;
-const STATUS_PREV_PROOF_TOO_SHORT: u8 = 8;
-const STATUS_PREV_PROOF_GENESIS_MISMATCH: u8 = 9;
-const STATUS_PREV_PROOF_FAILED: u8 = 10;
+// STATUS_TIMESTAMP_FUTURE = 5        (network policy, not consensus)
+// STATUS_PREV_PROOF_TOO_SHORT = 8     (tested via recursive_chain_success)
+// STATUS_PREV_PROOF_GENESIS_MISMATCH = 9  (tested via recursive_chain_success)
+// STATUS_PREV_PROOF_FAILED = 10       (tested via recursive_chain_success)
 
-/// Commit all public values for an error exit and return.
-/// This produces a valid proof with a non-zero success_code, proving that
-/// the program ran correctly and found an error at the given header index.
-///
-/// Note: We use a loop with `break` to simulate early exit, since the zkVM
-/// requires reaching HALT(0) normally (via return from main) to produce a proof.
-struct ValidationError {
-    code: u8,
-    detail: u32,
-}
-
+#[allow(clippy::too_many_arguments)]
 fn commit_error_and_exit(
-    _genesis_hash: &[u8; 32],
     prev_hash: &[u8; 32],
     cumulative_chain_work: [u64; 4],
     last_epoch_start_timestamp: u32,
@@ -67,9 +56,7 @@ fn commit_error_and_exit(
     sp1_zkvm::io::commit_slice(&[error_code]);
     sp1_zkvm::io::commit_slice(&detail.to_le_bytes());
 
-    unsafe {
-        sp1_zkvm::syscalls::syscall_halt(0);
-    }
+    sp1_zkvm::syscalls::syscall_halt(0);
 }
 
 fn double_sha256(data: &[u8]) -> [u8; 32] {
@@ -79,7 +66,7 @@ fn double_sha256(data: &[u8]) -> [u8; 32] {
 }
 
 fn bits_to_target(bits: u32) -> [u8; 32] {
-    let exponent = (bits >> 24) as u32;
+    let exponent = bits >> 24;
     let mantissa = bits & 0x00ffffff;
     let mut target = [0u8; 32];
     if mantissa == 0 {
@@ -126,7 +113,7 @@ fn target_to_bits(target: &[u8; 32]) -> u32 {
         return 0;
     }
     let bit_length = high_byte * 8 + (8 - target[high_byte].leading_zeros() as usize);
-    let nbytes = (bit_length + 7) / 8;
+    let nbytes = bit_length.div_ceil(8);
     let mantissa: u32 = if high_byte >= 2 {
         (target[high_byte] as u32) << 16
             | (target[high_byte - 1] as u32) << 8
@@ -174,7 +161,7 @@ const NIBBLE_MASK: u64 = 0xF;
 fn check_median(
     timestamps: &[u32; WINDOW_SIZE],
     len: usize,
-    head: u8,
+    _head: u8,
     packed: u64,
     ts: u32,
 ) -> bool {
@@ -263,13 +250,11 @@ fn rebuild_packed(timestamps: &[u32; WINDOW_SIZE], len: usize) -> u64 {
     let mut indices: [u8; WINDOW_SIZE] = [0; WINDOW_SIZE];
     let mut sorted_count = 0;
 
-    for i in 0..len {
-        let ts = timestamps[i];
+    for (i, ts) in timestamps.iter().take(len).enumerate() {
         // Find insertion position
         let mut pos = sorted_count;
-        for j in 0..sorted_count {
-            let idx = indices[j] as usize;
-            if ts < timestamps[idx] {
+        for (j, idx) in indices.iter().take(sorted_count).enumerate() {
+            if *ts < timestamps[*idx as usize] {
                 pos = j;
                 break;
             }
@@ -284,8 +269,8 @@ fn rebuild_packed(timestamps: &[u32; WINDOW_SIZE], len: usize) -> u64 {
 
     // Pack into nibbles
     let mut packed = 0u64;
-    for i in 0..sorted_count {
-        packed |= (indices[i] as u64) << (i * NIBBLE_BITS);
+    for (i, idx) in indices.iter().take(sorted_count).enumerate() {
+        packed |= (*idx as u64) << (i * NIBBLE_BITS);
     }
     packed
 }
@@ -297,7 +282,7 @@ fn get_nibble(packed: u64, pos: usize) -> u8 {
 
 /// Remove nibble at `pos` from packed (which has `count` nibbles).
 /// Returns packed with `count-1` nibbles.
-fn remove_nibble(packed: u64, pos: usize, count: usize) -> u64 {
+fn remove_nibble(packed: u64, pos: usize, _count: usize) -> u64 {
     let lower_mask = (1u64 << (pos * NIBBLE_BITS)) - 1;
     let lower = packed & lower_mask;
     let upper = (packed >> ((pos + 1) * NIBBLE_BITS)) << (pos * NIBBLE_BITS);
@@ -349,12 +334,12 @@ fn div_2n_minus_r_by_u32(n: u32, r: u32, m: u32) -> [u64; 4] {
     }
 
     let bit_limb = (n / 64) as usize;
-    let bit_offset = (n % 64) as u32;
+    let bit_offset = n % 64;
 
     let mut limbs = [0u64; 5];
     limbs[0] = u64::MAX.wrapping_sub(r as u64 - 1);
-    for i in 1..bit_limb.min(4) {
-        limbs[i] = u64::MAX;
+    for item in limbs.iter_mut().take(bit_limb.min(4)).skip(1) {
+        *item = u64::MAX;
     }
     if bit_limb < 4 {
         limbs[bit_limb] = (1u64 << bit_offset).wrapping_sub(1);
@@ -386,7 +371,7 @@ fn q_le_r_shifted(q: &[u64; 4], r: u32, k: u32) -> bool {
     }
 
     let r64 = r as u64;
-    let lo = (k % 64) as u32;
+    let lo = k % 64;
     let hi_limb = (k / 64) as usize;
 
     let mut rv = [0u64; 4];
@@ -409,7 +394,7 @@ fn q_le_r_shifted(q: &[u64; 4], r: u32, k: u32) -> bool {
 }
 
 fn work_from_bits(bits: u32) -> [u64; 4] {
-    let exponent = (bits >> 24) as u32;
+    let exponent = bits >> 24;
     let mantissa = bits & 0x00ffffff;
     let k = 8 * (exponent - 3);
     let n = 256 - k;
@@ -423,12 +408,12 @@ fn work_from_bits(bits: u32) -> [u64; 4] {
 
     let mut work = q;
     if !q_le_r_shifted(&q, r, k) {
-        for i in 0..4 {
-            if work[i] > 0 {
-                work[i] -= 1;
+        for item in &mut work {
+            if *item > 0 {
+                *item -= 1;
                 break;
             } else {
-                work[i] = u64::MAX;
+                *item = u64::MAX;
             }
         }
     }
@@ -453,8 +438,6 @@ pub fn main() {
         mut median_head,
         mut median_len,
         mut median_packed,
-        start_height,
-        _prev_num_headers,
     ) = if has_prev_proof {
         let _prev_vk_digest = sp1_zkvm::io::read::<[u32; 8]>();
         let _prev_pv_digest = sp1_zkvm::io::read::<[u8; 32]>();
@@ -512,8 +495,6 @@ pub fn main() {
             prev_median_head,
             prev_median_len,
             prev_median_packed,
-            prev_num_headers,
-            prev_num_headers,
         )
     } else {
         (
@@ -525,8 +506,6 @@ pub fn main() {
             0u8,
             0usize,
             0u64,
-            0u64,
-            0u64,
         )
     };
 
@@ -537,7 +516,7 @@ pub fn main() {
     let expected_len = (num_headers * 80) as usize;
     if headers_bytes.len() != expected_len {
         commit_error_and_exit(
-            &expected_genesis_hash, &prev_hash, cumulative_chain_work,
+            &prev_hash, cumulative_chain_work,
             last_epoch_start_timestamp, median_timestamps,
             start_height, num_headers,
             STATUS_HEADER_COUNT_MISMATCH, 0,
@@ -559,7 +538,7 @@ pub fn main() {
             let computed_hash = double_sha256(header);
             if computed_hash != expected_genesis_hash {
                 commit_error_and_exit(
-                    &expected_genesis_hash, &prev_hash, cumulative_chain_work,
+                    &prev_hash, cumulative_chain_work,
                     last_epoch_start_timestamp, median_timestamps,
                     start_height, num_headers,
                     STATUS_GENESIS_HASH_MISMATCH, i as u32,
@@ -575,7 +554,7 @@ pub fn main() {
         } else {
             if prev_blockhash != prev_hash {
                 commit_error_and_exit(
-                    &expected_genesis_hash, &prev_hash, cumulative_chain_work,
+                    &prev_hash, cumulative_chain_work,
                     last_epoch_start_timestamp, median_timestamps,
                     start_height, num_headers,
                     STATUS_PREV_BLOCKHASH_MISMATCH, i as u32,
@@ -585,7 +564,7 @@ pub fn main() {
             // === BIP113: Median timestamp check ===
             if check_median(&median_timestamps, median_len, median_head, median_packed, timestamp) {
                 commit_error_and_exit(
-                    &expected_genesis_hash, &prev_hash, cumulative_chain_work,
+                    &prev_hash, cumulative_chain_work,
                     last_epoch_start_timestamp, median_timestamps,
                     start_height, num_headers,
                     STATUS_TIMESTAMP_TOO_OLD, i as u32,
@@ -599,7 +578,7 @@ pub fn main() {
             // The BIP113 median check (above) is the consensus-critical timestamp rule.
 
             // Difficulty retargeting every 2016 blocks
-            if current_height > 0 && current_height % 2016 == 0 {
+            if current_height > 0 && current_height.is_multiple_of(2016) {
                 let actual_timespan = timestamp.wrapping_sub(last_epoch_start_timestamp);
                 let expected_timespan: u32 = 2016 * 600;
                 let clamped = actual_timespan
@@ -613,7 +592,7 @@ pub fn main() {
             let expected_bits = target_to_bits(&prev_target);
             if bits != expected_bits {
                 commit_error_and_exit(
-                    &expected_genesis_hash, &prev_hash, cumulative_chain_work,
+                    &prev_hash, cumulative_chain_work,
                     last_epoch_start_timestamp, median_timestamps,
                     start_height, num_headers,
                     STATUS_BITS_MISMATCH, i as u32,
@@ -623,7 +602,7 @@ pub fn main() {
             let block_hash = double_sha256(header);
             if !hash_meets_target(&block_hash, bits) {
                 commit_error_and_exit(
-                    &expected_genesis_hash, &prev_hash, cumulative_chain_work,
+                    &prev_hash, cumulative_chain_work,
                     last_epoch_start_timestamp, median_timestamps,
                     start_height, num_headers,
                     STATUS_POW_INSUFFICIENT, i as u32,

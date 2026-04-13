@@ -97,9 +97,8 @@ fn main() {
     if median_count > 0 {
         println!("\nMedian Buffer ({}/11):", median_count);
         let display_count = median_count.min(11) as usize;
-        for i in 0..display_count {
-            let ts = median_timestamps[i];
-            let dt = UNIX_EPOCH + std::time::Duration::from_secs(ts as u64);
+        for (i, ts) in median_timestamps.iter().take(display_count).enumerate() {
+            let dt = UNIX_EPOCH + std::time::Duration::from_secs(*ts as u64);
             println!("  [{}] {} ({})", i, humantime::format_rfc3339_seconds(dt), ts);
         }
     }

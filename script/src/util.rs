@@ -53,7 +53,7 @@ pub fn double_sha256_host(data: &[u8]) -> [u8; 32] {
 
 /// Convert compact "bits" to a 32-byte target (little-endian).
 pub fn bits_to_target(bits: u32) -> [u8; 32] {
-    let exponent = (bits >> 24) as u32;
+    let exponent = bits >> 24;
     let mantissa = bits & 0x00ffffff;
     let mut target = [0u8; 32];
     if mantissa == 0 {
@@ -75,7 +75,7 @@ pub fn bits_to_target(bits: u32) -> [u8; 32] {
 /// Compute work = floor(2^256 / (target + 1)) as [u64; 4] LE.
 /// Canonical Bitcoin formula — no simplifications.
 pub fn work_from_bits(bits: u32) -> [u64; 4] {
-    let exponent = (bits >> 24) as u32;
+    let exponent = bits >> 24;
     let mantissa = bits & 0x00ffffff;
     let k = 8 * (exponent - 3);
     let n = 256 - k;
@@ -93,12 +93,12 @@ pub fn work_from_bits(bits: u32) -> [u64; 4] {
     // work = Q if Q <= R * 2^k, else Q - 1
     let mut work = q;
     if !q_le_r_shifted(&q, r, k) {
-        for i in 0..4 {
-            if work[i] > 0 {
-                work[i] -= 1;
+        for item in &mut work {
+            if *item > 0 {
+                *item -= 1;
                 break;
             } else {
-                work[i] = u64::MAX;
+                *item = u64::MAX;
             }
         }
     }
@@ -135,12 +135,12 @@ fn div_2n_minus_r_by_u32(n: u32, r: u32, m: u32) -> [u64; 4] {
     }
 
     let bit_limb = (n / 64) as usize;
-    let bit_offset = (n % 64) as u32;
+    let bit_offset = n % 64;
 
     let mut limbs = [0u64; 5];
     limbs[0] = u64::MAX.wrapping_sub(r as u64 - 1);
-    for i in 1..bit_limb.min(4) {
-        limbs[i] = u64::MAX;
+    for item in limbs.iter_mut().take(bit_limb.min(4)).skip(1) {
+        *item = u64::MAX;
     }
     if bit_limb < 4 {
         limbs[bit_limb] = (1u64 << bit_offset).wrapping_sub(1);
@@ -172,7 +172,7 @@ fn q_le_r_shifted(q: &[u64; 4], r: u32, k: u32) -> bool {
     }
 
     let r64 = r as u64;
-    let lo = (k % 64) as u32;
+    let lo = k % 64;
     let hi_limb = (k / 64) as usize;
 
     let mut rv = [0u64; 4];

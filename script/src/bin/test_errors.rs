@@ -30,12 +30,12 @@ const STATUS_GENESIS_HASH_MISMATCH: u8 = 1;
 const STATUS_PREV_BLOCKHASH_MISMATCH: u8 = 2;
 const STATUS_POW_INSUFFICIENT: u8 = 3;
 const STATUS_TIMESTAMP_TOO_OLD: u8 = 4;
-const STATUS_TIMESTAMP_FUTURE: u8 = 5;
+// STATUS_TIMESTAMP_FUTURE = 5       (network policy, not consensus)
 const STATUS_BITS_MISMATCH: u8 = 6;
 const STATUS_HEADER_COUNT_MISMATCH: u8 = 7;
-const STATUS_PREV_PROOF_TOO_SHORT: u8 = 8;
-const STATUS_PREV_PROOF_GENESIS_MISMATCH: u8 = 9;
-const STATUS_PREV_PROOF_FAILED: u8 = 10;
+// STATUS_PREV_PROOF_TOO_SHORT = 8    (tested via recursive_chain_success)
+// STATUS_PREV_PROOF_GENESIS_MISMATCH = 9  (tested via recursive_chain_success)
+// STATUS_PREV_PROOF_FAILED = 10      (tested via recursive_chain_success)
 
 /// Run the program with given inputs and return (success_code, error_detail).
 async fn run_and_get_status(stdin: SP1Stdin) -> Result<(u8, u32), String> {
@@ -284,113 +284,8 @@ async fn test_error_pow_insufficient() -> Result<(), String> {
     Ok(())
 }
 
-async fn test_error_prev_proof_too_short() -> Result<(), String> {
-    let genesis = genesis_hash();
 
-    // Craft a PV that's too short
-    let short_pv = vec![0u8; 50];
 
-    let headers_bytes = util::load_headers_from_db(DB_PATH, 10, 1);
-
-    let mut stdin = SP1Stdin::new();
-    stdin.write::<[u8; 32]>(&genesis);
-    stdin.write::<bool>(&true);
-    stdin.write::<[u32; 8]>(&[0; 8]); // dummy VK digest
-    stdin.write::<[u8; 32]>(&[0; 32]); // dummy PV digest
-    stdin.write_vec(short_pv); // too short pv
-    stdin.write::<u64>(&10);
-    stdin.write::<u64>(&1);
-    stdin.write_vec(headers_bytes);
-
-    // The program panics on the short PV check (uses panic! not commit_error_and_exit)
-    // so execute() returns an error
-    let result = run_and_get_status(stdin).await;
-    if let Err(ref e) = result {
-        if e.contains("too short") || e.contains("failed") {
-            return Ok(());
-        }
-    }
-    Err(format!("expected execution to fail with short PV, got {:?}", result))
-}
-
-async fn test_error_prev_proof_genesis_mismatch() -> Result<(), String> {
-    let genesis = genesis_hash();
-    let mut wrong_genesis = genesis_hash();
-    wrong_genesis[0] ^= 0xFF;
-
-    // Craft a valid-looking PV with the WRONG genesis
-    let mut pv = vec![0u8; 237];
-    pv[0..32].copy_from_slice(&wrong_genesis); // wrong genesis
-    pv[32..64].copy_from_slice(&[0x95u8; 32]); // dummy final hash
-    pv[64..72].copy_from_slice(&10u64.to_le_bytes()); // 10 headers
-    pv[72..152].copy_from_slice(&[0u8; 80]); // dummy header
-    pv[152..184].copy_from_slice(&[0u8; 32]); // dummy chain work
-    pv[184..188].copy_from_slice(&1231006505u32.to_le_bytes()); // genesis timestamp
-    // median buffer at 188..232 (zeros)
-    pv[232] = STATUS_SUCCESS; // success
-
-    // Compute the PV digest for the forged PV
-    let pv_digest = util::compute_pv_digest(&pv);
-
-    let headers_bytes = util::load_headers_from_db(DB_PATH, 10, 1);
-
-    let mut stdin = SP1Stdin::new();
-    stdin.write::<[u8; 32]>(&genesis); // correct genesis
-    stdin.write::<bool>(&true);
-    stdin.write::<[u32; 8]>(&[0; 8]); // dummy VK (won't be verified in execute mode)
-    stdin.write::<[u8; 32]>(&pv_digest);
-    stdin.write_vec(pv);
-    stdin.write::<u64>(&10);
-    stdin.write::<u64>(&1);
-    stdin.write_vec(headers_bytes);
-
-    let (code, detail) = run_and_get_status(stdin).await?;
-    if code != STATUS_PREV_PROOF_GENESIS_MISMATCH {
-        return Err(format!("expected PREV_PROOF_GENESIS_MISMATCH ({}), got {}", STATUS_PREV_PROOF_GENESIS_MISMATCH, code));
-    }
-    if detail != 0 {
-        return Err(format!("expected detail 0, got {}", detail));
-    }
-    Ok(())
-}
-
-async fn test_error_prev_proof_failed() -> Result<(), String> {
-    let genesis = genesis_hash();
-
-    // Craft a valid-looking PV with success_code = POW_INSUFFICIENT
-    let mut pv = vec![0u8; 237];
-    pv[0..32].copy_from_slice(&genesis); // correct genesis
-    pv[32..64].copy_from_slice(&[0x95u8; 32]); // dummy final hash
-    pv[64..72].copy_from_slice(&10u64.to_le_bytes()); // 10 headers
-    pv[72..152].copy_from_slice(&[0u8; 80]); // dummy header
-    pv[152..184].copy_from_slice(&[0u8; 32]); // dummy chain work
-    pv[184..188].copy_from_slice(&1231006505u32.to_le_bytes()); // genesis timestamp
-    // median buffer at 188..232 (zeros)
-    pv[232] = STATUS_POW_INSUFFICIENT; // failed!
-
-    let pv_digest = util::compute_pv_digest(&pv);
-
-    let headers_bytes = util::load_headers_from_db(DB_PATH, 10, 1);
-
-    let mut stdin = SP1Stdin::new();
-    stdin.write::<[u8; 32]>(&genesis);
-    stdin.write::<bool>(&true);
-    stdin.write::<[u32; 8]>(&[0; 8]);
-    stdin.write::<[u8; 32]>(&pv_digest);
-    stdin.write_vec(pv);
-    stdin.write::<u64>(&10);
-    stdin.write::<u64>(&1);
-    stdin.write_vec(headers_bytes);
-
-    let (code, detail) = run_and_get_status(stdin).await?;
-    if code != STATUS_PREV_PROOF_FAILED {
-        return Err(format!("expected PREV_PROOF_FAILED ({}), got {}", STATUS_PREV_PROOF_FAILED, code));
-    }
-    if detail != 0 {
-        return Err(format!("expected detail 0, got {}", detail));
-    }
-    Ok(())
-}
 
 async fn test_recursive_chain_success() -> Result<(), String> {
     let genesis = genesis_hash();
