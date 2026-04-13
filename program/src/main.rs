@@ -14,9 +14,6 @@ sp1_zkvm::entrypoint!(main);
 mod sha256;
 use sha256::double_sha256_80;
 
-// Bitcoin mainnet genesis block timestamp (2009-01-03 18:15:05 UTC).
-const GENESIS_TIMESTAMP: u32 = 1231006505;
-
 // ============================================================================
 // Error codes — committed to public values on failure.
 // The program exits cleanly (HALT 0) with a non-zero status, producing a
@@ -611,17 +608,6 @@ pub fn main() {
                 last_epoch_start_timestamp, median_timestamps,
                 start_height, num_headers,
                 STATUS_BITS_MISMATCH, i as u32,
-            );
-        }
-
-        // Validate timestamp is after genesis and before any reasonable future bound.
-        if timestamp < GENESIS_TIMESTAMP {
-            println!("cycle-tracker-end: parse");
-            commit_error_and_exit(
-                &prev_hash, cumulative_chain_work,
-                last_epoch_start_timestamp, median_timestamps,
-                start_height, num_headers,
-                STATUS_TIMESTAMP_TOO_OLD, i as u32,
             );
         }
 
