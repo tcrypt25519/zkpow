@@ -166,20 +166,13 @@ Run 2: Block 100 → 199 (extends Run 1)
 
 ## Remaining Phases
 
-### Phase 6: Automated Tests ⏳ NEXT
+### Phase 7: On-Chain Verification ✅ COMPLETE
 
-**Goal**: Automated tests verifying all 10 error codes trigger correctly.
-
-**Approach**:
-- Create test headers with specific corruptions
-- Run the zkVM program via `client.execute()` (fast, no proving)
-- Assert error code in public values matches expected
-- Test both genesis-start and recursive-chaining scenarios
-
-### Phase 7: On-Chain Verification ⏳
-
-- `.groth16()` proof generation
-- Solidity verifier integration
+- Groth16 proof generation via `client.prove(&pk, stdin).groth16().await`
+- Produces a BN254 Groth16 SNARK proof (~200 bytes, ~100k gas on Ethereum)
+- Both compressed and Groth16 proofs are saved each run
+- Groth16 proof verified cryptographically before saving
+- Files: `proof_height_X_to_Y.bin` (compressed) and `proof_height_X_to_Y_groth16.bin` (on-chain)
 
 ### Phase 8: Performance ⏳
 

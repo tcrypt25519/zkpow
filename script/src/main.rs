@@ -108,7 +108,9 @@ async fn main() {
 
     // Generate compressed proof
     tracing::info!("Generating compressed proof...");
-    let proof = client.prove(&pk, stdin).compressed().await.expect("proving failed");
+    let proof = client.prove(&pk, stdin.clone()).compressed()
+        .await
+        .expect("proving failed");
     tracing::info!("Generated compressed proof");
 
     // Verify public values
@@ -134,10 +136,42 @@ async fn main() {
     client.verify(&proof, vk, None).expect("verification failed");
     tracing::info!("Proof verified successfully");
 
-    // Save
-    let proof_path = format!("proof_height_{}_to_{}.bin", start_height, start_height + loaded_count - 1);
+    // Save compressed proof
+    let proof_path = format!(
+        "proof_height_{}_to_{}.bin",
+        start_height,
+        start_height + loaded_count - 1
+    );
     proof.save(&proof_path).expect("failed to save proof");
-    tracing::info!("Proof saved to {}", proof_path);
+    tracing::info!("Compressed proof saved to {}", proof_path);
+
+    // Generate Groth16 proof for on-chain verification
+    tracing::info!("Generating Groth16 proof...");
+    let groth16_proof = client
+        .prove(&pk, stdin)
+        .groth16()
+        .await
+        .expect("Groth16 proving failed");
+    tracing::info!("Groth16 proof generated");
+
+    // Verify Groth16 proof
+    client
+        .verify(&groth16_proof, vk, None)
+        .expect("Groth16 verification failed");
+    tracing::info!("Groth16 proof verified");
+
+    let groth16_path = proof_path.replace(".bin", "_groth16.bin");
+    groth16_proof
+        .save(&groth16_path)
+        .expect("failed to save Groth16 proof");
+    tracing::info!("Groth16 proof saved to {}", groth16_path);
+
+    tracing::info!(
+        "Complete: validated {} headers from height {} to height {}",
+        loaded_count,
+        start_height,
+        start_height + loaded_count - 1
+    );
 }
 
 /// Compute the expected state after validating headers, optionally extending a previous state.
