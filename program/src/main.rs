@@ -25,6 +25,7 @@ const STATUS_GENESIS_HASH_MISMATCH: u8 = 1;
 const STATUS_PREV_BLOCKHASH_MISMATCH: u8 = 2;
 const STATUS_POW_INSUFFICIENT: u8 = 3;
 const STATUS_TIMESTAMP_TOO_OLD: u8 = 4;
+const STATUS_HEIGHT_MISMATCH: u8 = 5;
 const STATUS_BITS_MISMATCH: u8 = 6;
 const STATUS_HEADER_COUNT_MISMATCH: u8 = 7;
 // STATUS_TIMESTAMP_FUTURE = 5        (network policy, not consensus)
@@ -434,6 +435,7 @@ pub fn main() {
         mut median_head,
         mut median_len,
         mut median_packed,
+        prev_num_headers,
     ) = if has_prev_proof {
         let _prev_vk_digest = sp1_zkvm::io::read::<[u32; 8]>();
         let _prev_pv_digest = sp1_zkvm::io::read::<[u8; 32]>();
@@ -491,6 +493,7 @@ pub fn main() {
             prev_median_head,
             prev_median_len,
             prev_median_packed,
+            prev_num_headers,
         )
     } else {
         (
@@ -502,10 +505,28 @@ pub fn main() {
             0u8,
             0usize,
             0u64,
+            0u64,
         )
     };
 
     let start_height = sp1_zkvm::io::read::<u64>();
+
+    // Validate chain continuity: the new batch must start exactly where the
+    // previous proof left off. If no previous proof, must start from genesis (0).
+    let expected_start = if has_prev_proof {
+        prev_num_headers
+    } else {
+        0u64
+    };
+    if start_height != expected_start {
+        commit_error_and_exit(
+            &prev_hash, cumulative_chain_work,
+            last_epoch_start_timestamp, median_timestamps,
+            start_height, 0, // num_headers = 0 (we haven't read it yet)
+            STATUS_HEIGHT_MISMATCH, 0,
+        );
+    }
+
     let num_headers = sp1_zkvm::io::read::<u64>();
     let headers_bytes = sp1_zkvm::io::read_vec();
 
