@@ -230,10 +230,10 @@ tracing::info!("ELF SHA-256: {}", hex::encode(elf_hash));
 
 ## 8. Recursive Chaining Correctness
 
-### 8.1 Verify start_height consistency 🛡️🔬
-**Current:** The program accepts any `start_height` from stdin. When extending a previous proof, the host passes `start_height` from the user, not from the previous proof's PV.
-**Risk:** User could pass `start_height=100` with a proof that ends at block 50, creating a gap.
-**Fix:** Extract `start_height` from the previous proof's PV (`prev_num_headers`) and use that instead of the user-provided value. Or validate that `start_height == prev_num_headers`.
+### 8.1 Verify start_height consistency ✅ FIXED
+**Fix applied:** The program now validates that `start_height` from stdin matches
+`prev_num_headers` from the previous proof's public values. If no previous proof
+is provided, `start_height` must be 0 (genesis). New error code `STATUS_HEIGHT_MISMATCH = 5`.
 
 ### 8.2 Validate median window consistency on resume 🛡️🔬
 **Current:** When resuming, the program reads median_timestamps from the PV and rebuilds packed. It trusts the timestamps are valid.

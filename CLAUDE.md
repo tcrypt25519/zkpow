@@ -97,10 +97,11 @@ The host script still uses the `sha2` crate (via workspace) for `compute_pv_dige
 | 2 | Prev blockhash mismatch | `header.prev ≠ prev_hash` |
 | 3 | PoW insufficient | `SHA256d(header) > target` |
 | 4 | Timestamp too old | `timestamp ≤ median_of_last_11` |
+| 5 | Height mismatch | `start_height ≠ prev_num_headers` (or ≠ 0 at genesis) |
 | 6 | Bits mismatch | `header.bits ≠ expected` |
 | 7 | Header count mismatch | `len ≠ num_headers * 80` |
 
-Not used (reserved for recursive chaining edge cases): 5, 8, 9, 10.
+Not used (reserved): 8, 9, 10.
 
 ## Proof Files
 
