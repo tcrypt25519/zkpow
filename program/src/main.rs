@@ -156,6 +156,167 @@ fn u256_add(a: [u64; 4], b: [u64; 4]) -> [u64; 4] {
 }
 
 // ============================================================================
+// Sliding window of the 11 most recent block timestamps (BIP113 MTP)
+//
+// Maintains sorted order incrementally using packed nibble indices, avoiding
+// full re-sort on every block. The timestamps buffer stores in insertion
+// (height) order; the packed field stores sorted indices as 4-bit nibbles.
+// ============================================================================
+
+const WINDOW_SIZE: usize = 11;
+const NIBBLE_BITS: usize = 4;
+const NIBBLE_MASK: u64 = 0xF;
+
+/// Returns true if `ts` is ≤ the median of the sorted window.
+///
+/// For len < 11, no check is performed (MTP requires a full window).
+/// When len == 11, returns `ts <= sorted[5]`.
+fn check_median(
+    timestamps: &[u32; WINDOW_SIZE],
+    len: usize,
+    head: u8,
+    packed: u64,
+    ts: u32,
+) -> bool {
+    if len < WINDOW_SIZE {
+        return false; // no check needed
+    }
+    let median_pos = (len - 1) / 2; // = 5 for len=11
+    let idx = get_nibble(packed, median_pos) as usize;
+    ts <= timestamps[idx]
+}
+
+/// Add a timestamp to the circular buffer and update the packed sorted indices.
+/// Returns updated (head, packed). When the window is full, the oldest entry
+/// (at `head`) is evicted before inserting the new one.
+fn add_timestamp(
+    timestamps: &mut [u32; WINDOW_SIZE],
+    mut head: u8,
+    mut len: usize,
+    mut packed: u64,
+    ts: u32,
+) -> (u8, usize, u64) {
+    if len < WINDOW_SIZE {
+        // Growing phase: insert at head position
+        timestamps[head as usize] = ts;
+
+        // Find sorted position for this timestamp
+        let pos = find_insert_position(timestamps, packed, len, ts);
+        packed = insert_nibble(packed, pos, head, len);
+
+        len += 1;
+        head = (head + 1) % WINDOW_SIZE as u8;
+    } else {
+        // Full window: evict oldest (at head), replace with new
+
+        // 1. Find where the evicted entry sits in the sorted order
+        let pos_old = find_index_position(packed, len, head as usize);
+
+        // 2. Remove that nibble from packed (now has 10 entries)
+        packed = remove_nibble(packed, pos_old, len);
+
+        // 3. Find where the new timestamp belongs in the sorted order
+        let pos_new = find_insert_position(timestamps, packed, len - 1, ts);
+
+        // 4. Insert the reused buffer index at the correct sorted position
+        packed = insert_nibble(packed, pos_new, head, len - 1);
+
+        // 5. Overwrite the timestamp and advance head
+        timestamps[head as usize] = ts;
+        head = (head + 1) % WINDOW_SIZE as u8;
+    }
+
+    (head, len, packed)
+}
+
+/// Linear scan over sorted indices to find where `ts` belongs.
+/// Equal timestamps are inserted after existing ones (stable sort).
+fn find_insert_position(
+    timestamps: &[u32; WINDOW_SIZE],
+    packed: u64,
+    count: usize,
+    ts: u32,
+) -> usize {
+    for i in 0..count {
+        let idx = get_nibble(packed, i) as usize;
+        if ts < timestamps[idx] {
+            return i;
+        }
+    }
+    count
+}
+
+/// Find the sorted position (0-based) of a given buffer index in packed.
+fn find_index_position(packed: u64, count: usize, target: usize) -> usize {
+    for i in 0..count {
+        if get_nibble(packed, i) as usize == target {
+            return i;
+        }
+    }
+    count
+}
+
+/// Rebuild the packed sorted indices from the timestamps buffer.
+/// This is needed when resuming from a previous proof's PV.
+fn rebuild_packed(timestamps: &[u32; WINDOW_SIZE], len: usize) -> u64 {
+    // Sort indices 0..len by their timestamp values (simple insertion sort)
+    let mut indices: [u8; WINDOW_SIZE] = [0; WINDOW_SIZE];
+    let mut sorted_count = 0;
+
+    for i in 0..len {
+        let ts = timestamps[i];
+        // Find insertion position
+        let mut pos = sorted_count;
+        for j in 0..sorted_count {
+            let idx = indices[j] as usize;
+            if ts < timestamps[idx] {
+                pos = j;
+                break;
+            }
+        }
+        // Shift right and insert
+        for k in (pos + 1..sorted_count + 1).rev() {
+            indices[k] = indices[k - 1];
+        }
+        indices[pos] = i as u8;
+        sorted_count += 1;
+    }
+
+    // Pack into nibbles
+    let mut packed = 0u64;
+    for i in 0..sorted_count {
+        packed |= (indices[i] as u64) << (i * NIBBLE_BITS);
+    }
+    packed
+}
+
+#[inline]
+fn get_nibble(packed: u64, pos: usize) -> u8 {
+    ((packed >> (pos * NIBBLE_BITS)) & NIBBLE_MASK) as u8
+}
+
+/// Remove nibble at `pos` from packed (which has `count` nibbles).
+/// Returns packed with `count-1` nibbles.
+fn remove_nibble(packed: u64, pos: usize, count: usize) -> u64 {
+    let lower_mask = (1u64 << (pos * NIBBLE_BITS)) - 1;
+    let lower = packed & lower_mask;
+    let upper = (packed >> ((pos + 1) * NIBBLE_BITS)) << (pos * NIBBLE_BITS);
+    lower | upper
+}
+
+/// Insert `val` at position `pos` into packed (which has `count` nibbles).
+/// Returns packed with `count+1` nibbles.
+fn insert_nibble(packed: u64, pos: usize, val: u8, count: usize) -> u64 {
+    let lower_mask = (1u64 << (pos * NIBBLE_BITS)) - 1;
+    let lower = packed & lower_mask;
+    let upper = (packed & !lower_mask) << NIBBLE_BITS;
+
+    let new_packed = lower | ((val as u64) << (pos * NIBBLE_BITS)) | upper;
+    let new_mask = (1u64 << ((count + 1) * NIBBLE_BITS)) - 1;
+    new_packed & new_mask
+}
+
+// ============================================================================
 // Canonical chain work: floor(2^256 / (target + 1))
 // ============================================================================
 
@@ -289,7 +450,9 @@ pub fn main() {
         mut last_epoch_start_timestamp,
         mut prev_target,
         mut median_timestamps,
-        mut median_count,
+        mut median_head,
+        mut median_len,
+        mut median_packed,
         start_height,
         _prev_num_headers,
     ) = if has_prev_proof {
@@ -314,15 +477,23 @@ pub fn main() {
             u64::from_le_bytes(prev_public_values[176..184].try_into().unwrap()),
         ];
         let prev_epoch_ts = u32::from_le_bytes(prev_public_values[184..188].try_into().unwrap());
-        let prev_median: [u32; 11] = core::array::from_fn(|i| {
+        let prev_median: [u32; WINDOW_SIZE] = core::array::from_fn(|i| {
             u32::from_le_bytes(prev_public_values[(188 + i * 4)..(192 + i * 4)].try_into().unwrap())
         });
-        // Derive median_count from total headers: min(11, total - 1) for total > 0
-        let prev_median_count = if prev_num_headers == 0 {
-            0u32
+
+        // Derive median window state from total headers
+        let prev_median_len = if prev_num_headers == 0 {
+            0usize
         } else {
-            (prev_num_headers.min(11)) as u32
+            prev_num_headers.min(11) as usize
         };
+        let prev_median_head = if prev_median_len < WINDOW_SIZE {
+            prev_median_len as u8
+        } else {
+            (prev_num_headers % WINDOW_SIZE as u64) as u8
+        };
+        let prev_median_packed = rebuild_packed(&prev_median, prev_median_len);
+
         let prev_success = prev_public_values[232];
 
         if prev_genesis != expected_genesis_hash {
@@ -338,7 +509,9 @@ pub fn main() {
             prev_epoch_ts,
             bits_to_target_from_header_bytes(&prev_public_values[72..152]),
             prev_median,
-            prev_median_count,
+            prev_median_head,
+            prev_median_len,
+            prev_median_packed,
             prev_num_headers,
             prev_num_headers,
         )
@@ -348,8 +521,10 @@ pub fn main() {
             [0u64; 4],
             1231006505u32,
             bits_to_target(0x1d00ffff),
-            [0u32; 11],
-            0u32,
+            [0u32; WINDOW_SIZE],
+            0u8,
+            0usize,
+            0u64,
             0u64,
             0u64,
         )
@@ -394,8 +569,9 @@ pub fn main() {
             last_epoch_start_timestamp = timestamp;
             prev_target = bits_to_target(bits);
             cumulative_chain_work = u256_add(cumulative_chain_work, work_from_bits(bits));
-            median_timestamps[0] = timestamp;
-            median_count = 1;
+            // Initialize median window with genesis timestamp
+            (median_head, median_len, median_packed) =
+                add_timestamp(&mut median_timestamps, median_head, median_len, median_packed, timestamp);
         } else {
             if prev_blockhash != prev_hash {
                 commit_error_and_exit(
@@ -407,18 +583,13 @@ pub fn main() {
             }
 
             // === BIP113: Median timestamp check ===
-            if median_count >= 11 {
-                let mut sorted = median_timestamps;
-                sorted.sort_unstable();
-                let median = sorted[5];
-                if timestamp <= median {
-                    commit_error_and_exit(
-                        &expected_genesis_hash, &prev_hash, cumulative_chain_work,
-                        last_epoch_start_timestamp, median_timestamps,
-                        start_height, num_headers,
-                        STATUS_TIMESTAMP_TOO_OLD, i as u32,
-                    );
-                }
+            if check_median(&median_timestamps, median_len, median_head, median_packed, timestamp) {
+                commit_error_and_exit(
+                    &expected_genesis_hash, &prev_hash, cumulative_chain_work,
+                    last_epoch_start_timestamp, median_timestamps,
+                    start_height, num_headers,
+                    STATUS_TIMESTAMP_TOO_OLD, i as u32,
+                );
             }
 
             // Note: Bitcoin's "timestamp ≤ MTP + 2h" rule uses the network's adjusted
@@ -463,16 +634,9 @@ pub fn main() {
             prev_target = bits_to_target(bits);
             cumulative_chain_work = u256_add(cumulative_chain_work, work_from_bits(bits));
 
-            // === Update median timestamp buffer ===
-            if median_count < 11 {
-                median_timestamps[median_count as usize] = timestamp;
-                median_count += 1;
-            } else {
-                for j in 0..10 {
-                    median_timestamps[j as usize] = median_timestamps[(j + 1) as usize];
-                }
-                median_timestamps[10] = timestamp;
-            }
+            // === Update median timestamp window ===
+            (median_head, median_len, median_packed) =
+                add_timestamp(&mut median_timestamps, median_head, median_len, median_packed, timestamp);
         }
 
         final_header.copy_from_slice(header);

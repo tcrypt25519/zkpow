@@ -141,30 +141,148 @@ async fn main() {
 }
 
 /// Compute the expected state after validating headers, optionally extending a previous state.
+/// Sliding window constants — must match the program.
+const WINDOW_SIZE: usize = 11;
+const NIBBLE_BITS: usize = 4;
+const NIBBLE_MASK: u64 = 0xF;
+
+fn get_nibble(packed: u64, pos: usize) -> u8 {
+    ((packed >> (pos * NIBBLE_BITS)) & NIBBLE_MASK) as u8
+}
+
+fn find_insert_position(
+    timestamps: &[u32; WINDOW_SIZE],
+    packed: u64,
+    count: usize,
+    ts: u32,
+) -> usize {
+    for i in 0..count {
+        let idx = get_nibble(packed, i) as usize;
+        if ts < timestamps[idx] {
+            return i;
+        }
+    }
+    count
+}
+
+fn find_index_position(packed: u64, count: usize, target: usize) -> usize {
+    for i in 0..count {
+        if get_nibble(packed, i) as usize == target {
+            return i;
+        }
+    }
+    count
+}
+
+fn remove_nibble(packed: u64, pos: usize, _count: usize) -> u64 {
+    let lower_mask = (1u64 << (pos * NIBBLE_BITS)) - 1;
+    let lower = packed & lower_mask;
+    let upper = (packed >> ((pos + 1) * NIBBLE_BITS)) << (pos * NIBBLE_BITS);
+    lower | upper
+}
+
+fn insert_nibble(packed: u64, pos: usize, val: u8, count: usize) -> u64 {
+    let lower_mask = (1u64 << (pos * NIBBLE_BITS)) - 1;
+    let lower = packed & lower_mask;
+    let upper = (packed & !lower_mask) << NIBBLE_BITS;
+    let new_packed = lower | ((val as u64) << (pos * NIBBLE_BITS)) | upper;
+    let new_mask = (1u64 << ((count + 1) * NIBBLE_BITS)) - 1;
+    new_packed & new_mask
+}
+
+fn rebuild_packed(timestamps: &[u32; WINDOW_SIZE], len: usize) -> u64 {
+    let mut indices: [u8; WINDOW_SIZE] = [0; WINDOW_SIZE];
+    let mut sorted_count = 0;
+    for i in 0..len {
+        let ts = timestamps[i];
+        let mut pos = sorted_count;
+        for j in 0..sorted_count {
+            let idx = indices[j] as usize;
+            if ts < timestamps[idx] {
+                pos = j;
+                break;
+            }
+        }
+        for k in (pos + 1..sorted_count + 1).rev() {
+            indices[k] = indices[k - 1];
+        }
+        indices[pos] = i as u8;
+        sorted_count += 1;
+    }
+    let mut packed = 0u64;
+    for i in 0..sorted_count {
+        packed |= (indices[i] as u64) << (i * NIBBLE_BITS);
+    }
+    packed
+}
+
+fn add_timestamp_window(
+    timestamps: &mut [u32; WINDOW_SIZE],
+    head: u8,
+    len: usize,
+    packed: u64,
+    ts: u32,
+) -> (u8, usize, u64) {
+    if len < WINDOW_SIZE {
+        timestamps[head as usize] = ts;
+        let pos = find_insert_position(timestamps, packed, len, ts);
+        let new_packed = insert_nibble(packed, pos, head, len);
+        (
+            (head + 1) % WINDOW_SIZE as u8,
+            len + 1,
+            new_packed,
+        )
+    } else {
+        let pos_old = find_index_position(packed, len, head as usize);
+        let packed_without = remove_nibble(packed, pos_old, len);
+        let pos_new = find_insert_position(timestamps, packed_without, len - 1, ts);
+        let new_packed = insert_nibble(packed_without, pos_new, head, len - 1);
+        timestamps[head as usize] = ts;
+        (
+            (head + 1) % WINDOW_SIZE as u8,
+            len,
+            new_packed,
+        )
+    }
+}
+
 fn compute_expected_state(
     start_height: u64,
     num_headers: u64,
     headers_bytes: &[u8],
     prev_pv: Option<&[u8]>,
 ) -> ([u64; 4], u32, [u32; 11]) {
-    let (mut work, mut epoch_ts, mut median, mut median_count) = if let Some(pv) = prev_pv {
-        (
-            [
-                u64::from_le_bytes(pv[152..160].try_into().unwrap()),
-                u64::from_le_bytes(pv[160..168].try_into().unwrap()),
-                u64::from_le_bytes(pv[168..176].try_into().unwrap()),
-                u64::from_le_bytes(pv[176..184].try_into().unwrap()),
-            ],
-            u32::from_le_bytes(pv[184..188].try_into().unwrap()),
-            core::array::from_fn(|i| u32::from_le_bytes(pv[(188 + i * 4)..(192 + i * 4)].try_into().unwrap())),
-            {
-                let total = u64::from_le_bytes(pv[64..72].try_into().unwrap());
-                if total == 0 { 0u32 } else { total.min(11) as u32 }
-            },
-        )
-    } else {
-        ([0u64; 4], 1231006505u32, [0u32; 11], 0u32)
-    };
+    let (mut work, mut epoch_ts, mut median, mut median_head, mut median_len, mut median_packed) =
+        if let Some(pv) = prev_pv {
+            (
+                [
+                    u64::from_le_bytes(pv[152..160].try_into().unwrap()),
+                    u64::from_le_bytes(pv[160..168].try_into().unwrap()),
+                    u64::from_le_bytes(pv[168..176].try_into().unwrap()),
+                    u64::from_le_bytes(pv[176..184].try_into().unwrap()),
+                ],
+                u32::from_le_bytes(pv[184..188].try_into().unwrap()),
+                core::array::from_fn(|i| u32::from_le_bytes(pv[(188 + i * 4)..(192 + i * 4)].try_into().unwrap())),
+                {
+                    let total = u64::from_le_bytes(pv[64..72].try_into().unwrap());
+                    if total == 0 { 0u8 } else { (total % 11) as u8 }
+                },
+                {
+                    let total = u64::from_le_bytes(pv[64..72].try_into().unwrap());
+                    if total == 0 { 0usize } else { total.min(11) as usize }
+                },
+                {
+                    let total = u64::from_le_bytes(pv[64..72].try_into().unwrap());
+                    let len = if total == 0 { 0usize } else { total.min(11) as usize };
+                    let ts: [u32; WINDOW_SIZE] = core::array::from_fn(|i| {
+                        u32::from_le_bytes(pv[(188 + i * 4)..(192 + i * 4)].try_into().unwrap())
+                    });
+                    rebuild_packed(&ts, len)
+                },
+            )
+        } else {
+            ([0u64; 4], 1231006505u32, [0u32; WINDOW_SIZE], 0u8, 0usize, 0u64)
+        };
 
     for i in 0..num_headers {
         let offset = (i * 80) as usize;
@@ -176,18 +294,11 @@ fn compute_expected_state(
 
         let height = start_height + i;
         if height == 0 {
-            median[0] = timestamp;
-            median_count = 1;
+            (median_head, median_len, median_packed) =
+                add_timestamp_window(&mut median, median_head, median_len, median_packed, timestamp);
         } else {
-            if median_count < 11 {
-                median[median_count as usize] = timestamp;
-                median_count += 1;
-            } else {
-                for j in 0..10 {
-                    median[j as usize] = median[(j + 1) as usize];
-                }
-                median[10] = timestamp;
-            }
+            (median_head, median_len, median_packed) =
+                add_timestamp_window(&mut median, median_head, median_len, median_packed, timestamp);
         }
 
         if height > 0 && height % 2016 == 0 {
