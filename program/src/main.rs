@@ -12,6 +12,8 @@
 sp1_zkvm::entrypoint!(main);
 
 mod sha256;
+mod pow;
+use pow::{PoWVerifier, ActiveVerifier};
 use sha256::double_sha256_80;
 
 // ============================================================================
@@ -62,7 +64,7 @@ fn commit_error_and_exit(
 }
 
 
-fn bits_to_target(bits: u32) -> [u8; 32] {
+pub(crate) fn bits_to_target(bits: u32) -> [u8; 32] {
     let exponent = bits >> 24;
     let mantissa = bits & 0x00ffffff;
     let mut target = [0u8; 32];
@@ -91,7 +93,8 @@ fn bits_to_target_from_header_bytes(header: &[u8; 80]) -> [u8; 32] {
     bits_to_target(bits)
 }
 
-fn hash_meets_target(hash: &[u8; 32], bits: u32) -> bool {
+#[allow(dead_code)]
+pub(crate) fn hash_meets_target(hash: &[u8; 32], bits: u32) -> bool {
     let target = bits_to_target(bits);
     for i in (0..32).rev() {
         if hash[i] > target[i] {
@@ -689,7 +692,7 @@ pub fn main() {
             // SAFETY: header is &headers_bytes[offset..offset+80], always exactly 80 bytes.
             let block_hash = double_sha256_80(header.try_into().unwrap());
             println!("cycle-tracker-end: sha256d");
-            if !hash_meets_target(&block_hash, bits) {
+            if !ActiveVerifier::check(&block_hash, bits) {
                 commit_error_and_exit(
                     &prev_hash, cumulative_chain_work,
                     last_epoch_start_timestamp, median_timestamps,

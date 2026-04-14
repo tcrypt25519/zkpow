@@ -6,3 +6,9 @@ publish = false
 
 [dependencies]
 sp1-zkvm = { workspace = true, features = ["verify"] }
+
+[features]
+default = []
+# Use a dummy PoW verifier (always returns true) for testing post-PoW validation
+# without grinding real block headers. WARNING: this does NOT validate proof-of-work.
+dummy-pow = []
