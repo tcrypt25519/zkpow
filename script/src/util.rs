@@ -12,8 +12,9 @@ use sha2::{Digest, Sha256};
 use sp1_sdk::SP1PublicValues;
 
 pub use bitcoin_header_chain_core::{
-    BlockHash, ChainWork, CompactTarget, HeaderChainPublicValues, NewHeader, ProofFailure,
-    PublicValuesParseError, State, Target, ValidationErrorCode, NEW_HEADER_SIZE, STATE_SIZE,
+    BlockHash, BlockTimestamp, ChainWork, CompactTarget, HeaderChainPublicValues, NewHeader,
+    ParseError, ProofFailure, PublicValuesParseError, State, Target, ValidationErrorCode,
+    NEW_HEADER_SIZE, STATE_SIZE,
 };
 
 // ============================================================================
@@ -77,7 +78,7 @@ pub fn raw_headers_to_new_headers(raw_headers: &[u8]) -> Vec<u8> {
         let nh = NewHeader::from_raw_header(&raw);
         out.extend_from_slice(&nh.version.to_le_bytes());
         out.extend_from_slice(&nh.merkle_root);
-        out.extend_from_slice(&nh.timestamp.to_le_bytes());
+        out.extend_from_slice(&nh.timestamp.to_consensus().to_le_bytes());
         out.extend_from_slice(&nh.nonce.to_le_bytes());
     }
     out
@@ -112,7 +113,7 @@ fn construct_header(state: &State, new_header: &NewHeader) -> [u8; 80] {
     header[0..4].copy_from_slice(&new_header.version.to_le_bytes());
     header[4..36].copy_from_slice(state.prev_blockhash.as_raw());
     header[36..68].copy_from_slice(&new_header.merkle_root);
-    header[68..72].copy_from_slice(&new_header.timestamp.to_le_bytes());
+    header[68..72].copy_from_slice(&new_header.timestamp.to_consensus().to_le_bytes());
     header[72..76].copy_from_slice(&state.nbits.to_consensus().to_le_bytes());
     header[76..80].copy_from_slice(&new_header.nonce.to_le_bytes());
     header
@@ -139,14 +140,15 @@ pub fn compute_expected_state(
         target: bits_to_target(CompactTarget::from_consensus(GENESIS_NBITS)),
         height: 0,
         chain_work: ChainWork::default(),
-        epoch_start_timestamp: 0,
-        timestamps: [0u32; WINDOW_SIZE],
+        epoch_start_timestamp: BlockTimestamp::default(),
+        timestamps: [BlockTimestamp::default(); WINDOW_SIZE],
         sorted_nibbles: 0,
     });
 
     for i in 0..num_headers {
         let offset = (i as usize) * NEW_HEADER_SIZE;
-        let new_header = NewHeader::from_bytes(new_headers_bytes, offset);
+        let new_header = NewHeader::parse_at(new_headers_bytes, offset)
+            .expect("new header bytes should be well-formed");
         let validated_count = state.height + 1;
 
         // Construct the full header (matching the circuit)

@@ -45,7 +45,7 @@ fn construct_header(state: &State, new_header: &NewHeader) -> [u8; 80] {
     header[0..4].copy_from_slice(&new_header.version.to_le_bytes());
     header[4..36].copy_from_slice(state.prev_blockhash.as_raw());
     header[36..68].copy_from_slice(&new_header.merkle_root);
-    header[68..72].copy_from_slice(&new_header.timestamp.to_le_bytes());
+    header[68..72].copy_from_slice(&new_header.timestamp.to_consensus().to_le_bytes());
     header[72..76].copy_from_slice(&state.nbits.to_consensus().to_le_bytes());
     header[76..80].copy_from_slice(&new_header.nonce.to_le_bytes());
     header
@@ -97,7 +97,7 @@ pub fn main() {
             panic!("Previous proof public values digest mismatch");
         }
 
-        let s = State::from_bytes(&prev_state_bytes);
+        let s = State::parse(&prev_state_bytes).expect("previous state bytes should parse");
 
         if s.height != prev_height {
             panic!(
@@ -127,7 +127,8 @@ pub fn main() {
     // --- Process each header ------------------------------------------------
     for i in 0..num_headers {
         let offset = (i as usize) * NEW_HEADER_SIZE;
-        let new_header = NewHeader::from_bytes(&headers_bytes, offset);
+        let new_header =
+            NewHeader::parse_at(&headers_bytes, offset).expect("input header bytes should parse");
         let validated_count = state.height + 1;
 
         // Median timestamp check — always runs when height > 0.

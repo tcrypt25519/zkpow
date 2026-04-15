@@ -168,30 +168,114 @@ impl From<ChainWork> for [u64; 4] {
     }
 }
 
+/// Bitcoin block timestamp encoded as Unix seconds in consensus serialization.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub struct BlockTimestamp(u32);
+
+impl BlockTimestamp {
+    /// Construct directly from the consensus timestamp.
+    #[must_use]
+    pub const fn from_consensus(timestamp: u32) -> Self {
+        Self(timestamp)
+    }
+
+    /// Return the raw consensus timestamp.
+    #[must_use]
+    pub const fn to_consensus(self) -> u32 {
+        self.0
+    }
+
+    /// Wrapping subtraction matching Bitcoin's timestamp arithmetic.
+    #[must_use]
+    pub const fn wrapping_sub(self, other: Self) -> u32 {
+        self.0.wrapping_sub(other.0)
+    }
+}
+
+impl From<u32> for BlockTimestamp {
+    fn from(value: u32) -> Self {
+        Self(value)
+    }
+}
+
+impl From<BlockTimestamp> for u32 {
+    fn from(value: BlockTimestamp) -> Self {
+        value.0
+    }
+}
+
+/// Parse errors for fixed-width serialized core types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParseError {
+    InvalidLength {
+        expected: usize,
+        actual: usize,
+    },
+    Truncated {
+        offset: usize,
+        needed: usize,
+        actual: usize,
+    },
+}
+
+impl core::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::InvalidLength { expected, actual } => {
+                write!(f, "invalid length: expected {}, got {}", expected, actual)
+            }
+            Self::Truncated {
+                offset,
+                needed,
+                actual,
+            } => {
+                write!(
+                    f,
+                    "truncated input at offset {}: need {} bytes, got {}",
+                    offset, needed, actual
+                )
+            }
+        }
+    }
+}
+
 /// Prover-supplied fields for a new header.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewHeader {
     pub version: u32,
     pub merkle_root: [u8; 32],
-    pub timestamp: u32,
+    pub timestamp: BlockTimestamp,
     pub nonce: u32,
 }
 
 impl NewHeader {
     /// Parse a [`NewHeader`] from the flat input buffer at `offset`.
-    #[must_use]
-    pub fn from_bytes(data: &[u8], offset: usize) -> Self {
-        let version = u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap());
+    pub fn parse_at(data: &[u8], offset: usize) -> Result<Self, ParseError> {
+        let end = offset
+            .checked_add(NEW_HEADER_SIZE)
+            .ok_or(ParseError::Truncated {
+                offset,
+                needed: NEW_HEADER_SIZE,
+                actual: data.len().saturating_sub(offset),
+            })?;
+        let bytes = data.get(offset..end).ok_or(ParseError::Truncated {
+            offset,
+            needed: NEW_HEADER_SIZE,
+            actual: data.len().saturating_sub(offset),
+        })?;
+
+        let version = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
         let mut merkle_root = [0u8; 32];
-        merkle_root.copy_from_slice(&data[offset + 4..offset + 36]);
-        let timestamp = u32::from_le_bytes(data[offset + 36..offset + 40].try_into().unwrap());
-        let nonce = u32::from_le_bytes(data[offset + 40..offset + 44].try_into().unwrap());
-        Self {
+        merkle_root.copy_from_slice(&bytes[4..36]);
+        let timestamp =
+            BlockTimestamp::from_consensus(u32::from_le_bytes(bytes[36..40].try_into().unwrap()));
+        let nonce = u32::from_le_bytes(bytes[40..44].try_into().unwrap());
+        Ok(Self {
             version,
             merkle_root,
             timestamp,
             nonce,
-        }
+        })
     }
 
     /// Construct a [`NewHeader`] from a full raw 80-byte Bitcoin header.
@@ -200,7 +284,8 @@ impl NewHeader {
         let version = u32::from_le_bytes(raw[0..4].try_into().unwrap());
         let mut merkle_root = [0u8; 32];
         merkle_root.copy_from_slice(&raw[36..68]);
-        let timestamp = u32::from_le_bytes(raw[68..72].try_into().unwrap());
+        let timestamp =
+            BlockTimestamp::from_consensus(u32::from_le_bytes(raw[68..72].try_into().unwrap()));
         let nonce = u32::from_le_bytes(raw[76..80].try_into().unwrap());
         Self {
             version,
@@ -220,8 +305,8 @@ pub struct State {
     pub target: Target,
     pub height: u32,
     pub chain_work: ChainWork,
-    pub epoch_start_timestamp: u32,
-    pub timestamps: [u32; WINDOW_SIZE],
+    pub epoch_start_timestamp: BlockTimestamp,
+    pub timestamps: [BlockTimestamp; WINDOW_SIZE],
     pub sorted_nibbles: u64,
 }
 
@@ -238,17 +323,23 @@ impl State {
         for &limb in self.chain_work.as_limbs() {
             out.extend_from_slice(&limb.to_le_bytes());
         }
-        out.extend_from_slice(&self.epoch_start_timestamp.to_le_bytes());
+        out.extend_from_slice(&self.epoch_start_timestamp.to_consensus().to_le_bytes());
         for &ts in &self.timestamps {
-            out.extend_from_slice(&ts.to_le_bytes());
+            out.extend_from_slice(&ts.to_consensus().to_le_bytes());
         }
         out.extend_from_slice(&self.sorted_nibbles.to_le_bytes());
         out
     }
 
     /// Deserialize from exactly [`STATE_SIZE`] bytes.
-    #[must_use]
-    pub fn from_bytes(bytes: &[u8]) -> Self {
+    pub fn parse(bytes: &[u8]) -> Result<Self, ParseError> {
+        if bytes.len() != STATE_SIZE {
+            return Err(ParseError::InvalidLength {
+                expected: STATE_SIZE,
+                actual: bytes.len(),
+            });
+        }
+
         let mut off = 0;
 
         let genesis_hash = BlockHash::from_raw(bytes[off..off + 32].try_into().unwrap());
@@ -274,18 +365,22 @@ impl State {
             off += 8;
         }
 
-        let epoch_start_timestamp = u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap());
+        let epoch_start_timestamp = BlockTimestamp::from_consensus(u32::from_le_bytes(
+            bytes[off..off + 4].try_into().unwrap(),
+        ));
         off += 4;
 
-        let mut timestamps = [0u32; WINDOW_SIZE];
+        let mut timestamps = [BlockTimestamp::default(); WINDOW_SIZE];
         for ts in &mut timestamps {
-            *ts = u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap());
+            *ts = BlockTimestamp::from_consensus(u32::from_le_bytes(
+                bytes[off..off + 4].try_into().unwrap(),
+            ));
             off += 4;
         }
 
         let sorted_nibbles = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
 
-        Self {
+        Ok(Self {
             genesis_hash,
             prev_blockhash,
             nbits,
@@ -295,7 +390,7 @@ impl State {
             epoch_start_timestamp,
             timestamps,
             sorted_nibbles,
-        }
+        })
     }
 }
 
@@ -308,8 +403,8 @@ impl Default for State {
             target: Target::default(),
             height: 0,
             chain_work: ChainWork::default(),
-            epoch_start_timestamp: 0,
-            timestamps: [0u32; WINDOW_SIZE],
+            epoch_start_timestamp: BlockTimestamp::default(),
+            timestamps: [BlockTimestamp::default(); WINDOW_SIZE],
             sorted_nibbles: 0,
         }
     }
@@ -383,9 +478,12 @@ impl HeaderChainPublicValues {
     /// Parse committed public values into the typed representation.
     pub fn parse(bytes: &[u8]) -> Result<Self, PublicValuesParseError> {
         match bytes.len() {
-            STATE_SIZE => Ok(Self::Success(State::from_bytes(bytes))),
+            STATE_SIZE => Ok(Self::Success(
+                State::parse(bytes).map_err(PublicValuesParseError::StateParse)?,
+            )),
             len if len == STATE_SIZE + 1 + 4 => {
-                let state = State::from_bytes(&bytes[..STATE_SIZE]);
+                let state = State::parse(&bytes[..STATE_SIZE])
+                    .map_err(PublicValuesParseError::StateParse)?;
                 let error_code = ValidationErrorCode::try_from(bytes[STATE_SIZE])?;
                 let header_index =
                     u32::from_le_bytes(bytes[STATE_SIZE + 1..STATE_SIZE + 5].try_into().unwrap());
@@ -414,6 +512,7 @@ impl HeaderChainPublicValues {
 pub enum PublicValuesParseError {
     InvalidLength { actual: usize },
     UnknownErrorCode { code: u8 },
+    StateParse(ParseError),
 }
 
 impl core::fmt::Display for PublicValuesParseError {
@@ -431,6 +530,7 @@ impl core::fmt::Display for PublicValuesParseError {
             Self::UnknownErrorCode { code } => {
                 write!(f, "unknown validation error code: {}", code)
             }
+            Self::StateParse(err) => write!(f, "invalid state payload: {}", err),
         }
     }
 }
@@ -539,10 +639,10 @@ pub fn u256_add(a: ChainWork, b: ChainWork) -> ChainWork {
 /// Return `true` when `timestamp` violates median-time-past for the current window.
 #[must_use]
 pub fn check_median_timestamp(
-    timestamps: &[u32; WINDOW_SIZE],
+    timestamps: &[BlockTimestamp; WINDOW_SIZE],
     packed: u64,
     count: usize,
-    timestamp: u32,
+    timestamp: BlockTimestamp,
 ) -> bool {
     if count == 0 {
         return false;
@@ -555,10 +655,10 @@ pub fn check_median_timestamp(
 /// Insert a new timestamp into the circular window and update the packed sort order.
 #[must_use]
 pub fn add_timestamp_window(
-    timestamps: &mut [u32; WINDOW_SIZE],
+    timestamps: &mut [BlockTimestamp; WINDOW_SIZE],
     prev_count: usize,
     packed: u64,
-    timestamp: u32,
+    timestamp: BlockTimestamp,
     slot: usize,
 ) -> u64 {
     if prev_count < WINDOW_SIZE {
@@ -731,10 +831,10 @@ fn get_nibble(packed: u64, pos: usize) -> u8 {
 }
 
 fn find_insert_position(
-    timestamps: &[u32; WINDOW_SIZE],
+    timestamps: &[BlockTimestamp; WINDOW_SIZE],
     packed: u64,
     count: usize,
-    timestamp: u32,
+    timestamp: BlockTimestamp,
 ) -> usize {
     for i in 0..count {
         let idx = get_nibble(packed, i) as usize;

@@ -105,11 +105,12 @@ fn display_state(state: &util::State) {
     println!("Nbits:             0x{:08x}", state.nbits.to_consensus());
 
     // Epoch start timestamp
-    let epoch_dt = UNIX_EPOCH + std::time::Duration::from_secs(state.epoch_start_timestamp as u64);
+    let epoch_start_timestamp = state.epoch_start_timestamp.to_consensus();
+    let epoch_dt = UNIX_EPOCH + std::time::Duration::from_secs(epoch_start_timestamp as u64);
     println!(
         "Epoch Start:       {} (timestamp: {})",
         humantime::format_rfc3339_seconds(epoch_dt),
-        state.epoch_start_timestamp
+        epoch_start_timestamp
     );
 
     // Timestamp window
@@ -117,7 +118,7 @@ fn display_state(state: &util::State) {
     if timestamp_count > 0 {
         println!("\nTimestamp Window ({} entries):", timestamp_count);
         for i in 0..timestamp_count {
-            let ts = state.timestamps[i];
+            let ts = state.timestamps[i].to_consensus();
             let dt = UNIX_EPOCH + std::time::Duration::from_secs(ts as u64);
             println!(
                 "  [{}] {} ({})",
