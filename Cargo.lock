@@ -387,9 +387,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "bitcoin-header-chain-core"
+version = "0.1.0"
+
+[[package]]
 name = "bitcoin-header-chain-program"
 version = "0.1.0"
 dependencies = [
+ "bitcoin-header-chain-core",
  "sp1-zkvm",
 ]
 
@@ -397,6 +402,7 @@ dependencies = [
 name = "bitcoin-header-chain-script"
 version = "0.1.0"
 dependencies = [
+ "bitcoin-header-chain-core",
  "hex",
  "humantime",
  "rusqlite",

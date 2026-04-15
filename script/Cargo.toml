@@ -5,6 +5,7 @@ edition = "2021"
 publish = false
 
 [dependencies]
+bitcoin-header-chain-core = { workspace = true }
 sp1-sdk = { workspace = true }
 hex = { workspace = true }
 humantime = { workspace = true }
