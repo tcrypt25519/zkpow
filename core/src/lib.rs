@@ -30,6 +30,144 @@ pub const MAINNET_GENESIS_HASH_RAW: [u8; 32] = [
     0x93, 0x1e, 0x83, 0x65, 0xe1, 0x5a, 0x08, 0x9c, 0x68, 0xd6, 0x19, 0x00, 0x00, 0x00, 0x00, 0x00,
 ];
 
+/// Bitcoin block hash stored in Bitcoin's internal little-endian byte order.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct BlockHash([u8; 32]);
+
+impl BlockHash {
+    /// Construct from raw little-endian bytes.
+    #[must_use]
+    pub const fn from_raw(raw: [u8; 32]) -> Self {
+        Self(raw)
+    }
+
+    /// Borrow the raw little-endian bytes.
+    #[must_use]
+    pub const fn as_raw(&self) -> &[u8; 32] {
+        &self.0
+    }
+
+    /// Consume into raw little-endian bytes.
+    #[must_use]
+    pub const fn into_raw(self) -> [u8; 32] {
+        self.0
+    }
+}
+
+impl From<[u8; 32]> for BlockHash {
+    fn from(value: [u8; 32]) -> Self {
+        Self(value)
+    }
+}
+
+impl From<BlockHash> for [u8; 32] {
+    fn from(value: BlockHash) -> Self {
+        value.0
+    }
+}
+
+/// Bitcoin compact difficulty encoding (`nBits`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CompactTarget(u32);
+
+impl CompactTarget {
+    /// Construct directly from the compact representation.
+    #[must_use]
+    pub const fn from_consensus(bits: u32) -> Self {
+        Self(bits)
+    }
+
+    /// Return the compact consensus encoding.
+    #[must_use]
+    pub const fn to_consensus(self) -> u32 {
+        self.0
+    }
+}
+
+impl From<u32> for CompactTarget {
+    fn from(value: u32) -> Self {
+        Self(value)
+    }
+}
+
+impl From<CompactTarget> for u32 {
+    fn from(value: CompactTarget) -> Self {
+        value.0
+    }
+}
+
+/// Expanded 256-bit proof-of-work target in little-endian byte order.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Target([u8; 32]);
+
+impl Target {
+    /// Construct from raw little-endian bytes.
+    #[must_use]
+    pub const fn from_raw(raw: [u8; 32]) -> Self {
+        Self(raw)
+    }
+
+    /// Borrow the raw little-endian bytes.
+    #[must_use]
+    pub const fn as_raw(&self) -> &[u8; 32] {
+        &self.0
+    }
+
+    /// Consume into raw little-endian bytes.
+    #[must_use]
+    pub const fn into_raw(self) -> [u8; 32] {
+        self.0
+    }
+}
+
+impl From<[u8; 32]> for Target {
+    fn from(value: [u8; 32]) -> Self {
+        Self(value)
+    }
+}
+
+impl From<Target> for [u8; 32] {
+    fn from(value: Target) -> Self {
+        value.0
+    }
+}
+
+/// Cumulative proof-of-work as a 256-bit little-endian limb array.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ChainWork([u64; 4]);
+
+impl ChainWork {
+    /// Construct from little-endian limbs.
+    #[must_use]
+    pub const fn from_limbs(limbs: [u64; 4]) -> Self {
+        Self(limbs)
+    }
+
+    /// Borrow the little-endian limbs.
+    #[must_use]
+    pub const fn as_limbs(&self) -> &[u64; 4] {
+        &self.0
+    }
+
+    /// Consume into little-endian limbs.
+    #[must_use]
+    pub const fn into_limbs(self) -> [u64; 4] {
+        self.0
+    }
+}
+
+impl From<[u64; 4]> for ChainWork {
+    fn from(value: [u64; 4]) -> Self {
+        Self(value)
+    }
+}
+
+impl From<ChainWork> for [u64; 4] {
+    fn from(value: ChainWork) -> Self {
+        value.0
+    }
+}
+
 /// Prover-supplied fields for a new header.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewHeader {
@@ -76,12 +214,12 @@ impl NewHeader {
 /// Complete authenticated validation state, serialized between recursive iterations.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct State {
-    pub genesis_hash: [u8; 32],
-    pub prev_blockhash: [u8; 32],
-    pub nbits: u32,
-    pub target: [u8; 32],
+    pub genesis_hash: BlockHash,
+    pub prev_blockhash: BlockHash,
+    pub nbits: CompactTarget,
+    pub target: Target,
     pub height: u32,
-    pub chain_work: [u64; 4],
+    pub chain_work: ChainWork,
     pub epoch_start_timestamp: u32,
     pub timestamps: [u32; WINDOW_SIZE],
     pub sorted_nibbles: u64,
@@ -92,12 +230,12 @@ impl State {
     #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(STATE_SIZE);
-        out.extend_from_slice(&self.genesis_hash);
-        out.extend_from_slice(&self.prev_blockhash);
-        out.extend_from_slice(&self.nbits.to_le_bytes());
-        out.extend_from_slice(&self.target);
+        out.extend_from_slice(self.genesis_hash.as_raw());
+        out.extend_from_slice(self.prev_blockhash.as_raw());
+        out.extend_from_slice(&self.nbits.to_consensus().to_le_bytes());
+        out.extend_from_slice(self.target.as_raw());
         out.extend_from_slice(&self.height.to_le_bytes());
-        for &limb in &self.chain_work {
+        for &limb in self.chain_work.as_limbs() {
             out.extend_from_slice(&limb.to_le_bytes());
         }
         out.extend_from_slice(&self.epoch_start_timestamp.to_le_bytes());
@@ -113,17 +251,18 @@ impl State {
     pub fn from_bytes(bytes: &[u8]) -> Self {
         let mut off = 0;
 
-        let genesis_hash: [u8; 32] = bytes[off..off + 32].try_into().unwrap();
+        let genesis_hash = BlockHash::from_raw(bytes[off..off + 32].try_into().unwrap());
         off += 32;
 
-        let prev_blockhash: [u8; 32] = bytes[off..off + 32].try_into().unwrap();
+        let prev_blockhash = BlockHash::from_raw(bytes[off..off + 32].try_into().unwrap());
         off += 32;
 
-        let nbits = u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap());
+        let nbits = CompactTarget::from_consensus(u32::from_le_bytes(
+            bytes[off..off + 4].try_into().unwrap(),
+        ));
         off += 4;
 
-        let mut target = [0u8; 32];
-        target.copy_from_slice(&bytes[off..off + 32]);
+        let target = Target::from_raw(bytes[off..off + 32].try_into().unwrap());
         off += 32;
 
         let height = u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap());
@@ -152,7 +291,7 @@ impl State {
             nbits,
             target,
             height,
-            chain_work,
+            chain_work: ChainWork::from_limbs(chain_work),
             epoch_start_timestamp,
             timestamps,
             sorted_nibbles,
@@ -163,12 +302,12 @@ impl State {
 impl Default for State {
     fn default() -> Self {
         Self {
-            genesis_hash: [0u8; 32],
-            prev_blockhash: [0u8; 32],
-            nbits: 0,
-            target: [0u8; 32],
+            genesis_hash: BlockHash::default(),
+            prev_blockhash: BlockHash::default(),
+            nbits: CompactTarget::default(),
+            target: Target::default(),
             height: 0,
-            chain_work: [0u64; 4],
+            chain_work: ChainWork::default(),
             epoch_start_timestamp: 0,
             timestamps: [0u32; WINDOW_SIZE],
             sorted_nibbles: 0,
@@ -298,12 +437,13 @@ impl core::fmt::Display for PublicValuesParseError {
 
 /// Convert compact `bits` encoding into a 256-bit target.
 #[must_use]
-pub fn bits_to_target(bits: u32) -> [u8; 32] {
+pub fn bits_to_target(bits: CompactTarget) -> Target {
+    let bits = bits.to_consensus();
     let exponent = bits >> 24;
     let mantissa = bits & 0x00ff_ffff;
     let mut target = [0u8; 32];
     if mantissa == 0 {
-        return target;
+        return Target::from_raw(target);
     }
     let byte_offset = (exponent - 3) as usize;
     if byte_offset < 32 {
@@ -315,18 +455,19 @@ pub fn bits_to_target(bits: u32) -> [u8; 32] {
     if byte_offset + 2 < 32 {
         target[byte_offset + 2] = ((mantissa >> 16) & 0xff) as u8;
     }
-    target
+    Target::from_raw(target)
 }
 
 /// Convert a full 256-bit target into compact `bits` encoding.
 #[must_use]
-pub fn target_to_bits(target: &[u8; 32]) -> u32 {
+pub fn target_to_bits(target: Target) -> CompactTarget {
+    let target = target.as_raw();
     let mut high_byte = 31usize;
     while high_byte > 0 && target[high_byte] == 0 {
         high_byte -= 1;
     }
     if target[high_byte] == 0 {
-        return 0;
+        return CompactTarget::from_consensus(0);
     }
     let bit_length = high_byte * 8 + (8 - target[high_byte].leading_zeros() as usize);
     let nbytes = bit_length.div_ceil(8);
@@ -344,12 +485,14 @@ pub fn target_to_bits(target: &[u8; 32]) -> u32 {
     } else {
         (mantissa, nbytes)
     };
-    ((nbytes as u32) << 24) | (mantissa & 0x00ff_ffff)
+    CompactTarget::from_consensus(((nbytes as u32) << 24) | (mantissa & 0x00ff_ffff))
 }
 
 /// Return `true` when `lhs` is strictly greater than `rhs` as unsigned 256-bit integers.
 #[must_use]
-pub fn target_exceeds(lhs: &[u8; 32], rhs: &[u8; 32]) -> bool {
+pub fn target_exceeds(lhs: Target, rhs: Target) -> bool {
+    let lhs = lhs.as_raw();
+    let rhs = rhs.as_raw();
     for i in (0..32).rev() {
         if lhs[i] > rhs[i] {
             return true;
@@ -363,8 +506,10 @@ pub fn target_exceeds(lhs: &[u8; 32], rhs: &[u8; 32]) -> bool {
 
 /// Check whether a header hash satisfies the compact target in `nbits`.
 #[must_use]
-pub fn hash_meets_target(hash: &[u8; 32], nbits: u32) -> bool {
+pub fn hash_meets_target(hash: BlockHash, nbits: CompactTarget) -> bool {
     let target = bits_to_target(nbits);
+    let hash = hash.as_raw();
+    let target = target.as_raw();
     for i in (0..32).rev() {
         if hash[i] > target[i] {
             return false;
@@ -378,7 +523,9 @@ pub fn hash_meets_target(hash: &[u8; 32], nbits: u32) -> bool {
 
 /// Add two little-endian `u256` values.
 #[must_use]
-pub fn u256_add(a: [u64; 4], b: [u64; 4]) -> [u64; 4] {
+pub fn u256_add(a: ChainWork, b: ChainWork) -> ChainWork {
+    let a = a.as_limbs();
+    let b = b.as_limbs();
     let mut result = [0u64; 4];
     let mut carry = 0u128;
     for i in 0..4 {
@@ -386,7 +533,7 @@ pub fn u256_add(a: [u64; 4], b: [u64; 4]) -> [u64; 4] {
         result[i] = sum as u64;
         carry = sum >> 64;
     }
-    result
+    ChainWork::from_limbs(result)
 }
 
 /// Return `true` when `timestamp` violates median-time-past for the current window.
@@ -429,11 +576,8 @@ pub fn add_timestamp_window(
 
 /// Compute a retargeted 256-bit target from the previous target and measured timespan.
 #[must_use]
-pub fn retarget_target(
-    old_target: &[u8; 32],
-    actual_timespan: u32,
-    expected_timespan: u32,
-) -> [u8; 32] {
+pub fn retarget_target(old_target: Target, actual_timespan: u32, expected_timespan: u32) -> Target {
+    let old_target = old_target.as_raw();
     let mut old_u64 = [0u64; 4];
     for (i, limb) in old_u64.iter_mut().enumerate() {
         let base = i * 8;
@@ -460,19 +604,20 @@ pub fn retarget_target(
     for i in 0..4 {
         target[i * 8..(i + 1) * 8].copy_from_slice(&result[i].to_le_bytes());
     }
-    target
+    Target::from_raw(target)
 }
 
 /// Convert compact `bits` into cumulative-work units.
 #[must_use]
-pub fn work_from_bits(bits: u32) -> [u64; 4] {
+pub fn work_from_bits(bits: CompactTarget) -> ChainWork {
+    let bits = bits.to_consensus();
     let exponent = bits >> 24;
     let mantissa = bits & 0x00ff_ffff;
     let k = 8 * (exponent - 3);
     let n = 256 - k;
 
     if mantissa == 0 || n == 0 {
-        return [0; 4];
+        return ChainWork::default();
     }
 
     let r = pow_mod_2(n, mantissa);
@@ -489,7 +634,7 @@ pub fn work_from_bits(bits: u32) -> [u64; 4] {
         }
     }
 
-    work
+    ChainWork::from_limbs(work)
 }
 
 fn pow_mod_2(exp: u32, m: u32) -> u32 {

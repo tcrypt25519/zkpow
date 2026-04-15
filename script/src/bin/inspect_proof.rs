@@ -10,8 +10,8 @@ use bitcoin_header_chain_script::util::{
 const MAINNET_GENESIS_HEX: &str =
     "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f";
 
-fn reverse_hash_display(hash: &[u8; 32]) -> String {
-    let mut reversed = *hash;
+fn reverse_hash_display(hash: util::BlockHash) -> String {
+    let mut reversed = hash.into_raw();
     reversed.reverse();
     hex::encode(reversed)
 }
@@ -66,7 +66,7 @@ fn display_state(state: &util::State) {
     // Genesis hash
     println!(
         "Genesis Hash:      {}",
-        reverse_hash_display(&state.genesis_hash)
+        reverse_hash_display(state.genesis_hash)
     );
     let mainnet_genesis_raw: [u8; 32] = {
         let mut g: [u8; 32] = hex::decode(MAINNET_GENESIS_HEX)
@@ -76,7 +76,7 @@ fn display_state(state: &util::State) {
         g.reverse();
         g
     };
-    if state.genesis_hash == mainnet_genesis_raw {
+    if state.genesis_hash == util::BlockHash::from_raw(mainnet_genesis_raw) {
         println!("                     ↳ mainnet ✓");
     } else {
         println!("                     ↳ NOT mainnet (different chain)");
@@ -85,7 +85,7 @@ fn display_state(state: &util::State) {
     // Chain tip
     println!(
         "\nChain Tip:         {}",
-        reverse_hash_display(&state.prev_blockhash)
+        reverse_hash_display(state.prev_blockhash)
     );
 
     // Height
@@ -94,6 +94,7 @@ fn display_state(state: &util::State) {
     // Cumulative chain work
     let work_hex: String = state
         .chain_work
+        .as_limbs()
         .iter()
         .rev()
         .map(|w| format!("{:016x}", w))
@@ -101,7 +102,7 @@ fn display_state(state: &util::State) {
     println!("Cumulative Work:   0x{}", work_hex);
 
     // Difficulty
-    println!("Nbits:             0x{:08x}", state.nbits);
+    println!("Nbits:             0x{:08x}", state.nbits.to_consensus());
 
     // Epoch start timestamp
     let epoch_dt = UNIX_EPOCH + std::time::Duration::from_secs(state.epoch_start_timestamp as u64);

@@ -97,6 +97,10 @@ fn raw_header_bits(raw_headers: &[u8], height: usize) -> Result<u32, String> {
     Ok(u32::from_le_bytes(bits))
 }
 
+fn consensus_bits(bits: util::CompactTarget) -> u32 {
+    bits.to_consensus()
+}
+
 #[tokio::main]
 async fn main() {
     utils::setup_logger();
@@ -167,10 +171,11 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
         &util::load_headers_from_db(DB_PATH, FIRST_BOUNDARY_HEIGHT as u64, 1),
         0,
     )?;
-    if first_epoch_state.nbits != first_retarget_bits {
+    if consensus_bits(first_epoch_state.nbits) != first_retarget_bits {
         return Err(format!(
             "expected first retarget boundary bits {:#x}, got {:#x}",
-            first_retarget_bits, first_epoch_state.nbits,
+            first_retarget_bits,
+            consensus_bits(first_epoch_state.nbits),
         ));
     }
 
@@ -198,10 +203,11 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
         ));
     }
 
-    if state.nbits != next_header_bits {
+    if consensus_bits(state.nbits) != next_header_bits {
         return Err(format!(
             "expected next-header bits {:#x} after completing epoch, got {:#x}",
-            next_header_bits, state.nbits,
+            next_header_bits,
+            consensus_bits(state.nbits),
         ));
     }
 
@@ -210,10 +216,11 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
     let pre_boundary_state =
         util::compute_expected_state(0, (RETARGET_HEIGHT - 1) as u32, &pre_boundary_headers, None);
 
-    if pre_boundary_state.nbits != previous_epoch_bits {
+    if consensus_bits(pre_boundary_state.nbits) != previous_epoch_bits {
         return Err(format!(
             "expected pre-boundary bits {:#x}, got {:#x}",
-            previous_epoch_bits, pre_boundary_state.nbits,
+            previous_epoch_bits,
+            consensus_bits(pre_boundary_state.nbits),
         ));
     }
 

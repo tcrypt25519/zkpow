@@ -18,9 +18,9 @@ sp1_zkvm::entrypoint!(main);
 
 use bitcoin_header_chain_core::{
     add_timestamp_window, bits_to_target, check_median_timestamp, hash_meets_target,
-    retarget_target, target_exceeds, target_to_bits, u256_add, work_from_bits, NewHeader, State,
-    ValidationErrorCode, GENESIS_NBITS, MAINNET_GENESIS_HASH_RAW, NEW_HEADER_SIZE, STATE_SIZE,
-    WINDOW_SIZE,
+    retarget_target, target_exceeds, target_to_bits, u256_add, work_from_bits, BlockHash,
+    CompactTarget, NewHeader, State, ValidationErrorCode, GENESIS_NBITS, MAINNET_GENESIS_HASH_RAW,
+    NEW_HEADER_SIZE, STATE_SIZE, WINDOW_SIZE,
 };
 
 mod sha256;
@@ -43,10 +43,10 @@ use sha256::{double_sha256_80, sha256_192};
 fn construct_header(state: &State, new_header: &NewHeader) -> [u8; 80] {
     let mut header = [0u8; 80];
     header[0..4].copy_from_slice(&new_header.version.to_le_bytes());
-    header[4..36].copy_from_slice(&state.prev_blockhash);
+    header[4..36].copy_from_slice(state.prev_blockhash.as_raw());
     header[36..68].copy_from_slice(&new_header.merkle_root);
     header[68..72].copy_from_slice(&new_header.timestamp.to_le_bytes());
-    header[72..76].copy_from_slice(&state.nbits.to_le_bytes());
+    header[72..76].copy_from_slice(&state.nbits.to_consensus().to_le_bytes());
     header[76..80].copy_from_slice(&new_header.nonce.to_le_bytes());
     header
 }
@@ -112,8 +112,8 @@ pub fn main() {
     };
 
     if state.height == 0 {
-        state.nbits = GENESIS_NBITS;
-        state.target = bits_to_target(GENESIS_NBITS);
+        state.nbits = CompactTarget::from_consensus(GENESIS_NBITS);
+        state.target = bits_to_target(CompactTarget::from_consensus(GENESIS_NBITS));
     }
 
     let num_headers = sp1_zkvm::io::read::<u32>();
@@ -147,17 +147,17 @@ pub fn main() {
         // Construct the full 80-byte header from authenticated state + prover input
         println!("cycle-tracker-start: sha256d");
         let header = construct_header(&state, &new_header);
-        let block_hash = double_sha256_80(&header);
+        let block_hash = BlockHash::from_raw(double_sha256_80(&header));
         println!("cycle-tracker-end: sha256d");
 
         // PoW check: hash must meet target (uses state.nbits directly — no conversion)
-        if !hash_meets_target(&block_hash, state.nbits) {
+        if !hash_meets_target(block_hash, state.nbits) {
             commit_error(&state, ValidationErrorCode::PowInsufficient, i);
         }
 
         // Genesis special case: the first constructed header must match Bitcoin mainnet genesis.
         if state.height == 0 {
-            if block_hash != MAINNET_GENESIS_HASH_RAW {
+            if block_hash.as_raw() != &MAINNET_GENESIS_HASH_RAW {
                 commit_error(&state, ValidationErrorCode::GenesisHashMismatch, i);
             }
             state.genesis_hash = block_hash;
@@ -196,12 +196,12 @@ pub fn main() {
                 let clamped = actual_timespan
                     .max(expected_timespan / 4)
                     .min(expected_timespan * 4);
-                let pow_limit = bits_to_target(GENESIS_NBITS);
-                let mut new_target = retarget_target(&state.target, clamped, expected_timespan);
-                if target_exceeds(&new_target, &pow_limit) {
+                let pow_limit = bits_to_target(CompactTarget::from_consensus(GENESIS_NBITS));
+                let mut new_target = retarget_target(state.target, clamped, expected_timespan);
+                if target_exceeds(new_target, pow_limit) {
                     new_target = pow_limit;
                 }
-                state.nbits = target_to_bits(&new_target);
+                state.nbits = target_to_bits(new_target);
                 state.target = new_target;
                 println!("cycle-tracker-end: retarget");
             }

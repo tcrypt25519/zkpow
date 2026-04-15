@@ -12,8 +12,8 @@ use sha2::{Digest, Sha256};
 use sp1_sdk::SP1PublicValues;
 
 pub use bitcoin_header_chain_core::{
-    HeaderChainPublicValues, NewHeader, ProofFailure, PublicValuesParseError, State,
-    ValidationErrorCode, NEW_HEADER_SIZE, STATE_SIZE,
+    BlockHash, ChainWork, CompactTarget, HeaderChainPublicValues, NewHeader, ProofFailure,
+    PublicValuesParseError, State, Target, ValidationErrorCode, NEW_HEADER_SIZE, STATE_SIZE,
 };
 
 // ============================================================================
@@ -110,10 +110,10 @@ pub fn compute_pv_digest(committed_bytes: &[u8]) -> [u8; 32] {
 fn construct_header(state: &State, new_header: &NewHeader) -> [u8; 80] {
     let mut header = [0u8; 80];
     header[0..4].copy_from_slice(&new_header.version.to_le_bytes());
-    header[4..36].copy_from_slice(&state.prev_blockhash);
+    header[4..36].copy_from_slice(state.prev_blockhash.as_raw());
     header[36..68].copy_from_slice(&new_header.merkle_root);
     header[68..72].copy_from_slice(&new_header.timestamp.to_le_bytes());
-    header[72..76].copy_from_slice(&state.nbits.to_le_bytes());
+    header[72..76].copy_from_slice(&state.nbits.to_consensus().to_le_bytes());
     header[76..80].copy_from_slice(&new_header.nonce.to_le_bytes());
     header
 }
@@ -133,12 +133,12 @@ pub fn compute_expected_state(
     prev_state: Option<&State>,
 ) -> State {
     let mut state = prev_state.cloned().unwrap_or(State {
-        genesis_hash: [0u8; 32],
-        prev_blockhash: [0u8; 32],
-        nbits: GENESIS_NBITS,
-        target: bits_to_target(GENESIS_NBITS),
+        genesis_hash: BlockHash::default(),
+        prev_blockhash: BlockHash::default(),
+        nbits: CompactTarget::from_consensus(GENESIS_NBITS),
+        target: bits_to_target(CompactTarget::from_consensus(GENESIS_NBITS)),
         height: 0,
-        chain_work: [0u64; 4],
+        chain_work: ChainWork::default(),
         epoch_start_timestamp: 0,
         timestamps: [0u32; WINDOW_SIZE],
         sorted_nibbles: 0,
@@ -159,7 +159,7 @@ pub fn compute_expected_state(
                 "constructed genesis header does not match mainnet genesis hash",
             );
             // Genesis block
-            state.genesis_hash = block_hash;
+            state.genesis_hash = block_hash.into();
             state.chain_work = work_from_bits(state.nbits);
             state.epoch_start_timestamp = new_header.timestamp;
             state.timestamps[0] = new_header.timestamp;
@@ -186,12 +186,12 @@ pub fn compute_expected_state(
                 let clamped = actual_timespan
                     .max(expected_timespan / 4)
                     .min(expected_timespan * 4);
-                let pow_limit = bits_to_target(GENESIS_NBITS);
-                let mut new_target = retarget_target(&state.target, clamped, expected_timespan);
-                if target_exceeds(&new_target, &pow_limit) {
+                let pow_limit = bits_to_target(CompactTarget::from_consensus(GENESIS_NBITS));
+                let mut new_target = retarget_target(state.target, clamped, expected_timespan);
+                if target_exceeds(new_target, pow_limit) {
                     new_target = pow_limit;
                 }
-                state.nbits = target_to_bits(&new_target);
+                state.nbits = target_to_bits(new_target);
                 state.target = new_target;
             }
 
@@ -207,7 +207,7 @@ pub fn compute_expected_state(
             state.chain_work = u256_add(state.chain_work, work_from_bits(state.nbits));
         }
 
-        state.prev_blockhash = block_hash;
+        state.prev_blockhash = block_hash.into();
         state.height = validated_count;
     }
 

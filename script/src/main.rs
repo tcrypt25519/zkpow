@@ -31,6 +31,7 @@ async fn main() {
     let mut genesis_hash = [0u8; 32];
     genesis_hash.copy_from_slice(&hex::decode(GENESIS_HASH_HEX).unwrap());
     genesis_hash.reverse();
+    let genesis_hash = util::BlockHash::from_raw(genesis_hash);
 
     let num_headers: u32 = std::env::var("NUM_HEADERS")
         .ok()
@@ -263,6 +264,7 @@ async fn main() {
     );
     let work_hex: String = expected_state
         .chain_work
+        .as_limbs()
         .iter()
         .rev()
         .map(|w| format!("{:016x}", w))
