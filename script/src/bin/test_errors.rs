@@ -3,16 +3,16 @@
 //! Each test crafts specific inputs that should trigger a particular error code,
 //! then runs the zkVM program via `client.execute()` and checks the public values.
 //!
-//! New I/O protocol:
-//!   stdin: prev_height(u32) → [prev_vk(32) + pv_digest(32) + pv_bytes] → num_headers(u32) → headers
-//!   output: state(236) on success, or state(236) + error_code(1) + header_index(4) on error
+//! Input protocol (header-construction architecture):
+//!   stdin: prev_height(u32) → [prev_vk(32) + pv_digest(32) + pv_bytes] → num_headers(u32) → headers(44 bytes each)
+//!   output: state(192) on success, or state(192) + error_code(1) + header_index(4) on error
 
 use sp1_sdk::prelude::*;
 use sp1_sdk::{Prover, SP1Stdin, HashableKey, Elf};
 use sp1_sdk::utils;
 
 use bitcoin_header_chain_script::util;
-use bitcoin_header_chain_script::util::STATE_SIZE;
+use bitcoin_header_chain_script::util::{STATE_SIZE, NEW_HEADER_SIZE};
 
 const ELF: Elf = include_elf!("bitcoin-header-chain-program");
 
@@ -21,16 +21,15 @@ const DB_PATH: &str = concat!(
     "/../bitcoin_headers.sqlite",
 );
 
-// Error codes from the program (revised)
+// Error codes from the program (revised — header-construction architecture)
 #[allow(dead_code)]
 const STATUS_SUCCESS: u8 = 0;
-const STATUS_PREV_BLOCKHASH_MISMATCH: u8 = 1;
+const STATUS_HEADER_COUNT_MISMATCH: u8 = 1;
 const STATUS_POW_INSUFFICIENT: u8 = 2;
 const STATUS_TIMESTAMP_TOO_OLD: u8 = 3;
-const STATUS_BITS_MISMATCH: u8 = 4;
-const STATUS_HEADER_COUNT_MISMATCH: u8 = 5;
 #[allow(dead_code)]
-const STATUS_HEIGHT_MISMATCH: u8 = 6;
+const STATUS_GENESIS_HASH_MISMATCH: u8 = 4;
+// Removed: prev_blockhash mismatch, bits mismatch — impossible by construction
 
 /// Run the program with given inputs and return the raw public values.
 async fn run_and_get_pv(stdin: SP1Stdin) -> Result<Vec<u8>, String> {
@@ -75,14 +74,8 @@ async fn main() {
     // === Input validation errors ===
     check("error_header_count_mismatch", test_error_header_count_mismatch().await);
 
-    // === Chain linkage errors ===
-    check("error_prev_blockhash_mismatch", test_error_prev_blockhash_mismatch().await);
-
     // === Timestamp validation errors ===
     check("error_timestamp_too_old", test_error_timestamp_too_old().await);
-
-    // === Difficulty validation errors ===
-    check("error_bits_mismatch", test_error_bits_mismatch().await);
 
     // === PoW errors ===
     check("error_pow_insufficient", test_error_pow_insufficient().await);
@@ -95,7 +88,8 @@ async fn main() {
 // ============================================================================
 
 async fn test_success_100_headers() -> Result<(), String> {
-    let headers_bytes = util::load_headers_from_db(DB_PATH, 0, 100);
+    let raw_headers = util::load_headers_from_db(DB_PATH, 0, 100);
+    let headers_bytes = util::raw_headers_to_new_headers(&raw_headers);
 
     let mut stdin = SP1Stdin::new();
     stdin.write::<u32>(&0); // prev_height = 0 (genesis start)
@@ -109,11 +103,12 @@ async fn test_success_100_headers() -> Result<(), String> {
 }
 
 async fn test_error_header_count_mismatch() -> Result<(), String> {
-    let headers_bytes = util::load_headers_from_db(DB_PATH, 0, 10);
+    let raw_headers = util::load_headers_from_db(DB_PATH, 0, 10);
+    let headers_bytes = util::raw_headers_to_new_headers(&raw_headers);
 
     let mut stdin = SP1Stdin::new();
     stdin.write::<u32>(&0);
-    stdin.write::<u32>(&20); // Claim 20, provide 800 bytes
+    stdin.write::<u32>(&20); // Claim 20, provide only 10 * 44 bytes
     stdin.write_vec(headers_bytes);
 
     let pv = run_and_get_pv(stdin).await?;
@@ -131,46 +126,18 @@ async fn test_error_header_count_mismatch() -> Result<(), String> {
     }
 }
 
-async fn test_error_prev_blockhash_mismatch() -> Result<(), String> {
-    // Load blocks 0 and 1, corrupt block 1's prev_blockhash.
-    let mut headers_bytes = util::load_headers_from_db(DB_PATH, 0, 2);
-    // Block 1 starts at offset 80. Corrupt its prev_blockhash (bytes 4-35).
-    let off = 80 + 4;
-    headers_bytes[off] ^= 0xFF;
-    headers_bytes[off + 1] ^= 0xFF;
-
-    let mut stdin = SP1Stdin::new();
-    stdin.write::<u32>(&0);
-    stdin.write::<u32>(&2);
-    stdin.write_vec(headers_bytes);
-
-    let pv = run_and_get_pv(stdin).await?;
-    match parse_result(&pv) {
-        Err((code, detail)) => {
-            if code != STATUS_PREV_BLOCKHASH_MISMATCH {
-                return Err(format!(
-                    "expected PREV_BLOCKHASH_MISMATCH ({}), got {}",
-                    STATUS_PREV_BLOCKHASH_MISMATCH, code
-                ));
-            }
-            if detail != 1 {
-                return Err(format!("expected detail 1 (block 1), got {}", detail));
-            }
-            Ok(())
-        }
-        Ok(()) => Err("expected error but got success".to_string()),
-    }
-}
-
 async fn test_error_timestamp_too_old() -> Result<(), String> {
     // Load blocks 0-12 so the median buffer is full (11 blocks after genesis).
     // Block 12's median check uses blocks 1-11 timestamps.
     // We corrupt block 12's timestamp to be older than the median.
-    let mut headers_bytes = util::load_headers_from_db(DB_PATH, 0, 13);
+    let raw_headers = util::load_headers_from_db(DB_PATH, 0, 13);
+    let mut headers_bytes = util::raw_headers_to_new_headers(&raw_headers);
 
-    // Set block 12's timestamp (offset 12*80 + 68) to genesis timestamp,
+    // Set block 12's timestamp (offset 12*44 + 36) to genesis timestamp,
     // which is older than all block 1-11 timestamps.
-    let offset = 12 * 80 + 68;
+    // NewHeader layout: version(4) + merkle_root(32) + timestamp(4) + nonce(4)
+    // timestamp is at offset 36 within each 44-byte NewHeader
+    let offset = 12 * NEW_HEADER_SIZE + 36;
     let genesis_ts: u32 = 1231006505;
     headers_bytes[offset] = (genesis_ts & 0xFF) as u8;
     headers_bytes[offset + 1] = ((genesis_ts >> 8) & 0xFF) as u8;
@@ -200,44 +167,13 @@ async fn test_error_timestamp_too_old() -> Result<(), String> {
     }
 }
 
-async fn test_error_bits_mismatch() -> Result<(), String> {
-    // Load blocks 0-1. Change block 1's bits field to a different value.
-    let mut headers_bytes = util::load_headers_from_db(DB_PATH, 0, 2);
-
-    // Block 1 starts at offset 80. Change its bits from 0x1d00ffff to 0x1c00ffff.
-    let off = 80 + 72;
-    headers_bytes[off] = 0xff;
-    headers_bytes[off + 1] = 0xff;
-    headers_bytes[off + 2] = 0x00;
-    headers_bytes[off + 3] = 0x1c;
-
-    let mut stdin = SP1Stdin::new();
-    stdin.write::<u32>(&0);
-    stdin.write::<u32>(&2);
-    stdin.write_vec(headers_bytes);
-
-    let pv = run_and_get_pv(stdin).await?;
-    match parse_result(&pv) {
-        Err((code, detail)) => {
-            if code != STATUS_BITS_MISMATCH {
-                return Err(format!(
-                    "expected BITS_MISMATCH ({}), got {}",
-                    STATUS_BITS_MISMATCH, code
-                ));
-            }
-            if detail != 1 {
-                return Err(format!("expected detail 1 (block 1), got {}", detail));
-            }
-            Ok(())
-        }
-        Ok(()) => Err("expected error but got success".to_string()),
-    }
-}
-
 async fn test_error_pow_insufficient() -> Result<(), String> {
     // Load blocks 0-1, corrupt block 1's nonce.
-    let mut headers_bytes = util::load_headers_from_db(DB_PATH, 0, 2);
-    let off = 80 + 76;
+    let raw_headers = util::load_headers_from_db(DB_PATH, 0, 2);
+    let mut headers_bytes = util::raw_headers_to_new_headers(&raw_headers);
+
+    // Block 1 starts at offset 44. NewHeader nonce is at offset 40 within each 44-byte struct.
+    let off = NEW_HEADER_SIZE + 40;
     headers_bytes[off] ^= 0xFF; // corrupt block 1's nonce
 
     let mut stdin = SP1Stdin::new();
@@ -265,7 +201,8 @@ async fn test_error_pow_insufficient() -> Result<(), String> {
 
 async fn test_recursive_chain_success() -> Result<(), String> {
     // === Run 1: Genesis → Block 9 ===
-    let headers1 = util::load_headers_from_db(DB_PATH, 0, 10);
+    let raw1 = util::load_headers_from_db(DB_PATH, 0, 10);
+    let headers1 = util::raw_headers_to_new_headers(&raw1);
     let mut stdin1 = SP1Stdin::new();
     stdin1.write::<u32>(&0); // prev_height = 0
     stdin1.write::<u32>(&10);
@@ -295,7 +232,8 @@ async fn test_recursive_chain_success() -> Result<(), String> {
     }
 
     // === Run 2: Extend from Run 1 (blocks 10-19) ===
-    let headers2 = util::load_headers_from_db(DB_PATH, 10, 10);
+    let raw2 = util::load_headers_from_db(DB_PATH, 10, 10);
+    let headers2 = util::raw_headers_to_new_headers(&raw2);
     let mut stdin2 = SP1Stdin::new();
     stdin2.write::<u32>(&10); // prev_height = 10
     stdin2.write::<[u32; 8]>(&vk.hash_u32());

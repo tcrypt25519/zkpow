@@ -41,12 +41,9 @@ fn main() {
         println!("\n--- Error ---");
         let error_name = match error_code {
             0 => "Success",
-            1 => "Prev blockhash mismatch",
+            1 => "Header count mismatch",
             2 => "PoW insufficient",
             3 => "Timestamp too old",
-            4 => "Bits mismatch",
-            5 => "Header count mismatch",
-            6 => "Height mismatch",
             _ => "Unknown",
         };
         println!("Error Code:        {} ({})", error_code, error_name);
@@ -88,7 +85,7 @@ fn display_state(pv: &[u8]) {
     }
 
     // Chain tip
-    println!("\nChain Tip:         {}", reverse_hash_display(&state.prev_header_hash));
+    println!("\nChain Tip:         {}", reverse_hash_display(&state.prev_blockhash));
 
     // Height
     println!("\nHeight:            {}", state.height);
@@ -101,6 +98,9 @@ fn display_state(pv: &[u8]) {
         .map(|w| format!("{:016x}", w))
         .collect();
     println!("Cumulative Work:   0x{}", work_hex);
+
+    // Difficulty
+    println!("Nbits:             0x{:08x}", state.nbits);
 
     // Epoch start timestamp
     let epoch_dt = UNIX_EPOCH + std::time::Duration::from_secs(state.epoch_start_timestamp as u64);
@@ -118,14 +118,6 @@ fn display_state(pv: &[u8]) {
             println!("  [{}] {} ({})", i, humantime::format_rfc3339_seconds(dt), ts);
         }
     }
-
-    // Final header details
-    let fh_bits = u32::from_le_bytes(state.prev_header[72..76].try_into().unwrap());
-    let fh_timestamp = u32::from_le_bytes(state.prev_header[68..72].try_into().unwrap());
-    let fh_dt = UNIX_EPOCH + std::time::Duration::from_secs(fh_timestamp as u64);
-    println!("\n--- Final Header ---");
-    println!("Bits:              0x{:08x}", fh_bits);
-    println!("Timestamp:         {} ({})", humantime::format_rfc3339_seconds(fh_dt), fh_timestamp);
 
     println!("\nStatus:              ✓ All headers validated");
 }

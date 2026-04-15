@@ -1,11 +1,17 @@
-//! Bitcoin Header Chain Prover — IVC State Machine
+//! Bitcoin Header Chain Prover — Header-Construction Architecture
 //!
 //! Validates a batch of Bitcoin block headers incrementally.
-//! Input: previous height (0 for genesis), optional previous proof + public values,
-//!        number of new headers, and the header bytes.
-//! Output: serialized State (236 bytes) on success or error.
-//! The program verifies the previous proof in-circuit (if height > 0),
-//! then validates each new header against Bitcoin consensus rules.
+//! The prover supplies only non-deterministic fields (version, merkle_root,
+//! timestamp, nonce). The circuit constructs the full 80-byte header from
+//! authenticated state, then hashes and validates.
+//!
+//! Input protocol:
+//!   1. prev_height: u32
+//!   2. If prev_height > 0: prev_vk([u32;8]), pv_digest([u8;32]), pv_bytes (192 bytes)
+//!   3. num_headers: u32
+//!   4. headers_bytes: Vec<u8> — num_headers * 44 bytes (NewHeader instances)
+//!
+//! Output: serialized State (192 bytes) on success, or state + error_code + header_index on error.
 
 #![no_main]
 sp1_zkvm::entrypoint!(main);
@@ -20,36 +26,79 @@ use sha256::double_sha256_80;
 const WINDOW_SIZE: usize = 11;
 const NIBBLE_BITS: usize = 4;
 const NIBBLE_MASK: u64 = 0xF;
+const NEW_HEADER_SIZE: usize = 44; // version(4) + merkle_root(32) + timestamp(4) + nonce(4)
+const STATE_SIZE: usize = 192;     // 32+32+4+32+4+32+4+44+8
+const GENESIS_NBITS: u32 = 0x1d00ffff;
+const MAINNET_GENESIS_HASH_RAW: [u8; 32] = [
+    0x6f, 0xe2, 0x8c, 0x0a, 0xb6, 0xf1, 0xb3, 0x72,
+    0xc1, 0xa6, 0xa2, 0x46, 0xae, 0x63, 0xf7, 0x4f,
+    0x93, 0x1e, 0x83, 0x65, 0xe1, 0x5a, 0x08, 0x9c,
+    0x68, 0xd6, 0x19, 0x00, 0x00, 0x00, 0x00, 0x00,
+];
 
-const STATUS_PREV_BLOCKHASH_MISMATCH: u8 = 1;
+const STATUS_HEADER_COUNT_MISMATCH: u8 = 1;
 const STATUS_POW_INSUFFICIENT: u8 = 2;
 const STATUS_TIMESTAMP_TOO_OLD: u8 = 3;
-const STATUS_BITS_MISMATCH: u8 = 4;
-const STATUS_HEADER_COUNT_MISMATCH: u8 = 5;
-// Reserved: 6, 7, 8, 9, 10
+const STATUS_GENESIS_HASH_MISMATCH: u8 = 4;
+// Removed: prev_blockhash mismatch, bits mismatch — impossible by construction
 
 // ============================================================================
-// State Structure (236 bytes)
+// NewHeader — Prover-supplied fields (44 bytes)
+//
+// Only non-deterministic values. prev_blockhash and nbits are constructed
+// from authenticated state, not supplied by the prover.
 // ============================================================================
 
+#[derive(Clone, Debug)]
+struct NewHeader {
+    version: u32,
+    merkle_root: [u8; 32],
+    timestamp: u32,
+    nonce: u32,
+}
+
+impl NewHeader {
+    /// Parse a NewHeader from 44 bytes at the given offset.
+    fn from_bytes(data: &[u8], offset: usize) -> Self {
+        let version = u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap());
+        let mut merkle_root = [0u8; 32];
+        merkle_root.copy_from_slice(&data[offset + 4..offset + 36]);
+        let timestamp = u32::from_le_bytes(data[offset + 36..offset + 40].try_into().unwrap());
+        let nonce = u32::from_le_bytes(data[offset + 40..offset + 44].try_into().unwrap());
+        Self {
+            version,
+            merkle_root,
+            timestamp,
+            nonce,
+        }
+    }
+}
+
+// ============================================================================
+// State Structure (192 bytes)
+//
 /// The complete validation state, persisted between IVC iterations.
 ///
 /// Layout:
-///   0..32    genesis_hash        — anchor of the chain (set at height 0)
-///  32..112   prev_header         — last validated header (raw 80 bytes)
-/// 112..144   prev_header_hash    — cached SHA256d(prev_header), saves 1 hash/iter
-/// 144..148   height              — number of validated blocks (0 = none yet)
-/// 148..180   chain_work          — 256-bit cumulative work (LE [u64; 4])
-/// 180..184   epoch_start_ts      — timestamp of first block in current epoch
-/// 184..228   timestamps          — circular buffer of last min(height,11) timestamps
-/// 228..236   sorted_nibbles      — packed sorted indices for O(1) median lookup
+///   0..32    genesis_hash       — anchor of the chain (set at height 0)
+///  32..64    prev_blockhash     — SHA256d of last validated header
+///  64..68    nbits              — current difficulty compact form
+///  68..100   target             — current difficulty as 256-bit integer
+/// 100..104   height             — number of validated blocks
+/// 104..136   chain_work         — 256-bit cumulative work (LE [u64; 4])
+/// 136..140   epoch_start_ts     — timestamp of first block in current epoch
+/// 140..184   timestamps         — circular buffer of last min(height,11) timestamps
+/// 184..192   sorted_nibbles     — packed sorted indices for O(1) median lookup
 ///
-/// Total: 32 + 80 + 32 + 4 + 32 + 4 + 44 + 8 = 236 bytes
+/// Total: 32 + 32 + 4 + 32 + 4 + 32 + 4 + 44 + 8 = 192 bytes
+// ============================================================================
+
 #[derive(Clone, Debug, PartialEq)]
 struct State {
     genesis_hash: [u8; 32],
-    prev_header: [u8; 80],
-    prev_header_hash: [u8; 32],
+    prev_blockhash: [u8; 32],
+    nbits: u32,
+    target: [u8; 32],
     height: u32,
     chain_work: [u64; 4],
     epoch_start_timestamp: u32,
@@ -58,12 +107,13 @@ struct State {
 }
 
 impl State {
-    /// Serialize to exactly 236 bytes. No length prefixes — fixed layout.
+    /// Serialize to exactly 192 bytes. No length prefixes — fixed layout.
     fn to_bytes(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(236);
+        let mut out = Vec::with_capacity(STATE_SIZE);
         out.extend_from_slice(&self.genesis_hash);
-        out.extend_from_slice(&self.prev_header);
-        out.extend_from_slice(&self.prev_header_hash);
+        out.extend_from_slice(&self.prev_blockhash);
+        out.extend_from_slice(&self.nbits.to_le_bytes());
+        out.extend_from_slice(&self.target);
         out.extend_from_slice(&self.height.to_le_bytes());
         for &limb in &self.chain_work {
             out.extend_from_slice(&limb.to_le_bytes());
@@ -76,17 +126,21 @@ impl State {
         out
     }
 
-    /// Deserialize from exactly 236 bytes.
+    /// Deserialize from exactly 192 bytes.
     fn from_bytes(bytes: &[u8]) -> Self {
         let mut off = 0;
 
         let genesis_hash: [u8; 32] = bytes[off..off + 32].try_into().unwrap();
         off += 32;
 
-        let prev_header: [u8; 80] = bytes[off..off + 80].try_into().unwrap();
-        off += 80;
+        let prev_blockhash: [u8; 32] = bytes[off..off + 32].try_into().unwrap();
+        off += 32;
 
-        let prev_header_hash: [u8; 32] = bytes[off..off + 32].try_into().unwrap();
+        let nbits = u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap());
+        off += 4;
+
+        let mut target = [0u8; 32];
+        target.copy_from_slice(&bytes[off..off + 32]);
         off += 32;
 
         let height = u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap());
@@ -113,8 +167,9 @@ impl State {
 
         Self {
             genesis_hash,
-            prev_header,
-            prev_header_hash,
+            prev_blockhash,
+            nbits,
+            target,
             height,
             chain_work,
             epoch_start_timestamp,
@@ -128,8 +183,9 @@ impl Default for State {
     fn default() -> Self {
         Self {
             genesis_hash: [0u8; 32],
-            prev_header: [0u8; 80],
-            prev_header_hash: [0u8; 32],
+            prev_blockhash: [0u8; 32],
+            nbits: 0,
+            target: [0u8; 32],
             height: 0,
             chain_work: [0u64; 4],
             epoch_start_timestamp: 0,
@@ -142,10 +198,6 @@ impl Default for State {
 // ============================================================================
 // Bitcoin Consensus Helpers
 // ============================================================================
-
-fn bits_from_header(header: &[u8; 80]) -> u32 {
-    u32::from_le_bytes(header[72..76].try_into().unwrap())
-}
 
 fn bits_to_target(bits: u32) -> [u8; 32] {
     let exponent = bits >> 24;
@@ -194,8 +246,8 @@ fn target_to_bits(target: &[u8; 32]) -> u32 {
     ((nbytes as u32) << 24) | (mantissa & 0x00ffffff)
 }
 
-fn hash_meets_target(hash: &[u8; 32], bits: u32) -> bool {
-    let target = bits_to_target(bits);
+fn hash_meets_target(hash: &[u8; 32], nbits: u32) -> bool {
+    let target = bits_to_target(nbits);
     for i in (0..32).rev() {
         if hash[i] > target[i] {
             return false;
@@ -442,8 +494,7 @@ fn add_timestamp(
 }
 
 /// Check if timestamp is <= median of the current window.
-/// Returns `true` if the timestamp violates the median time past rule
-/// (i.e., it is not strictly greater than the median).
+/// Returns `true` if the timestamp violates the median time past rule.
 /// `count` = number of timestamps currently in window (before adding).
 fn check_median(timestamps: &[u32; WINDOW_SIZE], packed: u64, count: usize, ts: u32) -> bool {
     if count == 0 {
@@ -455,11 +506,35 @@ fn check_median(timestamps: &[u32; WINDOW_SIZE], packed: u64, count: usize, ts: 
 }
 
 // ============================================================================
+// Header Construction
+// ============================================================================
+
+/// Build the full 80-byte Bitcoin block header from authenticated state + prover input.
+///
+/// | Offset | Field         | Source                    |
+/// |--------|---------------|---------------------------|
+/// | 0..4   | version       | Prover input              |
+/// | 4..36  | prev_blockhash| state.prev_blockhash      |
+/// | 36..68 | merkle_root   | Prover input              |
+/// | 68..72 | timestamp     | Prover input              |
+/// | 72..76 | nbits         | state.nbits               |
+/// | 76..80 | nonce         | Prover input              |
+fn construct_header(state: &State, new_header: &NewHeader) -> [u8; 80] {
+    let mut header = [0u8; 80];
+    header[0..4].copy_from_slice(&new_header.version.to_le_bytes());
+    header[4..36].copy_from_slice(&state.prev_blockhash);
+    header[36..68].copy_from_slice(&new_header.merkle_root);
+    header[68..72].copy_from_slice(&new_header.timestamp.to_le_bytes());
+    header[72..76].copy_from_slice(&state.nbits.to_le_bytes());
+    header[76..80].copy_from_slice(&new_header.nonce.to_le_bytes());
+    header
+}
+
+// ============================================================================
 // Error Handling
 // ============================================================================
 
 /// Commit the last valid state plus error information, then halt.
-/// This produces a valid proof that "validation failed at header X for reason Y".
 fn commit_error(state: &State, error_code: u8, header_index: u32) -> ! {
     let state_bytes = state.to_bytes();
     sp1_zkvm::io::commit_slice(&state_bytes);
@@ -483,10 +558,8 @@ pub fn main() {
         let prev_pv_digest = sp1_zkvm::io::read::<[u8; 32]>();
         let prev_pv_bytes = sp1_zkvm::io::read_vec();
 
-        if prev_pv_bytes.len() != 236 {
-            // We can't commit a proper error here because we haven't established
-            // a valid state yet. Panic is acceptable — this is a protocol violation.
-            panic!("Previous proof public values wrong size: expected 236, got {}", prev_pv_bytes.len());
+        if prev_pv_bytes.len() != STATE_SIZE {
+            panic!("Previous proof public values wrong size: expected {}, got {}", STATE_SIZE, prev_pv_bytes.len());
         }
 
         // In-circuit verification of the previous proof
@@ -503,104 +576,87 @@ pub fn main() {
         State::default()
     };
 
+    if state.height == 0 {
+        state.nbits = GENESIS_NBITS;
+        state.target = bits_to_target(GENESIS_NBITS);
+    }
+
     let num_headers = sp1_zkvm::io::read::<u32>();
     let headers_bytes = sp1_zkvm::io::read_vec();
 
-    // Validate header byte count
-    if headers_bytes.len() != (num_headers as usize) * 80 {
+    // Validate header byte count: must be num_headers * 44 (NewHeader size)
+    if headers_bytes.len() != (num_headers as usize) * NEW_HEADER_SIZE {
         commit_error(&state, STATUS_HEADER_COUNT_MISMATCH, 0);
     }
 
     // --- Process each header ------------------------------------------------
     for i in 0..num_headers {
-        let offset = (i * 80) as usize;
-        let header: &[u8; 80] = &headers_bytes[offset..offset + 80].try_into().unwrap();
+        let offset = (i as usize) * NEW_HEADER_SIZE;
+        let new_header = NewHeader::from_bytes(&headers_bytes, offset);
         let new_height = state.height + 1;
 
-        // Parse header fields
-        let prev_blockhash: [u8; 32] = header[4..36].try_into().unwrap();
-        let timestamp = u32::from_le_bytes(header[68..72].try_into().unwrap());
-        let bits = u32::from_le_bytes(header[72..76].try_into().unwrap());
-
-        // Validate bits range: exponent must be 3..=29 for a valid target
-        let exponent = bits >> 24;
-        if !(3..=29).contains(&exponent) {
-            commit_error(&state, STATUS_BITS_MISMATCH, i);
-        }
-
-        // Early PoW check (cheapest rejection — hash + comparison)
-        println!("cycle-tracker-start: sha256d");
-        let block_hash = double_sha256_80(header);
-        println!("cycle-tracker-end: sha256d");
-        if !hash_meets_target(&block_hash, bits) {
-            commit_error(&state, STATUS_POW_INSUFFICIENT, i);
-        }
-
-        // Chain linkage check (skip for genesis block at height 0)
-        if state.height > 0 && prev_blockhash != state.prev_header_hash {
-            commit_error(&state, STATUS_PREV_BLOCKHASH_MISMATCH, i);
-        }
-
-        // Median timestamp check — always runs when height > 0
-        // count = min(height, 11); median computed from last `count` timestamps
+        // Median timestamp check — always runs when height > 0.
+        // Run this before hashing so timestamp violations surface directly.
         let timestamp_count = (state.height as usize).min(WINDOW_SIZE);
         if timestamp_count > 0
-            && check_median(&state.timestamps, state.sorted_nibbles, timestamp_count, timestamp)
+            && check_median(&state.timestamps, state.sorted_nibbles, timestamp_count, new_header.timestamp)
         {
             commit_error(&state, STATUS_TIMESTAMP_TOO_OLD, i);
         }
 
-        // Compute expected bits (carry over or retarget)
-        let expected_bits = if state.height == 0 {
-            // Genesis: any bits are allowed (PoW already checked)
-            bits
-        } else if new_height % 2016 == 0 {
-            // This block completes an epoch → retarget
-            println!("cycle-tracker-start: retarget");
-            let actual_timespan = timestamp.wrapping_sub(state.epoch_start_timestamp);
-            let expected_timespan: u32 = 2016 * 600;
-            let clamped = actual_timespan
-                .max(expected_timespan / 4)
-                .min(expected_timespan * 4);
-            let old_target = bits_to_target(bits_from_header(&state.prev_header));
-            let new_target = retarget_target(&old_target, clamped, expected_timespan);
-            // Next epoch starts with this block
-            state.epoch_start_timestamp = timestamp;
-            println!("cycle-tracker-end: retarget");
-            target_to_bits(&new_target)
-        } else {
-            // Same epoch: copy bits from previous header
-            bits_from_header(&state.prev_header)
-        };
+        // Construct the full 80-byte header from authenticated state + prover input
+        println!("cycle-tracker-start: sha256d");
+        let header = construct_header(&state, &new_header);
+        let block_hash = double_sha256_80(&header);
+        println!("cycle-tracker-end: sha256d");
 
-        if bits != expected_bits {
-            commit_error(&state, STATUS_BITS_MISMATCH, i);
+        // PoW check: hash must meet target (uses state.nbits directly — no conversion)
+        if !hash_meets_target(&block_hash, state.nbits) {
+            commit_error(&state, STATUS_POW_INSUFFICIENT, i);
         }
 
-        // --- Update state (all checks passed) --------------------------------
+        // Genesis special case: the first constructed header must match Bitcoin mainnet genesis.
         if state.height == 0 {
-            // Genesis block: set chain anchor and initial values
+            if block_hash != MAINNET_GENESIS_HASH_RAW {
+                commit_error(&state, STATUS_GENESIS_HASH_MISMATCH, i);
+            }
             state.genesis_hash = block_hash;
-            state.chain_work = work_from_bits(bits);
-            state.epoch_start_timestamp = timestamp;
-            state.timestamps[0] = timestamp;
-            state.sorted_nibbles = 0; // single element
+            state.chain_work = work_from_bits(state.nbits);
+            state.epoch_start_timestamp = new_header.timestamp;
+            state.timestamps[0] = new_header.timestamp;
+            state.sorted_nibbles = 0;
         } else {
-            // Normal update: add timestamp to circular buffer
+            // Median timestamp count (before adding this one)
+            // Add timestamp to circular buffer
             let slot = (state.height as usize) % WINDOW_SIZE;
             state.sorted_nibbles = add_timestamp(
                 &mut state.timestamps,
                 timestamp_count,
                 state.sorted_nibbles,
-                timestamp,
+                new_header.timestamp,
                 slot,
             );
-            state.chain_work = u256_add(state.chain_work, work_from_bits(bits));
+
+            // Retarget if this block completes an epoch
+            if new_height % 2016 == 0 {
+                println!("cycle-tracker-start: retarget");
+                let actual_timespan = new_header.timestamp.wrapping_sub(state.epoch_start_timestamp);
+                let expected_timespan: u32 = 2016 * 600;
+                let clamped = actual_timespan
+                    .max(expected_timespan / 4)
+                    .min(expected_timespan * 4);
+                let new_target = retarget_target(&state.target, clamped, expected_timespan);
+                state.nbits = target_to_bits(&new_target);
+                state.target = new_target;
+                state.epoch_start_timestamp = new_header.timestamp;
+                println!("cycle-tracker-end: retarget");
+            }
+
+            state.chain_work = u256_add(state.chain_work, work_from_bits(state.nbits));
         }
 
-        // Always update header and height
-        state.prev_header = *header;
-        state.prev_header_hash = block_hash;
+        // Always update prev_blockhash and height
+        state.prev_blockhash = block_hash;
         state.height = new_height;
     }
 

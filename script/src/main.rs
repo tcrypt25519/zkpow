@@ -71,10 +71,16 @@ async fn main() {
         prev_proof_path.as_deref().unwrap_or("none"),
     );
 
-    // Load raw headers
-    let headers_bytes = util::load_headers_from_db(DB_PATH, start_height as u64, num_headers as u64);
-    let loaded_count = (headers_bytes.len() / 80) as u32;
-    tracing::info!("Loaded {} headers", loaded_count);
+    // Load raw 80-byte headers from DB, then convert to 44-byte NewHeader format
+    let raw_headers = util::load_headers_from_db(DB_PATH, start_height as u64, num_headers as u64);
+    let headers_bytes = util::raw_headers_to_new_headers(&raw_headers);
+    let loaded_count = (raw_headers.len() / 80) as u32;
+    tracing::info!(
+        "Loaded {} headers ({} raw bytes → {} NewHeader bytes)",
+        loaded_count,
+        raw_headers.len(),
+        headers_bytes.len(),
+    );
 
     // Setup prover
     let client = ProverClient::from_env().await;
@@ -93,12 +99,6 @@ async fn main() {
         prev_state.as_ref(),
     );
 
-    // Build the expected final header hash
-    let final_header: [u8; 80] = headers_bytes[(headers_bytes.len() - 80)..]
-        .try_into()
-        .unwrap();
-    let final_hash = util::double_sha256_host(&final_header);
-
     // Build expected PV (the state bytes the program will commit)
     let expected_pv = expected_state.to_bytes();
     assert_eq!(expected_pv.len(), STATE_SIZE);
@@ -107,7 +107,7 @@ async fn main() {
     //   1. prev_height: u32
     //   2. (if prev_height > 0) prev_vk, prev_pv_digest, prev_pv_bytes
     //   3. num_headers: u32
-    //   4. headers_bytes: Vec<u8>
+    //   4. headers_bytes: Vec<u8> (NewHeader format, 44 bytes each)
     let mut stdin = SP1Stdin::new();
 
     let prev_height_u32: u32 = if has_prev_proof {
@@ -249,7 +249,6 @@ async fn main() {
         start_height,
         start_height + loaded_count - 1,
     );
-    tracing::info!("Final header hash: {}", hex::encode(final_hash));
     let work_hex: String = expected_state
         .chain_work
         .iter()
