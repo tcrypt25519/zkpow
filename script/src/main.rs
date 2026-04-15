@@ -8,15 +8,14 @@
 //!   PREV_PROOF=proof_height_0_to_99.bin cargo run --release --bin bitcoin-header-chain-script
 
 use sp1_sdk::prelude::*;
-use sp1_sdk::ProverClient;
 use sp1_sdk::HashableKey;
+use sp1_sdk::ProverClient;
 
 use bitcoin_header_chain_script::util;
-use bitcoin_header_chain_script::util::{State, STATE_SIZE};
+use bitcoin_header_chain_script::util::{HeaderChainPublicValues, STATE_SIZE};
 
 const ELF: Elf = include_elf!("bitcoin-header-chain-program");
-const GENESIS_HASH_HEX: &str =
-    "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f";
+const GENESIS_HASH_HEX: &str = "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f";
 const DB_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../bitcoin_headers.sqlite");
 
 #[tokio::main]
@@ -41,17 +40,19 @@ async fn main() {
     // Determine starting height and previous state
     let (start_height, prev_state) = if has_prev_proof {
         let path = prev_proof_path.as_ref().unwrap();
-        let prev_proof = SP1ProofWithPublicValues::load(path).expect("failed to load previous proof");
-        let pv = prev_proof.public_values.as_ref();
-
-        assert!(
-            pv.len() >= STATE_SIZE,
-            "Previous proof PV too short: {} bytes (expected {})",
-            pv.len(),
-            STATE_SIZE,
-        );
-
-        let prev_state = State::from_bytes(&pv[..STATE_SIZE]);
+        let prev_proof =
+            SP1ProofWithPublicValues::load(path).expect("failed to load previous proof");
+        let prev_public_values = HeaderChainPublicValues::parse(prev_proof.public_values.as_ref())
+            .expect("failed to parse previous proof public values");
+        let prev_state = match prev_public_values {
+            HeaderChainPublicValues::Success(state) => state,
+            HeaderChainPublicValues::Failure(failure) => {
+                panic!(
+                    "previous proof ended in error: {} at header {}",
+                    failure.error_code, failure.header_index,
+                );
+            }
+        };
         let start_h = prev_state.height;
 
         assert_eq!(
@@ -110,29 +111,24 @@ async fn main() {
     //   4. headers_bytes: Vec<u8> (NewHeader format, 44 bytes each)
     let mut stdin = SP1Stdin::new();
 
-    let prev_height_u32: u32 = if has_prev_proof {
-        start_height
-    } else {
-        0
-    };
+    let prev_height_u32: u32 = if has_prev_proof { start_height } else { 0 };
     stdin.write::<u32>(&prev_height_u32);
 
     if has_prev_proof {
-        let pv_bytes = prev_state.as_ref().unwrap().to_bytes();
-
         // VK digest as [u32; 8]
         stdin.write::<[u32; 8]>(&vk_digest_u32);
 
         // PV digest: SHA-256 of the previous proof's committed public values
+        let path = prev_proof_path.as_ref().unwrap();
+        let prev_proof = SP1ProofWithPublicValues::load(path).expect("failed to load proof");
+        let pv_bytes = prev_proof.public_values.to_vec();
         let pv_digest: [u8; 32] = util::compute_pv_digest(&pv_bytes);
         stdin.write::<[u8; 32]>(&pv_digest);
 
-        // Previous public values (so the guest can deserialize state)
-        stdin.write_vec(pv_bytes);
+        // Previous serialized state (so the guest can continue from authenticated state)
+        stdin.write_vec(prev_state.as_ref().unwrap().to_bytes());
 
         // Write the actual proof for recursive verification
-        let path = prev_proof_path.as_ref().unwrap();
-        let prev_proof = SP1ProofWithPublicValues::load(path).expect("failed to load proof");
         let sp1_sdk::SP1Proof::Compressed(inner_proof) = &prev_proof.proof else {
             panic!("Previous proof is not compressed");
         };
@@ -155,37 +151,34 @@ async fn main() {
 
     // Check the output
     let actual_pv = public_values.to_vec();
+    let parsed_public_values = HeaderChainPublicValues::parse(&actual_pv)
+        .expect("failed to parse execution public values");
 
-    if actual_pv.len() == STATE_SIZE {
-        // Success path: just state bytes
-        assert_eq!(
-            actual_pv, expected_pv,
-            "Public values mismatch!\n  expected: {}\n  actual:   {}",
-            hex::encode(&expected_pv),
-            hex::encode(&actual_pv),
-        );
-        tracing::info!(
-            "Public values verified successfully ({} bytes — success)",
-            actual_pv.len()
-        );
-    } else if actual_pv.len() == STATE_SIZE + 1 + 4 {
-        // Error path: state + error_code + header_index
-        let error_code = actual_pv[STATE_SIZE];
-        let header_index =
-            u32::from_le_bytes(actual_pv[STATE_SIZE + 1..STATE_SIZE + 5].try_into().unwrap());
-        tracing::warn!(
-            "Program exited with error: code={}, header_index={}",
-            error_code,
-            header_index,
-        );
-        panic!("zkVM program failed with error code {}", error_code);
-    } else {
-        panic!(
-            "Unexpected public values size: {} bytes (expected {} or {})",
-            actual_pv.len(),
-            STATE_SIZE,
-            STATE_SIZE + 1 + 4,
-        );
+    match parsed_public_values {
+        HeaderChainPublicValues::Success(state) => {
+            assert_eq!(
+                state.to_bytes(),
+                expected_pv,
+                "Public values mismatch!\n  expected: {}\n  actual:   {}",
+                hex::encode(&expected_pv),
+                hex::encode(state.to_bytes()),
+            );
+            tracing::info!(
+                "Public values verified successfully ({} bytes — success)",
+                actual_pv.len()
+            );
+        }
+        HeaderChainPublicValues::Failure(failure) => {
+            tracing::warn!(
+                "Program exited with error: code={}, header_index={}",
+                failure.error_code,
+                failure.header_index,
+            );
+            panic!(
+                "zkVM program failed with error {} at header {}",
+                failure.error_code, failure.header_index,
+            );
+        }
     }
 
     // Verify proof
@@ -199,17 +192,36 @@ async fn main() {
 
     // Verify public values on the real proof
     let proof_pv = proof.public_values.to_vec();
-    assert_eq!(
-        proof_pv, expected_pv,
-        "Proof public values mismatch!\n  expected: {}\n  actual:   {}",
-        hex::encode(&expected_pv),
-        hex::encode(&proof_pv),
-    );
-    tracing::info!("Proof public values verified ({} bytes)", proof_pv.len());
+    let parsed_proof_public_values =
+        HeaderChainPublicValues::parse(&proof_pv).expect("failed to parse proof public values");
+
+    match parsed_proof_public_values {
+        HeaderChainPublicValues::Success(state) => {
+            assert_eq!(
+                state.to_bytes(),
+                expected_pv,
+                "Proof public values mismatch!\n  expected: {}\n  actual:   {}",
+                hex::encode(&expected_pv),
+                hex::encode(state.to_bytes()),
+            );
+            tracing::info!(
+                "Proof public values verified ({} bytes — success)",
+                proof_pv.len()
+            );
+        }
+        HeaderChainPublicValues::Failure(failure) => {
+            panic!(
+                "generated proof ended in error {} at header {}",
+                failure.error_code, failure.header_index,
+            );
+        }
+    }
 
     // Verify proof
     tracing::info!("Verifying proof...");
-    client.verify(&proof, vk, None).expect("verification failed");
+    client
+        .verify(&proof, vk, None)
+        .expect("verification failed");
     tracing::info!("Proof verified successfully");
 
     // Save compressed proof

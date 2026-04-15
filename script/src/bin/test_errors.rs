@@ -8,32 +8,21 @@
 //!   output: state(192) on success, or state(192) + error_code(1) + header_index(4) on error
 
 use sp1_sdk::prelude::*;
-use sp1_sdk::{Prover, SP1Stdin, HashableKey, Elf};
 use sp1_sdk::utils;
+use sp1_sdk::{Elf, HashableKey, Prover, ProverClient, SP1Stdin};
 
 use bitcoin_header_chain_script::util;
-use bitcoin_header_chain_script::util::{STATE_SIZE, NEW_HEADER_SIZE};
+use bitcoin_header_chain_script::util::{
+    HeaderChainPublicValues, ValidationErrorCode, NEW_HEADER_SIZE,
+};
 
 const ELF: Elf = include_elf!("bitcoin-header-chain-program");
 
-const DB_PATH: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../bitcoin_headers.sqlite",
-);
-
-// Error codes from the program (revised — header-construction architecture)
-#[allow(dead_code)]
-const STATUS_SUCCESS: u8 = 0;
-const STATUS_HEADER_COUNT_MISMATCH: u8 = 1;
-const STATUS_POW_INSUFFICIENT: u8 = 2;
-const STATUS_TIMESTAMP_TOO_OLD: u8 = 3;
-#[allow(dead_code)]
-const STATUS_GENESIS_HASH_MISMATCH: u8 = 4;
-// Removed: prev_blockhash mismatch, bits mismatch — impossible by construction
+const DB_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../bitcoin_headers.sqlite",);
 
 /// Run the program with given inputs and return the raw public values.
 async fn run_and_get_pv(stdin: SP1Stdin) -> Result<Vec<u8>, String> {
-    let client = sp1_sdk::ProverClient::from_env().await;
+    let client = ProverClient::builder().mock().build().await;
     let (public_values, _report) = client
         .execute(ELF, stdin)
         .await
@@ -41,17 +30,46 @@ async fn run_and_get_pv(stdin: SP1Stdin) -> Result<Vec<u8>, String> {
     Ok(public_values.to_vec())
 }
 
-/// Parse the result: returns Ok(()) on success, or Err((error_code, header_index)) on failure.
-fn parse_result(pv: &[u8]) -> Result<(), (u8, u32)> {
-    if pv.len() == STATE_SIZE {
-        Ok(())
-    } else if pv.len() == STATE_SIZE + 1 + 4 {
-        let error_code = pv[STATE_SIZE];
-        let header_index =
-            u32::from_le_bytes(pv[STATE_SIZE + 1..STATE_SIZE + 5].try_into().unwrap());
-        Err((error_code, header_index))
-    } else {
-        panic!("Unexpected PV length: {} bytes", pv.len());
+fn expect_success(pv: &[u8]) -> Result<util::State, String> {
+    let parsed =
+        HeaderChainPublicValues::parse(pv).map_err(|err| format!("failed to parse PV: {err}"))?;
+    match parsed {
+        HeaderChainPublicValues::Success(state) => Ok(state),
+        HeaderChainPublicValues::Failure(failure) => Err(format!(
+            "expected success, got error {} at header {}",
+            failure.error_code, failure.header_index,
+        )),
+    }
+}
+
+fn expect_failure(
+    pv: &[u8],
+    expected_code: ValidationErrorCode,
+    expected_header_index: u32,
+) -> Result<(), String> {
+    let parsed =
+        HeaderChainPublicValues::parse(pv).map_err(|err| format!("failed to parse PV: {err}"))?;
+
+    match parsed {
+        HeaderChainPublicValues::Success(state) => Err(format!(
+            "expected error {}, got success at height {}",
+            expected_code, state.height,
+        )),
+        HeaderChainPublicValues::Failure(failure) => {
+            if failure.error_code != expected_code {
+                return Err(format!(
+                    "expected error {}, got {}",
+                    expected_code, failure.error_code,
+                ));
+            }
+            if failure.header_index != expected_header_index {
+                return Err(format!(
+                    "expected header index {}, got {}",
+                    expected_header_index, failure.header_index,
+                ));
+            }
+            Ok(())
+        }
     }
 }
 
@@ -69,16 +87,28 @@ async fn main() {
 
     // === Success cases ===
     check("success_100_headers", test_success_100_headers().await);
-    check("recursive_chain_success", test_recursive_chain_success().await);
+    check(
+        "recursive_chain_success",
+        test_recursive_chain_success().await,
+    );
 
     // === Input validation errors ===
-    check("error_header_count_mismatch", test_error_header_count_mismatch().await);
+    check(
+        "error_header_count_mismatch",
+        test_error_header_count_mismatch().await,
+    );
 
     // === Timestamp validation errors ===
-    check("error_timestamp_too_old", test_error_timestamp_too_old().await);
+    check(
+        "error_timestamp_too_old",
+        test_error_timestamp_too_old().await,
+    );
 
     // === PoW errors ===
-    check("error_pow_insufficient", test_error_pow_insufficient().await);
+    check(
+        "error_pow_insufficient",
+        test_error_pow_insufficient().await,
+    );
 
     println!("\nDone.");
 }
@@ -97,9 +127,7 @@ async fn test_success_100_headers() -> Result<(), String> {
     stdin.write_vec(headers_bytes);
 
     let pv = run_and_get_pv(stdin).await?;
-    parse_result(&pv).map_err(|(code, detail)| {
-        format!("expected success, got error code {} detail {}", code, detail)
-    })
+    expect_success(&pv).map(|_| ())
 }
 
 async fn test_error_header_count_mismatch() -> Result<(), String> {
@@ -112,18 +140,7 @@ async fn test_error_header_count_mismatch() -> Result<(), String> {
     stdin.write_vec(headers_bytes);
 
     let pv = run_and_get_pv(stdin).await?;
-    match parse_result(&pv) {
-        Err((code, _detail)) => {
-            if code != STATUS_HEADER_COUNT_MISMATCH {
-                return Err(format!(
-                    "expected HEADER_COUNT_MISMATCH ({}), got {}",
-                    STATUS_HEADER_COUNT_MISMATCH, code
-                ));
-            }
-            Ok(())
-        }
-        Ok(()) => Err("expected error but got success".to_string()),
-    }
+    expect_failure(&pv, ValidationErrorCode::HeaderCountMismatch, 0)
 }
 
 async fn test_error_timestamp_too_old() -> Result<(), String> {
@@ -150,21 +167,7 @@ async fn test_error_timestamp_too_old() -> Result<(), String> {
     stdin.write_vec(headers_bytes);
 
     let pv = run_and_get_pv(stdin).await?;
-    match parse_result(&pv) {
-        Err((code, detail)) => {
-            if code != STATUS_TIMESTAMP_TOO_OLD {
-                return Err(format!(
-                    "expected TIMESTAMP_TOO_OLD ({}), got {}",
-                    STATUS_TIMESTAMP_TOO_OLD, code
-                ));
-            }
-            if detail != 12 {
-                return Err(format!("expected detail 12, got {}", detail));
-            }
-            Ok(())
-        }
-        Ok(()) => Err("expected error but got success".to_string()),
-    }
+    expect_failure(&pv, ValidationErrorCode::TimestampTooOld, 12)
 }
 
 async fn test_error_pow_insufficient() -> Result<(), String> {
@@ -182,24 +185,17 @@ async fn test_error_pow_insufficient() -> Result<(), String> {
     stdin.write_vec(headers_bytes);
 
     let pv = run_and_get_pv(stdin).await?;
-    match parse_result(&pv) {
-        Err((code, detail)) => {
-            if code != STATUS_POW_INSUFFICIENT {
-                return Err(format!(
-                    "expected POW_INSUFFICIENT ({}), got {}",
-                    STATUS_POW_INSUFFICIENT, code
-                ));
-            }
-            if detail != 1 {
-                return Err(format!("expected detail 1 (block 1), got {}", detail));
-            }
-            Ok(())
-        }
-        Ok(()) => Err("expected error but got success".to_string()),
-    }
+    expect_failure(&pv, ValidationErrorCode::PowInsufficient, 1)
 }
 
 async fn test_recursive_chain_success() -> Result<(), String> {
+    let client = ProverClient::from_env().await;
+    let pk = client
+        .setup(ELF)
+        .await
+        .map_err(|e| format!("setup: {}", e))?;
+    let vk = pk.verifying_key();
+
     // === Run 1: Genesis → Block 9 ===
     let raw1 = util::load_headers_from_db(DB_PATH, 0, 10);
     let headers1 = util::raw_headers_to_new_headers(&raw1);
@@ -208,25 +204,15 @@ async fn test_recursive_chain_success() -> Result<(), String> {
     stdin1.write::<u32>(&10);
     stdin1.write_vec(headers1);
 
-    let client = sp1_sdk::ProverClient::from_env().await;
-    let pk = client.setup(ELF).await.map_err(|e| format!("setup: {}", e))?;
-    let vk = pk.verifying_key();
-
-    let (pv1, _) = client
-        .execute(ELF, stdin1)
+    let proof1 = client
+        .prove(&pk, stdin1)
+        .compressed()
         .await
-        .map_err(|e| format!("Run 1: {}", e))?;
-    let pv1_bytes = pv1.to_vec();
-    if pv1_bytes.len() != STATE_SIZE {
-        return Err(format!(
-            "Run 1: unexpected PV length {} (expected {})",
-            pv1_bytes.len(),
-            STATE_SIZE
-        ));
-    }
+        .map_err(|e| format!("Run 1 proof generation failed: {}", e))?;
+    let pv1_bytes = proof1.public_values.to_vec();
 
     // Verify Run 1 state
-    let state1 = util::State::from_bytes(&pv1_bytes);
+    let state1 = expect_success(&pv1_bytes)?;
     if state1.height != 10 {
         return Err(format!("Run 1: expected height 10, got {}", state1.height));
     }
@@ -239,12 +225,18 @@ async fn test_recursive_chain_success() -> Result<(), String> {
     stdin2.write::<[u32; 8]>(&vk.hash_u32());
     let pv_digest = util::compute_pv_digest(&pv1_bytes);
     stdin2.write::<[u8; 32]>(&pv_digest);
-    stdin2.write_vec(pv1_bytes);
+    stdin2.write_vec(state1.to_bytes());
+    let sp1_sdk::SP1Proof::Compressed(inner_proof) = &proof1.proof else {
+        return Err("Run 1 proof is not compressed".to_string());
+    };
+    stdin2.write_proof(inner_proof.as_ref().clone(), vk.vk.clone());
     stdin2.write::<u32>(&10);
     stdin2.write_vec(headers2);
 
-    let pv2 = run_and_get_pv(stdin2).await?;
-    parse_result(&pv2).map_err(|(code, detail)| {
-        format!("expected success, got error code {} detail {}", code, detail)
-    })
+    let (pv2, _) = client
+        .execute(ELF, stdin2)
+        .await
+        .map_err(|e| format!("Run 2 execution failed: {}", e))?;
+    let pv2 = pv2.to_vec();
+    expect_success(&pv2).map(|_| ())
 }

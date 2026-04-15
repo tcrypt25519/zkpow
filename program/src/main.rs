@@ -17,7 +17,7 @@
 sp1_zkvm::entrypoint!(main);
 
 mod sha256;
-use sha256::double_sha256_80;
+use sha256::{double_sha256_80, sha256_192};
 
 // ============================================================================
 // Constants & Error Codes
@@ -27,20 +27,27 @@ const WINDOW_SIZE: usize = 11;
 const NIBBLE_BITS: usize = 4;
 const NIBBLE_MASK: u64 = 0xF;
 const NEW_HEADER_SIZE: usize = 44; // version(4) + merkle_root(32) + timestamp(4) + nonce(4)
-const STATE_SIZE: usize = 192;     // 32+32+4+32+4+32+4+44+8
+const STATE_SIZE: usize = 192; // 32+32+4+32+4+32+4+44+8
 const GENESIS_NBITS: u32 = 0x1d00ffff;
 const MAINNET_GENESIS_HASH_RAW: [u8; 32] = [
-    0x6f, 0xe2, 0x8c, 0x0a, 0xb6, 0xf1, 0xb3, 0x72,
-    0xc1, 0xa6, 0xa2, 0x46, 0xae, 0x63, 0xf7, 0x4f,
-    0x93, 0x1e, 0x83, 0x65, 0xe1, 0x5a, 0x08, 0x9c,
-    0x68, 0xd6, 0x19, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x6f, 0xe2, 0x8c, 0x0a, 0xb6, 0xf1, 0xb3, 0x72, 0xc1, 0xa6, 0xa2, 0x46, 0xae, 0x63, 0xf7, 0x4f,
+    0x93, 0x1e, 0x83, 0x65, 0xe1, 0x5a, 0x08, 0x9c, 0x68, 0xd6, 0x19, 0x00, 0x00, 0x00, 0x00, 0x00,
 ];
 
-const STATUS_HEADER_COUNT_MISMATCH: u8 = 1;
-const STATUS_POW_INSUFFICIENT: u8 = 2;
-const STATUS_TIMESTAMP_TOO_OLD: u8 = 3;
-const STATUS_GENESIS_HASH_MISMATCH: u8 = 4;
-// Removed: prev_blockhash mismatch, bits mismatch — impossible by construction
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+enum ValidationErrorCode {
+    HeaderCountMismatch = 1,
+    PowInsufficient = 2,
+    TimestampTooOld = 3,
+    GenesisHashMismatch = 4,
+}
+
+impl ValidationErrorCode {
+    const fn as_byte(self) -> u8 {
+        self as u8
+    }
+}
 
 // ============================================================================
 // NewHeader — Prover-supplied fields (44 bytes)
@@ -152,8 +159,7 @@ impl State {
             off += 8;
         }
 
-        let epoch_start_timestamp =
-            u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap());
+        let epoch_start_timestamp = u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap());
         off += 4;
 
         let mut timestamps = [0u32; WINDOW_SIZE];
@@ -162,8 +168,7 @@ impl State {
             off += 4;
         }
 
-        let sorted_nibbles =
-            u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
+        let sorted_nibbles = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
 
         Self {
             genesis_hash,
@@ -535,10 +540,10 @@ fn construct_header(state: &State, new_header: &NewHeader) -> [u8; 80] {
 // ============================================================================
 
 /// Commit the last valid state plus error information, then halt.
-fn commit_error(state: &State, error_code: u8, header_index: u32) -> ! {
+fn commit_error(state: &State, error_code: ValidationErrorCode, header_index: u32) -> ! {
     let state_bytes = state.to_bytes();
     sp1_zkvm::io::commit_slice(&state_bytes);
-    sp1_zkvm::io::commit_slice(&[error_code]);
+    sp1_zkvm::io::commit_slice(&[error_code.as_byte()]);
     sp1_zkvm::io::commit_slice(&header_index.to_le_bytes());
     sp1_zkvm::syscalls::syscall_halt(0);
 }
@@ -559,16 +564,30 @@ pub fn main() {
         let prev_pv_bytes = sp1_zkvm::io::read_vec();
 
         if prev_pv_bytes.len() != STATE_SIZE {
-            panic!("Previous proof public values wrong size: expected {}, got {}", STATE_SIZE, prev_pv_bytes.len());
+            panic!(
+                "Previous proof public values wrong size: expected {}, got {}",
+                STATE_SIZE,
+                prev_pv_bytes.len()
+            );
         }
 
         // In-circuit verification of the previous proof
         sp1_zkvm::lib::verify::verify_sp1_proof(&prev_vk, &prev_pv_digest);
 
-        let s = State::from_bytes(&prev_pv_bytes);
+        let mut prev_state_bytes = [0u8; STATE_SIZE];
+        prev_state_bytes.copy_from_slice(&prev_pv_bytes);
+        let actual_prev_pv_digest = sha256_192(&prev_state_bytes);
+        if actual_prev_pv_digest != prev_pv_digest {
+            panic!("Previous proof public values digest mismatch");
+        }
+
+        let s = State::from_bytes(&prev_state_bytes);
 
         if s.height != prev_height {
-            panic!("Height mismatch in previous state: expected {}, got {}", prev_height, s.height);
+            panic!(
+                "Height mismatch in previous state: expected {}, got {}",
+                prev_height, s.height
+            );
         }
 
         s
@@ -586,7 +605,7 @@ pub fn main() {
 
     // Validate header byte count: must be num_headers * 44 (NewHeader size)
     if headers_bytes.len() != (num_headers as usize) * NEW_HEADER_SIZE {
-        commit_error(&state, STATUS_HEADER_COUNT_MISMATCH, 0);
+        commit_error(&state, ValidationErrorCode::HeaderCountMismatch, 0);
     }
 
     // --- Process each header ------------------------------------------------
@@ -599,9 +618,14 @@ pub fn main() {
         // Run this before hashing so timestamp violations surface directly.
         let timestamp_count = (state.height as usize).min(WINDOW_SIZE);
         if timestamp_count > 0
-            && check_median(&state.timestamps, state.sorted_nibbles, timestamp_count, new_header.timestamp)
+            && check_median(
+                &state.timestamps,
+                state.sorted_nibbles,
+                timestamp_count,
+                new_header.timestamp,
+            )
         {
-            commit_error(&state, STATUS_TIMESTAMP_TOO_OLD, i);
+            commit_error(&state, ValidationErrorCode::TimestampTooOld, i);
         }
 
         // Construct the full 80-byte header from authenticated state + prover input
@@ -612,13 +636,13 @@ pub fn main() {
 
         // PoW check: hash must meet target (uses state.nbits directly — no conversion)
         if !hash_meets_target(&block_hash, state.nbits) {
-            commit_error(&state, STATUS_POW_INSUFFICIENT, i);
+            commit_error(&state, ValidationErrorCode::PowInsufficient, i);
         }
 
         // Genesis special case: the first constructed header must match Bitcoin mainnet genesis.
         if state.height == 0 {
             if block_hash != MAINNET_GENESIS_HASH_RAW {
-                commit_error(&state, STATUS_GENESIS_HASH_MISMATCH, i);
+                commit_error(&state, ValidationErrorCode::GenesisHashMismatch, i);
             }
             state.genesis_hash = block_hash;
             state.chain_work = work_from_bits(state.nbits);
@@ -640,7 +664,9 @@ pub fn main() {
             // Retarget if this block completes an epoch
             if new_height % 2016 == 0 {
                 println!("cycle-tracker-start: retarget");
-                let actual_timespan = new_header.timestamp.wrapping_sub(state.epoch_start_timestamp);
+                let actual_timespan = new_header
+                    .timestamp
+                    .wrapping_sub(state.epoch_start_timestamp);
                 let expected_timespan: u32 = 2016 * 600;
                 let clamped = actual_timespan
                     .max(expected_timespan / 4)

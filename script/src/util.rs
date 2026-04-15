@@ -5,6 +5,7 @@
 //! The host constructs full 80-byte headers from state + NewHeader, matching the circuit.
 
 use sha2::{Digest, Sha256};
+use sp1_sdk::SP1PublicValues;
 
 // ============================================================================
 // Constants — must match the program
@@ -17,10 +18,8 @@ pub const STATE_SIZE: usize = 192;
 pub const NEW_HEADER_SIZE: usize = 44;
 const GENESIS_NBITS: u32 = 0x1d00ffff;
 const MAINNET_GENESIS_HASH_RAW: [u8; 32] = [
-    0x6f, 0xe2, 0x8c, 0x0a, 0xb6, 0xf1, 0xb3, 0x72,
-    0xc1, 0xa6, 0xa2, 0x46, 0xae, 0x63, 0xf7, 0x4f,
-    0x93, 0x1e, 0x83, 0x65, 0xe1, 0x5a, 0x08, 0x9c,
-    0x68, 0xd6, 0x19, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x6f, 0xe2, 0x8c, 0x0a, 0xb6, 0xf1, 0xb3, 0x72, 0xc1, 0xa6, 0xa2, 0x46, 0xae, 0x63, 0xf7, 0x4f,
+    0x93, 0x1e, 0x83, 0x65, 0xe1, 0x5a, 0x08, 0x9c, 0x68, 0xd6, 0x19, 0x00, 0x00, 0x00, 0x00, 0x00,
 ];
 
 const WINDOW_SIZE: usize = 11;
@@ -33,6 +32,7 @@ const NIBBLE_MASK: u64 = 0xF;
 
 /// A new header as supplied by the prover — only non-deterministic fields.
 /// prev_blockhash and nbits are constructed from authenticated state.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewHeader {
     pub version: u32,
     pub merkle_root: [u8; 32],
@@ -88,7 +88,7 @@ impl NewHeader {
 /// 136..140   epoch_start_ts
 /// 140..184   timestamps
 /// 184..192   sorted_nibbles
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct State {
     pub genesis_hash: [u8; 32],
     pub prev_blockhash: [u8; 32],
@@ -123,7 +123,12 @@ impl State {
 
     /// Deserialize from exactly 192 bytes (must match program's from_bytes).
     pub fn from_bytes(bytes: &[u8]) -> Self {
-        assert_eq!(bytes.len(), STATE_SIZE, "State must be {} bytes", STATE_SIZE);
+        assert_eq!(
+            bytes.len(),
+            STATE_SIZE,
+            "State must be {} bytes",
+            STATE_SIZE
+        );
         let mut off = 0;
 
         let genesis_hash: [u8; 32] = bytes[off..off + 32].try_into().unwrap();
@@ -148,8 +153,7 @@ impl State {
             off += 8;
         }
 
-        let epoch_start_timestamp =
-            u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap());
+        let epoch_start_timestamp = u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap());
         off += 4;
 
         let mut timestamps = [0u32; WINDOW_SIZE];
@@ -158,8 +162,7 @@ impl State {
             off += 4;
         }
 
-        let sorted_nibbles =
-            u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
+        let sorted_nibbles = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
 
         Self {
             genesis_hash,
@@ -173,19 +176,110 @@ impl State {
             sorted_nibbles,
         }
     }
+}
 
-    /// Extract the error code and header index from error output bytes.
-    /// Error output = state_bytes(192) + error_code(1) + header_index(4) = 197 bytes.
-    pub fn parse_error(error_bytes: &[u8]) -> Option<(Self, u8, u32)> {
-        if error_bytes.len() != STATE_SIZE + 1 + 4 {
-            return None;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ValidationErrorCode {
+    HeaderCountMismatch = 1,
+    PowInsufficient = 2,
+    TimestampTooOld = 3,
+    GenesisHashMismatch = 4,
+}
+
+impl ValidationErrorCode {
+    pub const fn description(self) -> &'static str {
+        match self {
+            Self::HeaderCountMismatch => "Header count mismatch",
+            Self::PowInsufficient => "PoW insufficient",
+            Self::TimestampTooOld => "Timestamp too old",
+            Self::GenesisHashMismatch => "Genesis hash mismatch",
         }
-        let state = Self::from_bytes(&error_bytes[..STATE_SIZE]);
-        let error_code = error_bytes[STATE_SIZE];
-        let header_index = u32::from_le_bytes(
-            error_bytes[STATE_SIZE + 1..STATE_SIZE + 5].try_into().unwrap()
-        );
-        Some((state, error_code, header_index))
+    }
+}
+
+impl core::fmt::Display for ValidationErrorCode {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(self.description())
+    }
+}
+
+impl TryFrom<u8> for ValidationErrorCode {
+    type Error = PublicValuesParseError;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::HeaderCountMismatch),
+            2 => Ok(Self::PowInsufficient),
+            3 => Ok(Self::TimestampTooOld),
+            4 => Ok(Self::GenesisHashMismatch),
+            _ => Err(PublicValuesParseError::UnknownErrorCode { code: value }),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProofFailure {
+    pub last_valid_state: State,
+    pub error_code: ValidationErrorCode,
+    pub header_index: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HeaderChainPublicValues {
+    Success(State),
+    Failure(ProofFailure),
+}
+
+impl HeaderChainPublicValues {
+    pub fn parse(bytes: &[u8]) -> Result<Self, PublicValuesParseError> {
+        match bytes.len() {
+            STATE_SIZE => Ok(Self::Success(State::from_bytes(bytes))),
+            len if len == STATE_SIZE + 1 + 4 => {
+                let state = State::from_bytes(&bytes[..STATE_SIZE]);
+                let error_code = ValidationErrorCode::try_from(bytes[STATE_SIZE])?;
+                let header_index =
+                    u32::from_le_bytes(bytes[STATE_SIZE + 1..STATE_SIZE + 5].try_into().unwrap());
+                Ok(Self::Failure(ProofFailure {
+                    last_valid_state: state,
+                    error_code,
+                    header_index,
+                }))
+            }
+            actual => Err(PublicValuesParseError::InvalidLength { actual }),
+        }
+    }
+
+    pub fn state(&self) -> &State {
+        match self {
+            Self::Success(state) => state,
+            Self::Failure(failure) => &failure.last_valid_state,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PublicValuesParseError {
+    InvalidLength { actual: usize },
+    UnknownErrorCode { code: u8 },
+}
+
+impl core::fmt::Display for PublicValuesParseError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::InvalidLength { actual } => {
+                write!(
+                    f,
+                    "invalid public values length: expected {} or {}, got {}",
+                    STATE_SIZE,
+                    STATE_SIZE + 1 + 4,
+                    actual,
+                )
+            }
+            Self::UnknownErrorCode { code } => {
+                write!(f, "unknown validation error code: {}", code)
+            }
+        }
     }
 }
 
@@ -237,7 +331,11 @@ pub fn load_headers_from_db(db_path: &str, start_height: u64, count: u64) -> Vec
 
 /// Convert raw 80-byte headers (from DB) to 44-byte NewHeader format (for zkVM input).
 pub fn raw_headers_to_new_headers(raw_headers: &[u8]) -> Vec<u8> {
-    assert_eq!(raw_headers.len() % 80, 0, "raw_headers must be a multiple of 80 bytes");
+    assert_eq!(
+        raw_headers.len() % 80,
+        0,
+        "raw_headers must be a multiple of 80 bytes"
+    );
     let count = raw_headers.len() / 80;
     let mut out = Vec::with_capacity(count * NEW_HEADER_SIZE);
     for i in 0..count {
@@ -265,7 +363,10 @@ pub fn double_sha256_host(data: &[u8]) -> [u8; 32] {
 
 /// Compute SHA-256 digest (host-side).
 pub fn compute_pv_digest(committed_bytes: &[u8]) -> [u8; 32] {
-    Sha256::digest(committed_bytes).into()
+    let digest = SP1PublicValues::from(committed_bytes).hash();
+    digest
+        .try_into()
+        .expect("SP1 public values hash must be 32 bytes")
 }
 
 // ============================================================================
@@ -570,8 +671,7 @@ pub fn compute_expected_state(
 
         if state.height == 0 {
             assert_eq!(
-                block_hash,
-                MAINNET_GENESIS_HASH_RAW,
+                block_hash, MAINNET_GENESIS_HASH_RAW,
                 "constructed genesis header does not match mainnet genesis hash",
             );
             // Genesis block
@@ -586,7 +686,9 @@ pub fn compute_expected_state(
 
             // Retarget if this block completes an epoch
             if new_height % 2016 == 0 {
-                let actual_timespan = new_header.timestamp.wrapping_sub(state.epoch_start_timestamp);
+                let actual_timespan = new_header
+                    .timestamp
+                    .wrapping_sub(state.epoch_start_timestamp);
                 let expected_timespan: u32 = 2016 * 600;
                 let clamped = actual_timespan
                     .max(expected_timespan / 4)
