@@ -17,98 +17,14 @@
 sp1_zkvm::entrypoint!(main);
 
 use bitcoin_header_chain_core::{
-    bits_to_target, hash_meets_target, retarget_target, target_exceeds, target_to_bits, u256_add,
-    work_from_bits, NewHeader, State, ValidationErrorCode, GENESIS_NBITS, MAINNET_GENESIS_HASH_RAW,
-    NEW_HEADER_SIZE, NIBBLE_BITS, NIBBLE_MASK, STATE_SIZE, WINDOW_SIZE,
+    add_timestamp_window, bits_to_target, check_median_timestamp, hash_meets_target,
+    retarget_target, target_exceeds, target_to_bits, u256_add, work_from_bits, NewHeader, State,
+    ValidationErrorCode, GENESIS_NBITS, MAINNET_GENESIS_HASH_RAW, NEW_HEADER_SIZE, STATE_SIZE,
+    WINDOW_SIZE,
 };
 
 mod sha256;
 use sha256::{double_sha256_80, sha256_192};
-
-// ============================================================================
-// Median Time Past (nibble-packed circular buffer)
-// ============================================================================
-
-#[inline]
-fn get_nibble(packed: u64, pos: usize) -> u8 {
-    ((packed >> (pos * NIBBLE_BITS)) & NIBBLE_MASK) as u8
-}
-
-fn find_insert_position(
-    timestamps: &[u32; WINDOW_SIZE],
-    packed: u64,
-    count: usize,
-    ts: u32,
-) -> usize {
-    for i in 0..count {
-        let idx = get_nibble(packed, i) as usize;
-        if ts < timestamps[idx] {
-            return i;
-        }
-    }
-    count
-}
-
-fn find_index_position(packed: u64, count: usize, target: usize) -> usize {
-    for i in 0..count {
-        if get_nibble(packed, i) as usize == target {
-            return i;
-        }
-    }
-    count
-}
-
-fn remove_nibble(packed: u64, pos: usize, _count: usize) -> u64 {
-    let lower_mask = (1u64 << (pos * NIBBLE_BITS)) - 1;
-    let lower = packed & lower_mask;
-    let upper = (packed >> ((pos + 1) * NIBBLE_BITS)) << (pos * NIBBLE_BITS);
-    lower | upper
-}
-
-fn insert_nibble(packed: u64, pos: usize, val: u8, count: usize) -> u64 {
-    let lower_mask = (1u64 << (pos * NIBBLE_BITS)) - 1;
-    let lower = packed & lower_mask;
-    let upper = (packed & !lower_mask) << NIBBLE_BITS;
-    let new_packed = lower | ((val as u64) << (pos * NIBBLE_BITS)) | upper;
-    let new_mask = (1u64 << ((count + 1) * NIBBLE_BITS)) - 1;
-    new_packed & new_mask
-}
-
-/// Add timestamp at the given slot and update packed sorted indices.
-/// `prev_count` = number of timestamps already in window (before adding this one).
-fn add_timestamp(
-    timestamps: &mut [u32; WINDOW_SIZE],
-    prev_count: usize,
-    packed: u64,
-    ts: u32,
-    slot: usize,
-) -> u64 {
-    if prev_count < WINDOW_SIZE {
-        // Window still growing
-        timestamps[slot] = ts;
-        let pos = find_insert_position(timestamps, packed, prev_count, ts);
-        insert_nibble(packed, pos, slot as u8, prev_count)
-    } else {
-        // Window full: evict oldest (at slot), insert new
-        let pos_old = find_index_position(packed, WINDOW_SIZE, slot);
-        let without = remove_nibble(packed, pos_old, WINDOW_SIZE);
-        let pos_new = find_insert_position(timestamps, without, WINDOW_SIZE - 1, ts);
-        timestamps[slot] = ts;
-        insert_nibble(without, pos_new, slot as u8, WINDOW_SIZE - 1)
-    }
-}
-
-/// Check if timestamp is <= median of the current window.
-/// Returns `true` if the timestamp violates the median time past rule.
-/// `count` = number of timestamps currently in window (before adding).
-fn check_median(timestamps: &[u32; WINDOW_SIZE], packed: u64, count: usize, ts: u32) -> bool {
-    if count == 0 {
-        return false;
-    }
-    let median_pos = (count - 1) / 2;
-    let idx = get_nibble(packed, median_pos) as usize;
-    ts <= timestamps[idx]
-}
 
 // ============================================================================
 // Header Construction
@@ -218,7 +134,7 @@ pub fn main() {
         // Run this before hashing so timestamp violations surface directly.
         let timestamp_count = (state.height as usize).min(WINDOW_SIZE);
         if timestamp_count > 0
-            && check_median(
+            && check_median_timestamp(
                 &state.timestamps,
                 state.sorted_nibbles,
                 timestamp_count,
@@ -253,7 +169,7 @@ pub fn main() {
             // Median timestamp count (before adding this one)
             // Add timestamp to circular buffer
             let slot = (state.height as usize) % WINDOW_SIZE;
-            state.sorted_nibbles = add_timestamp(
+            state.sorted_nibbles = add_timestamp_window(
                 &mut state.timestamps,
                 timestamp_count,
                 state.sorted_nibbles,

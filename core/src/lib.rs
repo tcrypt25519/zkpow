@@ -389,6 +389,44 @@ pub fn u256_add(a: [u64; 4], b: [u64; 4]) -> [u64; 4] {
     result
 }
 
+/// Return `true` when `timestamp` violates median-time-past for the current window.
+#[must_use]
+pub fn check_median_timestamp(
+    timestamps: &[u32; WINDOW_SIZE],
+    packed: u64,
+    count: usize,
+    timestamp: u32,
+) -> bool {
+    if count == 0 {
+        return false;
+    }
+    let median_pos = (count - 1) / 2;
+    let idx = get_nibble(packed, median_pos) as usize;
+    timestamp <= timestamps[idx]
+}
+
+/// Insert a new timestamp into the circular window and update the packed sort order.
+#[must_use]
+pub fn add_timestamp_window(
+    timestamps: &mut [u32; WINDOW_SIZE],
+    prev_count: usize,
+    packed: u64,
+    timestamp: u32,
+    slot: usize,
+) -> u64 {
+    if prev_count < WINDOW_SIZE {
+        timestamps[slot] = timestamp;
+        let pos = find_insert_position(timestamps, packed, prev_count, timestamp);
+        insert_nibble(packed, pos, slot as u8, prev_count)
+    } else {
+        let pos_old = find_index_position(packed, WINDOW_SIZE, slot);
+        let without = remove_nibble(packed, pos_old);
+        let pos_new = find_insert_position(timestamps, without, WINDOW_SIZE - 1, timestamp);
+        timestamps[slot] = timestamp;
+        insert_nibble(without, pos_new, slot as u8, WINDOW_SIZE - 1)
+    }
+}
+
 /// Compute a retargeted 256-bit target from the previous target and measured timespan.
 #[must_use]
 pub fn retarget_target(
@@ -540,4 +578,49 @@ fn q_le_r_shifted(q: &[u64; 4], r: u32, k: u32) -> bool {
         }
     }
     true
+}
+
+#[inline]
+fn get_nibble(packed: u64, pos: usize) -> u8 {
+    ((packed >> (pos * NIBBLE_BITS)) & NIBBLE_MASK) as u8
+}
+
+fn find_insert_position(
+    timestamps: &[u32; WINDOW_SIZE],
+    packed: u64,
+    count: usize,
+    timestamp: u32,
+) -> usize {
+    for i in 0..count {
+        let idx = get_nibble(packed, i) as usize;
+        if timestamp < timestamps[idx] {
+            return i;
+        }
+    }
+    count
+}
+
+fn find_index_position(packed: u64, count: usize, target: usize) -> usize {
+    for i in 0..count {
+        if get_nibble(packed, i) as usize == target {
+            return i;
+        }
+    }
+    count
+}
+
+fn remove_nibble(packed: u64, pos: usize) -> u64 {
+    let lower_mask = (1u64 << (pos * NIBBLE_BITS)) - 1;
+    let lower = packed & lower_mask;
+    let upper = (packed >> ((pos + 1) * NIBBLE_BITS)) << (pos * NIBBLE_BITS);
+    lower | upper
+}
+
+fn insert_nibble(packed: u64, pos: usize, val: u8, count: usize) -> u64 {
+    let lower_mask = (1u64 << (pos * NIBBLE_BITS)) - 1;
+    let lower = packed & lower_mask;
+    let upper = (packed & !lower_mask) << NIBBLE_BITS;
+    let new_packed = lower | ((val as u64) << (pos * NIBBLE_BITS)) | upper;
+    let new_mask = (1u64 << ((count + 1) * NIBBLE_BITS)) - 1;
+    new_packed & new_mask
 }
