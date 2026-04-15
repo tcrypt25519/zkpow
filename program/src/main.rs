@@ -7,7 +7,7 @@
 //!
 //! Input protocol:
 //!   1. prev_height: u32
-//!   2. If prev_height > 0: prev_vk([u32;8]), pv_digest([u8;32]), pv_bytes (192 bytes)
+//!   2. If prev_height > 0: prev_vk([u32;8]), pv_digest([u8;32]), prev_state_bytes (192 bytes)
 //!   3. num_headers: u32
 //!   4. headers_bytes: Vec<u8> — num_headers * 44 bytes (NewHeader instances)
 //!
@@ -262,6 +262,18 @@ fn hash_meets_target(hash: &[u8; 32], nbits: u32) -> bool {
         }
     }
     true
+}
+
+fn target_exceeds(lhs: &[u8; 32], rhs: &[u8; 32]) -> bool {
+    for i in (0..32).rev() {
+        if lhs[i] > rhs[i] {
+            return true;
+        }
+        if lhs[i] < rhs[i] {
+            return false;
+        }
+    }
+    false
 }
 
 fn u256_add(a: [u64; 4], b: [u64; 4]) -> [u64; 4] {
@@ -561,13 +573,13 @@ pub fn main() {
         // Read previous proof verification data
         let prev_vk = sp1_zkvm::io::read::<[u32; 8]>();
         let prev_pv_digest = sp1_zkvm::io::read::<[u8; 32]>();
-        let prev_pv_bytes = sp1_zkvm::io::read_vec();
+        let prev_state_bytes_vec = sp1_zkvm::io::read_vec();
 
-        if prev_pv_bytes.len() != STATE_SIZE {
+        if prev_state_bytes_vec.len() != STATE_SIZE {
             panic!(
                 "Previous proof public values wrong size: expected {}, got {}",
                 STATE_SIZE,
-                prev_pv_bytes.len()
+                prev_state_bytes_vec.len()
             );
         }
 
@@ -575,7 +587,7 @@ pub fn main() {
         sp1_zkvm::lib::verify::verify_sp1_proof(&prev_vk, &prev_pv_digest);
 
         let mut prev_state_bytes = [0u8; STATE_SIZE];
-        prev_state_bytes.copy_from_slice(&prev_pv_bytes);
+        prev_state_bytes.copy_from_slice(&prev_state_bytes_vec);
         let actual_prev_pv_digest = sha256_192(&prev_state_bytes);
         if actual_prev_pv_digest != prev_pv_digest {
             panic!("Previous proof public values digest mismatch");
@@ -612,7 +624,7 @@ pub fn main() {
     for i in 0..num_headers {
         let offset = (i as usize) * NEW_HEADER_SIZE;
         let new_header = NewHeader::from_bytes(&headers_bytes, offset);
-        let new_height = state.height + 1;
+        let validated_count = state.height + 1;
 
         // Median timestamp check — always runs when height > 0.
         // Run this before hashing so timestamp violations surface directly.
@@ -661,8 +673,17 @@ pub fn main() {
                 slot,
             );
 
-            // Retarget if this block completes an epoch
-            if new_height % 2016 == 0 {
+            // The first block of a new epoch becomes the reference point for the
+            // next retarget window.
+            if state.height % 2016 == 0 {
+                state.epoch_start_timestamp = new_header.timestamp;
+            }
+
+            // `state.height` is the next chain height to validate. Once this block
+            // is accepted, `validated_count` becomes the number of blocks in the
+            // authenticated prefix. Retargeting runs at that point so the new
+            // difficulty applies to the next header we construct.
+            if validated_count % 2016 == 0 {
                 println!("cycle-tracker-start: retarget");
                 let actual_timespan = new_header
                     .timestamp
@@ -671,10 +692,13 @@ pub fn main() {
                 let clamped = actual_timespan
                     .max(expected_timespan / 4)
                     .min(expected_timespan * 4);
-                let new_target = retarget_target(&state.target, clamped, expected_timespan);
+                let pow_limit = bits_to_target(GENESIS_NBITS);
+                let mut new_target = retarget_target(&state.target, clamped, expected_timespan);
+                if target_exceeds(&new_target, &pow_limit) {
+                    new_target = pow_limit;
+                }
                 state.nbits = target_to_bits(&new_target);
                 state.target = new_target;
-                state.epoch_start_timestamp = new_header.timestamp;
                 println!("cycle-tracker-end: retarget");
             }
 
@@ -683,7 +707,7 @@ pub fn main() {
 
         // Always update prev_blockhash and height
         state.prev_blockhash = block_hash;
-        state.height = new_height;
+        state.height = validated_count;
     }
 
     // --- Commit success output ----------------------------------------------

@@ -80,6 +80,23 @@ fn check(name: &str, result: Result<(), String>) {
     }
 }
 
+fn raw_header_bits(raw_headers: &[u8], height: usize) -> Result<u32, String> {
+    let start = height
+        .checked_mul(80)
+        .ok_or_else(|| format!("header offset overflow for height {}", height))?;
+    let end = start + 80;
+    let raw_header = raw_headers
+        .get(start..end)
+        .ok_or_else(|| format!("missing raw header at height {}", height))?;
+    let bits = raw_header
+        .get(72..76)
+        .ok_or_else(|| format!("missing bits field at height {}", height))?;
+    let bits: [u8; 4] = bits
+        .try_into()
+        .map_err(|_| format!("invalid bits field width at height {}", height))?;
+    Ok(u32::from_le_bytes(bits))
+}
+
 #[tokio::main]
 async fn main() {
     utils::setup_logger();
@@ -87,6 +104,10 @@ async fn main() {
 
     // === Success cases ===
     check("success_100_headers", test_success_100_headers().await);
+    check(
+        "retarget_boundary_schedule",
+        test_retarget_boundary_schedule().await,
+    );
     check(
         "recursive_chain_success",
         test_recursive_chain_success().await,
@@ -128,6 +149,79 @@ async fn test_success_100_headers() -> Result<(), String> {
 
     let pv = run_and_get_pv(stdin).await?;
     expect_success(&pv).map(|_| ())
+}
+
+async fn test_retarget_boundary_schedule() -> Result<(), String> {
+    const FIRST_BOUNDARY_HEIGHT: usize = 2016;
+    // Mainnet first changes difficulty at height 32256. We simulate through the
+    // end of the previous epoch and assert the state carries the exact bits that
+    // appear in the next raw header.
+    const RETARGET_HEIGHT: usize = 32256;
+    const EPOCH_LENGTH: usize = 2016;
+
+    let first_epoch_raw = util::load_headers_from_db(DB_PATH, 0, FIRST_BOUNDARY_HEIGHT as u64);
+    let first_epoch_headers = util::raw_headers_to_new_headers(&first_epoch_raw);
+    let first_epoch_state =
+        util::compute_expected_state(0, FIRST_BOUNDARY_HEIGHT as u32, &first_epoch_headers, None);
+    let first_retarget_bits = raw_header_bits(
+        &util::load_headers_from_db(DB_PATH, FIRST_BOUNDARY_HEIGHT as u64, 1),
+        0,
+    )?;
+    if first_epoch_state.nbits != first_retarget_bits {
+        return Err(format!(
+            "expected first retarget boundary bits {:#x}, got {:#x}",
+            first_retarget_bits, first_epoch_state.nbits,
+        ));
+    }
+
+    let raw_headers = util::load_headers_from_db(DB_PATH, 0, RETARGET_HEIGHT as u64);
+    let new_headers = util::raw_headers_to_new_headers(&raw_headers);
+    let state = util::compute_expected_state(0, RETARGET_HEIGHT as u32, &new_headers, None);
+
+    if state.height != RETARGET_HEIGHT as u32 {
+        return Err(format!(
+            "expected validated height {}, got {}",
+            RETARGET_HEIGHT, state.height,
+        ));
+    }
+
+    let previous_epoch_bits = raw_header_bits(&raw_headers, RETARGET_HEIGHT - 1)?;
+    let next_header_bits = raw_header_bits(
+        &util::load_headers_from_db(DB_PATH, RETARGET_HEIGHT as u64, 1),
+        0,
+    )?;
+
+    if previous_epoch_bits == next_header_bits {
+        return Err(format!(
+            "expected a real retarget boundary at height {}, but bits stayed at {:#x}",
+            RETARGET_HEIGHT, next_header_bits,
+        ));
+    }
+
+    if state.nbits != next_header_bits {
+        return Err(format!(
+            "expected next-header bits {:#x} after completing epoch, got {:#x}",
+            next_header_bits, state.nbits,
+        ));
+    }
+
+    let pre_boundary_raw = util::load_headers_from_db(DB_PATH, 0, (RETARGET_HEIGHT - 1) as u64);
+    let pre_boundary_headers = util::raw_headers_to_new_headers(&pre_boundary_raw);
+    let pre_boundary_state =
+        util::compute_expected_state(0, (RETARGET_HEIGHT - 1) as u32, &pre_boundary_headers, None);
+
+    if pre_boundary_state.nbits != previous_epoch_bits {
+        return Err(format!(
+            "expected pre-boundary bits {:#x}, got {:#x}",
+            previous_epoch_bits, pre_boundary_state.nbits,
+        ));
+    }
+
+    if (pre_boundary_state.height as usize).is_multiple_of(EPOCH_LENGTH) {
+        return Err("pre-boundary state unexpectedly ended on an epoch boundary".to_string());
+    }
+
+    Ok(())
 }
 
 async fn test_error_header_count_mismatch() -> Result<(), String> {

@@ -393,6 +393,18 @@ pub fn bits_to_target(bits: u32) -> [u8; 32] {
     target
 }
 
+fn target_exceeds(lhs: &[u8; 32], rhs: &[u8; 32]) -> bool {
+    for i in (0..32).rev() {
+        if lhs[i] > rhs[i] {
+            return true;
+        }
+        if lhs[i] < rhs[i] {
+            return false;
+        }
+    }
+    false
+}
+
 fn target_to_bits(target: &[u8; 32]) -> u32 {
     let mut high_byte = 31usize;
     while high_byte > 0 && target[high_byte] == 0 {
@@ -663,7 +675,7 @@ pub fn compute_expected_state(
     for i in 0..num_headers {
         let offset = (i as usize) * NEW_HEADER_SIZE;
         let new_header = NewHeader::from_bytes(new_headers_bytes, offset);
-        let new_height = state.height + 1;
+        let validated_count = state.height + 1;
 
         // Construct the full header (matching the circuit)
         let header = construct_header(&state, &new_header);
@@ -684,8 +696,17 @@ pub fn compute_expected_state(
             // Median timestamp count (before adding this one)
             let timestamp_count = (state.height as usize).min(WINDOW_SIZE);
 
-            // Retarget if this block completes an epoch
-            if new_height % 2016 == 0 {
+            // The first block of a new epoch becomes the reference point for the
+            // next retarget window.
+            if state.height % 2016 == 0 {
+                state.epoch_start_timestamp = new_header.timestamp;
+            }
+
+            // `state.height` is the next chain height to validate. Once this block
+            // is accepted, `validated_count` becomes the number of blocks in the
+            // authenticated prefix. Retargeting runs at that point so the new
+            // difficulty applies to the next header we construct.
+            if validated_count % 2016 == 0 {
                 let actual_timespan = new_header
                     .timestamp
                     .wrapping_sub(state.epoch_start_timestamp);
@@ -693,10 +714,13 @@ pub fn compute_expected_state(
                 let clamped = actual_timespan
                     .max(expected_timespan / 4)
                     .min(expected_timespan * 4);
-                let new_target = retarget_target(&state.target, clamped, expected_timespan);
+                let pow_limit = bits_to_target(GENESIS_NBITS);
+                let mut new_target = retarget_target(&state.target, clamped, expected_timespan);
+                if target_exceeds(&new_target, &pow_limit) {
+                    new_target = pow_limit;
+                }
                 state.nbits = target_to_bits(&new_target);
                 state.target = new_target;
-                state.epoch_start_timestamp = new_header.timestamp;
             }
 
             // Add timestamp to circular buffer
@@ -712,7 +736,7 @@ pub fn compute_expected_state(
         }
 
         state.prev_blockhash = block_hash;
-        state.height = new_height;
+        state.height = validated_count;
     }
 
     state
