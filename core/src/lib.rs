@@ -12,6 +12,9 @@ pub const STATE_SIZE: usize = 192;
 /// Size of each [`NewHeader`] input from the prover.
 pub const NEW_HEADER_SIZE: usize = 44;
 
+/// Size of a serialized Bitcoin block header in bytes.
+pub const BLOCK_HEADER_SIZE: usize = 80;
+
 /// Sliding window size used for median-time-past checks.
 pub const WINDOW_SIZE: usize = 11;
 
@@ -201,6 +204,55 @@ impl From<u32> for BlockTimestamp {
 impl From<BlockTimestamp> for u32 {
     fn from(value: BlockTimestamp) -> Self {
         value.0
+    }
+}
+
+/// Fully constructed Bitcoin block header in consensus serialization order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BlockHeader([u8; BLOCK_HEADER_SIZE]);
+
+impl BlockHeader {
+    /// Construct a block header from authenticated state and prover-supplied fields.
+    #[must_use]
+    pub fn from_state(state: &State, new_header: &NewHeader) -> Self {
+        let mut header = [0u8; BLOCK_HEADER_SIZE];
+        header[0..4].copy_from_slice(&new_header.version.to_le_bytes());
+        header[4..36].copy_from_slice(state.prev_blockhash.as_raw());
+        header[36..68].copy_from_slice(&new_header.merkle_root);
+        header[68..72].copy_from_slice(&new_header.timestamp.to_consensus().to_le_bytes());
+        header[72..76].copy_from_slice(&state.nbits.to_consensus().to_le_bytes());
+        header[76..80].copy_from_slice(&new_header.nonce.to_le_bytes());
+        Self(header)
+    }
+
+    /// Borrow the raw consensus bytes.
+    #[must_use]
+    pub const fn as_bytes(&self) -> &[u8; BLOCK_HEADER_SIZE] {
+        &self.0
+    }
+
+    /// Consume into raw consensus bytes.
+    #[must_use]
+    pub const fn into_bytes(self) -> [u8; BLOCK_HEADER_SIZE] {
+        self.0
+    }
+}
+
+impl From<[u8; BLOCK_HEADER_SIZE]> for BlockHeader {
+    fn from(value: [u8; BLOCK_HEADER_SIZE]) -> Self {
+        Self(value)
+    }
+}
+
+impl From<BlockHeader> for [u8; BLOCK_HEADER_SIZE] {
+    fn from(value: BlockHeader) -> Self {
+        value.0
+    }
+}
+
+impl Default for BlockHeader {
+    fn default() -> Self {
+        Self([0u8; BLOCK_HEADER_SIZE])
     }
 }
 

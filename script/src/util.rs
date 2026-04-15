@@ -12,9 +12,9 @@ use sha2::{Digest, Sha256};
 use sp1_sdk::SP1PublicValues;
 
 pub use bitcoin_header_chain_core::{
-    BlockHash, BlockTimestamp, ChainWork, CompactTarget, HeaderChainPublicValues, NewHeader,
-    ParseError, ProofFailure, PublicValuesParseError, State, Target, ValidationErrorCode,
-    NEW_HEADER_SIZE, STATE_SIZE,
+    BlockHash, BlockHeader, BlockTimestamp, ChainWork, CompactTarget, HeaderChainPublicValues,
+    NewHeader, ParseError, ProofFailure, PublicValuesParseError, State, Target,
+    ValidationErrorCode, NEW_HEADER_SIZE, STATE_SIZE,
 };
 
 // ============================================================================
@@ -104,22 +104,6 @@ pub fn compute_pv_digest(committed_bytes: &[u8]) -> [u8; 32] {
 }
 
 // ============================================================================
-// Header Construction (host-side, identical to program)
-// ============================================================================
-
-/// Build the full 80-byte Bitcoin block header from authenticated state + NewHeader.
-fn construct_header(state: &State, new_header: &NewHeader) -> [u8; 80] {
-    let mut header = [0u8; 80];
-    header[0..4].copy_from_slice(&new_header.version.to_le_bytes());
-    header[4..36].copy_from_slice(state.prev_blockhash.as_raw());
-    header[36..68].copy_from_slice(&new_header.merkle_root);
-    header[68..72].copy_from_slice(&new_header.timestamp.to_consensus().to_le_bytes());
-    header[72..76].copy_from_slice(&state.nbits.to_consensus().to_le_bytes());
-    header[76..80].copy_from_slice(&new_header.nonce.to_le_bytes());
-    header
-}
-
-// ============================================================================
 // State Computation (host-side simulation of zkVM logic)
 // ============================================================================
 
@@ -152,8 +136,8 @@ pub fn compute_expected_state(
         let validated_count = state.height + 1;
 
         // Construct the full header (matching the circuit)
-        let header = construct_header(&state, &new_header);
-        let block_hash = double_sha256_host(&header);
+        let header = BlockHeader::from_state(&state, &new_header);
+        let block_hash = double_sha256_host(header.as_bytes());
 
         if state.height == 0 {
             assert_eq!(
