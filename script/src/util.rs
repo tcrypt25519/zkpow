@@ -149,8 +149,8 @@ pub fn compute_next_state(initial_state: &State, headers: &[NewHeader]) -> State
         let header = new_header.into_header(state.block_hash, required_nbits);
         let block_hash = BlockHash::from_raw(double_sha256_host(&header.to_bytes()));
 
-        let timestamp_count = ((state.height as usize) + 1).min(WINDOW_SIZE);
-        let slot = (validated_height as usize) % WINDOW_SIZE;
+        let timestamp_count = (state.height as usize).min(WINDOW_SIZE);
+        let slot = (state.height as usize) % WINDOW_SIZE;
         state.sorted_nibbles = add_timestamp_window(
             &mut state.timestamps,
             timestamp_count,

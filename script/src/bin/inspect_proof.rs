@@ -125,7 +125,7 @@ fn display_state(state: &util::State) {
     );
 
     // Timestamp window
-    let timestamp_count = ((state.height as usize) + 1).min(11);
+    let timestamp_count = (state.height as usize).min(11);
     if timestamp_count > 0 {
         println!("\nTimestamp Window ({} entries):", timestamp_count);
         for i in 0..timestamp_count {

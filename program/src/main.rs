@@ -82,9 +82,9 @@ pub fn main() {
         let validated_height = state.height + 1;
         let required_nbits = state.next_nbits;
 
-        // Median timestamp check over the authenticated tip window.
+        // Median timestamp check over the timestamps already tracked in state.
         // Run this before hashing so timestamp violations surface directly.
-        let timestamp_count = ((state.height as usize) + 1).min(WINDOW_SIZE);
+        let timestamp_count = (state.height as usize).min(WINDOW_SIZE);
         if timestamp_count > 0
             && check_median_timestamp(
                 &state.timestamps,
@@ -107,7 +107,7 @@ pub fn main() {
             commit_error(&state, ValidationErrorCode::PowInsufficient, header_index);
         }
 
-        let slot = (validated_height as usize) % WINDOW_SIZE;
+        let slot = (state.height as usize) % WINDOW_SIZE;
         state.sorted_nibbles = add_timestamp_window(
             &mut state.timestamps,
             timestamp_count,
