@@ -3,9 +3,9 @@
 //! Each test crafts specific inputs that should trigger a particular error code,
 //! then runs the zkVM program via `client.execute()` and checks the public values.
 //!
-//! Input protocol (header-construction architecture):
-//!   stdin: prev_height(u32) → [prev_vk(32) + pv_digest(32) + pv_bytes] → num_headers(u32) → headers(44 bytes each)
-//!   output: state(192) on success, or state(192) + error_code(1) + header_index(4) on error
+//! Input protocol:
+//!   stdin: encoded_input(Vec<u8>) → [recursive proof witness when state.height > 0]
+//!   output: state on success, or state + error_code(1) + header_index(4) on error
 
 use sp1_sdk::prelude::*;
 use sp1_sdk::utils;
@@ -13,12 +13,15 @@ use sp1_sdk::{Elf, HashableKey, Prover, ProverClient, SP1Stdin};
 
 use bitcoin_header_chain_script::util;
 use bitcoin_header_chain_script::util::{
-    HeaderChainPublicValues, ValidationErrorCode, NEW_HEADER_SIZE,
+    HeaderChainPublicValues, Input, PublicValuesDigest, RecursiveProof, ValidationErrorCode,
+    VerifierKeyDigest, STATE_SIZE,
 };
 
 const ELF: Elf = include_elf!("bitcoin-header-chain-program");
 
 const DB_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../bitcoin_headers.sqlite",);
+const MAINNET_GENESIS_HEX: &str =
+    "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f";
 
 /// Run the program with given inputs and return the raw public values.
 async fn run_and_get_pv(stdin: SP1Stdin) -> Result<Vec<u8>, String> {
@@ -101,6 +104,26 @@ fn consensus_bits(bits: util::CompactTarget) -> u32 {
     bits.to_consensus()
 }
 
+fn mainnet_genesis_hash() -> util::BlockHash {
+    let mut bytes: [u8; 32] = hex::decode(MAINNET_GENESIS_HEX)
+        .expect("mainnet genesis hash should decode")
+        .try_into()
+        .expect("mainnet genesis hash should be 32 bytes");
+    bytes.reverse();
+    util::BlockHash::from_raw(bytes)
+}
+
+fn mainnet_genesis_state() -> util::State {
+    let genesis_header = util::load_header_from_db(DB_PATH, 0);
+    util::genesis_state(genesis_header, mainnet_genesis_hash())
+}
+
+fn stdin_for_input(input: &Input) -> SP1Stdin {
+    let mut stdin = SP1Stdin::new();
+    stdin.write_vec(input.to_bytes());
+    stdin
+}
+
 #[tokio::main]
 async fn main() {
     utils::setup_logger();
@@ -143,45 +166,43 @@ async fn main() {
 // ============================================================================
 
 async fn test_success_100_headers() -> Result<(), String> {
-    let raw_headers = util::load_headers_from_db(DB_PATH, 0, 100);
-    let headers_bytes = util::raw_headers_to_new_headers(&raw_headers);
-
-    let mut stdin = SP1Stdin::new();
-    stdin.write::<u32>(&0); // prev_height = 0 (genesis start)
-    stdin.write::<u32>(&100);
-    stdin.write_vec(headers_bytes);
+    let genesis_state = mainnet_genesis_state();
+    let raw_headers = util::load_headers_from_db(DB_PATH, 1, 100);
+    let headers = util::raw_headers_to_new_headers(&raw_headers);
+    let input = Input::new(genesis_state, None, headers).map_err(|err| err.to_string())?;
+    let stdin = stdin_for_input(&input);
 
     let pv = run_and_get_pv(stdin).await?;
     expect_success(&pv).map(|_| ())
 }
 
 async fn test_retarget_boundary_schedule() -> Result<(), String> {
-    const FIRST_BOUNDARY_HEIGHT: usize = 2016;
+    const FIRST_BOUNDARY_TIP_HEIGHT: usize = 2015;
     // Mainnet first changes difficulty at height 32256. We simulate through the
     // end of the previous epoch and assert the state carries the exact bits that
     // appear in the next raw header.
     const RETARGET_HEIGHT: usize = 32256;
     const EPOCH_LENGTH: usize = 2016;
+    let genesis_state = mainnet_genesis_state();
 
-    let first_epoch_raw = util::load_headers_from_db(DB_PATH, 0, FIRST_BOUNDARY_HEIGHT as u64);
+    let first_epoch_raw = util::load_headers_from_db(DB_PATH, 1, FIRST_BOUNDARY_TIP_HEIGHT as u64);
     let first_epoch_headers = util::raw_headers_to_new_headers(&first_epoch_raw);
-    let first_epoch_state =
-        util::compute_expected_state(0, FIRST_BOUNDARY_HEIGHT as u32, &first_epoch_headers, None);
+    let first_epoch_state = util::compute_next_state(&genesis_state, &first_epoch_headers);
     let first_retarget_bits = raw_header_bits(
-        &util::load_headers_from_db(DB_PATH, FIRST_BOUNDARY_HEIGHT as u64, 1),
+        &util::load_headers_from_db(DB_PATH, (FIRST_BOUNDARY_TIP_HEIGHT + 1) as u64, 1),
         0,
     )?;
-    if consensus_bits(first_epoch_state.nbits) != first_retarget_bits {
+    if consensus_bits(first_epoch_state.next_nbits) != first_retarget_bits {
         return Err(format!(
             "expected first retarget boundary bits {:#x}, got {:#x}",
             first_retarget_bits,
-            consensus_bits(first_epoch_state.nbits),
+            consensus_bits(first_epoch_state.next_nbits),
         ));
     }
 
-    let raw_headers = util::load_headers_from_db(DB_PATH, 0, RETARGET_HEIGHT as u64);
+    let raw_headers = util::load_headers_from_db(DB_PATH, 1, (RETARGET_HEIGHT - 1) as u64);
     let new_headers = util::raw_headers_to_new_headers(&raw_headers);
-    let state = util::compute_expected_state(0, RETARGET_HEIGHT as u32, &new_headers, None);
+    let state = util::compute_next_state(&genesis_state, &new_headers);
 
     if state.height != RETARGET_HEIGHT as u32 {
         return Err(format!(
@@ -203,24 +224,23 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
         ));
     }
 
-    if consensus_bits(state.nbits) != next_header_bits {
+    if consensus_bits(state.next_nbits) != next_header_bits {
         return Err(format!(
             "expected next-header bits {:#x} after completing epoch, got {:#x}",
             next_header_bits,
-            consensus_bits(state.nbits),
+            consensus_bits(state.next_nbits),
         ));
     }
 
-    let pre_boundary_raw = util::load_headers_from_db(DB_PATH, 0, (RETARGET_HEIGHT - 1) as u64);
+    let pre_boundary_raw = util::load_headers_from_db(DB_PATH, 1, (RETARGET_HEIGHT - 2) as u64);
     let pre_boundary_headers = util::raw_headers_to_new_headers(&pre_boundary_raw);
-    let pre_boundary_state =
-        util::compute_expected_state(0, (RETARGET_HEIGHT - 1) as u32, &pre_boundary_headers, None);
+    let pre_boundary_state = util::compute_next_state(&genesis_state, &pre_boundary_headers);
 
-    if consensus_bits(pre_boundary_state.nbits) != previous_epoch_bits {
+    if consensus_bits(pre_boundary_state.next_nbits) != previous_epoch_bits {
         return Err(format!(
             "expected pre-boundary bits {:#x}, got {:#x}",
             previous_epoch_bits,
-            consensus_bits(pre_boundary_state.nbits),
+            consensus_bits(pre_boundary_state.next_nbits),
         ));
     }
 
@@ -232,13 +252,16 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
 }
 
 async fn test_error_header_count_mismatch() -> Result<(), String> {
-    let raw_headers = util::load_headers_from_db(DB_PATH, 0, 10);
-    let headers_bytes = util::raw_headers_to_new_headers(&raw_headers);
+    let genesis_state = mainnet_genesis_state();
+    let raw_headers = util::load_headers_from_db(DB_PATH, 1, 10);
+    let headers = util::raw_headers_to_new_headers(&raw_headers);
+    let input = Input::new(genesis_state, None, headers).map_err(|err| err.to_string())?;
+    let mut encoded = input.to_bytes();
+    let tampered_count_offset = STATE_SIZE;
+    encoded[tampered_count_offset..tampered_count_offset + 4].copy_from_slice(&20u32.to_le_bytes());
 
     let mut stdin = SP1Stdin::new();
-    stdin.write::<u32>(&0);
-    stdin.write::<u32>(&20); // Claim 20, provide only 10 * 44 bytes
-    stdin.write_vec(headers_bytes);
+    stdin.write_vec(encoded);
 
     let pv = run_and_get_pv(stdin).await?;
     expect_failure(&pv, ValidationErrorCode::HeaderCountMismatch, 0)
@@ -248,45 +271,27 @@ async fn test_error_timestamp_too_old() -> Result<(), String> {
     // Load blocks 0-12 so the median buffer is full (11 blocks after genesis).
     // Block 12's median check uses blocks 1-11 timestamps.
     // We corrupt block 12's timestamp to be older than the median.
-    let raw_headers = util::load_headers_from_db(DB_PATH, 0, 13);
-    let mut headers_bytes = util::raw_headers_to_new_headers(&raw_headers);
-
-    // Set block 12's timestamp (offset 12*44 + 36) to genesis timestamp,
-    // which is older than all block 1-11 timestamps.
-    // NewHeader layout: version(4) + merkle_root(32) + timestamp(4) + nonce(4)
-    // timestamp is at offset 36 within each 44-byte NewHeader
-    let offset = 12 * NEW_HEADER_SIZE + 36;
-    let genesis_ts: u32 = 1231006505;
-    headers_bytes[offset] = (genesis_ts & 0xFF) as u8;
-    headers_bytes[offset + 1] = ((genesis_ts >> 8) & 0xFF) as u8;
-    headers_bytes[offset + 2] = ((genesis_ts >> 16) & 0xFF) as u8;
-    headers_bytes[offset + 3] = ((genesis_ts >> 24) & 0xFF) as u8;
-
-    let mut stdin = SP1Stdin::new();
-    stdin.write::<u32>(&0);
-    stdin.write::<u32>(&13);
-    stdin.write_vec(headers_bytes);
+    let genesis_state = mainnet_genesis_state();
+    let raw_headers = util::load_headers_from_db(DB_PATH, 1, 13);
+    let mut headers = util::raw_headers_to_new_headers(&raw_headers);
+    headers[11].timestamp = util::BlockTimestamp::from_consensus(1231006505);
+    let input = Input::new(genesis_state, None, headers).map_err(|err| err.to_string())?;
+    let stdin = stdin_for_input(&input);
 
     let pv = run_and_get_pv(stdin).await?;
-    expect_failure(&pv, ValidationErrorCode::TimestampTooOld, 12)
+    expect_failure(&pv, ValidationErrorCode::TimestampTooOld, 11)
 }
 
 async fn test_error_pow_insufficient() -> Result<(), String> {
-    // Load blocks 0-1, corrupt block 1's nonce.
-    let raw_headers = util::load_headers_from_db(DB_PATH, 0, 2);
-    let mut headers_bytes = util::raw_headers_to_new_headers(&raw_headers);
-
-    // Block 1 starts at offset 44. NewHeader nonce is at offset 40 within each 44-byte struct.
-    let off = NEW_HEADER_SIZE + 40;
-    headers_bytes[off] ^= 0xFF; // corrupt block 1's nonce
-
-    let mut stdin = SP1Stdin::new();
-    stdin.write::<u32>(&0);
-    stdin.write::<u32>(&2);
-    stdin.write_vec(headers_bytes);
+    let genesis_state = mainnet_genesis_state();
+    let raw_headers = util::load_headers_from_db(DB_PATH, 1, 2);
+    let mut headers = util::raw_headers_to_new_headers(&raw_headers);
+    headers[0].nonce ^= 0xFF;
+    let input = Input::new(genesis_state, None, headers).map_err(|err| err.to_string())?;
+    let stdin = stdin_for_input(&input);
 
     let pv = run_and_get_pv(stdin).await?;
-    expect_failure(&pv, ValidationErrorCode::PowInsufficient, 1)
+    expect_failure(&pv, ValidationErrorCode::PowInsufficient, 0)
 }
 
 async fn test_recursive_chain_success() -> Result<(), String> {
@@ -297,13 +302,12 @@ async fn test_recursive_chain_success() -> Result<(), String> {
         .map_err(|e| format!("setup: {}", e))?;
     let vk = pk.verifying_key();
 
-    // === Run 1: Genesis → Block 9 ===
-    let raw1 = util::load_headers_from_db(DB_PATH, 0, 10);
+    // === Run 1: genesis state → block 10 ===
+    let genesis_state = mainnet_genesis_state();
+    let raw1 = util::load_headers_from_db(DB_PATH, 1, 10);
     let headers1 = util::raw_headers_to_new_headers(&raw1);
-    let mut stdin1 = SP1Stdin::new();
-    stdin1.write::<u32>(&0); // prev_height = 0
-    stdin1.write::<u32>(&10);
-    stdin1.write_vec(headers1);
+    let input1 = Input::new(genesis_state, None, headers1).map_err(|err| err.to_string())?;
+    let stdin1 = stdin_for_input(&input1);
 
     let proof1 = client
         .prove(&pk, stdin1)
@@ -318,21 +322,23 @@ async fn test_recursive_chain_success() -> Result<(), String> {
         return Err(format!("Run 1: expected height 10, got {}", state1.height));
     }
 
-    // === Run 2: Extend from Run 1 (blocks 10-19) ===
-    let raw2 = util::load_headers_from_db(DB_PATH, 10, 10);
+    // === Run 2: Extend from Run 1 (blocks 11-20) ===
+    let raw2 = util::load_headers_from_db(DB_PATH, 11, 10);
     let headers2 = util::raw_headers_to_new_headers(&raw2);
-    let mut stdin2 = SP1Stdin::new();
-    stdin2.write::<u32>(&10); // prev_height = 10
-    stdin2.write::<[u32; 8]>(&vk.hash_u32());
-    let pv_digest = util::compute_pv_digest(&pv1_bytes);
-    stdin2.write::<[u8; 32]>(&pv_digest);
-    stdin2.write_vec(state1.to_bytes());
+    let input2 = Input::new(
+        state1,
+        Some(RecursiveProof {
+            verifier_key: VerifierKeyDigest::from_raw(vk.hash_u32()),
+            public_values_digest: PublicValuesDigest::from_raw(util::compute_pv_digest(&pv1_bytes)),
+        }),
+        headers2,
+    )
+    .map_err(|err| err.to_string())?;
+    let mut stdin2 = stdin_for_input(&input2);
     let sp1_sdk::SP1Proof::Compressed(inner_proof) = &proof1.proof else {
         return Err("Run 1 proof is not compressed".to_string());
     };
     stdin2.write_proof(inner_proof.as_ref().clone(), vk.vk.clone());
-    stdin2.write::<u32>(&10);
-    stdin2.write_vec(headers2);
 
     let (pv2, _) = client
         .execute(ELF, stdin2)

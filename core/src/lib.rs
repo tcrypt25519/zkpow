@@ -7,7 +7,7 @@ extern crate alloc;
 use alloc::vec::Vec;
 
 /// Size of the serialized [`State`] in bytes.
-pub const STATE_SIZE: usize = 192;
+pub const STATE_SIZE: usize = 240;
 
 /// Size of each [`NewHeader`] input from the prover.
 pub const NEW_HEADER_SIZE: usize = 44;
@@ -207,52 +207,123 @@ impl From<BlockTimestamp> for u32 {
     }
 }
 
-/// Fully constructed Bitcoin block header in consensus serialization order.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct BlockHeader([u8; BLOCK_HEADER_SIZE]);
+/// A Bitcoin block header with typed fields.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Header {
+    pub version: u32,
+    pub prev_blockhash: BlockHash,
+    pub merkle_root: [u8; 32],
+    pub timestamp: BlockTimestamp,
+    pub nbits: CompactTarget,
+    pub nonce: u32,
+}
 
-impl BlockHeader {
-    /// Construct a block header from authenticated state and prover-supplied fields.
+impl Header {
+    /// Serialize to exactly [`BLOCK_HEADER_SIZE`] bytes.
     #[must_use]
-    pub fn from_state(state: &State, new_header: &NewHeader) -> Self {
-        let mut header = [0u8; BLOCK_HEADER_SIZE];
-        header[0..4].copy_from_slice(&new_header.version.to_le_bytes());
-        header[4..36].copy_from_slice(state.prev_blockhash.as_raw());
-        header[36..68].copy_from_slice(&new_header.merkle_root);
-        header[68..72].copy_from_slice(&new_header.timestamp.to_consensus().to_le_bytes());
-        header[72..76].copy_from_slice(&state.nbits.to_consensus().to_le_bytes());
-        header[76..80].copy_from_slice(&new_header.nonce.to_le_bytes());
-        Self(header)
+    pub fn to_bytes(&self) -> [u8; BLOCK_HEADER_SIZE] {
+        let mut bytes = [0u8; BLOCK_HEADER_SIZE];
+        bytes[0..4].copy_from_slice(&self.version.to_le_bytes());
+        bytes[4..36].copy_from_slice(self.prev_blockhash.as_raw());
+        bytes[36..68].copy_from_slice(&self.merkle_root);
+        bytes[68..72].copy_from_slice(&self.timestamp.to_consensus().to_le_bytes());
+        bytes[72..76].copy_from_slice(&self.nbits.to_consensus().to_le_bytes());
+        bytes[76..80].copy_from_slice(&self.nonce.to_le_bytes());
+        bytes
     }
 
-    /// Borrow the raw consensus bytes.
+    /// Deserialize from exactly [`BLOCK_HEADER_SIZE`] bytes.
+    pub fn parse(bytes: &[u8]) -> Result<Self, ParseError> {
+        if bytes.len() != BLOCK_HEADER_SIZE {
+            return Err(ParseError::InvalidLength {
+                expected: BLOCK_HEADER_SIZE,
+                actual: bytes.len(),
+            });
+        }
+
+        let mut off = 0;
+        let version = u32::from_le_bytes(take::<4>(bytes, &mut off)?);
+        let prev_blockhash = BlockHash::from_raw(take::<32>(bytes, &mut off)?);
+        let merkle_root = take::<32>(bytes, &mut off)?;
+        let timestamp =
+            BlockTimestamp::from_consensus(u32::from_le_bytes(take::<4>(bytes, &mut off)?));
+        let nbits = CompactTarget::from_consensus(u32::from_le_bytes(take::<4>(bytes, &mut off)?));
+        let nonce = u32::from_le_bytes(take::<4>(bytes, &mut off)?);
+
+        Ok(Self {
+            version,
+            prev_blockhash,
+            merkle_root,
+            timestamp,
+            nbits,
+            nonce,
+        })
+    }
+}
+
+/// Digest of a program verifier key.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct VerifierKeyDigest([u32; 8]);
+
+impl VerifierKeyDigest {
     #[must_use]
-    pub const fn as_bytes(&self) -> &[u8; BLOCK_HEADER_SIZE] {
+    pub const fn from_raw(raw: [u32; 8]) -> Self {
+        Self(raw)
+    }
+
+    #[must_use]
+    pub const fn as_raw(&self) -> &[u32; 8] {
         &self.0
     }
 
-    /// Consume into raw consensus bytes.
     #[must_use]
-    pub const fn into_bytes(self) -> [u8; BLOCK_HEADER_SIZE] {
+    pub const fn into_raw(self) -> [u32; 8] {
         self.0
     }
 }
 
-impl From<[u8; BLOCK_HEADER_SIZE]> for BlockHeader {
-    fn from(value: [u8; BLOCK_HEADER_SIZE]) -> Self {
+impl From<[u32; 8]> for VerifierKeyDigest {
+    fn from(value: [u32; 8]) -> Self {
         Self(value)
     }
 }
 
-impl From<BlockHeader> for [u8; BLOCK_HEADER_SIZE] {
-    fn from(value: BlockHeader) -> Self {
+impl From<VerifierKeyDigest> for [u32; 8] {
+    fn from(value: VerifierKeyDigest) -> Self {
         value.0
     }
 }
 
-impl Default for BlockHeader {
-    fn default() -> Self {
-        Self([0u8; BLOCK_HEADER_SIZE])
+/// Digest of committed public values.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PublicValuesDigest([u8; 32]);
+
+impl PublicValuesDigest {
+    #[must_use]
+    pub const fn from_raw(raw: [u8; 32]) -> Self {
+        Self(raw)
+    }
+
+    #[must_use]
+    pub const fn as_raw(&self) -> &[u8; 32] {
+        &self.0
+    }
+
+    #[must_use]
+    pub const fn into_raw(self) -> [u8; 32] {
+        self.0
+    }
+}
+
+impl From<[u8; 32]> for PublicValuesDigest {
+    fn from(value: [u8; 32]) -> Self {
+        Self(value)
+    }
+}
+
+impl From<PublicValuesDigest> for [u8; 32] {
+    fn from(value: PublicValuesDigest) -> Self {
+        value.0
     }
 }
 
@@ -291,8 +362,28 @@ impl core::fmt::Display for ParseError {
     }
 }
 
+fn take<const N: usize>(data: &[u8], off: &mut usize) -> Result<[u8; N], ParseError> {
+    let start = *off;
+    let end = start.checked_add(N).ok_or(ParseError::Truncated {
+        offset: start,
+        needed: N,
+        actual: data.len().saturating_sub(start),
+    })?;
+    let bytes = data.get(start..end).ok_or(ParseError::Truncated {
+        offset: start,
+        needed: N,
+        actual: data.len().saturating_sub(start),
+    })?;
+    *off = end;
+    bytes.try_into().map_err(|_| ParseError::Truncated {
+        offset: start,
+        needed: N,
+        actual: data.len().saturating_sub(start),
+    })
+}
+
 /// Prover-supplied fields for a new header.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NewHeader {
     pub version: u32,
     pub merkle_root: [u8; 32],
@@ -330,31 +421,56 @@ impl NewHeader {
         })
     }
 
+    /// Serialize to exactly [`NEW_HEADER_SIZE`] bytes.
+    #[must_use]
+    pub fn to_bytes(&self) -> [u8; NEW_HEADER_SIZE] {
+        let mut bytes = [0u8; NEW_HEADER_SIZE];
+        bytes[0..4].copy_from_slice(&self.version.to_le_bytes());
+        bytes[4..36].copy_from_slice(&self.merkle_root);
+        bytes[36..40].copy_from_slice(&self.timestamp.to_consensus().to_le_bytes());
+        bytes[40..44].copy_from_slice(&self.nonce.to_le_bytes());
+        bytes
+    }
+
+    /// Materialize a full [`Header`] using authenticated chain context.
+    #[must_use]
+    pub fn into_header(self, prev_blockhash: BlockHash, nbits: CompactTarget) -> Header {
+        Header {
+            version: self.version,
+            prev_blockhash,
+            merkle_root: self.merkle_root,
+            timestamp: self.timestamp,
+            nbits,
+            nonce: self.nonce,
+        }
+    }
+
+    /// Construct a [`NewHeader`] from a full [`Header`].
+    #[must_use]
+    pub fn from_header(header: &Header) -> Self {
+        Self {
+            version: header.version,
+            merkle_root: header.merkle_root,
+            timestamp: header.timestamp,
+            nonce: header.nonce,
+        }
+    }
+
     /// Construct a [`NewHeader`] from a full raw 80-byte Bitcoin header.
     #[must_use]
     pub fn from_raw_header(raw: &[u8; 80]) -> Self {
-        let version = u32::from_le_bytes(raw[0..4].try_into().unwrap());
-        let mut merkle_root = [0u8; 32];
-        merkle_root.copy_from_slice(&raw[36..68]);
-        let timestamp =
-            BlockTimestamp::from_consensus(u32::from_le_bytes(raw[68..72].try_into().unwrap()));
-        let nonce = u32::from_le_bytes(raw[76..80].try_into().unwrap());
-        Self {
-            version,
-            merkle_root,
-            timestamp,
-            nonce,
-        }
+        let header = Header::parse(raw).expect("raw Bitcoin header should parse");
+        Self::from_header(&header)
     }
 }
 
 /// Complete authenticated validation state, serialized between recursive iterations.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct State {
+    pub header: Header,
+    pub block_hash: BlockHash,
     pub genesis_hash: BlockHash,
-    pub prev_blockhash: BlockHash,
-    pub nbits: CompactTarget,
-    pub target: Target,
+    pub next_nbits: CompactTarget,
     pub height: u32,
     pub chain_work: ChainWork,
     pub epoch_start_timestamp: BlockTimestamp,
@@ -367,10 +483,10 @@ impl State {
     #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(STATE_SIZE);
+        out.extend_from_slice(&self.header.to_bytes());
+        out.extend_from_slice(self.block_hash.as_raw());
         out.extend_from_slice(self.genesis_hash.as_raw());
-        out.extend_from_slice(self.prev_blockhash.as_raw());
-        out.extend_from_slice(&self.nbits.to_consensus().to_le_bytes());
-        out.extend_from_slice(self.target.as_raw());
+        out.extend_from_slice(&self.next_nbits.to_consensus().to_le_bytes());
         out.extend_from_slice(&self.height.to_le_bytes());
         for &limb in self.chain_work.as_limbs() {
             out.extend_from_slice(&limb.to_le_bytes());
@@ -393,50 +509,33 @@ impl State {
         }
 
         let mut off = 0;
-
-        let genesis_hash = BlockHash::from_raw(bytes[off..off + 32].try_into().unwrap());
-        off += 32;
-
-        let prev_blockhash = BlockHash::from_raw(bytes[off..off + 32].try_into().unwrap());
-        off += 32;
-
-        let nbits = CompactTarget::from_consensus(u32::from_le_bytes(
-            bytes[off..off + 4].try_into().unwrap(),
-        ));
-        off += 4;
-
-        let target = Target::from_raw(bytes[off..off + 32].try_into().unwrap());
-        off += 32;
-
-        let height = u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap());
-        off += 4;
+        let header = Header::parse(&take::<BLOCK_HEADER_SIZE>(bytes, &mut off)?)?;
+        let block_hash = BlockHash::from_raw(take::<32>(bytes, &mut off)?);
+        let genesis_hash = BlockHash::from_raw(take::<32>(bytes, &mut off)?);
+        let next_nbits =
+            CompactTarget::from_consensus(u32::from_le_bytes(take::<4>(bytes, &mut off)?));
+        let height = u32::from_le_bytes(take::<4>(bytes, &mut off)?);
 
         let mut chain_work = [0u64; 4];
         for limb in &mut chain_work {
-            *limb = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
-            off += 8;
+            *limb = u64::from_le_bytes(take::<8>(bytes, &mut off)?);
         }
 
-        let epoch_start_timestamp = BlockTimestamp::from_consensus(u32::from_le_bytes(
-            bytes[off..off + 4].try_into().unwrap(),
-        ));
-        off += 4;
+        let epoch_start_timestamp =
+            BlockTimestamp::from_consensus(u32::from_le_bytes(take::<4>(bytes, &mut off)?));
 
         let mut timestamps = [BlockTimestamp::default(); WINDOW_SIZE];
         for ts in &mut timestamps {
-            *ts = BlockTimestamp::from_consensus(u32::from_le_bytes(
-                bytes[off..off + 4].try_into().unwrap(),
-            ));
-            off += 4;
+            *ts = BlockTimestamp::from_consensus(u32::from_le_bytes(take::<4>(bytes, &mut off)?));
         }
 
-        let sorted_nibbles = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
+        let sorted_nibbles = u64::from_le_bytes(take::<8>(bytes, &mut off)?);
 
         Ok(Self {
+            header,
+            block_hash,
             genesis_hash,
-            prev_blockhash,
-            nbits,
-            target,
+            next_nbits,
             height,
             chain_work: ChainWork::from_limbs(chain_work),
             epoch_start_timestamp,
@@ -444,15 +543,21 @@ impl State {
             sorted_nibbles,
         })
     }
+
+    /// The expanded proof-of-work target required for the next header.
+    #[must_use]
+    pub fn next_target(&self) -> Target {
+        bits_to_target(self.next_nbits)
+    }
 }
 
 impl Default for State {
     fn default() -> Self {
         Self {
+            header: Header::default(),
+            block_hash: BlockHash::default(),
             genesis_hash: BlockHash::default(),
-            prev_blockhash: BlockHash::default(),
-            nbits: CompactTarget::default(),
-            target: Target::default(),
+            next_nbits: CompactTarget::default(),
             height: 0,
             chain_work: ChainWork::default(),
             epoch_start_timestamp: BlockTimestamp::default(),
@@ -565,6 +670,150 @@ pub enum PublicValuesParseError {
     InvalidLength { actual: usize },
     UnknownErrorCode { code: u8 },
     StateParse(ParseError),
+}
+
+/// Recursive proof metadata that authenticates the current [`State`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RecursiveProof {
+    pub verifier_key: VerifierKeyDigest,
+    pub public_values_digest: PublicValuesDigest,
+}
+
+/// Parse and validation errors for [`Input`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputError {
+    Parse(ParseError),
+    MissingRecursiveProof,
+    UnexpectedRecursiveProof,
+    HeaderCountMismatch { expected: usize, actual: usize },
+}
+
+impl core::fmt::Display for InputError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Parse(err) => write!(f, "invalid input encoding: {}", err),
+            Self::MissingRecursiveProof => {
+                write!(f, "missing recursive proof metadata for non-genesis state")
+            }
+            Self::UnexpectedRecursiveProof => {
+                write!(f, "genesis state must not carry recursive proof metadata")
+            }
+            Self::HeaderCountMismatch { expected, actual } => {
+                write!(
+                    f,
+                    "header count mismatch: expected {} bytes of headers, got {}",
+                    expected, actual
+                )
+            }
+        }
+    }
+}
+
+impl From<ParseError> for InputError {
+    fn from(value: ParseError) -> Self {
+        Self::Parse(value)
+    }
+}
+
+/// Complete typed prover input.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Input {
+    pub state: State,
+    pub recursive_proof: Option<RecursiveProof>,
+    pub headers: Vec<NewHeader>,
+}
+
+impl Input {
+    /// Construct typed input with invariant validation.
+    pub fn new(
+        state: State,
+        recursive_proof: Option<RecursiveProof>,
+        headers: Vec<NewHeader>,
+    ) -> Result<Self, InputError> {
+        if state.height == 0 && recursive_proof.is_some() {
+            return Err(InputError::UnexpectedRecursiveProof);
+        }
+        if state.height > 0 && recursive_proof.is_none() {
+            return Err(InputError::MissingRecursiveProof);
+        }
+        Ok(Self {
+            state,
+            recursive_proof,
+            headers,
+        })
+    }
+
+    /// Serialize to the host/guest wire format.
+    #[must_use]
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(
+            STATE_SIZE
+                + (self.recursive_proof.is_some() as usize) * (8 * 4 + 32)
+                + 4
+                + (self.headers.len() * NEW_HEADER_SIZE),
+        );
+        out.extend_from_slice(&self.state.to_bytes());
+        if let Some(recursive_proof) = self.recursive_proof {
+            for limb in recursive_proof.verifier_key.into_raw() {
+                out.extend_from_slice(&limb.to_le_bytes());
+            }
+            out.extend_from_slice(recursive_proof.public_values_digest.as_raw());
+        }
+        out.extend_from_slice(&(self.headers.len() as u32).to_le_bytes());
+        for header in &self.headers {
+            out.extend_from_slice(&header.to_bytes());
+        }
+        out
+    }
+
+    /// Parse and validate input from the host/guest wire format.
+    pub fn parse(bytes: &[u8]) -> Result<Self, InputError> {
+        let mut off = 0;
+        let state = State::parse(&take::<STATE_SIZE>(bytes, &mut off)?)?;
+
+        let recursive_proof = if state.height == 0 {
+            None
+        } else {
+            let mut verifier_key = [0u32; 8];
+            for limb in &mut verifier_key {
+                *limb = u32::from_le_bytes(take::<4>(bytes, &mut off)?);
+            }
+            let public_values_digest = PublicValuesDigest::from_raw(take::<32>(bytes, &mut off)?);
+            Some(RecursiveProof {
+                verifier_key: VerifierKeyDigest::from_raw(verifier_key),
+                public_values_digest,
+            })
+        };
+
+        let header_count = u32::from_le_bytes(take::<4>(bytes, &mut off)?) as usize;
+        let actual_header_bytes = bytes.len().saturating_sub(off);
+        let expected_header_bytes =
+            header_count
+                .checked_mul(NEW_HEADER_SIZE)
+                .ok_or(InputError::HeaderCountMismatch {
+                    expected: usize::MAX,
+                    actual: actual_header_bytes,
+                })?;
+        if actual_header_bytes != expected_header_bytes {
+            return Err(InputError::HeaderCountMismatch {
+                expected: expected_header_bytes,
+                actual: actual_header_bytes,
+            });
+        }
+
+        let mut headers = Vec::with_capacity(header_count);
+        for index in 0..header_count {
+            headers.push(NewHeader::parse_at(bytes, off + (index * NEW_HEADER_SIZE))?);
+        }
+
+        Self::new(state, recursive_proof, headers)
+    }
+
+    /// Return the number of new headers carried by this input.
+    #[must_use]
+    pub fn header_count(&self) -> u32 {
+        self.headers.len() as u32
+    }
 }
 
 impl core::fmt::Display for PublicValuesParseError {

@@ -118,14 +118,14 @@ pub fn sha256_32(data: &[u8; 32]) -> [u8; 32] {
     state_to_hash(&state)
 }
 
-/// Compute SHA-256 of exactly 192 bytes.
+/// Compute SHA-256 of exactly 240 bytes.
 ///
 /// Produces four blocks:
 /// - Block 1: bytes 0–63
 /// - Block 2: bytes 64–127
 /// - Block 3: bytes 128–191
-/// - Block 4: 0x80 + zeros + 8-byte length (1536 bits)
-pub fn sha256_192(data: &[u8; 192]) -> [u8; 32] {
+/// - Block 4: bytes 192–239 + 0x80 + zeros + 8-byte length (1920 bits)
+pub fn sha256_240(data: &[u8; 240]) -> [u8; 32] {
     let mut state = SHA256_IV;
 
     let mut w = [0u64; 64];
@@ -189,8 +189,20 @@ pub fn sha256_192(data: &[u8; 192]) -> [u8; 32] {
     syscall_sha256_compress(&mut w, &mut state);
 
     let mut w = [0u64; 64];
-    w[0] = 0x80000000;
-    w[15] = 0x600;
+    w[0] = be_u64(data[192], data[193], data[194], data[195]);
+    w[1] = be_u64(data[196], data[197], data[198], data[199]);
+    w[2] = be_u64(data[200], data[201], data[202], data[203]);
+    w[3] = be_u64(data[204], data[205], data[206], data[207]);
+    w[4] = be_u64(data[208], data[209], data[210], data[211]);
+    w[5] = be_u64(data[212], data[213], data[214], data[215]);
+    w[6] = be_u64(data[216], data[217], data[218], data[219]);
+    w[7] = be_u64(data[220], data[221], data[222], data[223]);
+    w[8] = be_u64(data[224], data[225], data[226], data[227]);
+    w[9] = be_u64(data[228], data[229], data[230], data[231]);
+    w[10] = be_u64(data[232], data[233], data[234], data[235]);
+    w[11] = be_u64(data[236], data[237], data[238], data[239]);
+    w[12] = 0x80000000;
+    w[15] = 0x780;
     syscall_sha256_extend(&mut w);
     syscall_sha256_compress(&mut w, &mut state);
 

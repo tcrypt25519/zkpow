@@ -6,15 +6,15 @@
 
 use bitcoin_header_chain_core::{
     add_timestamp_window, bits_to_target, retarget_target, target_exceeds, target_to_bits,
-    u256_add, work_from_bits, GENESIS_NBITS, MAINNET_GENESIS_HASH_RAW, WINDOW_SIZE,
+    u256_add, work_from_bits, GENESIS_NBITS, WINDOW_SIZE,
 };
 use sha2::{Digest, Sha256};
 use sp1_sdk::SP1PublicValues;
 
 pub use bitcoin_header_chain_core::{
-    BlockHash, BlockHeader, BlockTimestamp, ChainWork, CompactTarget, HeaderChainPublicValues,
-    NewHeader, ParseError, ProofFailure, PublicValuesParseError, State, Target,
-    ValidationErrorCode, NEW_HEADER_SIZE, STATE_SIZE,
+    BlockHash, BlockTimestamp, ChainWork, CompactTarget, Header, HeaderChainPublicValues, Input,
+    InputError, NewHeader, ParseError, ProofFailure, PublicValuesDigest, PublicValuesParseError,
+    RecursiveProof, State, ValidationErrorCode, VerifierKeyDigest, NEW_HEADER_SIZE, STATE_SIZE,
 };
 
 // ============================================================================
@@ -63,25 +63,31 @@ pub fn load_headers_from_db(db_path: &str, start_height: u64, count: u64) -> Vec
     all_headers
 }
 
-/// Convert raw 80-byte headers (from DB) to 44-byte NewHeader format (for zkVM input).
-pub fn raw_headers_to_new_headers(raw_headers: &[u8]) -> Vec<u8> {
+/// Convert raw 80-byte headers (from DB) to typed [`NewHeader`] values.
+pub fn raw_headers_to_new_headers(raw_headers: &[u8]) -> Vec<NewHeader> {
     assert_eq!(
         raw_headers.len() % 80,
         0,
         "raw_headers must be a multiple of 80 bytes"
     );
     let count = raw_headers.len() / 80;
-    let mut out = Vec::with_capacity(count * NEW_HEADER_SIZE);
+    let mut out = Vec::with_capacity(count);
     for i in 0..count {
         let offset = i * 80;
         let raw: [u8; 80] = raw_headers[offset..offset + 80].try_into().unwrap();
-        let nh = NewHeader::from_raw_header(&raw);
-        out.extend_from_slice(&nh.version.to_le_bytes());
-        out.extend_from_slice(&nh.merkle_root);
-        out.extend_from_slice(&nh.timestamp.to_consensus().to_le_bytes());
-        out.extend_from_slice(&nh.nonce.to_le_bytes());
+        out.push(NewHeader::from_raw_header(&raw));
     }
     out
+}
+
+/// Load and parse a single header from the SQLite database.
+pub fn load_header_from_db(db_path: &str, height: u64) -> Header {
+    let raw_headers = load_headers_from_db(db_path, height, 1);
+    let raw_header: [u8; 80] = raw_headers
+        .as_slice()
+        .try_into()
+        .expect("exactly one raw header should be returned");
+    Header::parse(&raw_header).expect("raw Bitcoin header should parse")
 }
 
 // ============================================================================
@@ -107,94 +113,76 @@ pub fn compute_pv_digest(committed_bytes: &[u8]) -> [u8; 32] {
 // State Computation (host-side simulation of zkVM logic)
 // ============================================================================
 
-/// Simulate the zkVM program locally to compute the expected State after
-/// validating a batch of headers, optionally extending from a previous state.
-///
-/// `headers_bytes` must be in NewHeader format (44 bytes per header).
-pub fn compute_expected_state(
-    _start_height: u32,
-    num_headers: u32,
-    new_headers_bytes: &[u8],
-    prev_state: Option<&State>,
-) -> State {
-    let mut state = prev_state.cloned().unwrap_or(State {
-        genesis_hash: BlockHash::default(),
-        prev_blockhash: BlockHash::default(),
-        nbits: CompactTarget::from_consensus(GENESIS_NBITS),
-        target: bits_to_target(CompactTarget::from_consensus(GENESIS_NBITS)),
+/// Build the initial genesis state from a host-selected genesis header.
+pub fn genesis_state(genesis_header: Header, genesis_hash: BlockHash) -> State {
+    let block_hash = BlockHash::from_raw(double_sha256_host(&genesis_header.to_bytes()));
+    assert_eq!(
+        block_hash, genesis_hash,
+        "configured genesis hash must match the supplied genesis header",
+    );
+
+    let mut timestamps = [BlockTimestamp::default(); WINDOW_SIZE];
+    timestamps[0] = genesis_header.timestamp;
+
+    State {
+        header: genesis_header,
+        block_hash,
+        genesis_hash,
+        next_nbits: genesis_header.nbits,
         height: 0,
-        chain_work: ChainWork::default(),
-        epoch_start_timestamp: BlockTimestamp::default(),
-        timestamps: [BlockTimestamp::default(); WINDOW_SIZE],
+        chain_work: work_from_bits(genesis_header.nbits),
+        epoch_start_timestamp: genesis_header.timestamp,
+        timestamps,
         sorted_nibbles: 0,
-    });
+    }
+}
 
-    for i in 0..num_headers {
-        let offset = (i as usize) * NEW_HEADER_SIZE;
-        let new_header = NewHeader::parse_at(new_headers_bytes, offset)
-            .expect("new header bytes should be well-formed");
-        let validated_count = state.height + 1;
+/// Simulate the zkVM program locally to compute the expected [`State`] after
+/// validating a batch of headers.
+pub fn compute_next_state(initial_state: &State, headers: &[NewHeader]) -> State {
+    let mut state = initial_state.clone();
 
-        // Construct the full header (matching the circuit)
-        let header = BlockHeader::from_state(&state, &new_header);
-        let block_hash = double_sha256_host(header.as_bytes());
+    for new_header in headers.iter().copied() {
+        let validated_height = state.height + 1;
+        let required_nbits = state.next_nbits;
 
-        if state.height == 0 {
-            assert_eq!(
-                block_hash, MAINNET_GENESIS_HASH_RAW,
-                "constructed genesis header does not match mainnet genesis hash",
-            );
-            // Genesis block
-            state.genesis_hash = block_hash.into();
-            state.chain_work = work_from_bits(state.nbits);
+        let header = new_header.into_header(state.block_hash, required_nbits);
+        let block_hash = BlockHash::from_raw(double_sha256_host(&header.to_bytes()));
+
+        let timestamp_count = ((state.height as usize) + 1).min(WINDOW_SIZE);
+        let slot = (validated_height as usize) % WINDOW_SIZE;
+        state.sorted_nibbles = add_timestamp_window(
+            &mut state.timestamps,
+            timestamp_count,
+            state.sorted_nibbles,
+            new_header.timestamp,
+            slot,
+        );
+
+        if validated_height % 2016 == 0 {
             state.epoch_start_timestamp = new_header.timestamp;
-            state.timestamps[0] = new_header.timestamp;
-            state.sorted_nibbles = 0;
-        } else {
-            // Median timestamp count (before adding this one)
-            let timestamp_count = (state.height as usize).min(WINDOW_SIZE);
-
-            // The first block of a new epoch becomes the reference point for the
-            // next retarget window.
-            if state.height % 2016 == 0 {
-                state.epoch_start_timestamp = new_header.timestamp;
-            }
-
-            // `state.height` is the next chain height to validate. Once this block
-            // is accepted, `validated_count` becomes the number of blocks in the
-            // authenticated prefix. Retargeting runs at that point so the new
-            // difficulty applies to the next header we construct.
-            if validated_count % 2016 == 0 {
-                let actual_timespan = new_header
-                    .timestamp
-                    .wrapping_sub(state.epoch_start_timestamp);
-                let expected_timespan: u32 = 2016 * 600;
-                let clamped = actual_timespan
-                    .max(expected_timespan / 4)
-                    .min(expected_timespan * 4);
-                let pow_limit = bits_to_target(CompactTarget::from_consensus(GENESIS_NBITS));
-                let mut new_target = retarget_target(state.target, clamped, expected_timespan);
-                if target_exceeds(new_target, pow_limit) {
-                    new_target = pow_limit;
-                }
-                state.nbits = target_to_bits(new_target);
-                state.target = new_target;
-            }
-
-            // Add timestamp to circular buffer
-            let slot = (state.height as usize) % WINDOW_SIZE;
-            state.sorted_nibbles = add_timestamp_window(
-                &mut state.timestamps,
-                timestamp_count,
-                state.sorted_nibbles,
-                new_header.timestamp,
-                slot,
-            );
-            state.chain_work = u256_add(state.chain_work, work_from_bits(state.nbits));
         }
 
-        state.prev_blockhash = block_hash.into();
-        state.height = validated_count;
+        if (validated_height + 1) % 2016 == 0 {
+            let actual_timespan = new_header
+                .timestamp
+                .wrapping_sub(state.epoch_start_timestamp);
+            let expected_timespan: u32 = 2016 * 600;
+            let clamped = actual_timespan
+                .max(expected_timespan / 4)
+                .min(expected_timespan * 4);
+            let pow_limit = bits_to_target(CompactTarget::from_consensus(GENESIS_NBITS));
+            let mut new_target = retarget_target(state.next_target(), clamped, expected_timespan);
+            if target_exceeds(new_target, pow_limit) {
+                new_target = pow_limit;
+            }
+            state.next_nbits = target_to_bits(new_target);
+        }
+
+        state.chain_work = u256_add(state.chain_work, work_from_bits(required_nbits));
+        state.header = header;
+        state.block_hash = block_hash;
+        state.height = validated_height;
     }
 
     state

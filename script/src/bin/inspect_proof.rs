@@ -85,7 +85,11 @@ fn display_state(state: &util::State) {
     // Chain tip
     println!(
         "\nChain Tip:         {}",
-        reverse_hash_display(state.prev_blockhash)
+        reverse_hash_display(state.block_hash)
+    );
+    println!(
+        "Tip Prev Hash:     {}",
+        reverse_hash_display(state.header.prev_blockhash)
     );
 
     // Height
@@ -102,7 +106,14 @@ fn display_state(state: &util::State) {
     println!("Cumulative Work:   0x{}", work_hex);
 
     // Difficulty
-    println!("Nbits:             0x{:08x}", state.nbits.to_consensus());
+    println!(
+        "Header Nbits:      0x{:08x}",
+        state.header.nbits.to_consensus()
+    );
+    println!(
+        "Next Nbits:        0x{:08x}",
+        state.next_nbits.to_consensus()
+    );
 
     // Epoch start timestamp
     let epoch_start_timestamp = state.epoch_start_timestamp.to_consensus();
@@ -114,7 +125,7 @@ fn display_state(state: &util::State) {
     );
 
     // Timestamp window
-    let timestamp_count = (state.height as usize).min(11);
+    let timestamp_count = ((state.height as usize) + 1).min(11);
     if timestamp_count > 0 {
         println!("\nTimestamp Window ({} entries):", timestamp_count);
         for i in 0..timestamp_count {
