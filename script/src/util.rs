@@ -98,6 +98,12 @@ pub fn double_sha256_host(data: &[u8]) -> [u8; 32] {
     outer.into()
 }
 
+/// Hash a full Bitcoin header with double SHA-256 (host-side).
+#[must_use]
+pub fn hash_header(header: &Header) -> BlockHash {
+    BlockHash::from_raw(double_sha256_host(&header.to_bytes()))
+}
+
 /// Compute SHA-256 digest (host-side).
 pub fn compute_pv_digest(committed_bytes: &[u8]) -> [u8; 32] {
     let digest = SP1PublicValues::from(committed_bytes).hash();
@@ -112,7 +118,7 @@ pub fn compute_pv_digest(committed_bytes: &[u8]) -> [u8; 32] {
 
 /// Build the initial genesis state from a host-selected genesis header.
 pub fn genesis_state(genesis_header: Header, genesis_hash: BlockHash) -> State {
-    let block_hash = BlockHash::from_raw(double_sha256_host(&genesis_header.to_bytes()));
+    let block_hash = hash_header(&genesis_header);
     assert_eq!(
         block_hash, genesis_hash,
         "configured genesis hash must match the supplied genesis header",
@@ -136,14 +142,11 @@ pub fn genesis_state(genesis_header: Header, genesis_hash: BlockHash) -> State {
 
 /// Simulate the zkVM program locally to compute the expected [`State`] after
 /// validating a batch of headers.
-pub fn compute_next_state(initial_state: &State, headers: &[NewHeader]) -> State {
-    let mut state = initial_state.clone();
-
-    for new_header in headers.iter().copied() {
-        state = state.next(new_header, |header| {
-            BlockHash::from_raw(double_sha256_host(&header.to_bytes()))
-        });
-    }
-
-    state
+pub fn compute_final_state(initial_state: &State, headers: &[NewHeader]) -> State {
+    initial_state
+        .validate_initial(hash_header)
+        .expect("host initial state should satisfy genesis invariants");
+    initial_state
+        .apply_headers(headers, hash_header)
+        .expect("host state transition should succeed")
 }

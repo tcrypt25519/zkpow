@@ -187,7 +187,7 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
 
     let first_epoch_raw = util::load_headers_from_db(DB_PATH, 1, FIRST_BOUNDARY_TIP_HEIGHT as u64);
     let first_epoch_headers = util::raw_headers_to_new_headers(&first_epoch_raw);
-    let first_epoch_state = util::compute_next_state(&genesis_state, &first_epoch_headers);
+    let first_epoch_state = util::compute_final_state(&genesis_state, &first_epoch_headers);
     let first_retarget_bits = raw_header_bits(
         &util::load_headers_from_db(DB_PATH, (FIRST_BOUNDARY_TIP_HEIGHT + 1) as u64, 1),
         0,
@@ -202,7 +202,7 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
 
     let raw_headers = util::load_headers_from_db(DB_PATH, 1, (RETARGET_HEIGHT - 1) as u64);
     let new_headers = util::raw_headers_to_new_headers(&raw_headers);
-    let state = util::compute_next_state(&genesis_state, &new_headers);
+    let state = util::compute_final_state(&genesis_state, &new_headers);
 
     if state.height != RETARGET_HEIGHT as u32 {
         return Err(format!(
@@ -234,7 +234,7 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
 
     let pre_boundary_raw = util::load_headers_from_db(DB_PATH, 1, (RETARGET_HEIGHT - 2) as u64);
     let pre_boundary_headers = util::raw_headers_to_new_headers(&pre_boundary_raw);
-    let pre_boundary_state = util::compute_next_state(&genesis_state, &pre_boundary_headers);
+    let pre_boundary_state = util::compute_final_state(&genesis_state, &pre_boundary_headers);
 
     if consensus_bits(pre_boundary_state.next_nbits) != previous_epoch_bits {
         return Err(format!(

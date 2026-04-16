@@ -14,7 +14,6 @@ use sp1_sdk::ProverClient;
 use bitcoin_header_chain_script::util;
 use bitcoin_header_chain_script::util::{
     HeaderChainPublicValues, Input, PublicValuesDigest, RecursiveProof, VerifierKeyDigest,
-    STATE_SIZE,
 };
 
 const ELF: Elf = include_elf!("bitcoin-header-chain-program");
@@ -97,11 +96,10 @@ async fn main() {
     tracing::info!("VK digest: {:?}", vk_digest_u32);
 
     // Compute expected state by simulating locally
-    let expected_state = util::compute_next_state(&current_state, &headers);
+    let expected_state = util::compute_final_state(&current_state, &headers);
 
     // Build expected PV (the state bytes the program will commit)
     let expected_pv = expected_state.to_bytes();
-    assert_eq!(expected_pv.len(), STATE_SIZE);
 
     let recursive_proof = previous_proof.as_ref().map(|prev_proof| RecursiveProof {
         verifier_key: VerifierKeyDigest::from_raw(vk_digest_u32),
@@ -143,7 +141,7 @@ async fn main() {
                 state.to_bytes(),
                 expected_pv,
                 "Public values mismatch!\n  expected: {}\n  actual:   {}",
-                hex::encode(&expected_pv),
+                hex::encode(expected_pv),
                 hex::encode(state.to_bytes()),
             );
             tracing::info!(
@@ -184,7 +182,7 @@ async fn main() {
                 state.to_bytes(),
                 expected_pv,
                 "Proof public values mismatch!\n  expected: {}\n  actual:   {}",
-                hex::encode(&expected_pv),
+                hex::encode(expected_pv),
                 hex::encode(state.to_bytes()),
             );
             tracing::info!(

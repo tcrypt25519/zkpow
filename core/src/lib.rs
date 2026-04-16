@@ -487,27 +487,37 @@ impl State {
 
     /// The circular-buffer slot where the next timestamp should be written.
     #[must_use]
-    pub fn next_timestamp_slot(&self) -> usize {
+    fn next_timestamp_slot(&self) -> usize {
         (self.height as usize) % WINDOW_SIZE
     }
 
     /// Serialize to exactly [`STATE_SIZE`] bytes.
     #[must_use]
-    pub fn to_bytes(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(STATE_SIZE);
-        out.extend_from_slice(&self.header.to_bytes());
-        out.extend_from_slice(self.block_hash.as_raw());
-        out.extend_from_slice(self.genesis_hash.as_raw());
-        out.extend_from_slice(&self.next_nbits.to_consensus().to_le_bytes());
-        out.extend_from_slice(&self.height.to_le_bytes());
+    pub fn to_bytes(&self) -> [u8; STATE_SIZE] {
+        let mut out = [0u8; STATE_SIZE];
+        let mut off = 0;
+
+        out[off..off + BLOCK_HEADER_SIZE].copy_from_slice(&self.header.to_bytes());
+        off += BLOCK_HEADER_SIZE;
+        out[off..off + 32].copy_from_slice(self.block_hash.as_raw());
+        off += 32;
+        out[off..off + 32].copy_from_slice(self.genesis_hash.as_raw());
+        off += 32;
+        out[off..off + 4].copy_from_slice(&self.next_nbits.to_consensus().to_le_bytes());
+        off += 4;
+        out[off..off + 4].copy_from_slice(&self.height.to_le_bytes());
+        off += 4;
         for &limb in self.chain_work.as_limbs() {
-            out.extend_from_slice(&limb.to_le_bytes());
+            out[off..off + 8].copy_from_slice(&limb.to_le_bytes());
+            off += 8;
         }
-        out.extend_from_slice(&self.epoch_start_timestamp.to_consensus().to_le_bytes());
+        out[off..off + 4].copy_from_slice(&self.epoch_start_timestamp.to_consensus().to_le_bytes());
+        off += 4;
         for &ts in &self.timestamps {
-            out.extend_from_slice(&ts.to_consensus().to_le_bytes());
+            out[off..off + 4].copy_from_slice(&ts.to_consensus().to_le_bytes());
+            off += 4;
         }
-        out.extend_from_slice(&self.sorted_nibbles.to_le_bytes());
+        out[off..off + 8].copy_from_slice(&self.sorted_nibbles.to_le_bytes());
         out
     }
 
@@ -562,9 +572,39 @@ impl State {
         bits_to_target(self.next_nbits)
     }
 
+    /// Return the median time past for the currently tracked timestamps.
+    #[must_use]
+    pub fn median_time_past(&self) -> Option<BlockTimestamp> {
+        let count = self.timestamp_count();
+        if count == 0 {
+            return None;
+        }
+
+        let median_pos = (count - 1) / 2;
+        let idx = get_nibble(self.sorted_nibbles, median_pos) as usize;
+        Some(self.timestamps[idx])
+    }
+
+    /// Validate the authenticated starting state for a batch of new headers.
+    pub fn validate_initial<F>(&self, hash_header: F) -> Result<(), ValidationErrorCode>
+    where
+        F: FnOnce(&Header) -> BlockHash,
+    {
+        if self.height > 0 {
+            return Ok(());
+        }
+
+        let block_hash = hash_header(&self.header);
+        if block_hash != self.block_hash || block_hash != self.genesis_hash {
+            return Err(ValidationErrorCode::GenesisHashMismatch);
+        }
+
+        Ok(())
+    }
+
     /// Build the next authenticated state from the current state and a prover-supplied header.
     #[must_use]
-    pub fn next<F>(&self, new_header: NewHeader, hash_header: F) -> Self
+    pub fn next<F>(&self, new_header: NewHeader, hash_header: F) -> NextState<'_>
     where
         F: FnOnce(&Header) -> BlockHash,
     {
@@ -606,20 +646,36 @@ impl State {
         next_state.header = header;
         next_state.block_hash = block_hash;
         next_state.height = new_height;
-        next_state
+        NextState {
+            current: self,
+            next: next_state,
+        }
     }
 
-    /// Validate state-local invariants that the guest must constrain.
-    pub fn validate(&self) -> Result<(), ValidationErrorCode> {
-        if self.height == 0 && self.block_hash != self.genesis_hash {
-            return Err(ValidationErrorCode::GenesisHashMismatch);
+    /// Apply a batch of new headers, returning either the final state or the first failure.
+    pub fn apply_headers<F>(
+        &self,
+        headers: &[NewHeader],
+        hash_header: F,
+    ) -> Result<Self, ProofFailure>
+    where
+        F: Copy + Fn(&Header) -> BlockHash,
+    {
+        let mut state = self.clone();
+
+        for (header_index, new_header) in headers.iter().copied().enumerate() {
+            let next_state = state.next(new_header, hash_header);
+            if let Err(error_code) = next_state.validate() {
+                return Err(ProofFailure {
+                    last_valid_state: state,
+                    error_code,
+                    header_index: header_index as u32,
+                });
+            }
+            state = next_state.into_state();
         }
 
-        if self.height > 0 && !hash_meets_target(self.block_hash, self.header.nbits) {
-            return Err(ValidationErrorCode::PowInsufficient);
-        }
-
-        Ok(())
+        Ok(state)
     }
 }
 
@@ -636,6 +692,42 @@ impl Default for State {
             timestamps: [BlockTimestamp::default(); WINDOW_SIZE],
             sorted_nibbles: 0,
         }
+    }
+}
+
+/// A typed state transition built from an authenticated current state and a new header.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NextState<'a> {
+    current: &'a State,
+    next: State,
+}
+
+impl NextState<'_> {
+    /// Validate the transition-specific constraints on the candidate next state.
+    pub fn validate(&self) -> Result<(), ValidationErrorCode> {
+        if let Some(median_time_past) = self.current.median_time_past() {
+            if self.next.header.timestamp <= median_time_past {
+                return Err(ValidationErrorCode::TimestampTooOld);
+            }
+        }
+
+        if !hash_meets_target(self.next.block_hash, self.next.header.nbits) {
+            return Err(ValidationErrorCode::PowInsufficient);
+        }
+
+        Ok(())
+    }
+
+    /// Borrow the next-state candidate.
+    #[must_use]
+    pub fn state(&self) -> &State {
+        &self.next
+    }
+
+    /// Consume the transition and return the next-state candidate.
+    #[must_use]
+    pub fn into_state(self) -> State {
+        self.next
     }
 }
 
@@ -1009,25 +1101,9 @@ pub fn u256_add(a: ChainWork, b: ChainWork) -> ChainWork {
     ChainWork::from_limbs(result)
 }
 
-/// Return `true` when `timestamp` violates median-time-past for the current window.
-#[must_use]
-pub fn check_median_timestamp(
-    timestamps: &[BlockTimestamp; WINDOW_SIZE],
-    packed: u64,
-    count: usize,
-    timestamp: BlockTimestamp,
-) -> bool {
-    if count == 0 {
-        return false;
-    }
-    let median_pos = (count - 1) / 2;
-    let idx = get_nibble(packed, median_pos) as usize;
-    timestamp <= timestamps[idx]
-}
-
 /// Insert a new timestamp into the circular window and update the packed sort order.
 #[must_use]
-pub fn add_timestamp_window(
+fn add_timestamp_window(
     timestamps: &mut [BlockTimestamp; WINDOW_SIZE],
     prev_count: usize,
     packed: u64,
