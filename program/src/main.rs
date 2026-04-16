@@ -47,21 +47,20 @@ fn hash_header(header: &Header) -> BlockHash {
 
 pub fn main() {
     let input_bytes = sp1_zkvm::io::read_vec();
-    let input = match Input::parse(&input_bytes) {
+    let input = match Input::parse(&input_bytes, hash_header) {
         Ok(input) => input,
         Err(InputError::HeaderCountMismatch { .. }) if input_bytes.len() >= STATE_SIZE => {
-            let state = State::parse(&input_bytes[..STATE_SIZE])
+            let mut state = State::parse(&input_bytes[..STATE_SIZE])
                 .expect("state prefix should parse when header count mismatches");
+            if state.height == 0 {
+                state = state.bootstrap_genesis(hash_header);
+            }
             commit_error(&state, ValidationErrorCode::HeaderCountMismatch, 0);
         }
         Err(err) => panic!("input should parse: {}", err),
     };
 
     let state = input.state.clone();
-    if let Err(error_code) = state.validate_initial(hash_header) {
-        commit_error(&state, error_code, 0);
-    }
-
     if let Some(recursive_proof) = input.recursive_proof {
         sp1_zkvm::lib::verify::verify_sp1_proof(
             recursive_proof.verifier_key.as_raw(),

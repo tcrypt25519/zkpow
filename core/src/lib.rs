@@ -585,21 +585,16 @@ impl State {
         Some(self.timestamps[idx])
     }
 
-    /// Validate the authenticated starting state for a batch of new headers.
-    pub fn validate_initial<F>(&self, hash_header: F) -> Result<(), ValidationErrorCode>
+    /// Fill in the authenticated genesis hashes from the genesis header itself.
+    #[must_use]
+    pub fn bootstrap_genesis<F>(mut self, hash_header: F) -> Self
     where
         F: FnOnce(&Header) -> BlockHash,
     {
-        if self.height > 0 {
-            return Ok(());
-        }
-
         let block_hash = hash_header(&self.header);
-        if block_hash != self.block_hash || block_hash != self.genesis_hash {
-            return Err(ValidationErrorCode::GenesisHashMismatch);
-        }
-
-        Ok(())
+        self.block_hash = block_hash;
+        self.genesis_hash = block_hash;
+        self
     }
 
     /// Build the next authenticated state from the current state and a prover-supplied header.
@@ -910,13 +905,19 @@ impl Input {
     /// Serialize to the host/guest wire format.
     #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
+        let mut state_bytes = self.state.to_bytes();
+        if self.state.height == 0 {
+            let genesis_hash_offset = BLOCK_HEADER_SIZE + 32;
+            state_bytes[genesis_hash_offset..genesis_hash_offset + 32].fill(0);
+        }
+
         let mut out = Vec::with_capacity(
             STATE_SIZE
                 + (self.recursive_proof.is_some() as usize) * (8 * 4 + 32)
                 + 4
                 + (self.headers.len() * NEW_HEADER_SIZE),
         );
-        out.extend_from_slice(&self.state.to_bytes());
+        out.extend_from_slice(&state_bytes);
         if let Some(recursive_proof) = self.recursive_proof {
             for limb in recursive_proof.verifier_key.into_raw() {
                 out.extend_from_slice(&limb.to_le_bytes());
@@ -931,9 +932,15 @@ impl Input {
     }
 
     /// Parse and validate input from the host/guest wire format.
-    pub fn parse(bytes: &[u8]) -> Result<Self, InputError> {
+    pub fn parse<F>(bytes: &[u8], hash_header: F) -> Result<Self, InputError>
+    where
+        F: FnOnce(&Header) -> BlockHash,
+    {
         let mut off = 0;
-        let state = State::parse(&take::<STATE_SIZE>(bytes, &mut off)?)?;
+        let mut state = State::parse(&take::<STATE_SIZE>(bytes, &mut off)?)?;
+        if state.height == 0 {
+            state = state.bootstrap_genesis(hash_header);
+        }
 
         let recursive_proof = if state.height == 0 {
             None

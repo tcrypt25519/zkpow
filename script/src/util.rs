@@ -144,9 +144,6 @@ pub fn genesis_state(genesis_header: Header, genesis_hash: BlockHash) -> State {
 /// validating a batch of headers.
 pub fn compute_final_state(initial_state: &State, headers: &[NewHeader]) -> State {
     initial_state
-        .validate_initial(hash_header)
-        .expect("host initial state should satisfy genesis invariants");
-    initial_state
         .apply_headers(headers, hash_header)
         .expect("host state transition should succeed")
 }
