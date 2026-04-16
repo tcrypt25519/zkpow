@@ -50,11 +50,8 @@ pub fn main() {
     let input = match Input::parse(&input_bytes, hash_header) {
         Ok(input) => input,
         Err(InputError::HeaderPayloadLengthInvalid { .. }) if input_bytes.len() >= STATE_SIZE => {
-            let mut state = State::parse(&input_bytes[..STATE_SIZE])
+            let state = Input::parse_state(&input_bytes[..STATE_SIZE], hash_header)
                 .expect("state prefix should parse when header payload is malformed");
-            if state.height == 0 {
-                state = state.bootstrap_genesis(hash_header);
-            }
             commit_error(&state, ValidationErrorCode::HeaderPayloadLengthInvalid, 0);
         }
         Err(err) => panic!("input should parse: {}", err),

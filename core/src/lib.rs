@@ -585,18 +585,6 @@ impl State {
         Some(self.timestamps[idx])
     }
 
-    /// Fill in the authenticated genesis hashes from the genesis header itself.
-    #[must_use]
-    pub fn bootstrap_genesis<F>(mut self, hash_header: F) -> Self
-    where
-        F: FnOnce(&Header) -> BlockHash,
-    {
-        let block_hash = hash_header(&self.header);
-        self.block_hash = block_hash;
-        self.genesis_hash = block_hash;
-        self
-    }
-
     /// Build the next authenticated state from the current state and a prover-supplied header.
     #[must_use]
     pub fn next<F>(&self, new_header: NewHeader, hash_header: F) -> NextState<'_>
@@ -844,6 +832,7 @@ pub enum InputError {
     Parse(ParseError),
     MissingRecursiveProof,
     UnexpectedRecursiveProof,
+    GenesisHashMustBeZero,
     HeaderPayloadLengthInvalid { actual: usize },
 }
 
@@ -856,6 +845,12 @@ impl core::fmt::Display for InputError {
             }
             Self::UnexpectedRecursiveProof => {
                 write!(f, "genesis state must not carry recursive proof metadata")
+            }
+            Self::GenesisHashMustBeZero => {
+                write!(
+                    f,
+                    "genesis state input must carry an all-zero genesis hash placeholder"
+                )
             }
             Self::HeaderPayloadLengthInvalid { actual } => {
                 write!(
@@ -883,6 +878,24 @@ pub struct Input {
 }
 
 impl Input {
+    pub fn parse_state<F>(bytes: &[u8], hash_header: F) -> Result<State, InputError>
+    where
+        F: FnOnce(&Header) -> BlockHash,
+    {
+        let mut state = State::parse(bytes)?;
+        if state.height == 0 {
+            if state.genesis_hash != BlockHash::default() {
+                return Err(InputError::GenesisHashMustBeZero);
+            }
+
+            let block_hash = hash_header(&state.header);
+            state.block_hash = block_hash;
+            state.genesis_hash = block_hash;
+        }
+
+        Ok(state)
+    }
+
     /// Construct typed input with invariant validation.
     pub fn new(
         state: State,
@@ -935,10 +948,7 @@ impl Input {
         F: FnOnce(&Header) -> BlockHash,
     {
         let mut off = 0;
-        let mut state = State::parse(&take::<STATE_SIZE>(bytes, &mut off)?)?;
-        if state.height == 0 {
-            state = state.bootstrap_genesis(hash_header);
-        }
+        let state = Self::parse_state(&take::<STATE_SIZE>(bytes, &mut off)?, hash_header)?;
 
         let recursive_proof = if state.height == 0 {
             None
