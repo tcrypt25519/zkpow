@@ -56,12 +56,12 @@ pub fn main() {
         .to_bytes()
         .try_into()
         .expect("state serialization should match STATE_SIZE");
-    let expected_block_hash = BlockHash::from_raw(double_sha256_80(&state.header.to_bytes()));
-    if expected_block_hash != state.block_hash {
-        panic!("state block hash does not match serialized header");
-    }
-    if state.height == 0 && state.block_hash != state.genesis_hash {
-        panic!("genesis state must hash to its configured genesis hash");
+    if state.height == 0 {
+        let genesis_block_hash = BlockHash::from_raw(double_sha256_80(&state.header.to_bytes()));
+        if genesis_block_hash != state.genesis_hash {
+            panic!("genesis state header must hash to its configured genesis hash");
+        }
+        state.block_hash = genesis_block_hash;
     }
 
     if let Some(recursive_proof) = input.recursive_proof {
