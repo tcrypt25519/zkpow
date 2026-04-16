@@ -479,6 +479,18 @@ pub struct State {
 }
 
 impl State {
+    /// The number of timestamps currently tracked for median-time-past.
+    #[must_use]
+    pub fn timestamp_count(&self) -> usize {
+        (self.height as usize).min(WINDOW_SIZE)
+    }
+
+    /// The circular-buffer slot where the next timestamp should be written.
+    #[must_use]
+    pub fn next_timestamp_slot(&self) -> usize {
+        (self.height as usize) % WINDOW_SIZE
+    }
+
     /// Serialize to exactly [`STATE_SIZE`] bytes.
     #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
@@ -548,6 +560,66 @@ impl State {
     #[must_use]
     pub fn next_target(&self) -> Target {
         bits_to_target(self.next_nbits)
+    }
+
+    /// Build the next authenticated state from the current state and a prover-supplied header.
+    #[must_use]
+    pub fn next<F>(&self, new_header: NewHeader, hash_header: F) -> Self
+    where
+        F: FnOnce(&Header) -> BlockHash,
+    {
+        let mut next_state = self.clone();
+        let new_height = self.height + 1;
+        let required_nbits = self.next_nbits;
+        let header = new_header.into_header(self.block_hash, required_nbits);
+        let block_hash = hash_header(&header);
+
+        next_state.sorted_nibbles = add_timestamp_window(
+            &mut next_state.timestamps,
+            self.timestamp_count(),
+            self.sorted_nibbles,
+            new_header.timestamp,
+            self.next_timestamp_slot(),
+        );
+
+        if new_height % 2016 == 0 {
+            next_state.epoch_start_timestamp = new_header.timestamp;
+        }
+
+        if (new_height + 1) % 2016 == 0 {
+            let actual_timespan = new_header
+                .timestamp
+                .wrapping_sub(next_state.epoch_start_timestamp);
+            let expected_timespan: u32 = 2016 * 600;
+            let clamped = actual_timespan
+                .max(expected_timespan / 4)
+                .min(expected_timespan * 4);
+            let pow_limit = bits_to_target(CompactTarget::from_consensus(GENESIS_NBITS));
+            let mut new_target = retarget_target(self.next_target(), clamped, expected_timespan);
+            if target_exceeds(new_target, pow_limit) {
+                new_target = pow_limit;
+            }
+            next_state.next_nbits = target_to_bits(new_target);
+        }
+
+        next_state.chain_work = u256_add(self.chain_work, work_from_bits(required_nbits));
+        next_state.header = header;
+        next_state.block_hash = block_hash;
+        next_state.height = new_height;
+        next_state
+    }
+
+    /// Validate state-local invariants that the guest must constrain.
+    pub fn validate(&self) -> Result<(), ValidationErrorCode> {
+        if self.height == 0 && self.block_hash != self.genesis_hash {
+            return Err(ValidationErrorCode::GenesisHashMismatch);
+        }
+
+        if self.height > 0 && !hash_meets_target(self.block_hash, self.header.nbits) {
+            return Err(ValidationErrorCode::PowInsufficient);
+        }
+
+        Ok(())
     }
 }
 

@@ -4,10 +4,7 @@
 //! The prover supplies 44-byte NewHeader structs (version, merkle_root, timestamp, nonce).
 //! The host constructs full 80-byte headers from state + NewHeader, matching the circuit.
 
-use bitcoin_header_chain_core::{
-    add_timestamp_window, bits_to_target, retarget_target, target_exceeds, target_to_bits,
-    u256_add, work_from_bits, GENESIS_NBITS, WINDOW_SIZE,
-};
+use bitcoin_header_chain_core::{work_from_bits, WINDOW_SIZE};
 use sha2::{Digest, Sha256};
 use sp1_sdk::SP1PublicValues;
 
@@ -143,46 +140,9 @@ pub fn compute_next_state(initial_state: &State, headers: &[NewHeader]) -> State
     let mut state = initial_state.clone();
 
     for new_header in headers.iter().copied() {
-        let validated_height = state.height + 1;
-        let required_nbits = state.next_nbits;
-
-        let header = new_header.into_header(state.block_hash, required_nbits);
-        let block_hash = BlockHash::from_raw(double_sha256_host(&header.to_bytes()));
-
-        let timestamp_count = (state.height as usize).min(WINDOW_SIZE);
-        let slot = (state.height as usize) % WINDOW_SIZE;
-        state.sorted_nibbles = add_timestamp_window(
-            &mut state.timestamps,
-            timestamp_count,
-            state.sorted_nibbles,
-            new_header.timestamp,
-            slot,
-        );
-
-        if validated_height % 2016 == 0 {
-            state.epoch_start_timestamp = new_header.timestamp;
-        }
-
-        if (validated_height + 1) % 2016 == 0 {
-            let actual_timespan = new_header
-                .timestamp
-                .wrapping_sub(state.epoch_start_timestamp);
-            let expected_timespan: u32 = 2016 * 600;
-            let clamped = actual_timespan
-                .max(expected_timespan / 4)
-                .min(expected_timespan * 4);
-            let pow_limit = bits_to_target(CompactTarget::from_consensus(GENESIS_NBITS));
-            let mut new_target = retarget_target(state.next_target(), clamped, expected_timespan);
-            if target_exceeds(new_target, pow_limit) {
-                new_target = pow_limit;
-            }
-            state.next_nbits = target_to_bits(new_target);
-        }
-
-        state.chain_work = u256_add(state.chain_work, work_from_bits(required_nbits));
-        state.header = header;
-        state.block_hash = block_hash;
-        state.height = validated_height;
+        state = state.next(new_header, |header| {
+            BlockHash::from_raw(double_sha256_host(&header.to_bytes()))
+        });
     }
 
     state
