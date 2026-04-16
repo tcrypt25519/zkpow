@@ -49,13 +49,13 @@ pub fn main() {
     let input_bytes = sp1_zkvm::io::read_vec();
     let input = match Input::parse(&input_bytes, hash_header) {
         Ok(input) => input,
-        Err(InputError::HeaderCountMismatch { .. }) if input_bytes.len() >= STATE_SIZE => {
+        Err(InputError::HeaderPayloadLengthInvalid { .. }) if input_bytes.len() >= STATE_SIZE => {
             let mut state = State::parse(&input_bytes[..STATE_SIZE])
-                .expect("state prefix should parse when header count mismatches");
+                .expect("state prefix should parse when header payload is malformed");
             if state.height == 0 {
                 state = state.bootstrap_genesis(hash_header);
             }
-            commit_error(&state, ValidationErrorCode::HeaderCountMismatch, 0);
+            commit_error(&state, ValidationErrorCode::HeaderPayloadLengthInvalid, 0);
         }
         Err(err) => panic!("input should parse: {}", err),
     };

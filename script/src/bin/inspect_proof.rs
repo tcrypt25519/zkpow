@@ -36,7 +36,7 @@ fn main() {
             display_state(&failure.last_valid_state);
             println!("\n--- Error ---");
             let error_name = match failure.error_code {
-                ValidationErrorCode::HeaderCountMismatch => "Header count mismatch",
+                ValidationErrorCode::HeaderPayloadLengthInvalid => "Header payload length invalid",
                 ValidationErrorCode::PowInsufficient => "PoW insufficient",
                 ValidationErrorCode::TimestampTooOld => "Timestamp too old",
                 ValidationErrorCode::GenesisHashMismatch => "Genesis hash mismatch",

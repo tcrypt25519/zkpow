@@ -730,7 +730,7 @@ impl NextState<'_> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum ValidationErrorCode {
-    HeaderCountMismatch = 1,
+    HeaderPayloadLengthInvalid = 1,
     PowInsufficient = 2,
     TimestampTooOld = 3,
     GenesisHashMismatch = 4,
@@ -747,7 +747,7 @@ impl ValidationErrorCode {
     #[must_use]
     pub const fn description(self) -> &'static str {
         match self {
-            Self::HeaderCountMismatch => "Header count mismatch",
+            Self::HeaderPayloadLengthInvalid => "Header payload length invalid",
             Self::PowInsufficient => "PoW insufficient",
             Self::TimestampTooOld => "Timestamp too old",
             Self::GenesisHashMismatch => "Genesis hash mismatch",
@@ -766,7 +766,7 @@ impl TryFrom<u8> for ValidationErrorCode {
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
-            1 => Ok(Self::HeaderCountMismatch),
+            1 => Ok(Self::HeaderPayloadLengthInvalid),
             2 => Ok(Self::PowInsufficient),
             3 => Ok(Self::TimestampTooOld),
             4 => Ok(Self::GenesisHashMismatch),
@@ -844,7 +844,7 @@ pub enum InputError {
     Parse(ParseError),
     MissingRecursiveProof,
     UnexpectedRecursiveProof,
-    HeaderCountMismatch { expected: usize, actual: usize },
+    HeaderPayloadLengthInvalid { actual: usize },
 }
 
 impl core::fmt::Display for InputError {
@@ -857,11 +857,11 @@ impl core::fmt::Display for InputError {
             Self::UnexpectedRecursiveProof => {
                 write!(f, "genesis state must not carry recursive proof metadata")
             }
-            Self::HeaderCountMismatch { expected, actual } => {
+            Self::HeaderPayloadLengthInvalid { actual } => {
                 write!(
                     f,
-                    "header count mismatch: expected {} bytes of headers, got {}",
-                    expected, actual
+                    "header payload length {} is not a multiple of {} bytes",
+                    actual, NEW_HEADER_SIZE
                 )
             }
         }
@@ -914,7 +914,6 @@ impl Input {
         let mut out = Vec::with_capacity(
             STATE_SIZE
                 + (self.recursive_proof.is_some() as usize) * (8 * 4 + 32)
-                + 4
                 + (self.headers.len() * NEW_HEADER_SIZE),
         );
         out.extend_from_slice(&state_bytes);
@@ -924,7 +923,6 @@ impl Input {
             }
             out.extend_from_slice(recursive_proof.public_values_digest.as_raw());
         }
-        out.extend_from_slice(&(self.headers.len() as u32).to_le_bytes());
         for header in &self.headers {
             out.extend_from_slice(&header.to_bytes());
         }
@@ -956,34 +954,20 @@ impl Input {
             })
         };
 
-        let header_count = u32::from_le_bytes(take::<4>(bytes, &mut off)?) as usize;
-        let actual_header_bytes = bytes.len().saturating_sub(off);
-        let expected_header_bytes =
-            header_count
-                .checked_mul(NEW_HEADER_SIZE)
-                .ok_or(InputError::HeaderCountMismatch {
-                    expected: usize::MAX,
-                    actual: actual_header_bytes,
-                })?;
-        if actual_header_bytes != expected_header_bytes {
-            return Err(InputError::HeaderCountMismatch {
-                expected: expected_header_bytes,
-                actual: actual_header_bytes,
+        let header_bytes = bytes.len().saturating_sub(off);
+        if header_bytes % NEW_HEADER_SIZE != 0 {
+            return Err(InputError::HeaderPayloadLengthInvalid {
+                actual: header_bytes,
             });
         }
 
+        let header_count = header_bytes / NEW_HEADER_SIZE;
         let mut headers = Vec::with_capacity(header_count);
         for index in 0..header_count {
             headers.push(NewHeader::parse_at(bytes, off + (index * NEW_HEADER_SIZE))?);
         }
 
         Self::new(state, recursive_proof, headers)
-    }
-
-    /// Return the number of new headers carried by this input.
-    #[must_use]
-    pub fn header_count(&self) -> u32 {
-        self.headers.len() as u32
     }
 }
 

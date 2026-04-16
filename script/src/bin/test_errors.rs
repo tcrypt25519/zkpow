@@ -4,7 +4,8 @@
 //! then runs the zkVM program via `client.execute()` and checks the public values.
 //!
 //! Input protocol:
-//!   stdin: encoded_input(Vec<u8>) → [recursive proof witness when state.height > 0]
+//!   stdin: encoded_input(Vec<u8>) where trailing bytes are fixed-width `NewHeader`s
+//!          → [recursive proof witness when state.height > 0]
 //!   output: state on success, or state + error_code(1) + header_index(4) on error
 
 use sp1_sdk::prelude::*;
@@ -14,7 +15,7 @@ use sp1_sdk::{Elf, HashableKey, Prover, ProverClient, SP1Stdin};
 use bitcoin_header_chain_script::util;
 use bitcoin_header_chain_script::util::{
     HeaderChainPublicValues, Input, PublicValuesDigest, RecursiveProof, ValidationErrorCode,
-    VerifierKeyDigest, STATE_SIZE,
+    VerifierKeyDigest,
 };
 
 const ELF: Elf = include_elf!("bitcoin-header-chain-program");
@@ -142,8 +143,8 @@ async fn main() {
 
     // === Input validation errors ===
     check(
-        "error_header_count_mismatch",
-        test_error_header_count_mismatch().await,
+        "error_header_payload_length",
+        test_error_header_payload_length().await,
     );
 
     // === Timestamp validation errors ===
@@ -251,20 +252,19 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
     Ok(())
 }
 
-async fn test_error_header_count_mismatch() -> Result<(), String> {
+async fn test_error_header_payload_length() -> Result<(), String> {
     let genesis_state = mainnet_genesis_state();
     let raw_headers = util::load_headers_from_db(DB_PATH, 1, 10);
     let headers = util::raw_headers_to_new_headers(&raw_headers);
     let input = Input::new(genesis_state, None, headers).map_err(|err| err.to_string())?;
     let mut encoded = input.to_bytes();
-    let tampered_count_offset = STATE_SIZE;
-    encoded[tampered_count_offset..tampered_count_offset + 4].copy_from_slice(&20u32.to_le_bytes());
+    encoded.pop();
 
     let mut stdin = SP1Stdin::new();
     stdin.write_vec(encoded);
 
     let pv = run_and_get_pv(stdin).await?;
-    expect_failure(&pv, ValidationErrorCode::HeaderCountMismatch, 0)
+    expect_failure(&pv, ValidationErrorCode::HeaderPayloadLengthInvalid, 0)
 }
 
 async fn test_error_timestamp_too_old() -> Result<(), String> {
