@@ -8,8 +8,14 @@
 //!   PREV_PROOF=proof_height_1_to_100.bin cargo run --release --bin bitcoin-header-chain-script
 
 use sp1_sdk::prelude::*;
+use sp1_sdk::proof::SP1Proof;
 use sp1_sdk::HashableKey;
-use sp1_sdk::ProverClient;
+use sp1_sdk::{SP1Context, SP1ProofWithPublicValues};
+
+use num_bigint::BigUint;
+use sp1_prover::build::{build_constraints_and_witness, try_build_groth16_artifacts_dir};
+use sp1_prover::worker::{cpu_worker_builder, SP1LocalNodeBuilder};
+use sp1_recursion_gnark_ffi::Groth16Bn254Prover;
 
 use bitcoin_header_chain_script::util;
 use bitcoin_header_chain_script::util::{
@@ -86,12 +92,11 @@ async fn main() {
         raw_headers.len(),
     );
 
-    // Setup prover
-    let client = ProverClient::from_env().await;
-    let pk = client.setup(ELF).await.expect("failed to setup prover");
-
-    // Get the VK for this program
-    let vk = pk.verifying_key();
+    let node = SP1LocalNodeBuilder::from_worker_client_builder(cpu_worker_builder())
+        .build()
+        .await
+        .expect("failed to initialize local prover node");
+    let vk = node.setup(&ELF).await.expect("failed to setup prover");
     let vk_digest_u32: [u32; 8] = vk.hash_u32();
     tracing::info!("VK digest: {:?}", vk_digest_u32);
 
@@ -101,10 +106,10 @@ async fn main() {
     // Build expected PV (the state bytes the program will commit)
     let expected_pv = expected_state.to_bytes();
 
-    let recursive_proof = previous_proof.as_ref().map(|prev_proof| RecursiveProof {
+    let recursive_proof = previous_proof.as_ref().map(|prev_proof_val| RecursiveProof {
         verifier_key: VerifierKeyDigest::from_raw(vk_digest_u32),
         public_values_digest: PublicValuesDigest::from_raw(util::compute_pv_digest(
-            &prev_proof.public_values.to_vec(),
+            &prev_proof_val.public_values.to_vec(),
         )),
     });
     let input = Input::new(current_state.clone(), recursive_proof, headers.clone())
@@ -121,8 +126,8 @@ async fn main() {
 
     // Execute (dry run)
     tracing::info!("Executing program (dry run)...");
-    let (public_values, report) = client
-        .execute(ELF, stdin.clone())
+    let (public_values, _, report) = node
+        .execute(&ELF, stdin.clone(), SP1Context::default())
         .await
         .expect("execution failed");
     tracing::info!(
@@ -164,15 +169,15 @@ async fn main() {
 
     // Verify proof
     tracing::info!("Generating compressed proof...");
-    let proof = client
-        .prove(&pk, stdin.clone())
-        .compressed()
+    let compressed_proof: SP1ProofWithPublicValues = node
+        .prove(&ELF, stdin.clone(), SP1Context::default())
         .await
-        .expect("proving failed");
+        .expect("proving failed")
+        .into();
     tracing::info!("Generated compressed proof");
 
     // Verify public values on the real proof
-    let proof_pv = proof.public_values.to_vec();
+    let proof_pv = compressed_proof.public_values.to_vec();
     let parsed_proof_public_values =
         HeaderChainPublicValues::parse(&proof_pv).expect("failed to parse proof public values");
 
@@ -200,9 +205,8 @@ async fn main() {
 
     // Verify proof
     tracing::info!("Verifying proof...");
-    client
-        .verify(&proof, vk, None)
-        .expect("verification failed");
+    node.verify(&vk, &compressed_proof.proof)
+        .expect("compressed proof verification failed");
     tracing::info!("Proof verified successfully");
 
     // Save compressed proof
@@ -211,26 +215,76 @@ async fn main() {
         first_new_height,
         start_height + loaded_count,
     );
-    proof.save(&proof_path).expect("failed to save proof");
+    compressed_proof
+        .save(&proof_path)
+        .expect("failed to save proof");
     tracing::info!("Compressed proof saved to {}", proof_path);
 
-    // Generate Groth16 proof for on-chain verification
-    tracing::info!("Generating Groth16 proof...");
-    let groth16_proof = client
-        .prove(&pk, stdin)
-        .groth16()
+    tracing::info!("Generating shrink/wrap proof from compressed proof...");
+    let wrap_proof = node
+        .shrink_wrap(&compressed_proof.proof)
         .await
-        .expect("Groth16 proving failed");
-    tracing::info!("Groth16 proof generated");
+        .expect("failed to convert compressed proof into wrap proof");
+    tracing::info!("Generated shrink/wrap proof");
 
-    // Verify Groth16 proof
-    client
-        .verify(&groth16_proof, vk, None)
-        .expect("Groth16 verification failed");
+    tracing::info!("Preparing Groth16 witness from wrap proof...");
+    let build_dir = try_build_groth16_artifacts_dir(&wrap_proof.vk, &wrap_proof.proof)
+        .await
+        .expect("failed to prepare Groth16 artifacts");
+    let (_, witness) = build_constraints_and_witness(&wrap_proof.vk, &wrap_proof.proof)
+        .expect("failed to build Groth16 witness");
+    let expected_vkey_hash = BigUint::from_bytes_be(&vk.bytes32_raw()).to_string();
+    let expected_public_values_digest = compressed_proof.public_values.hash_bn254().to_string();
+
+    tracing::info!("Generating Groth16 proof from wrapped proof...");
+    let groth16_inner = tokio::task::spawn_blocking(move || {
+        let prover = Groth16Bn254Prover::new();
+        let proof = prover.prove(witness, &build_dir);
+        let [vkey_hash, committed_values_digest, exit_code, vk_root, proof_nonce] =
+            proof.public_inputs.clone();
+
+        assert_eq!(
+            vkey_hash, expected_vkey_hash,
+            "Groth16 proof verifying-key hash does not match the program VK",
+        );
+        assert_eq!(
+            committed_values_digest, expected_public_values_digest,
+            "Groth16 proof public-values digest does not match the compressed proof",
+        );
+
+        let parse_biguint = |value: &str, label: &str| {
+            value
+                .parse::<BigUint>()
+                .unwrap_or_else(|_| panic!("failed to parse {label} as BigUint"))
+        };
+
+        prover
+            .verify(
+                &proof,
+                &parse_biguint(&vkey_hash, "Groth16 vkey hash"),
+                &parse_biguint(&committed_values_digest, "Groth16 public-values digest"),
+                &parse_biguint(&exit_code, "Groth16 exit code"),
+                &parse_biguint(&vk_root, "Groth16 recursion VK root"),
+                &parse_biguint(&proof_nonce, "Groth16 proof nonce"),
+                &build_dir,
+            )
+            .expect("native Groth16 verification failed");
+
+        proof
+    })
+    .await
+    .expect("Groth16 proof task panicked");
+    tracing::info!("Generated Groth16 proof");
     tracing::info!("Groth16 proof verified");
 
+    let final_groth16_proof = SP1ProofWithPublicValues::new(
+        SP1Proof::Groth16(groth16_inner),
+        compressed_proof.public_values.clone(),
+        compressed_proof.sp1_version.clone(),
+    );
+
     let groth16_path = proof_path.replace(".bin", "_groth16.bin");
-    groth16_proof
+    final_groth16_proof
         .save(&groth16_path)
         .expect("failed to save Groth16 proof");
     tracing::info!("Groth16 proof saved to {}", groth16_path);

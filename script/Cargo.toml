@@ -7,10 +7,15 @@ publish = false
 [dependencies]
 bitcoin-header-chain-core = { workspace = true }
 sp1-sdk = { workspace = true }
+sp1-prover = { workspace = true }
+sp1-recursion-gnark-ffi = { workspace = true, features = ["native"] }
+#sp1-cuda = { version = "6.1.0", default-features = false, features = [] }
+#sp1-prover-types = { version = "6.1.0", default-features = false, features = [] }
 hex = { workspace = true }
 humantime = { workspace = true }
+num-bigint = { workspace = true }
 rusqlite = { workspace = true }
-sha2 = "0.10.8"
+sha2 = "0.10.9"
 tokio = { workspace = true }
 tracing = { workspace = true }
 
