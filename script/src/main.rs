@@ -7,12 +7,13 @@
 //!   # Run 2: Extend from previous proof
 //!   PREV_PROOF=proof_height_1_to_100.bin cargo run --release --bin bitcoin-header-chain-script
 
+use bitcoin_header_chain_script::observability;
 use bitcoin_header_chain_script::proof_pipeline::{config_from_env, generate_and_save_proofs};
 
 #[tokio::main]
 async fn main() {
     println!("Host script started. For detailed tracing, set RUST_LOG=info (e.g., RUST_LOG=info cargo run).");
-    sp1_sdk::utils::setup_logger();
+    observability::init();
 
     let config = config_from_env();
     let artifacts = generate_and_save_proofs(&config)

@@ -9,9 +9,9 @@
 //!   output: state on success, or state + error_code(1) + header_index(4) on error
 
 use sp1_sdk::prelude::*;
-use sp1_sdk::utils;
 use sp1_sdk::{Elf, HashableKey, Prover, ProverClient, SP1Stdin};
 
+use bitcoin_header_chain_script::observability;
 use bitcoin_header_chain_script::util;
 use bitcoin_header_chain_script::util::{
     HeaderChainPublicValues, Input, PublicValuesDigest, RecursiveProof, ValidationErrorCode,
@@ -127,7 +127,7 @@ fn stdin_for_input(input: &Input) -> SP1Stdin {
 
 #[tokio::main]
 async fn main() {
-    utils::setup_logger();
+    observability::init();
     println!("Running error handling tests...\n");
 
     // === Success cases ===
