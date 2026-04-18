@@ -6,11 +6,17 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
+pub mod input;
+pub use input::{Input, InputError, RecursiveProof};
+
 /// Size of the serialized [`State`] in bytes.
 pub const STATE_SIZE: usize = 240;
 
 /// Size of each [`NewHeader`] input from the prover.
 pub const NEW_HEADER_SIZE: usize = 44;
+
+/// Size of a serialized [`RecursiveProof`] in bytes.
+pub const RECURSIVE_PROOF_SIZE: usize = (8 * 4) + 32;
 
 /// Size of a serialized Bitcoin block header in bytes.
 pub const BLOCK_HEADER_SIZE: usize = 80;
@@ -819,167 +825,11 @@ pub enum PublicValuesParseError {
     StateParse(ParseError),
 }
 
-/// Recursive proof metadata that authenticates the current [`State`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RecursiveProof {
-    pub verifier_key: VerifierKeyDigest,
-    pub public_values_digest: PublicValuesDigest,
-}
 
-/// Parse and validation errors for [`Input`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InputError {
-    Parse(ParseError),
-    MissingRecursiveProof,
-    UnexpectedRecursiveProof,
-    GenesisHashMustBeZero,
-    HeaderPayloadLengthInvalid { actual: usize },
-}
 
-impl core::fmt::Display for InputError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::Parse(err) => write!(f, "invalid input encoding: {}", err),
-            Self::MissingRecursiveProof => {
-                write!(f, "missing recursive proof metadata for non-genesis state")
-            }
-            Self::UnexpectedRecursiveProof => {
-                write!(f, "genesis state must not carry recursive proof metadata")
-            }
-            Self::GenesisHashMustBeZero => {
-                write!(
-                    f,
-                    "genesis state input must carry an all-zero genesis hash placeholder"
-                )
-            }
-            Self::HeaderPayloadLengthInvalid { actual } => {
-                write!(
-                    f,
-                    "header payload length {} is not a multiple of {} bytes",
-                    actual, NEW_HEADER_SIZE
-                )
-            }
-        }
-    }
-}
 
-impl From<ParseError> for InputError {
-    fn from(value: ParseError) -> Self {
-        Self::Parse(value)
-    }
-}
 
-/// Complete typed prover input.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Input {
-    pub state: State,
-    pub recursive_proof: Option<RecursiveProof>,
-    pub headers: Vec<NewHeader>,
-}
 
-impl Input {
-    pub fn parse_state<F>(bytes: &[u8], hash_header: F) -> Result<State, InputError>
-    where
-        F: FnOnce(&Header) -> BlockHash,
-    {
-        let mut state = State::parse(bytes)?;
-        if state.height == 0 {
-            if state.genesis_hash != BlockHash::default() {
-                return Err(InputError::GenesisHashMustBeZero);
-            }
-
-            let block_hash = hash_header(&state.header);
-            state.block_hash = block_hash;
-            state.genesis_hash = block_hash;
-        }
-
-        Ok(state)
-    }
-
-    /// Construct typed input with invariant validation.
-    pub fn new(
-        state: State,
-        recursive_proof: Option<RecursiveProof>,
-        headers: Vec<NewHeader>,
-    ) -> Result<Self, InputError> {
-        if state.height == 0 && recursive_proof.is_some() {
-            return Err(InputError::UnexpectedRecursiveProof);
-        }
-        if state.height > 0 && recursive_proof.is_none() {
-            return Err(InputError::MissingRecursiveProof);
-        }
-        Ok(Self {
-            state,
-            recursive_proof,
-            headers,
-        })
-    }
-
-    /// Serialize to the host/guest wire format.
-    #[must_use]
-    pub fn to_bytes(&self) -> Vec<u8> {
-        let mut state_bytes = self.state.to_bytes();
-        if self.state.height == 0 {
-            let genesis_hash_offset = BLOCK_HEADER_SIZE + 32;
-            state_bytes[genesis_hash_offset..genesis_hash_offset + 32].fill(0);
-        }
-
-        let mut out = Vec::with_capacity(
-            STATE_SIZE
-                + (self.recursive_proof.is_some() as usize) * (8 * 4 + 32)
-                + (self.headers.len() * NEW_HEADER_SIZE),
-        );
-        out.extend_from_slice(&state_bytes);
-        if let Some(recursive_proof) = self.recursive_proof {
-            for limb in recursive_proof.verifier_key.into_raw() {
-                out.extend_from_slice(&limb.to_le_bytes());
-            }
-            out.extend_from_slice(recursive_proof.public_values_digest.as_raw());
-        }
-        for header in &self.headers {
-            out.extend_from_slice(&header.to_bytes());
-        }
-        out
-    }
-
-    /// Parse and validate input from the host/guest wire format.
-    pub fn parse<F>(bytes: &[u8], hash_header: F) -> Result<Self, InputError>
-    where
-        F: FnOnce(&Header) -> BlockHash,
-    {
-        let mut off = 0;
-        let state = Self::parse_state(&take::<STATE_SIZE>(bytes, &mut off)?, hash_header)?;
-
-        let recursive_proof = if state.height == 0 {
-            None
-        } else {
-            let mut verifier_key = [0u32; 8];
-            for limb in &mut verifier_key {
-                *limb = u32::from_le_bytes(take::<4>(bytes, &mut off)?);
-            }
-            let public_values_digest = PublicValuesDigest::from_raw(take::<32>(bytes, &mut off)?);
-            Some(RecursiveProof {
-                verifier_key: VerifierKeyDigest::from_raw(verifier_key),
-                public_values_digest,
-            })
-        };
-
-        let header_bytes = bytes.len().saturating_sub(off);
-        if header_bytes % NEW_HEADER_SIZE != 0 {
-            return Err(InputError::HeaderPayloadLengthInvalid {
-                actual: header_bytes,
-            });
-        }
-
-        let header_count = header_bytes / NEW_HEADER_SIZE;
-        let mut headers = Vec::with_capacity(header_count);
-        for index in 0..header_count {
-            headers.push(NewHeader::parse_at(bytes, off + (index * NEW_HEADER_SIZE))?);
-        }
-
-        Self::new(state, recursive_proof, headers)
-    }
-}
 
 impl core::fmt::Display for PublicValuesParseError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
