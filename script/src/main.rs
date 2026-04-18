@@ -130,14 +130,16 @@ async fn main() {
     let expected_pv = expected_state.to_bytes();
 
     tracing::info!("Preparing recursive proof and SP1 Stdin.");
-    let recursive_proof = previous_proof
-        .as_ref()
-        .map(|prev_proof_val| RecursiveProof {
+    let recursive_proof = if let Some(prev_proof_val) = previous_proof.as_ref() {
+        RecursiveProof {
             verifier_key: VerifierKeyDigest::from_raw(vk_digest_u32),
             public_values_digest: PublicValuesDigest::from_raw(util::compute_pv_digest(
                 &prev_proof_val.public_values.to_vec(),
             )),
-        });
+        }
+    } else {
+        RecursiveProof::default()
+    };
     let input = Input::new(current_state.clone(), recursive_proof, headers.clone())
         .expect("host input should satisfy invariants");
 

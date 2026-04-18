@@ -4,7 +4,8 @@ use alloc::vec::Vec;
 
 use crate::{
     BlockHash, Header, NewHeader, ParseError, State,
-    NEW_HEADER_SIZE, STATE_SIZE, VerifierKeyDigest, PublicValuesDigest, RECURSIVE_PROOF_SIZE,
+    BLOCK_HEADER_SIZE, NEW_HEADER_SIZE, STATE_SIZE, VerifierKeyDigest, PublicValuesDigest,
+    RECURSIVE_PROOF_SIZE,
 };
 
 // Helper to take a fixed-size byte array from a slice and advance the offset.
@@ -119,7 +120,7 @@ impl Input {
     }
 
     /// Parse and validate input from the host/guest wire format.
-    pub fn parse_from_bytes<F>(bytes: &[u8], hash_header: F) -> Result<Self, InputError>
+    pub fn parse<F>(bytes: &[u8], hash_header: F) -> Result<Self, InputError>
     where
         F: FnOnce(&Header) -> BlockHash + Copy,
     {
@@ -178,7 +179,12 @@ impl Input {
     /// Serialize to the host/guest wire format.
     #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
-        let state_bytes = self.state.to_bytes();
+        let mut state_bytes = self.state.to_bytes();
+        if self.state.height == 0 {
+            let genesis_hash_start = BLOCK_HEADER_SIZE + 32;
+            let genesis_hash_end = genesis_hash_start + 32;
+            state_bytes[genesis_hash_start..genesis_hash_end].fill(0);
+        }
 
         let mut out = Vec::with_capacity(
             STATE_SIZE
@@ -236,7 +242,7 @@ mod tests {
         // Even if all zeros, the space is consumed.
         input_bytes.extend_from_slice(&vec![0u8; RECURSIVE_PROOF_SIZE]);
 
-        let input = Input::parse_from_bytes(&input_bytes, dummy_hash_header).unwrap();
+        let input = Input::parse(&input_bytes, dummy_hash_header).unwrap();
 
         assert_eq!(input.state.height, 0);
         assert_eq!(input.recursive_proof, RecursiveProof::default());
@@ -282,7 +288,7 @@ mod tests {
             input_bytes.extend_from_slice(&header.to_bytes());
         }
 
-        let input = Input::parse_from_bytes(&input_bytes, dummy_hash_header).unwrap();
+        let input = Input::parse(&input_bytes, dummy_hash_header).unwrap();
 
         assert_eq!(input.state.height, 100);
         assert_eq!(input.recursive_proof.verifier_key, expected_verifier_key);
@@ -323,7 +329,7 @@ mod tests {
             input_bytes.extend_from_slice(&header.to_bytes());
         }
 
-        let input = Input::parse_from_bytes(&input_bytes, dummy_hash_header).unwrap();
+        let input = Input::parse(&input_bytes, dummy_hash_header).unwrap();
 
         assert_eq!(input.state.height, 0);
         assert_eq!(input.recursive_proof, RecursiveProof::default());

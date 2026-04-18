@@ -15,7 +15,7 @@
 sp1_zkvm::entrypoint!(main);
 
 use bitcoin_header_chain_core::{
-    BlockHash, Header, Input, InputError, State, ValidationErrorCode, STATE_SIZE,
+    BlockHash, Header, Input, State, ValidationErrorCode,
 };
 
 mod sha256;
@@ -47,18 +47,11 @@ fn hash_header(header: &Header) -> BlockHash {
 
 pub fn main() {
     let input_bytes = sp1_zkvm::io::read_vec();
-    let input = match Input::parse(&input_bytes, hash_header) {
-        Ok(input) => input,
-        Err(InputError::HeaderPayloadLengthInvalid { .. }) if input_bytes.len() >= STATE_SIZE => {
-            let state = Input::parse_state(&input_bytes[..STATE_SIZE], hash_header)
-                .expect("state prefix should parse when header payload is malformed");
-            commit_error(&state, ValidationErrorCode::HeaderPayloadLengthInvalid, 0);
-        }
-        Err(err) => panic!("input should parse: {}", err),
-    };
+    let input = Input::parse(&input_bytes, hash_header).expect("input should parse");
 
     let state = input.state.clone();
-    if let Some(recursive_proof) = input.recursive_proof {
+    if state.height > 0 {
+        let recursive_proof = input.recursive_proof;
         sp1_zkvm::lib::verify::verify_sp1_proof(
             recursive_proof.verifier_key.as_raw(),
             recursive_proof.public_values_digest.as_raw(),

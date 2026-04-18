@@ -170,7 +170,8 @@ async fn test_success_100_headers() -> Result<(), String> {
     let genesis_state = mainnet_genesis_state();
     let raw_headers = util::load_headers_from_db(DB_PATH, 1, 100);
     let headers = util::raw_headers_to_new_headers(&raw_headers);
-    let input = Input::new(genesis_state, None, headers).map_err(|err| err.to_string())?;
+    let input = Input::new(genesis_state, RecursiveProof::default(), headers)
+        .map_err(|err| err.to_string())?;
     let stdin = stdin_for_input(&input);
 
     let pv = run_and_get_pv(stdin).await?;
@@ -256,7 +257,8 @@ async fn test_error_header_payload_length() -> Result<(), String> {
     let genesis_state = mainnet_genesis_state();
     let raw_headers = util::load_headers_from_db(DB_PATH, 1, 10);
     let headers = util::raw_headers_to_new_headers(&raw_headers);
-    let input = Input::new(genesis_state, None, headers).map_err(|err| err.to_string())?;
+    let input = Input::new(genesis_state, RecursiveProof::default(), headers)
+        .map_err(|err| err.to_string())?;
     let mut encoded = input.to_bytes();
     encoded.pop();
 
@@ -275,7 +277,8 @@ async fn test_error_timestamp_too_old() -> Result<(), String> {
     let raw_headers = util::load_headers_from_db(DB_PATH, 1, 13);
     let mut headers = util::raw_headers_to_new_headers(&raw_headers);
     headers[11].timestamp = util::BlockTimestamp::from_consensus(1231006505);
-    let input = Input::new(genesis_state, None, headers).map_err(|err| err.to_string())?;
+    let input = Input::new(genesis_state, RecursiveProof::default(), headers)
+        .map_err(|err| err.to_string())?;
     let stdin = stdin_for_input(&input);
 
     let pv = run_and_get_pv(stdin).await?;
@@ -287,7 +290,8 @@ async fn test_error_pow_insufficient() -> Result<(), String> {
     let raw_headers = util::load_headers_from_db(DB_PATH, 1, 2);
     let mut headers = util::raw_headers_to_new_headers(&raw_headers);
     headers[0].nonce ^= 0xFF;
-    let input = Input::new(genesis_state, None, headers).map_err(|err| err.to_string())?;
+    let input = Input::new(genesis_state, RecursiveProof::default(), headers)
+        .map_err(|err| err.to_string())?;
     let stdin = stdin_for_input(&input);
 
     let pv = run_and_get_pv(stdin).await?;
@@ -306,7 +310,8 @@ async fn test_recursive_chain_success() -> Result<(), String> {
     let genesis_state = mainnet_genesis_state();
     let raw1 = util::load_headers_from_db(DB_PATH, 1, 10);
     let headers1 = util::raw_headers_to_new_headers(&raw1);
-    let input1 = Input::new(genesis_state, None, headers1).map_err(|err| err.to_string())?;
+    let input1 = Input::new(genesis_state, RecursiveProof::default(), headers1)
+        .map_err(|err| err.to_string())?;
     let stdin1 = stdin_for_input(&input1);
 
     let proof1 = client
@@ -327,10 +332,10 @@ async fn test_recursive_chain_success() -> Result<(), String> {
     let headers2 = util::raw_headers_to_new_headers(&raw2);
     let input2 = Input::new(
         state1,
-        Some(RecursiveProof {
+        RecursiveProof {
             verifier_key: VerifierKeyDigest::from_raw(vk.hash_u32()),
             public_values_digest: PublicValuesDigest::from_raw(util::compute_pv_digest(&pv1_bytes)),
-        }),
+        },
         headers2,
     )
     .map_err(|err| err.to_string())?;
