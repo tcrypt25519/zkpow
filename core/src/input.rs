@@ -2,9 +2,11 @@
 
 use alloc::vec::Vec;
 
+use rkyv::{Archive, Deserialize, Serialize};
+
 use crate::{
     cycle_track, BlockHash, Header, NewHeader, ParseError, PublicValuesDigest, State,
-    VerifierKeyDigest, BLOCK_HEADER_SIZE, NEW_HEADER_SIZE, RECURSIVE_PROOF_SIZE, STATE_SIZE,
+    VerifierKeyDigest, NEW_HEADER_SIZE,
 };
 
 // Helper to take a fixed-size byte array from a slice and advance the offset.
@@ -33,7 +35,7 @@ pub fn take_bytes<const N: usize>(data: &[u8], off: &mut usize) -> Result<[u8; N
 // ============================================================================
 
 /// Complete typed prover input.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Archive, Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
 pub struct Input {
     pub state: State,
     pub recursive_proof: RecursiveProof,
@@ -41,7 +43,7 @@ pub struct Input {
 }
 
 /// Recursive proof metadata that authenticates the current [`State`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Archive, Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RecursiveProof {
     pub verifier_key: VerifierKeyDigest,
     pub public_values_digest: PublicValuesDigest,
@@ -142,87 +144,40 @@ impl Input {
         F: FnOnce(&Header) -> BlockHash + Copy,
     {
         cycle_track("input/parse", || {
-            let mut off = 0;
+            let mut input: Self = cycle_track("input/parse/rkyv_deserialize", || {
+                let archived = unsafe { rkyv::archived_root::<Self>(bytes) };
+                archived
+                    .deserialize(&mut rkyv::Infallible)
+                    .expect("rkyv input deserialization should be infallible")
+            });
 
-            let mut state = cycle_track("input/parse/state", || {
-                State::parse(&take_bytes::<STATE_SIZE>(bytes, &mut off)?).map_err(InputError::from)
-            })?;
-
-            let recursive_proof = if state.height == 0 {
-                cycle_track("input/parse/genesis_recursive_proof", || {
-                    if bytes.len().saturating_sub(off) < RECURSIVE_PROOF_SIZE {
-                        return Err(InputError::InvalidRecursiveProofLength {
-                            actual: bytes.len().saturating_sub(off),
-                            expected: RECURSIVE_PROOF_SIZE,
-                        });
-                    }
-                    off += RECURSIVE_PROOF_SIZE;
-                    Ok(RecursiveProof::default())
-                })?
-            } else {
-                RecursiveProof::parse_from_bytes(bytes, &mut off)?
-            };
-
-            let header_bytes = bytes.len().saturating_sub(off);
-            if header_bytes % NEW_HEADER_SIZE != 0 {
-                return Err(InputError::HeaderPayloadLengthInvalid {
-                    actual: header_bytes,
-                });
-            }
-
-            let header_count = header_bytes / NEW_HEADER_SIZE;
-            let mut headers = Vec::with_capacity(header_count);
-            cycle_track("input/parse/headers", || {
-                for index in 0..header_count {
-                    headers.push(NewHeader::parse_at(bytes, off + (index * NEW_HEADER_SIZE))?);
-                }
-                Ok::<(), InputError>(())
-            })?;
-
-            if state.height == 0 {
-                if state.genesis_hash != BlockHash::default() {
+            if input.state.height == 0 {
+                if input.state.genesis_hash != BlockHash::default() {
                     return Err(InputError::GenesisHashMustBeZero);
                 }
 
                 cycle_track("input/parse/genesis_hash", || {
-                    let block_hash = hash_header(&state.header);
-                    state.block_hash = block_hash;
-                    state.genesis_hash = block_hash;
+                    let block_hash = hash_header(&input.state.header);
+                    input.state.block_hash = block_hash;
+                    input.state.genesis_hash = block_hash;
                 });
             }
 
-            Ok(Self {
-                state,
-                recursive_proof,
-                headers,
-            })
+            Ok(input)
         })
     }
 
     /// Serialize to the host/guest wire format.
     #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut state_bytes = self.state.to_bytes();
-        if self.state.height == 0 {
-            let genesis_hash_start = BLOCK_HEADER_SIZE + 32;
-            let genesis_hash_end = genesis_hash_start + 32;
-            state_bytes[genesis_hash_start..genesis_hash_end].fill(0);
+        let mut input = self.clone();
+        if input.state.height == 0 {
+            input.state.genesis_hash = BlockHash::default();
         }
 
-        let mut out = Vec::with_capacity(
-            STATE_SIZE + RECURSIVE_PROOF_SIZE + (self.headers.len() * NEW_HEADER_SIZE),
-        );
-        out.extend_from_slice(&state_bytes);
-
-        for limb in self.recursive_proof.verifier_key.as_raw() {
-            out.extend_from_slice(&limb.to_le_bytes());
-        }
-        out.extend_from_slice(self.recursive_proof.public_values_digest.as_raw());
-
-        for header in &self.headers {
-            out.extend_from_slice(&header.to_bytes());
-        }
-        out
+        rkyv::to_bytes::<_, 1024>(&input)
+            .expect("failed to serialize input with rkyv")
+            .into_vec()
     }
 }
 
@@ -232,9 +187,10 @@ impl Input {
 
 #[cfg(test)]
 mod tests {
+    use alloc::vec;
+
     use super::*;
     use crate::{BlockHash, BlockTimestamp, Header};
-    use alloc::vec;
 
     // Dummy hash_header for testing
     fn dummy_hash_header(_header: &Header) -> BlockHash {
@@ -255,15 +211,10 @@ mod tests {
             genesis_hash: BlockHash::default(), // Should be default for initial parse
             ..Default::default()
         };
-        let _headers: Vec<NewHeader> = Vec::new(); // No headers for this test
-
-        let mut input_bytes = Vec::new();
-        input_bytes.extend_from_slice(&genesis_state.to_bytes());
-        // For genesis, we expect RECURSIVE_PROOF_SIZE bytes for the proof.
-        // Even if all zeros, the space is consumed.
-        input_bytes.extend_from_slice(&vec![0u8; RECURSIVE_PROOF_SIZE]);
-
-        let input = Input::parse(&input_bytes, dummy_hash_header).unwrap();
+        let input = Input::new(genesis_state, RecursiveProof::default(), Vec::new())
+            .unwrap()
+            .to_bytes();
+        let input = Input::parse(&input, dummy_hash_header).unwrap();
 
         assert_eq!(input.state.height, 0);
         assert_eq!(input.recursive_proof, RecursiveProof::default());
@@ -288,27 +239,16 @@ mod tests {
             nonce: 0,
         }];
 
-        let mut input_bytes = Vec::new();
-        input_bytes.extend_from_slice(&non_genesis_state.to_bytes());
-
-        // Add a non-zero recursive proof
         let expected_verifier_key = VerifierKeyDigest::from_raw([1; 8]);
         let expected_public_values_digest = PublicValuesDigest::from_raw([2; 32]);
         let recursive_proof_data = RecursiveProof {
             verifier_key: expected_verifier_key,
             public_values_digest: expected_public_values_digest,
         };
-
-        for limb in recursive_proof_data.verifier_key.as_raw() {
-            input_bytes.extend_from_slice(&limb.to_le_bytes());
-        }
-        input_bytes.extend_from_slice(recursive_proof_data.public_values_digest.as_raw());
-
-        for header in &headers {
-            input_bytes.extend_from_slice(&header.to_bytes());
-        }
-
-        let input = Input::parse(&input_bytes, dummy_hash_header).unwrap();
+        let input = Input::new(non_genesis_state, recursive_proof_data, headers.clone())
+            .unwrap()
+            .to_bytes();
+        let input = Input::parse(&input, dummy_hash_header).unwrap();
 
         assert_eq!(input.state.height, 100);
         assert_eq!(input.recursive_proof.verifier_key, expected_verifier_key);
@@ -341,18 +281,10 @@ mod tests {
             },
         ];
 
-        let mut input_bytes = Vec::new();
-        input_bytes.extend_from_slice(&genesis_state.to_bytes());
-        // For genesis, we include a default/zeroed recursive proof data (RECURSIVE_PROOF_SIZE bytes)
-        // Verifier key is 8 u32s (32 bytes), public values digest is 32 bytes
-        input_bytes.extend_from_slice(&vec![0u8; RECURSIVE_PROOF_SIZE]);
-        // input_bytes.extend_from_slice(RecursiveProof::default().public_values_digest.as_raw()); // This was handled by vec! above
-
-        for header in &headers {
-            input_bytes.extend_from_slice(&header.to_bytes());
-        }
-
-        let input = Input::parse(&input_bytes, dummy_hash_header).unwrap();
+        let input = Input::new(genesis_state, RecursiveProof::default(), headers.clone())
+            .unwrap()
+            .to_bytes();
+        let input = Input::parse(&input, dummy_hash_header).unwrap();
 
         assert_eq!(input.state.height, 0);
         assert_eq!(input.recursive_proof, RecursiveProof::default());

@@ -4,6 +4,8 @@
 
 extern crate alloc;
 
+use rkyv::{Archive, Deserialize, Serialize};
+
 pub mod input;
 pub use input::{Input, InputError, RecursiveProof};
 
@@ -34,7 +36,7 @@ where
 }
 
 /// Size of the serialized [`State`] in bytes.
-pub const STATE_SIZE: usize = 240;
+pub const STATE_SIZE: usize = core::mem::size_of::<rkyv::Archived<State>>();
 
 /// Size of each [`NewHeader`] input from the prover.
 pub const NEW_HEADER_SIZE: usize = 44;
@@ -64,7 +66,7 @@ pub const MAINNET_GENESIS_HASH_RAW: [u8; 32] = [
 ];
 
 /// Bitcoin block hash stored in Bitcoin's internal little-endian byte order.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Archive, Deserialize, Serialize, Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct BlockHash([u8; 32]);
 
 impl BlockHash {
@@ -100,7 +102,7 @@ impl From<BlockHash> for [u8; 32] {
 }
 
 /// Bitcoin compact difficulty encoding (`nBits`).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Archive, Deserialize, Serialize, Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct CompactTarget(u32);
 
 impl CompactTarget {
@@ -130,7 +132,7 @@ impl From<CompactTarget> for u32 {
 }
 
 /// Expanded 256-bit proof-of-work target in little-endian byte order.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Archive, Deserialize, Serialize, Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Target([u8; 32]);
 
 impl Target {
@@ -166,7 +168,7 @@ impl From<Target> for [u8; 32] {
 }
 
 /// Cumulative proof-of-work as a 256-bit little-endian limb array.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Archive, Deserialize, Serialize, Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ChainWork([u64; 4]);
 
 impl ChainWork {
@@ -202,7 +204,9 @@ impl From<ChainWork> for [u64; 4] {
 }
 
 /// Bitcoin block timestamp encoded as Unix seconds in consensus serialization.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Archive, Deserialize, Serialize, Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord,
+)]
 pub struct BlockTimestamp(u32);
 
 impl BlockTimestamp {
@@ -238,7 +242,7 @@ impl From<BlockTimestamp> for u32 {
 }
 
 /// A Bitcoin block header with typed fields.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Archive, Deserialize, Serialize, Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Header {
     pub version: u32,
     pub prev_blockhash: BlockHash,
@@ -295,7 +299,7 @@ impl Header {
 }
 
 /// Digest of a program verifier key.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Archive, Deserialize, Serialize, Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct VerifierKeyDigest([u32; 8]);
 
 impl VerifierKeyDigest {
@@ -328,7 +332,7 @@ impl From<VerifierKeyDigest> for [u32; 8] {
 }
 
 /// Digest of committed public values.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Archive, Deserialize, Serialize, Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PublicValuesDigest([u8; 32]);
 
 impl PublicValuesDigest {
@@ -361,7 +365,7 @@ impl From<PublicValuesDigest> for [u8; 32] {
 }
 
 /// Parse errors for fixed-width serialized core types.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Archive, Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParseError {
     InvalidLength {
         expected: usize,
@@ -416,7 +420,7 @@ fn take<const N: usize>(data: &[u8], off: &mut usize) -> Result<[u8; N], ParseEr
 }
 
 /// Prover-supplied fields for a new header.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Archive, Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NewHeader {
     pub version: u32,
     pub merkle_root: [u8; 32],
@@ -498,7 +502,7 @@ impl NewHeader {
 }
 
 /// Complete authenticated validation state, serialized between recursive iterations.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Archive, Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
 pub struct State {
     pub header: Header,
     pub block_hash: BlockHash,
@@ -527,31 +531,11 @@ impl State {
     /// Serialize to exactly [`STATE_SIZE`] bytes.
     #[must_use]
     pub fn to_bytes(&self) -> [u8; STATE_SIZE] {
-        let mut out = [0u8; STATE_SIZE];
-        let mut off = 0;
-
-        out[off..off + BLOCK_HEADER_SIZE].copy_from_slice(&self.header.to_bytes());
-        off += BLOCK_HEADER_SIZE;
-        out[off..off + 32].copy_from_slice(self.block_hash.as_raw());
-        off += 32;
-        out[off..off + 32].copy_from_slice(self.genesis_hash.as_raw());
-        off += 32;
-        out[off..off + 4].copy_from_slice(&self.next_nbits.to_consensus().to_le_bytes());
-        off += 4;
-        out[off..off + 4].copy_from_slice(&self.height.to_le_bytes());
-        off += 4;
-        for &limb in self.chain_work.as_limbs() {
-            out[off..off + 8].copy_from_slice(&limb.to_le_bytes());
-            off += 8;
-        }
-        out[off..off + 4].copy_from_slice(&self.epoch_start_timestamp.to_consensus().to_le_bytes());
-        off += 4;
-        for &ts in &self.timestamps {
-            out[off..off + 4].copy_from_slice(&ts.to_consensus().to_le_bytes());
-            off += 4;
-        }
-        out[off..off + 8].copy_from_slice(&self.sorted_nibbles.to_le_bytes());
-        out
+        let bytes = rkyv::to_bytes::<_, 1024>(self).expect("failed to serialize state with rkyv");
+        bytes
+            .as_slice()
+            .try_into()
+            .expect("rkyv state serialization should fit in STATE_SIZE")
     }
 
     /// Deserialize from exactly [`STATE_SIZE`] bytes.
@@ -564,41 +548,11 @@ impl State {
                 });
             }
 
-            let mut off = 0;
-            let header = Header::parse(&take::<BLOCK_HEADER_SIZE>(bytes, &mut off)?)?;
-            let block_hash = BlockHash::from_raw(take::<32>(bytes, &mut off)?);
-            let genesis_hash = BlockHash::from_raw(take::<32>(bytes, &mut off)?);
-            let next_nbits =
-                CompactTarget::from_consensus(u32::from_le_bytes(take::<4>(bytes, &mut off)?));
-            let height = u32::from_le_bytes(take::<4>(bytes, &mut off)?);
-
-            let mut chain_work = [0u64; 4];
-            for limb in &mut chain_work {
-                *limb = u64::from_le_bytes(take::<8>(bytes, &mut off)?);
-            }
-
-            let epoch_start_timestamp =
-                BlockTimestamp::from_consensus(u32::from_le_bytes(take::<4>(bytes, &mut off)?));
-
-            let mut timestamps = [BlockTimestamp::default(); WINDOW_SIZE];
-            for ts in &mut timestamps {
-                *ts =
-                    BlockTimestamp::from_consensus(u32::from_le_bytes(take::<4>(bytes, &mut off)?));
-            }
-
-            let sorted_nibbles = u64::from_le_bytes(take::<8>(bytes, &mut off)?);
-
-            Ok(Self {
-                header,
-                block_hash,
-                genesis_hash,
-                next_nbits,
-                height,
-                chain_work: ChainWork::from_limbs(chain_work),
-                epoch_start_timestamp,
-                timestamps,
-                sorted_nibbles,
-            })
+            let archived = unsafe { rkyv::archived_root::<Self>(bytes) };
+            let state: Self = archived
+                .deserialize(&mut rkyv::Infallible)
+                .expect("rkyv state deserialization should be infallible");
+            Ok(state)
         })
     }
 
@@ -732,7 +686,6 @@ impl Default for State {
 }
 
 /// A typed state transition built from an authenticated current state and a new header.
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NextState<'a> {
     current: &'a State,
     next: State,
@@ -776,7 +729,7 @@ impl NextState<'_> {
 }
 
 /// Validation status emitted by the program on failure.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Archive, Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum ValidationErrorCode {
     HeaderPayloadLengthInvalid = 1,
@@ -825,7 +778,7 @@ impl TryFrom<u8> for ValidationErrorCode {
 }
 
 /// Failure payload committed by the program when validation stops early.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Archive, Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
 pub struct ProofFailure {
     pub last_valid_state: State,
     pub error_code: ValidationErrorCode,
@@ -833,7 +786,7 @@ pub struct ProofFailure {
 }
 
 /// Typed public values committed by the prover.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Archive, Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
 pub enum HeaderChainPublicValues {
     Success(State),
     Failure(ProofFailure),
@@ -873,7 +826,7 @@ impl HeaderChainPublicValues {
 }
 
 /// Parse errors for committed public values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Archive, Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PublicValuesParseError {
     InvalidLength { actual: usize },
     UnknownErrorCode { code: u8 },

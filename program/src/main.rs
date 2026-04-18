@@ -26,10 +26,21 @@ use sha256::{double_sha256_80, sha256_240};
 
 /// Commit the last valid state plus error information, then halt.
 fn commit_error(state: &State, error_code: ValidationErrorCode, header_index: u32) -> ! {
-    sp1_zkvm::io::commit_slice(&state.to_bytes());
-    sp1_zkvm::io::commit_slice(&[error_code.as_byte()]);
-    sp1_zkvm::io::commit_slice(&header_index.to_le_bytes());
-    sp1_zkvm::syscalls::syscall_halt(0);
+    let state_bytes = cycle_track("program/commit_error/serialize_state", || state.to_bytes());
+    cycle_track("program/commit_error", || {
+        cycle_track("program/commit_error/commit_state", || {
+            sp1_zkvm::io::commit_slice(&state_bytes);
+        });
+        cycle_track("program/commit_error/commit_error_code", || {
+            sp1_zkvm::io::commit_slice(&[error_code.as_byte()]);
+        });
+        cycle_track("program/commit_error/commit_header_index", || {
+            sp1_zkvm::io::commit_slice(&header_index.to_le_bytes());
+        });
+    });
+    cycle_track("program/commit_error/halt", || {
+        sp1_zkvm::syscalls::syscall_halt(0);
+    })
 }
 
 /// Hash a full Bitcoin header with double SHA-256.
@@ -77,9 +88,15 @@ pub fn main() {
     });
 
     // --- Commit success output ----------------------------------------------
-    let final_state_bytes = final_state.to_bytes();
+    let final_state_bytes = cycle_track("program/commit_success/serialize_state", || {
+        final_state.to_bytes()
+    });
     cycle_track("program/commit_success", || {
-        sp1_zkvm::io::commit_slice(&final_state_bytes);
-        sp1_zkvm::syscalls::syscall_halt(0);
+        cycle_track("program/commit_success/commit_slice", || {
+            sp1_zkvm::io::commit_slice(&final_state_bytes);
+        });
+        cycle_track("program/commit_success/halt", || {
+            sp1_zkvm::syscalls::syscall_halt(0);
+        });
     });
 }
