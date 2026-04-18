@@ -10,7 +10,11 @@ LATEST_LINK="$ROOT/profiling/sp1/latest"
 mkdir -p "$PROOFS_DIR"
 ln -sfn "$RUN_DIR" "$LATEST_LINK"
 
-export RUST_LOG="${RUST_LOG:-info}"
+export SP1_ENABLE_TOKIO_CONSOLE=true
+export TRACE_FILE="$RUN_DIR/tracing.json"
+export TRACE_SAMPLE_RATE=100
+
+export RUST_LOG="${RUST_LOG:-trace}"
 export NUM_HEADERS="${NUM_HEADERS:-100}"
 export OUTPUT_DIR="$PROOFS_DIR"
 
