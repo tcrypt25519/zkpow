@@ -3,9 +3,8 @@
 use alloc::vec::Vec;
 
 use crate::{
-    BlockHash, Header, NewHeader, ParseError, State,
-    BLOCK_HEADER_SIZE, NEW_HEADER_SIZE, STATE_SIZE, VerifierKeyDigest, PublicValuesDigest,
-    RECURSIVE_PROOF_SIZE,
+    cycle_track, BlockHash, Header, NewHeader, ParseError, PublicValuesDigest, State,
+    VerifierKeyDigest, BLOCK_HEADER_SIZE, NEW_HEADER_SIZE, RECURSIVE_PROOF_SIZE, STATE_SIZE,
 };
 
 // Helper to take a fixed-size byte array from a slice and advance the offset.
@@ -78,11 +77,26 @@ impl core::fmt::Display for InputError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::Parse(err) => write!(f, "input parse error: {}", err),
-            Self::MissingRecursiveProof => write!(f, "missing recursive proof metadata for non-genesis state"),
-            Self::UnexpectedRecursiveProof => write!(f, "genesis state must not carry recursive proof metadata"),
-            Self::GenesisHashMustBeZero => write!(f, "genesis state input must carry an all-zero genesis hash placeholder"),
-            Self::HeaderPayloadLengthInvalid { actual } => write!(f, "header payload length {} is not a multiple of {} bytes", actual, NEW_HEADER_SIZE),
-            Self::InvalidRecursiveProofLength { actual, expected } => write!(f, "invalid recursive proof length: expected {} bytes, got {}", expected, actual),
+            Self::MissingRecursiveProof => {
+                write!(f, "missing recursive proof metadata for non-genesis state")
+            }
+            Self::UnexpectedRecursiveProof => {
+                write!(f, "genesis state must not carry recursive proof metadata")
+            }
+            Self::GenesisHashMustBeZero => write!(
+                f,
+                "genesis state input must carry an all-zero genesis hash placeholder"
+            ),
+            Self::HeaderPayloadLengthInvalid { actual } => write!(
+                f,
+                "header payload length {} is not a multiple of {} bytes",
+                actual, NEW_HEADER_SIZE
+            ),
+            Self::InvalidRecursiveProofLength { actual, expected } => write!(
+                f,
+                "invalid recursive proof length: expected {} bytes, got {}",
+                expected, actual
+            ),
         }
     }
 }
@@ -90,17 +104,20 @@ impl core::fmt::Display for InputError {
 impl RecursiveProof {
     /// Parse and validate a RecursiveProof from a byte slice.
     pub fn parse_from_bytes(bytes: &[u8], off: &mut usize) -> Result<Self, InputError> {
-        let verifier_key_raw = take_bytes::<32>(bytes, off)?;
-        let mut verifier_key_limbs = [0u32; 8];
-        for i in 0..8 {
-            verifier_key_limbs[i] = u32::from_le_bytes(verifier_key_raw[i*4..(i*4)+4].try_into().unwrap());
-        }
+        cycle_track("input/recursive_proof", || {
+            let verifier_key_raw = take_bytes::<32>(bytes, off)?;
+            let mut verifier_key_limbs = [0u32; 8];
+            for i in 0..8 {
+                verifier_key_limbs[i] =
+                    u32::from_le_bytes(verifier_key_raw[i * 4..(i * 4) + 4].try_into().unwrap());
+            }
 
-        let public_values_digest = PublicValuesDigest::from_raw(take_bytes::<32>(bytes, off)?);
-        
-        Ok(Self {
-            verifier_key: VerifierKeyDigest::from_raw(verifier_key_limbs),
-            public_values_digest,
+            let public_values_digest = PublicValuesDigest::from_raw(take_bytes::<32>(bytes, off)?);
+
+            Ok(Self {
+                verifier_key: VerifierKeyDigest::from_raw(verifier_key_limbs),
+                public_values_digest,
+            })
         })
     }
 }
@@ -124,55 +141,61 @@ impl Input {
     where
         F: FnOnce(&Header) -> BlockHash + Copy,
     {
-        let mut off = 0;
+        cycle_track("input/parse", || {
+            let mut off = 0;
 
-        // Parse state
-        let mut state = State::parse(&take_bytes::<STATE_SIZE>(bytes, &mut off)?)?;
+            let mut state = cycle_track("input/parse/state", || {
+                State::parse(&take_bytes::<STATE_SIZE>(bytes, &mut off)?).map_err(InputError::from)
+            })?;
 
-        let recursive_proof = if state.height == 0 {
-            // Ensure there is enough space for a full recursive proof element
-            if bytes.len().saturating_sub(off) < RECURSIVE_PROOF_SIZE {
-                return Err(InputError::InvalidRecursiveProofLength {
-                    actual: bytes.len().saturating_sub(off),
-                    expected: RECURSIVE_PROOF_SIZE,
+            let recursive_proof = if state.height == 0 {
+                cycle_track("input/parse/genesis_recursive_proof", || {
+                    if bytes.len().saturating_sub(off) < RECURSIVE_PROOF_SIZE {
+                        return Err(InputError::InvalidRecursiveProofLength {
+                            actual: bytes.len().saturating_sub(off),
+                            expected: RECURSIVE_PROOF_SIZE,
+                        });
+                    }
+                    off += RECURSIVE_PROOF_SIZE;
+                    Ok(RecursiveProof::default())
+                })?
+            } else {
+                RecursiveProof::parse_from_bytes(bytes, &mut off)?
+            };
+
+            let header_bytes = bytes.len().saturating_sub(off);
+            if header_bytes % NEW_HEADER_SIZE != 0 {
+                return Err(InputError::HeaderPayloadLengthInvalid {
+                    actual: header_bytes,
                 });
             }
-            // Consume the data but don't parse it; for genesis, we use a default zero proof.
-            off += RECURSIVE_PROOF_SIZE;
-            RecursiveProof::default()
-        } else {
-            // For non-genesis state, we expect a valid recursive_proof.
-            RecursiveProof::parse_from_bytes(bytes, &mut off)?
-        };
 
-        // Parse headers
-        let header_bytes = bytes.len().saturating_sub(off);
-        if header_bytes % NEW_HEADER_SIZE != 0 {
-            return Err(InputError::HeaderPayloadLengthInvalid {
-                actual: header_bytes,
-            });
-        }
+            let header_count = header_bytes / NEW_HEADER_SIZE;
+            let mut headers = Vec::with_capacity(header_count);
+            cycle_track("input/parse/headers", || {
+                for index in 0..header_count {
+                    headers.push(NewHeader::parse_at(bytes, off + (index * NEW_HEADER_SIZE))?);
+                }
+                Ok::<(), InputError>(())
+            })?;
 
-        let header_count = header_bytes / NEW_HEADER_SIZE;
-        let mut headers = Vec::with_capacity(header_count);
-        for index in 0..header_count {
-            headers.push(NewHeader::parse_at(bytes, off + (index * NEW_HEADER_SIZE))?);
-        }
+            if state.height == 0 {
+                if state.genesis_hash != BlockHash::default() {
+                    return Err(InputError::GenesisHashMustBeZero);
+                }
 
-        if state.height == 0 {
-            if state.genesis_hash != BlockHash::default() {
-                return Err(InputError::GenesisHashMustBeZero);
+                cycle_track("input/parse/genesis_hash", || {
+                    let block_hash = hash_header(&state.header);
+                    state.block_hash = block_hash;
+                    state.genesis_hash = block_hash;
+                });
             }
 
-            let block_hash = hash_header(&state.header);
-            state.block_hash = block_hash;
-            state.genesis_hash = block_hash;
-        }
-
-        Ok(Self {
-            state,
-            recursive_proof,
-            headers,
+            Ok(Self {
+                state,
+                recursive_proof,
+                headers,
+            })
         })
     }
 
@@ -187,9 +210,7 @@ impl Input {
         }
 
         let mut out = Vec::with_capacity(
-            STATE_SIZE
-                + RECURSIVE_PROOF_SIZE
-                + (self.headers.len() * NEW_HEADER_SIZE),
+            STATE_SIZE + RECURSIVE_PROOF_SIZE + (self.headers.len() * NEW_HEADER_SIZE),
         );
         out.extend_from_slice(&state_bytes);
 
@@ -197,7 +218,7 @@ impl Input {
             out.extend_from_slice(&limb.to_le_bytes());
         }
         out.extend_from_slice(self.recursive_proof.public_values_digest.as_raw());
-        
+
         for header in &self.headers {
             out.extend_from_slice(&header.to_bytes());
         }
@@ -212,8 +233,8 @@ impl Input {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{BlockHash, BlockTimestamp, Header};
     use alloc::vec;
-    use crate::{BlockHash, Header, BlockTimestamp};
 
     // Dummy hash_header for testing
     fn dummy_hash_header(_header: &Header) -> BlockHash {
@@ -260,7 +281,6 @@ mod tests {
         non_genesis_state.block_hash = BlockHash::from_raw([2; 32]);
         non_genesis_state.header.prev_blockhash = BlockHash::from_raw([3; 32]);
 
-
         let headers: Vec<NewHeader> = vec![NewHeader {
             version: 1,
             merkle_root: [4; 32],
@@ -283,7 +303,7 @@ mod tests {
             input_bytes.extend_from_slice(&limb.to_le_bytes());
         }
         input_bytes.extend_from_slice(recursive_proof_data.public_values_digest.as_raw());
-        
+
         for header in &headers {
             input_bytes.extend_from_slice(&header.to_bytes());
         }
@@ -292,7 +312,10 @@ mod tests {
 
         assert_eq!(input.state.height, 100);
         assert_eq!(input.recursive_proof.verifier_key, expected_verifier_key);
-        assert_eq!(input.recursive_proof.public_values_digest, expected_public_values_digest);
+        assert_eq!(
+            input.recursive_proof.public_values_digest,
+            expected_public_values_digest
+        );
         assert_eq!(input.headers, headers);
     }
 

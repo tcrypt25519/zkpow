@@ -6,7 +6,7 @@ publish = false
 
 [dependencies]
 bitcoin-header-chain-core = { workspace = true }
-sp1-zkvm = { workspace = true, features = ["verify"] }
+sp1-zkvm = { workspace = true, features = ["lib", "verify"] }
 
 [features]
 default = []
