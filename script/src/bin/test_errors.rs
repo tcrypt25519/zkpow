@@ -184,12 +184,19 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
     // end of the previous epoch and assert the state carries the exact bits that
     // appear in the next raw header.
     const RETARGET_HEIGHT: usize = 32256;
+    const RETARGET_TIP_HEIGHT: usize = RETARGET_HEIGHT - 1;
     const EPOCH_LENGTH: usize = 2016;
     let genesis_state = mainnet_genesis_state();
 
     let first_epoch_raw = util::load_headers_from_db(DB_PATH, 1, FIRST_BOUNDARY_TIP_HEIGHT as u64);
     let first_epoch_headers = util::raw_headers_to_new_headers(&first_epoch_raw);
     let first_epoch_state = util::compute_final_state(&genesis_state, &first_epoch_headers);
+    println!(
+        "retarget-debug: first_epoch loaded={} state.height={} state.next_nbits={:#x}",
+        first_epoch_headers.len(),
+        first_epoch_state.height,
+        consensus_bits(first_epoch_state.next_nbits),
+    );
     let first_retarget_bits = raw_header_bits(
         &util::load_headers_from_db(DB_PATH, (FIRST_BOUNDARY_TIP_HEIGHT + 1) as u64, 1),
         0,
@@ -202,18 +209,32 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
         ));
     }
 
-    let raw_headers = util::load_headers_from_db(DB_PATH, 1, (RETARGET_HEIGHT - 1) as u64);
+    let raw_headers = util::load_headers_from_db(DB_PATH, 1, RETARGET_TIP_HEIGHT as u64);
     let new_headers = util::raw_headers_to_new_headers(&raw_headers);
     let state = util::compute_final_state(&genesis_state, &new_headers);
+    println!(
+        "retarget-debug: retarget loaded={} state.height={} state.next_nbits={:#x}",
+        new_headers.len(),
+        state.height,
+        consensus_bits(state.next_nbits),
+    );
+    println!(
+        "retarget-debug: prev_epoch_bits={:#x} next_header_bits={:#x}",
+        raw_header_bits(&raw_headers, RETARGET_TIP_HEIGHT - 1)?,
+        raw_header_bits(
+            &util::load_headers_from_db(DB_PATH, RETARGET_HEIGHT as u64, 1),
+            0,
+        )?,
+    );
 
-    if state.height != RETARGET_HEIGHT as u32 {
+    if state.height != RETARGET_TIP_HEIGHT as u32 {
         return Err(format!(
             "expected validated height {}, got {}",
-            RETARGET_HEIGHT, state.height,
+            RETARGET_TIP_HEIGHT, state.height,
         ));
     }
 
-    let previous_epoch_bits = raw_header_bits(&raw_headers, RETARGET_HEIGHT - 1)?;
+    let previous_epoch_bits = raw_header_bits(&raw_headers, RETARGET_TIP_HEIGHT - 1)?;
     let next_header_bits = raw_header_bits(
         &util::load_headers_from_db(DB_PATH, RETARGET_HEIGHT as u64, 1),
         0,
