@@ -1,11 +1,11 @@
 [package]
-name = "bitcoin-header-chain-script"
+name = "zkpow-host"
 version = "0.1.0"
 edition = "2021"
 publish = false
 
 [dependencies]
-bitcoin-header-chain-core = { workspace = true }
+zkpow-core = { workspace = true }
 console-subscriber = "0.4.1"
 sp1-sdk = { workspace = true }
 sp1-prover = { workspace = true }

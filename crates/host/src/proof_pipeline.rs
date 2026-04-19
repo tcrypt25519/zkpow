@@ -16,10 +16,11 @@ use sp1_sdk::{HashableKey, SP1Context, SP1ProofWithPublicValues};
 
 pub type BoxError = Box<dyn Error + Send + Sync + 'static>;
 
-pub const ELF: Elf = include_elf!("bitcoin-header-chain-program");
+pub const ELF: Elf = include_elf!("zkpow-guest");
 pub const GENESIS_HASH_HEX: &str =
     "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f";
-pub const DEFAULT_DB_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../bitcoin_headers.sqlite");
+pub const DEFAULT_DB_PATH: &str =
+    concat!(env!("CARGO_MANIFEST_DIR"), "/../../bitcoin_headers.sqlite");
 
 #[derive(Debug, Clone)]
 pub struct ProofGenerationConfig {
