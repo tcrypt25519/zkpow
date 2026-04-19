@@ -63,10 +63,20 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     && cp /app/target/release/zkpow-host /tmp/zkpow-host \
     && strip /tmp/zkpow-host
 
+FROM debian:bookworm-slim AS layout
+
+RUN mkdir -p /rootfs/db /rootfs/app /rootfs/usr/local/bin \
+    && ln -s /db /rootfs/data
+
 FROM gcr.io/distroless/cc-debian12:nonroot AS runtime
 
 WORKDIR /app
 
+COPY --from=layout --chown=65532:65532 /rootfs/ /
 COPY --from=builder --chown=65532:65532 /tmp/zkpow-host /usr/local/bin/zkpow-host
+
+ENV HEADERS_DB_PATH=/data/headers.db
+
+VOLUME ["/db"]
 
 ENTRYPOINT ["/usr/local/bin/zkpow-host"]
