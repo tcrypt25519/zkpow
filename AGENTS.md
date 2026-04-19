@@ -1,126 +1,126 @@
-# Bitcoin Header Chain Prover
+# Bitcoin Header Chain
 
-Zero-knowledge proof system for Bitcoin header chain validation using SP1 zkVM.
-Proves that a batch of block headers are valid (PoW, chain linkage, difficulty retargeting, BIP113 MTP) and can be recursively chained to extend a proof from any trusted starting point.
+## Purpose
 
-## Quick Start
+Zero-knowledge Bitcoin header-chain validation using SP1 zkVM.
+The system proves a contiguous batch of headers, optionally extends a prior compressed proof recursively, and emits both a compressed SP1 proof and a Groth16 proof.
+
+## Current Workspace Layout
+
+This repo is currently organized as a Cargo workspace under `crates/`:
+
+- `crates/core` — shared consensus types, input encoding, state transitions, and validation logic.
+- `crates/guest` — zkVM guest program entrypoint plus SP1-compatible SHA helpers.
+- `crates/host` — proof orchestration, SQLite loading, observability, proof saving, and host-side binaries.
+- `contracts/` — Foundry relay scaffold for on-chain verification and proof-state anchoring.
+- `scripts/` — helper scripts such as profiling.
+- `docs/` — plans and ADRs.
+
+Authoritative workspace members are defined in [Cargo.toml](/Users/tcrypt/code/github.com/tcrypt25519/bitcoin-header-chain/Cargo.toml).
+If comments, scripts, or stale docs disagree with the workspace manifest, trust the manifest.
+
+## Refactor Status
+
+This repo is mid-migration away from the older top-level `program/`, `script/`, and `core/` layout.
+When editing or adding code:
+
+- Use `crates/core`, `crates/guest`, and `crates/host`.
+- Do not recreate the deleted top-level directories.
+- Be aware that some comments and scripts still use legacy names like `bitcoin-header-chain-script` or `script/Cargo.toml`.
+- `crates/zkpow-core` exists in the tree but is not a workspace member; do not treat it as the active shared crate unless you are explicitly cleaning up migration leftovers.
+
+## Crate Boundaries
+
+Keep responsibilities strict:
+
+- `crates/core`: pure consensus/state logic only. No host I/O, no SQLite, no proving orchestration.
+- `crates/guest`: zkVM-safe execution only. No host-only crates or convenience hashing crates.
+- `crates/host`: env parsing, DB access, proof generation, proof verification, observability, and file output.
+- `contracts/`: Solidity-side proof consumption and relay state.
+
+If a change affects consensus semantics, start in `crates/core` and let host/guest adapt around it.
+
+## Proof Pipeline Facts
+
+The host pipeline is centered in [crates/host/src/proof_pipeline.rs](/Users/tcrypt/code/github.com/tcrypt25519/bitcoin-header-chain/crates/host/src/proof_pipeline.rs).
+Key behavior:
+
+- `config_from_env()` currently reads `PREV_PROOF`, `NUM_HEADERS`, and `OUTPUT_DIR`.
+- The DB path defaults internally; current commands assume the checked-in SQLite file at repo root.
+- `generate_and_save_proofs()` loads the prior proof if present, derives the current state, loads new headers from SQLite, executes the guest, proves compressed, verifies public values, then shrink-wraps into Groth16.
+- The guest verifies the recursive proof only when `state.height > 0`.
+
+## Guest Program Facts
+
+The guest entrypoint lives in [crates/guest/src/main.rs](/Users/tcrypt/code/github.com/tcrypt25519/bitcoin-header-chain/crates/guest/src/main.rs).
+Important invariants:
+
+- Input is serialized once on the host via `Input::to_bytes()`.
+- On recursive runs, the recursive proof witness is written separately with `stdin.write_proof(...)`.
+- The guest commits serialized success state on success, or last valid state + error metadata on failure.
+- Guest hashing must remain SP1-compatible.
+
+## SHA / Hashing Rules
+
+- Keep guest hashing in `crates/guest/src/sha256.rs` using SP1-compatible paths.
+- Do not introduce `sha2` or other host-style hashing dependencies into the guest.
+- Host-side digesting for proof plumbing is fine in `crates/host`.
+
+## Contracts Boundary
+
+The Solidity relay in `contracts/` does not want the raw internal `rkyv` state blob as its long-term interface.
+The contract README documents a compact proof-boundary summary format.
+If you change the proof output or public-values boundary, verify whether the Solidity-facing serialization contract needs to change as well.
+
+## Commands
+
+Run commands from repo root unless there is a specific reason not to.
+
+### Rust
 
 ```bash
-# Build
 cargo build --release
-
-# Run prover (genesis → block 99)
-cd script && cargo run --release --bin bitcoin-header-chain-script
-
-# Run prover extending a previous proof
-PREV_PROOF=proof_height_0_to_99.bin START_HEIGHT=100 NUM_HEADERS=100 \
-  cargo run --release --bin bitcoin-header-chain-script
-
-# Run test suite (fast, no proving)
-cargo run --release --bin test_errors
-
-# Inspect a proof
-cargo run --release --bin inspect_proof -- proof_height_0_to_99.bin
-
-# Clippy (clean)
-cargo clippy --all-targets -- -D warnings
+cargo run --release -p zkpow-host --bin zkpow-host
+PREV_PROOF=./proof_height_1_to_100.bin NUM_HEADERS=100 OUTPUT_DIR=. \
+  cargo run --release -p zkpow-host --bin zkpow-host
+cargo run --release -p zkpow-host --bin test_errors
+cargo run --release -p zkpow-host --bin inspect_proof -- ./proof_height_1_to_100.bin
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-## Project Structure
+### Solidity
 
-```
-bitcoin-header-chain/
-├── program/                    # zkVM program (constrained execution)
-│   ├── Cargo.toml              # Only sp1-zkvm (verify feature)
-│   └── src/
-│       ├── main.rs             # Header validation logic
-│       └── sha256.rs           # Specialized SHA-256 precompile calls
-└── script/                     # Host script (proving orchestration)
-    ├── Cargo.toml
-    ├── build.rs                # Compiles program to RISC-V ELF
-    └── src/
-        ├── main.rs             # Prove → verify → save (compressed + Groth16)
-        ├── util.rs             # DB loading, work calculation, PV builder
-        ├── lib.rs              # pub mod util
-        └── bin/
-            ├── test_errors.rs      # Automated tests (8/8 pass)
-            └── inspect_proof.rs    # Human-readable proof display
+```bash
+forge build --root contracts
+forge test --root contracts
 ```
 
-## Architecture
+## Observability / Profiling
 
-### Data Flow
-```
-Host: genesis_hash, start_height, num_headers, headers_bytes
-  ↓ stdin
-zkVM: reads inputs → validates headers → commits public values → HALT(0)
-  ↓ proof
-Host: verifies proof → verifies public values → saves proof
-```
+- Host observability initializes Tokio console and tracing in [crates/host/src/observability.rs](/Users/tcrypt/code/github.com/tcrypt25519/bitcoin-header-chain/crates/host/src/observability.rs).
+- `TOKIO_CONSOLE_BIND` defaults to `127.0.0.1:6669`.
+- `RUST_LOG=info` is the normal first step when you need runtime visibility.
+- `scripts/profile-sp1.sh` exists, but verify it still targets the current workspace before relying on it. It still contains legacy `script/` references at the time of writing.
 
-### Public Values Layout (237 bytes)
-| Offset | Size | Field |
-|--------|------|-------|
-| 0..32 | 32 | genesis_hash |
-| 32..64 | 32 | final_header_hash |
-| 64..72 | 8 | num_headers (total validated) |
-| 72..152 | 80 | final_header (raw bytes) |
-| 152..184 | 32 | cumulative_chain_work (u256 LE) |
-| 184..188 | 4 | last_epoch_start_timestamp |
-| 188..232 | 44 | median_timestamp_buffer ([u32; 11]) |
-| 232..233 | 1 | success_code (0=success, 1-7=error) |
-| 233..237 | 4 | error_detail (header index on error) |
+## Agent Working Rules
 
-### Median Count is Derivable
-Do NOT commit median_count to public values. It's computed as:
-```
-count = min(11, total_validated - 1)  for total_validated > 0
-count = 0                              for total_validated == 0
-```
+- Prefer codebase-memory graph tools for code discovery before falling back to grep.
+- Stage only the files you intentionally changed. This repo is often worked in with an already-dirty refactor branch.
+- When changing interfaces shared across host/core/guest, update all three layers in one pass.
+- When touching proof-boundary semantics, check `contracts/README.md` and the relay scaffold before declaring the change complete.
+- When a comment or usage string conflicts with `cargo metadata`, treat the manifest and actual targets as canonical.
 
-## SHA-256 Implementation
+## Fast Orientation
 
-Uses direct SP1 precompile syscalls — no `sha2` crate in the program.
+Useful files:
 
-- `sha256_80(&[u8; 80])` → `[u8; 32]`: Bitcoin block header. Hardcoded for exactly 2 blocks. No loops, no branching.
-- `sha256_32(&[u8; 32])` → `[u8; 32]`: Intermediate hash. Hardcoded for exactly 1 block.
-- `double_sha256_80(&[u8; 80])` → `[u8; 32]`: Composition of the above.
-
-The host script still uses the `sha2` crate (via workspace) for `compute_pv_digest()` — this is appropriate since the host needs SHA-256 to verify it built the same public values the program committed.
-
-## Error Codes
-
-| Code | Name | Trigger |
-|------|------|---------|
-| 0 | Success | All headers valid |
-| 1 | Genesis hash mismatch | Height 0 hash ≠ expected |
-| 2 | Prev blockhash mismatch | `header.prev ≠ prev_hash` |
-| 3 | PoW insufficient | `SHA256d(header) > target` |
-| 4 | Timestamp too old | `timestamp ≤ median_of_last_11` |
-| 5 | Height mismatch | `start_height ≠ prev_num_headers` (or ≠ 0 at genesis) |
-| 6 | Bits mismatch | `header.bits ≠ expected` |
-| 7 | Header count mismatch | `len ≠ num_headers * 80` |
-
-Not used (reserved): 8, 9, 10.
-
-## Proof Files
-
-Each run produces two files:
-- `proof_height_X_to_Y.bin` — Compressed proof (~1.3 MB, for off-chain verification and recursive chaining)
-- `proof_height_X_to_Y_groth16.bin` — Groth16 SNARK (~200 bytes, ~100k gas on Ethereum)
-
-## Clippy Note
-
-`cargo clippy --all-targets` prints "Skipping build due to clippy invocation" for the script binary because the `sp1-build` dependency triggers ELF compilation which clippy suppresses. This is expected. Run `cargo build --release` to verify the script compiles.
-
-## Cycle Tracker
-
-Run with `RUST_LOG=info` to see cycle tracker output:
-```
-stdout: cycle-tracker-start: parse
-stdout: cycle-tracker-end: parse
-stdout: cycle-tracker-start: sha256d
-stdout: cycle-tracker-end: sha256d
-stdout: cycle-tracker-start: retarget
-stdout: cycle-tracker-end: retarget
-```
+- [Cargo.toml](/Users/tcrypt/code/github.com/tcrypt25519/bitcoin-header-chain/Cargo.toml)
+- [crates/core/src/lib.rs](/Users/tcrypt/code/github.com/tcrypt25519/bitcoin-header-chain/crates/core/src/lib.rs)
+- [crates/core/src/input.rs](/Users/tcrypt/code/github.com/tcrypt25519/bitcoin-header-chain/crates/core/src/input.rs)
+- [crates/guest/src/main.rs](/Users/tcrypt/code/github.com/tcrypt25519/bitcoin-header-chain/crates/guest/src/main.rs)
+- [crates/guest/src/sha256.rs](/Users/tcrypt/code/github.com/tcrypt25519/bitcoin-header-chain/crates/guest/src/sha256.rs)
+- [crates/host/src/proof_pipeline.rs](/Users/tcrypt/code/github.com/tcrypt25519/bitcoin-header-chain/crates/host/src/proof_pipeline.rs)
+- [crates/host/src/util.rs](/Users/tcrypt/code/github.com/tcrypt25519/bitcoin-header-chain/crates/host/src/util.rs)
+- [crates/host/src/observability.rs](/Users/tcrypt/code/github.com/tcrypt25519/bitcoin-header-chain/crates/host/src/observability.rs)
+- [contracts/README.md](/Users/tcrypt/code/github.com/tcrypt25519/bitcoin-header-chain/contracts/README.md)
