@@ -1,9 +1,15 @@
 # Build artifacts
 target/
-*.bin
 
 # Database
-bitcoin_headers.sqlite
+*.db
+*.sqlite
+
+# Development
+*.bin
+*.log
+profiling/
+docs/plans/
 
 # IDE
 .idea/
