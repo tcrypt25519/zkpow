@@ -1,11 +1,9 @@
 # Build artifacts
-*.bin
-profiling/
 target/
+*.bin
 
 # Database
 bitcoin_headers.sqlite
-headers.db
 
 # IDE
 .idea/

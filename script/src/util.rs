@@ -4,11 +4,11 @@
 //! The prover supplies 44-byte NewHeader structs (version, merkle_root, timestamp, nonce).
 //! The host constructs full 80-byte headers from state + NewHeader, matching the circuit.
 
-use zkpow_core::{work_from_bits, WINDOW_SIZE};
+use bitcoin_header_chain_core::{work_from_bits, WINDOW_SIZE};
 use sha2::{Digest, Sha256};
 use sp1_sdk::SP1PublicValues;
 
-pub use zkpow_core::{
+pub use bitcoin_header_chain_core::{
     BlockHash, BlockTimestamp, ChainWork, CompactTarget, Header, HeaderChainPublicValues, Input,
     InputError, NewHeader, ParseError, ProofFailure, PublicValuesDigest, PublicValuesParseError,
     RecursiveProof, State, ValidationErrorCode, VerifierKeyDigest, NEW_HEADER_SIZE, STATE_SIZE,

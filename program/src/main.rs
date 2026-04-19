@@ -14,8 +14,8 @@
 #![no_main]
 sp1_zkvm::entrypoint!(main);
 
-use zkpow_core::cycle_track;
-use zkpow_core::{BlockHash, Header, Input, State, ValidationErrorCode};
+use bitcoin_header_chain_core::cycle_track;
+use bitcoin_header_chain_core::{BlockHash, Header, Input, State, ValidationErrorCode};
 
 mod sha256;
 use sha256::{double_sha256_80, sha256_240};

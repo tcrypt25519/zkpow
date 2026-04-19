@@ -2,8 +2,8 @@
 
 use sp1_sdk::SP1ProofWithPublicValues;
 
-use zkpow_host::util;
-use zkpow_host::util::{
+use bitcoin_header_chain_script::util;
+use bitcoin_header_chain_script::util::{
     HeaderChainPublicValues, PublicValuesParseError, ValidationErrorCode,
 };
 

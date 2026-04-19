@@ -404,6 +404,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "bitcoin-header-chain-core"
+version = "0.1.0"
+dependencies = [
+ "rkyv",
+ "sp1-zkvm",
+]
+
+[[package]]
+name = "bitcoin-header-chain-program"
+version = "0.1.0"
+dependencies = [
+ "bitcoin-header-chain-core",
+ "sp1-zkvm",
+]
+
+[[package]]
+name = "bitcoin-header-chain-script"
+version = "0.1.0"
+dependencies = [
+ "bitcoin-header-chain-core",
+ "console-subscriber",
+ "hex",
+ "humantime",
+ "num-bigint 0.4.6",
+ "rusqlite",
+ "sha2",
+ "sp1-build",
+ "sp1-prover",
+ "sp1-recursion-gnark-ffi",
+ "sp1-sdk",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "bitflags"
 version = "2.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -739,9 +775,9 @@ dependencies = [
 
 [[package]]
 name = "constant_time_eq"
-version = "0.4.3"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7dab3fe76c1571ecd5cfe878b61bce3fedf4adbde5d8a8653b2a7956ffd14628"
+checksum = "3d52eff69cd5e647efe296129160853a42795992097e8af39800e1060caeea9b"
 
 [[package]]
 name = "core-foundation-sys"
@@ -966,15 +1002,6 @@ dependencies = [
  "num-modular",
  "num-order",
  "rustversion",
-]
-
-[[package]]
-name = "debugid"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bef552e6f588e446098f6ba40d89ac146c8c7b64aade83c051ee00bb5d2bc18d"
-dependencies = [
- "uuid",
 ]
 
 [[package]]
@@ -1463,17 +1490,6 @@ name = "gcd"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d758ba1b47b00caf47f24925c0074ecb20d6dfcffe7f6d53395c0465674841a"
-
-[[package]]
-name = "gecko_profile"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "890852c7e1e02bc6758e325d6b1e0236e4fbf21b492f585ce4d4715be54b4c6a"
-dependencies = [
- "debugid",
- "serde",
- "serde_json",
-]
 
 [[package]]
 name = "gen_ops"
@@ -3832,9 +3848,9 @@ dependencies = [
 
 [[package]]
 name = "sha3"
-version = "0.10.9"
+version = "0.10.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77fd7028345d415a4034cf8777cd4f8ab1851274233b45f84e3d955502d93874"
+checksum = "75872d278a8f37ef87fa0ddbda7802605cb18344497949862c0d4dcb291eba60"
 dependencies = [
  "digest",
  "keccak",
@@ -4361,15 +4377,12 @@ dependencies = [
  "elf",
  "enum-map",
  "eyre",
- "gecko_profile",
  "hashbrown 0.14.5",
  "hex",
- "indicatif",
  "itertools 0.14.0",
  "memmap2",
  "num",
  "rrs-succinct",
- "rustc-demangle",
  "serde",
  "serde_arrays",
  "serde_json",
@@ -5539,9 +5552,9 @@ dependencies = [
 
 [[package]]
 name = "typenum"
-version = "1.20.0"
+version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "40ce102ab67701b8526c123c1bab5cbe42d7040ccfd0f64af1a385808d2f43de"
+checksum = "562d481066bde0658276a35467c4af00bdc6ee726305698a55b86e61d7ad82bb"
 
 [[package]]
 name = "unicode-ident"
@@ -6402,42 +6415,6 @@ dependencies = [
  "sha2",
  "sha3",
  "subtle",
-]
-
-[[package]]
-name = "zkpow-core"
-version = "0.1.0"
-dependencies = [
- "rkyv",
- "sp1-zkvm",
-]
-
-[[package]]
-name = "zkpow-guest"
-version = "0.1.0"
-dependencies = [
- "sp1-zkvm",
- "zkpow-core",
-]
-
-[[package]]
-name = "zkpow-host"
-version = "0.1.0"
-dependencies = [
- "console-subscriber",
- "hex",
- "humantime",
- "num-bigint 0.4.6",
- "rusqlite",
- "sha2",
- "sp1-build",
- "sp1-prover",
- "sp1-recursion-gnark-ffi",
- "sp1-sdk",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "zkpow-core",
 ]
 
 [[package]]
