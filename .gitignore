@@ -5,7 +5,6 @@ target/
 
 # Database
 bitcoin_headers.sqlite
-headers.db
 
 # IDE
 .idea/
