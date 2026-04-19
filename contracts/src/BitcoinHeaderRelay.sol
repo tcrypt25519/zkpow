@@ -9,33 +9,37 @@ import {ISP1Verifier} from "./interfaces/ISP1Verifier.sol";
 /// single program verification key, but multiple relay instances may share the same verifier.
 contract BitcoinHeaderRelay {
     /// @notice Contract-facing public values for one accepted proof submission.
-    /// @dev This is intentionally ABI-friendly; it should be easy for Solidity to decode and for
-    /// off-chain consumers to index without knowing anything about the guest's internal rkyv state.
+    /// @dev This is a packed binary summary, not full ABI encoding. The Rust guest can keep its
+    /// internal rkyv state, then serialize this compact view once at the proof boundary.
     struct PublicValuesV1 {
         uint32 schemaVersion;
-        bytes32 genesisHash;
-        bytes32 blockHash;
+        uint32 headerVersion;
+        bytes32 genesisBlockHash;
+        bytes32 currentBlockHash;
         bytes32 prevBlockHash;
-        uint32 tipHeight;
+        uint32 height;
         uint256 cumulativeChainWork;
-        uint32 blockTimestamp;
+        uint32 timestamp;
         uint32 nBits;
         uint32 nonce;
         bytes32 merkleRoot;
+        uint32[11] medianTimePastWindow;
     }
 
     /// @notice Summary stored for each accepted tip.
     struct HeaderRecord {
         uint32 schemaVersion;
-        bytes32 genesisHash;
-        bytes32 blockHash;
+        uint32 headerVersion;
+        bytes32 genesisBlockHash;
+        bytes32 currentBlockHash;
         bytes32 prevBlockHash;
         bytes32 merkleRoot;
         uint256 cumulativeChainWork;
-        uint32 tipHeight;
-        uint32 blockTimestamp;
+        uint32 height;
+        uint32 timestamp;
         uint32 nBits;
         uint32 nonce;
+        uint32[11] medianTimePastWindow;
     }
 
     error InvalidPublicValuesLength(uint256 actual);
@@ -46,22 +50,22 @@ contract BitcoinHeaderRelay {
     error PrevHashMismatch(bytes32 expected, bytes32 actual);
     error CapacityZero();
     error ZeroAddress();
-    error OffsetOutOfRange(uint256 offset, uint256 acceptedCount);
+    error OffsetOutOfRange(uint256 offset, uint256 available);
     error SlotOutOfRange(uint256 slot, uint256 capacity);
 
     event HeaderAccepted(
         uint256 indexed slot,
-        uint32 indexed tipHeight,
-        bytes32 indexed blockHash,
+        uint32 indexed height,
+        bytes32 indexed currentBlockHash,
         bytes32 prevBlockHash,
-        bytes32 genesisHash,
+        bytes32 genesisBlockHash,
         uint256 cumulativeChainWork,
         bytes32 proofHash
     );
 
     ISP1Verifier public immutable VERIFIER;
     bytes32 public immutable PROGRAM_V_KEY;
-    bytes32 public immutable GENESIS_HASH;
+    bytes32 public immutable GENESIS_BLOCK_HASH;
     uint256 public immutable RECENT_HEADER_CAPACITY;
 
     uint256 public acceptedCount;
@@ -71,13 +75,13 @@ contract BitcoinHeaderRelay {
     HeaderRecord private _latestTip;
     mapping(uint256 => HeaderRecord) private _recentHeaders;
 
-    constructor(address verifier_, bytes32 programVKey_, bytes32 genesisHash_, uint256 recentHeaderCapacity_) {
+    constructor(address verifier_, bytes32 programVKey_, bytes32 genesisBlockHash_, uint256 recentHeaderCapacity_) {
         if (verifier_ == address(0)) revert ZeroAddress();
         if (recentHeaderCapacity_ == 0) revert CapacityZero();
 
         VERIFIER = ISP1Verifier(verifier_);
         PROGRAM_V_KEY = programVKey_;
-        GENESIS_HASH = genesisHash_;
+        GENESIS_BLOCK_HASH = genesisBlockHash_;
         RECENT_HEADER_CAPACITY = recentHeaderCapacity_;
     }
 
@@ -92,15 +96,17 @@ contract BitcoinHeaderRelay {
         uint256 slot = acceptedCount % RECENT_HEADER_CAPACITY;
         HeaderRecord memory record = HeaderRecord({
             schemaVersion: summary.schemaVersion,
-            genesisHash: summary.genesisHash,
-            blockHash: summary.blockHash,
+            headerVersion: summary.headerVersion,
+            genesisBlockHash: summary.genesisBlockHash,
+            currentBlockHash: summary.currentBlockHash,
             prevBlockHash: summary.prevBlockHash,
             merkleRoot: summary.merkleRoot,
             cumulativeChainWork: summary.cumulativeChainWork,
-            tipHeight: summary.tipHeight,
-            blockTimestamp: summary.blockTimestamp,
+            height: summary.height,
+            timestamp: summary.timestamp,
             nBits: summary.nBits,
-            nonce: summary.nonce
+            nonce: summary.nonce,
+            medianTimePastWindow: summary.medianTimePastWindow
         });
 
         _recentHeaders[slot] = record;
@@ -111,10 +117,10 @@ contract BitcoinHeaderRelay {
 
         emit HeaderAccepted(
             slot,
-            summary.tipHeight,
-            summary.blockHash,
+            summary.height,
+            summary.currentBlockHash,
             summary.prevBlockHash,
-            summary.genesisHash,
+            summary.genesisBlockHash,
             summary.cumulativeChainWork,
             latestProofHash
         );
@@ -151,44 +157,75 @@ contract BitcoinHeaderRelay {
     }
 
     function _decodePublicValues(bytes calldata publicValues) internal pure returns (PublicValuesV1 memory summary) {
-        if (publicValues.length != 320) {
+        if (publicValues.length != 228) {
             revert InvalidPublicValuesLength(publicValues.length);
         }
 
-        (
-            summary.schemaVersion,
-            summary.genesisHash,
-            summary.blockHash,
-            summary.prevBlockHash,
-            summary.tipHeight,
-            summary.cumulativeChainWork,
-            summary.blockTimestamp,
-            summary.nBits,
-            summary.nonce,
-            summary.merkleRoot
-        ) =
-            abi.decode(
-                publicValues, (uint32, bytes32, bytes32, bytes32, uint32, uint256, uint32, uint32, uint32, bytes32)
-            );
+        uint256 offset;
+        summary.schemaVersion = _readU32(publicValues, offset);
+        offset += 4;
+        summary.headerVersion = _readU32(publicValues, offset);
+        offset += 4;
+        summary.genesisBlockHash = _readBytes32(publicValues, offset);
+        offset += 32;
+        summary.currentBlockHash = _readBytes32(publicValues, offset);
+        offset += 32;
+        summary.prevBlockHash = _readBytes32(publicValues, offset);
+        offset += 32;
+        summary.height = _readU32(publicValues, offset);
+        offset += 4;
+        summary.cumulativeChainWork = _readU256(publicValues, offset);
+        offset += 32;
+        summary.timestamp = _readU32(publicValues, offset);
+        offset += 4;
+        summary.nBits = _readU32(publicValues, offset);
+        offset += 4;
+        summary.nonce = _readU32(publicValues, offset);
+        offset += 4;
+        summary.merkleRoot = _readBytes32(publicValues, offset);
+        offset += 32;
+
+        for (uint256 i = 0; i < 11; ++i) {
+            summary.medianTimePastWindow[i] = _readU32(publicValues, offset);
+            offset += 4;
+        }
     }
 
     function _validateSummary(PublicValuesV1 memory summary) internal view {
         if (summary.schemaVersion != 1) {
             revert UnsupportedSchemaVersion(summary.schemaVersion);
         }
-        if (summary.genesisHash != GENESIS_HASH) {
-            revert GenesisHashMismatch(GENESIS_HASH, summary.genesisHash);
+        if (summary.genesisBlockHash != GENESIS_BLOCK_HASH) {
+            revert GenesisHashMismatch(GENESIS_BLOCK_HASH, summary.genesisBlockHash);
         }
         if (hasTip) {
-            if (summary.tipHeight <= _latestTip.tipHeight) {
-                revert NonIncreasingHeight(_latestTip.tipHeight, summary.tipHeight);
+            if (summary.height <= _latestTip.height) {
+                revert NonIncreasingHeight(_latestTip.height, summary.height);
             }
             if (summary.cumulativeChainWork <= _latestTip.cumulativeChainWork) {
                 revert NonIncreasingChainWork(_latestTip.cumulativeChainWork, summary.cumulativeChainWork);
             }
-            if (summary.prevBlockHash != _latestTip.blockHash) {
-                revert PrevHashMismatch(_latestTip.blockHash, summary.prevBlockHash);
+            if (summary.prevBlockHash != _latestTip.currentBlockHash) {
+                revert PrevHashMismatch(_latestTip.currentBlockHash, summary.prevBlockHash);
             }
+        }
+    }
+
+    function _readU32(bytes calldata data, uint256 offset) private pure returns (uint32 value) {
+        assembly {
+            value := shr(224, calldataload(add(data.offset, offset)))
+        }
+    }
+
+    function _readBytes32(bytes calldata data, uint256 offset) private pure returns (bytes32 value) {
+        assembly {
+            value := calldataload(add(data.offset, offset))
+        }
+    }
+
+    function _readU256(bytes calldata data, uint256 offset) private pure returns (uint256 value) {
+        assembly {
+            value := calldataload(add(data.offset, offset))
         }
     }
 }
