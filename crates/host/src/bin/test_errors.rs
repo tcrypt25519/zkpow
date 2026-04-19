@@ -11,16 +11,16 @@
 use sp1_sdk::prelude::*;
 use sp1_sdk::{Elf, HashableKey, Prover, ProverClient, SP1Stdin};
 
-use bitcoin_header_chain_script::observability;
-use bitcoin_header_chain_script::util;
-use bitcoin_header_chain_script::util::{
+use zkpow_host::observability;
+use zkpow_host::proof_pipeline::DEFAULT_DB_PATH;
+use zkpow_host::util;
+use zkpow_host::util::{
     HeaderChainPublicValues, Input, PublicValuesDigest, RecursiveProof, ValidationErrorCode,
     VerifierKeyDigest,
 };
 
-const ELF: Elf = include_elf!("bitcoin-header-chain-program");
+const ELF: Elf = include_elf!("zkpow-guest");
 
-const DB_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../bitcoin_headers.sqlite",);
 const MAINNET_GENESIS_HEX: &str =
     "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f";
 
@@ -115,7 +115,7 @@ fn mainnet_genesis_hash() -> util::BlockHash {
 }
 
 fn mainnet_genesis_state() -> util::State {
-    let genesis_header = util::load_header_from_db(DB_PATH, 0);
+    let genesis_header = util::load_header_from_db(DEFAULT_DB_PATH, 0);
     util::genesis_state(genesis_header, mainnet_genesis_hash())
 }
 
@@ -168,7 +168,7 @@ async fn main() {
 
 async fn test_success_100_headers() -> Result<(), String> {
     let genesis_state = mainnet_genesis_state();
-    let raw_headers = util::load_headers_from_db(DB_PATH, 1, 100);
+    let raw_headers = util::load_headers_from_db(DEFAULT_DB_PATH, 1, 100);
     let headers = util::raw_headers_to_new_headers(&raw_headers);
     let input = Input::new(genesis_state, RecursiveProof::default(), headers)
         .map_err(|err| err.to_string())?;
@@ -188,7 +188,8 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
     const EPOCH_LENGTH: usize = 2016;
     let genesis_state = mainnet_genesis_state();
 
-    let first_epoch_raw = util::load_headers_from_db(DB_PATH, 1, FIRST_BOUNDARY_TIP_HEIGHT as u64);
+    let first_epoch_raw =
+        util::load_headers_from_db(DEFAULT_DB_PATH, 1, FIRST_BOUNDARY_TIP_HEIGHT as u64);
     let first_epoch_headers = util::raw_headers_to_new_headers(&first_epoch_raw);
     let first_epoch_state = util::compute_final_state(&genesis_state, &first_epoch_headers);
     println!(
@@ -198,7 +199,7 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
         consensus_bits(first_epoch_state.next_nbits),
     );
     let first_retarget_bits = raw_header_bits(
-        &util::load_headers_from_db(DB_PATH, (FIRST_BOUNDARY_TIP_HEIGHT + 1) as u64, 1),
+        &util::load_headers_from_db(DEFAULT_DB_PATH, (FIRST_BOUNDARY_TIP_HEIGHT + 1) as u64, 1),
         0,
     )?;
     if consensus_bits(first_epoch_state.next_nbits) != first_retarget_bits {
@@ -209,7 +210,7 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
         ));
     }
 
-    let raw_headers = util::load_headers_from_db(DB_PATH, 1, RETARGET_TIP_HEIGHT as u64);
+    let raw_headers = util::load_headers_from_db(DEFAULT_DB_PATH, 1, RETARGET_TIP_HEIGHT as u64);
     let new_headers = util::raw_headers_to_new_headers(&raw_headers);
     let state = util::compute_final_state(&genesis_state, &new_headers);
     println!(
@@ -222,7 +223,7 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
         "retarget-debug: prev_epoch_bits={:#x} next_header_bits={:#x}",
         raw_header_bits(&raw_headers, RETARGET_TIP_HEIGHT - 1)?,
         raw_header_bits(
-            &util::load_headers_from_db(DB_PATH, RETARGET_HEIGHT as u64, 1),
+            &util::load_headers_from_db(DEFAULT_DB_PATH, RETARGET_HEIGHT as u64, 1),
             0,
         )?,
     );
@@ -236,7 +237,7 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
 
     let previous_epoch_bits = raw_header_bits(&raw_headers, RETARGET_TIP_HEIGHT - 1)?;
     let next_header_bits = raw_header_bits(
-        &util::load_headers_from_db(DB_PATH, RETARGET_HEIGHT as u64, 1),
+        &util::load_headers_from_db(DEFAULT_DB_PATH, RETARGET_HEIGHT as u64, 1),
         0,
     )?;
 
@@ -255,7 +256,8 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
         ));
     }
 
-    let pre_boundary_raw = util::load_headers_from_db(DB_PATH, 1, (RETARGET_HEIGHT - 2) as u64);
+    let pre_boundary_raw =
+        util::load_headers_from_db(DEFAULT_DB_PATH, 1, (RETARGET_HEIGHT - 2) as u64);
     let pre_boundary_headers = util::raw_headers_to_new_headers(&pre_boundary_raw);
     let pre_boundary_state = util::compute_final_state(&genesis_state, &pre_boundary_headers);
 
@@ -276,7 +278,7 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
 
 async fn test_error_header_payload_length() -> Result<(), String> {
     let genesis_state = mainnet_genesis_state();
-    let raw_headers = util::load_headers_from_db(DB_PATH, 1, 10);
+    let raw_headers = util::load_headers_from_db(DEFAULT_DB_PATH, 1, 10);
     let headers = util::raw_headers_to_new_headers(&raw_headers);
     let input = Input::new(genesis_state, RecursiveProof::default(), headers)
         .map_err(|err| err.to_string())?;
@@ -295,7 +297,7 @@ async fn test_error_timestamp_too_old() -> Result<(), String> {
     // Block 12's median check uses blocks 1-11 timestamps.
     // We corrupt block 12's timestamp to be older than the median.
     let genesis_state = mainnet_genesis_state();
-    let raw_headers = util::load_headers_from_db(DB_PATH, 1, 13);
+    let raw_headers = util::load_headers_from_db(DEFAULT_DB_PATH, 1, 13);
     let mut headers = util::raw_headers_to_new_headers(&raw_headers);
     headers[11].timestamp = util::BlockTimestamp::from_consensus(1231006505);
     let input = Input::new(genesis_state, RecursiveProof::default(), headers)
@@ -308,7 +310,7 @@ async fn test_error_timestamp_too_old() -> Result<(), String> {
 
 async fn test_error_pow_insufficient() -> Result<(), String> {
     let genesis_state = mainnet_genesis_state();
-    let raw_headers = util::load_headers_from_db(DB_PATH, 1, 2);
+    let raw_headers = util::load_headers_from_db(DEFAULT_DB_PATH, 1, 2);
     let mut headers = util::raw_headers_to_new_headers(&raw_headers);
     headers[0].nonce ^= 0xFF;
     let input = Input::new(genesis_state, RecursiveProof::default(), headers)
@@ -329,7 +331,7 @@ async fn test_recursive_chain_success() -> Result<(), String> {
 
     // === Run 1: genesis state → block 10 ===
     let genesis_state = mainnet_genesis_state();
-    let raw1 = util::load_headers_from_db(DB_PATH, 1, 10);
+    let raw1 = util::load_headers_from_db(DEFAULT_DB_PATH, 1, 10);
     let headers1 = util::raw_headers_to_new_headers(&raw1);
     let input1 = Input::new(genesis_state, RecursiveProof::default(), headers1)
         .map_err(|err| err.to_string())?;
@@ -349,7 +351,7 @@ async fn test_recursive_chain_success() -> Result<(), String> {
     }
 
     // === Run 2: Extend from Run 1 (blocks 11-20) ===
-    let raw2 = util::load_headers_from_db(DB_PATH, 11, 10);
+    let raw2 = util::load_headers_from_db(DEFAULT_DB_PATH, 11, 10);
     let headers2 = util::raw_headers_to_new_headers(&raw2);
     let input2 = Input::new(
         state1,

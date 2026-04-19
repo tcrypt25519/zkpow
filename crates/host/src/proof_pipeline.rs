@@ -16,10 +16,11 @@ use sp1_sdk::{HashableKey, SP1Context, SP1ProofWithPublicValues};
 
 pub type BoxError = Box<dyn Error + Send + Sync + 'static>;
 
-pub const ELF: Elf = include_elf!("bitcoin-header-chain-program");
+pub const ELF: Elf = include_elf!("zkpow-guest");
 pub const GENESIS_HASH_HEX: &str =
     "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f";
-pub const DEFAULT_DB_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../bitcoin_headers.sqlite");
+pub const HEADERS_DB_PATH_ENV_VAR: &str = "HEADERS_DB_PATH";
+pub const DEFAULT_DB_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../headers.db");
 
 #[derive(Debug, Clone)]
 pub struct ProofGenerationConfig {
@@ -54,7 +55,10 @@ pub fn config_from_env() -> ProofGenerationConfig {
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(100),
-        db_path: PathBuf::from(DEFAULT_DB_PATH),
+        db_path: std::env::var(HEADERS_DB_PATH_ENV_VAR)
+            .ok()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(DEFAULT_DB_PATH)),
         output_dir: std::env::var("OUTPUT_DIR")
             .ok()
             .map(PathBuf::from)

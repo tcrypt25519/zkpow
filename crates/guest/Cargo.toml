@@ -1,11 +1,11 @@
 [package]
-name = "bitcoin-header-chain-program"
+name = "zkpow-guest"
 version = "0.1.0"
 edition = "2021"
 publish = false
 
 [dependencies]
-bitcoin-header-chain-core = { workspace = true }
+zkpow-core = { workspace = true }
 sp1-zkvm = { workspace = true, features = ["lib", "verify"] }
 
 [features]

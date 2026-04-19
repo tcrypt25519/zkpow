@@ -1,0 +1,11 @@
+**
+!.cargo/
+!Cargo.toml
+!Cargo.lock
+!crates/core/
+!crates/core/**
+!crates/guest/
+!crates/guest/**
+!crates/host/
+!crates/host/**
+crates/host/*.bin

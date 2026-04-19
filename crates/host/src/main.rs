@@ -2,13 +2,13 @@
 //!
 //! Usage:
 //!   # Run 1: start from a host-selected genesis state
-//!   cargo run --release --bin bitcoin-header-chain-script
+//!   cargo run --release -p zkpow-host --bin zkpow-host
 //!
 //!   # Run 2: Extend from previous proof
-//!   PREV_PROOF=proof_height_1_to_100.bin cargo run --release --bin bitcoin-header-chain-script
+//!   PREV_PROOF=proof_height_1_to_100.bin cargo run --release -p zkpow-host --bin zkpow-host
 
-use bitcoin_header_chain_script::observability;
-use bitcoin_header_chain_script::proof_pipeline::{config_from_env, generate_and_save_proofs};
+use zkpow_host::observability;
+use zkpow_host::proof_pipeline::{config_from_env, generate_and_save_proofs};
 
 #[tokio::main]
 async fn main() {
