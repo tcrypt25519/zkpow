@@ -10,8 +10,6 @@ console-subscriber = "0.4.1"
 sp1-sdk = { workspace = true }
 sp1-prover = { workspace = true }
 sp1-recursion-gnark-ffi = { workspace = true, features = ["native"] }
-#sp1-cuda = { version = "6.1.0", default-features = false, features = [] }
-#sp1-prover-types = { version = "6.1.0", default-features = false, features = [] }
 hex = { workspace = true }
 humantime = { workspace = true }
 num-bigint = { workspace = true }
@@ -23,3 +21,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
 [build-dependencies]
 sp1-build = { workspace = true }
+
+[features]
+default = []
+CUDA = ["sp1-sdk/cuda"]

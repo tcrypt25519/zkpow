@@ -9,6 +9,9 @@
 //!
 //!   # Optional: also emit a Groth16-wrapped proof
 //!   GENERATE_GROTH16=1 cargo run --release -p zkpow-host --bin zkpow-host
+//!
+//!   # Optional: enable CUDA proving (must compile with --features CUDA first)
+//!   CUDA=1 cargo run --release -p zkpow-host --features CUDA --bin zkpow-host
 
 use zkpow_host::observability;
 use zkpow_host::proof_pipeline::{config_from_env, generate_and_save_proofs};
@@ -21,6 +24,14 @@ async fn main() {
     observability::init();
 
     let config = config_from_env().expect("invalid proof generation configuration");
+    tracing::info!(
+        "Starting proof generation with backend {:?}{}",
+        config.prover_backend,
+        config
+            .cuda_device_id
+            .map(|id| format!(" (CUDA device {})", id))
+            .unwrap_or_default(),
+    );
     let artifacts = generate_and_save_proofs(&config)
         .await
         .expect("proof generation pipeline failed");

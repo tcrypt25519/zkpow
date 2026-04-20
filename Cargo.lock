@@ -4473,6 +4473,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "sp1-cuda"
+version = "6.1.0"
+source = "git+https://github.com/succinctlabs/sp1?tag=v6.1.0#d454975ac7c1126097e36eceda9bce2cb9899da4"
+dependencies = [
+ "bincode",
+ "bytes",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sp1-core-executor",
+ "sp1-core-machine",
+ "sp1-primitives",
+ "sp1-prover",
+ "sp1-prover-types",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "sp1-curves"
 version = "6.1.0"
 source = "git+https://github.com/succinctlabs/sp1?tag=v6.1.0#d454975ac7c1126097e36eceda9bce2cb9899da4"
@@ -4831,6 +4851,7 @@ dependencies = [
  "sp1-core-executor",
  "sp1-core-executor-runner",
  "sp1-core-machine",
+ "sp1-cuda",
  "sp1-hypercube",
  "sp1-primitives",
  "sp1-prover",

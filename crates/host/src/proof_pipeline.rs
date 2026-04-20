@@ -1,6 +1,7 @@
 use std::env::VarError;
 use std::error::Error;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::Instant;
 
 use crate::util;
@@ -9,11 +10,13 @@ use crate::util::{
 };
 use num_bigint::BigUint;
 use sp1_prover::build::{build_constraints_and_witness, try_build_groth16_artifacts_dir};
-use sp1_prover::worker::{SP1LocalNodeBuilder, cpu_worker_builder};
+use sp1_prover::worker::{cpu_worker_builder, SP1LocalNodeBuilder};
 use sp1_recursion_gnark_ffi::Groth16Bn254Prover;
 use sp1_sdk::prelude::*;
 use sp1_sdk::proof::SP1Proof;
-use sp1_sdk::{HashableKey, SP1Context, SP1ProofWithPublicValues};
+use sp1_sdk::{
+    HashableKey, ProveRequest, Prover, ProverClient, ProvingKey, SP1ProofWithPublicValues,
+};
 
 pub type BoxError = Box<dyn Error + Send + Sync + 'static>;
 
@@ -21,6 +24,19 @@ pub const ELF: Elf = include_elf!("zkpow-guest");
 pub const GENESIS_HASH_HEX: &str =
     "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f";
 pub const DEFAULT_DB_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../headers.db");
+const MIN_CUDA_COMPUTE_CAPABILITY: ComputeCapability = ComputeCapability { major: 8, minor: 6 };
+const RECOMMENDED_MIN_VRAM_MIB: u32 = 24 * 1024;
+const MIN_REPORTED_CUDA_VERSION: NumericVersion = NumericVersion {
+    major: 12,
+    minor: 5,
+    patch: 0,
+};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProverBackend {
+    Cpu,
+    Cuda,
+}
 
 #[derive(Debug, Clone)]
 pub struct ProofGenerationConfig {
@@ -29,6 +45,8 @@ pub struct ProofGenerationConfig {
     pub db_path: PathBuf,
     pub output_dir: PathBuf,
     pub generate_groth16: bool,
+    pub prover_backend: ProverBackend,
+    pub cuda_device_id: Option<u32>,
 }
 
 #[derive(Debug)]
@@ -40,6 +58,39 @@ pub struct ProofArtifacts {
     pub first_new_height: u32,
     pub end_height: u32,
     pub total_duration_secs: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct NumericVersion {
+    major: u32,
+    minor: u32,
+    patch: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct ComputeCapability {
+    major: u32,
+    minor: u32,
+}
+
+#[derive(Debug, Clone)]
+struct CudaGpuInfo {
+    name: String,
+    compute_capability: ComputeCapability,
+    memory_total_mib: u32,
+}
+
+#[derive(Debug, Clone)]
+struct CudaPreflightReport {
+    selected_device_id: u32,
+    gpu_count: usize,
+    selected_gpu: CudaGpuInfo,
+    reported_cuda_version: Option<NumericVersion>,
+}
+
+struct CompressedProofArtifacts {
+    vk: sp1_prover::SP1VerifyingKey,
+    compressed_proof: SP1ProofWithPublicValues,
 }
 
 fn parse_genesis_hash() -> Result<util::BlockHash, BoxError> {
@@ -65,7 +116,231 @@ fn parse_bool_env(var_name: &'static str) -> Result<bool, BoxError> {
     }
 }
 
+fn parse_u32_env(var_name: &'static str) -> Result<Option<u32>, BoxError> {
+    match std::env::var(var_name) {
+        Ok(value) => {
+            Ok(Some(value.parse().map_err(|err| {
+                format!("invalid {var_name} value `{value}`: {err}")
+            })?))
+        }
+        Err(VarError::NotPresent) => Ok(None),
+        Err(err) => Err(err.into()),
+    }
+}
+
+fn parse_numeric_version(input: &str) -> Result<NumericVersion, BoxError> {
+    let mut parts = input.trim().split('.');
+    let major = parts
+        .next()
+        .ok_or_else(|| format!("missing major version in `{input}`"))?
+        .parse::<u32>()?;
+    let minor = parts
+        .next()
+        .unwrap_or("0")
+        .parse::<u32>()
+        .map_err(|err| format!("invalid minor version in `{input}`: {err}"))?;
+    let patch = parts
+        .next()
+        .unwrap_or("0")
+        .parse::<u32>()
+        .map_err(|err| format!("invalid patch version in `{input}`: {err}"))?;
+    Ok(NumericVersion {
+        major,
+        minor,
+        patch,
+    })
+}
+
+fn parse_compute_capability(input: &str) -> Result<ComputeCapability, BoxError> {
+    let version = parse_numeric_version(input)?;
+    Ok(ComputeCapability {
+        major: version.major,
+        minor: version.minor,
+    })
+}
+
+fn run_command_stdout(program: &str, args: &[&str]) -> Result<String, BoxError> {
+    let output = Command::new(program).args(args).output().map_err(|err| {
+        format!(
+            "failed to run `{}`: {}",
+            std::iter::once(program)
+                .chain(args.iter().copied())
+                .collect::<Vec<_>>()
+                .join(" "),
+            err
+        )
+    })?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        return Err(format!(
+            "`{}` exited with {}{}",
+            std::iter::once(program)
+                .chain(args.iter().copied())
+                .collect::<Vec<_>>()
+                .join(" "),
+            output.status,
+            if stderr.is_empty() {
+                String::new()
+            } else {
+                format!(": {stderr}")
+            }
+        )
+        .into());
+    }
+    Ok(String::from_utf8(output.stdout)?)
+}
+
+fn parse_cuda_version_from_nvidia_smi_output(
+    output: &str,
+) -> Result<Option<NumericVersion>, BoxError> {
+    let marker = "CUDA Version:";
+    let Some(start) = output.find(marker) else {
+        return Ok(None);
+    };
+    let version = output[start + marker.len()..]
+        .trim_start()
+        .split_whitespace()
+        .next()
+        .ok_or_else(|| "missing CUDA version after `CUDA Version:`".to_string())?;
+    Ok(Some(parse_numeric_version(version)?))
+}
+
+fn parse_nvidia_smi_gpu_query(output: &str) -> Result<Vec<CudaGpuInfo>, BoxError> {
+    output
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| {
+            let parts = line.split(',').map(|part| part.trim()).collect::<Vec<_>>();
+            if parts.len() != 3 {
+                return Err(format!(
+                    "unexpected `nvidia-smi` GPU query row `{line}`; expected 3 comma-separated fields"
+                )
+                .into());
+            }
+            let compute_capability = parse_compute_capability(parts[1])?;
+            let memory_total_mib = parts[2].parse::<u32>().map_err(|err| {
+                format!("invalid GPU memory value `{}` in `nvidia-smi` output: {err}", parts[2])
+            })?;
+            Ok(CudaGpuInfo {
+                name: parts[0].to_owned(),
+                compute_capability,
+                memory_total_mib,
+            })
+        })
+        .collect()
+}
+
+fn ensure_cuda_feature_available() -> Result<(), BoxError> {
+    if cfg!(feature = "CUDA") {
+        Ok(())
+    } else {
+        Err("CUDA=1 requires building zkpow-host with `--features CUDA`".into())
+    }
+}
+
+fn ensure_cuda_requested_configuration(
+    use_cuda: bool,
+    cuda_device_id: Option<u32>,
+) -> Result<ProverBackend, BoxError> {
+    if !use_cuda {
+        if cuda_device_id.is_some() {
+            return Err("CUDA_DEVICE_ID is only valid when CUDA=1".into());
+        }
+        return Ok(ProverBackend::Cpu);
+    }
+
+    ensure_cuda_feature_available()?;
+    Ok(ProverBackend::Cuda)
+}
+
+fn run_cuda_preflight(config: &ProofGenerationConfig) -> Result<CudaPreflightReport, BoxError> {
+    if config.prover_backend != ProverBackend::Cuda {
+        return Err("internal error: CUDA preflight requested for non-CUDA config".into());
+    }
+
+    if std::env::consts::ARCH != "x86_64" {
+        return Err(format!(
+            "CUDA proving requires an x86_64 machine; detected architecture `{}`",
+            std::env::consts::ARCH
+        )
+        .into());
+    }
+
+    let gpu_query = run_command_stdout(
+        "nvidia-smi",
+        &[
+            "--query-gpu=name,compute_cap,memory.total",
+            "--format=csv,noheader,nounits",
+        ],
+    )?;
+    let gpus = parse_nvidia_smi_gpu_query(&gpu_query)?;
+    if gpus.is_empty() {
+        return Err("`nvidia-smi` reported no NVIDIA GPUs".into());
+    }
+
+    let selected_device_id = config.cuda_device_id.unwrap_or(0);
+    let selected_gpu = gpus
+        .get(selected_device_id as usize)
+        .ok_or_else(|| {
+            format!(
+                "CUDA_DEVICE_ID={} is out of range; machine only reports {} GPU(s)",
+                selected_device_id,
+                gpus.len()
+            )
+        })?
+        .clone();
+
+    if selected_gpu.compute_capability < MIN_CUDA_COMPUTE_CAPABILITY {
+        return Err(format!(
+            "GPU {} (`{}`) reports compute capability {}; SP1 requires >= {}",
+            selected_device_id,
+            selected_gpu.name,
+            selected_gpu.compute_capability,
+            MIN_CUDA_COMPUTE_CAPABILITY,
+        )
+        .into());
+    }
+
+    let nvidia_smi_output = run_command_stdout("nvidia-smi", &[])?;
+    let reported_cuda_version = parse_cuda_version_from_nvidia_smi_output(&nvidia_smi_output)?;
+    if let Some(version) = reported_cuda_version {
+        if version < MIN_REPORTED_CUDA_VERSION {
+            return Err(format!(
+                "reported CUDA runtime {} is too old; SP1 requires at least 12.5.1",
+                version
+            )
+            .into());
+        }
+    } else {
+        tracing::warn!(
+            "Unable to parse a CUDA runtime version from `nvidia-smi`; continuing because the GPU and driver are otherwise visible"
+        );
+    }
+
+    Ok(CudaPreflightReport {
+        selected_device_id,
+        gpu_count: gpus.len(),
+        selected_gpu,
+        reported_cuda_version,
+    })
+}
+
+impl std::fmt::Display for NumericVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}.{}.{}", self.major, self.minor, self.patch)
+    }
+}
+
+impl std::fmt::Display for ComputeCapability {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}.{}", self.major, self.minor)
+    }
+}
+
 pub fn config_from_env() -> Result<ProofGenerationConfig, BoxError> {
+    let use_cuda = parse_bool_env("CUDA")?;
+    let cuda_device_id = parse_u32_env("CUDA_DEVICE_ID")?;
+
     Ok(ProofGenerationConfig {
         prev_proof_path: std::env::var("PREV_PROOF").ok().map(PathBuf::from),
         num_headers: std::env::var("NUM_HEADERS")
@@ -78,6 +353,158 @@ pub fn config_from_env() -> Result<ProofGenerationConfig, BoxError> {
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from(".")),
         generate_groth16: parse_bool_env("GENERATE_GROTH16")?,
+        prover_backend: ensure_cuda_requested_configuration(use_cuda, cuda_device_id)?,
+        cuda_device_id,
+    })
+}
+
+fn log_prover_backend_selection(config: &ProofGenerationConfig) {
+    match config.prover_backend {
+        ProverBackend::Cpu => {
+            if cfg!(feature = "CUDA") {
+                tracing::info!(
+                    "CUDA support is compiled in, but CUDA=1 was not set; using the CPU prover"
+                );
+            } else {
+                tracing::info!("CUDA support is not compiled in; using the CPU prover");
+            }
+        }
+        ProverBackend::Cuda => {
+            tracing::info!(
+                "CUDA=1 requested; preparing the GPU prover{}",
+                config
+                    .cuda_device_id
+                    .map(|id| format!(" on device {}", id))
+                    .unwrap_or_else(|| " on device 0".to_owned()),
+            );
+        }
+    }
+}
+
+fn log_cuda_preflight(report: &CudaPreflightReport) {
+    tracing::info!(
+        "CUDA preflight passed: selected GPU {} of {}: `{}` (compute capability {}, {} MiB VRAM{})",
+        report.selected_device_id,
+        report.gpu_count,
+        report.selected_gpu.name,
+        report.selected_gpu.compute_capability,
+        report.selected_gpu.memory_total_mib,
+        report
+            .reported_cuda_version
+            .map(|version| format!(", reported CUDA runtime {}", version))
+            .unwrap_or_default(),
+    );
+    if report.selected_gpu.memory_total_mib < RECOMMENDED_MIN_VRAM_MIB {
+        tracing::warn!(
+            "Selected GPU has {} MiB VRAM; SP1 recommends at least {} MiB (24 GiB)",
+            report.selected_gpu.memory_total_mib,
+            RECOMMENDED_MIN_VRAM_MIB,
+        );
+    }
+    if report.reported_cuda_version == Some(MIN_REPORTED_CUDA_VERSION) {
+        tracing::warn!(
+            "The reported CUDA runtime is {}; SP1's docs call for at least 12.5.1, and `nvidia-smi` does not expose patch precision here",
+            MIN_REPORTED_CUDA_VERSION,
+        );
+    }
+}
+
+fn build_recursive_proof(
+    vk: &sp1_prover::SP1VerifyingKey,
+    previous_proof: Option<&SP1ProofWithPublicValues>,
+) -> Result<RecursiveProof, BoxError> {
+    Ok(if let Some(prev_proof_val) = previous_proof {
+        RecursiveProof {
+            verifier_key: VerifierKeyDigest::from_raw(vk.hash_u32()),
+            public_values_digest: PublicValuesDigest::from_raw(util::compute_pv_digest(
+                &prev_proof_val.public_values.to_vec(),
+            )),
+        }
+    } else {
+        RecursiveProof::default()
+    })
+}
+
+fn build_stdin(
+    input: &Input,
+    previous_proof: Option<&SP1ProofWithPublicValues>,
+    vk: &sp1_prover::SP1VerifyingKey,
+) -> Result<SP1Stdin, BoxError> {
+    let mut stdin = SP1Stdin::new();
+    stdin.write_vec(input.to_bytes());
+
+    if let Some(prev_proof) = previous_proof {
+        let SP1Proof::Compressed(inner_proof) = &prev_proof.proof else {
+            return Err("previous proof is not compressed".into());
+        };
+        stdin.write_proof(inner_proof.as_ref().clone(), vk.vk.clone());
+    }
+
+    Ok(stdin)
+}
+
+async fn generate_compressed_proof_with_prover<P>(
+    prover_name: &str,
+    prover: &P,
+    current_state: &util::State,
+    previous_proof: Option<&SP1ProofWithPublicValues>,
+    headers: &[util::NewHeader],
+    expected_pv: &[u8],
+) -> Result<CompressedProofArtifacts, BoxError>
+where
+    P: Prover,
+    P::Error: Error + Send + Sync + 'static,
+{
+    let pk = timed_async("setup_vkey", || async { prover.setup(ELF).await }).await?;
+    let recursive_proof = timed_sync("build_recursive_proof", || {
+        build_recursive_proof(pk.verifying_key(), previous_proof)
+    })?;
+    let input = timed_sync("build_input", || -> Result<_, BoxError> {
+        Input::new(current_state.clone(), recursive_proof, headers.to_vec())
+            .map_err(|err| err.to_string().into())
+    })?;
+    let stdin = timed_sync("serialize_input", || {
+        build_stdin(&input, previous_proof, pk.verifying_key())
+    })?;
+
+    let (public_values, report) = timed_async("execute_program", || async {
+        prover.execute(ELF, stdin.clone()).await
+    })
+    .await?;
+    tracing::info!(
+        prover = prover_name,
+        "Execution succeeded: {} cycles",
+        report.total_instruction_count()
+    );
+
+    timed_sync(
+        "verify_execution_public_values",
+        || -> Result<(), BoxError> {
+            verify_public_values(&public_values.to_vec(), expected_pv, "execution")
+        },
+    )?;
+
+    let compressed_proof = timed_async("prove_compressed", || async {
+        prover.prove(&pk, stdin.clone()).compressed().await
+    })
+    .await?;
+    timed_sync(
+        "verify_compressed_public_values",
+        || -> Result<(), BoxError> {
+            verify_public_values(
+                &compressed_proof.public_values.to_vec(),
+                expected_pv,
+                "compressed proof",
+            )
+        },
+    )?;
+    timed_sync("verify_compressed_proof", || -> Result<(), BoxError> {
+        Ok(prover.verify(&compressed_proof, pk.verifying_key(), None)?)
+    })?;
+
+    Ok(CompressedProofArtifacts {
+        vk: pk.verifying_key().clone(),
+        compressed_proof,
     })
 }
 
@@ -85,6 +512,7 @@ pub async fn generate_and_save_proofs(
     config: &ProofGenerationConfig,
 ) -> Result<ProofArtifacts, BoxError> {
     let overall_start = Instant::now();
+    log_prover_backend_selection(config);
 
     let previous_proof: Option<SP1ProofWithPublicValues> =
         timed_sync("load_previous_proof", || {
@@ -135,88 +563,69 @@ pub async fn generate_and_save_proofs(
         Ok(util::raw_headers_to_new_headers(&raw_headers))
     })?;
     let loaded_count = headers.len() as u32;
-
-    let node = timed_async("build_local_node", || async {
-        SP1LocalNodeBuilder::from_worker_client_builder(cpu_worker_builder())
-            .build()
-            .await
-    })
-    .await?;
-    let vk = timed_async("setup_vkey", || async { node.setup(&ELF).await }).await?;
     let expected_state = timed_sync("simulate_expected_state", || -> Result<_, BoxError> {
         Ok(util::compute_final_state(&current_state, &headers))
     })?;
     let expected_pv = expected_state.to_bytes();
-
-    let recursive_proof = timed_sync("build_recursive_proof", || -> Result<_, BoxError> {
-        Ok(if let Some(prev_proof_val) = previous_proof.as_ref() {
-            RecursiveProof {
-                verifier_key: VerifierKeyDigest::from_raw(vk.hash_u32()),
-                public_values_digest: PublicValuesDigest::from_raw(util::compute_pv_digest(
-                    &prev_proof_val.public_values.to_vec(),
-                )),
-            }
-        } else {
-            RecursiveProof::default()
-        })
-    })?;
-    let input = timed_sync("build_input", || -> Result<_, BoxError> {
-        match Input::new(current_state.clone(), recursive_proof, headers.clone()) {
-            Ok(input) => Ok(input),
-            Err(err) => Err(err.to_string().into()),
-        }
-    })?;
-
-    let mut stdin = SP1Stdin::new();
-    timed_sync("serialize_input", || -> Result<(), BoxError> {
-        stdin.write_vec(input.to_bytes());
-        Ok(())
-    })?;
-    if let Some(prev_proof) = previous_proof.as_ref() {
-        timed_sync("write_recursive_proof", || -> Result<(), BoxError> {
-            let SP1Proof::Compressed(inner_proof) = &prev_proof.proof else {
-                return Err("previous proof is not compressed".into());
-            };
-            stdin.write_proof(inner_proof.as_ref().clone(), vk.vk.clone());
-            Ok(())
-        })?;
-    }
-
-    let (public_values, _, report) = timed_async("execute_program", || async {
-        node.execute(&ELF, stdin.clone(), SP1Context::default())
-            .await
-    })
-    .await?;
-    tracing::info!(
-        "Execution succeeded: {} cycles",
-        report.total_instruction_count()
-    );
-
-    timed_sync(
-        "verify_execution_public_values",
-        || -> Result<(), BoxError> {
-            verify_public_values(&public_values.to_vec(), &expected_pv, "execution")
-        },
-    )?;
-
-    let compressed_proof: SP1ProofWithPublicValues = timed_async("prove_compressed", || async {
-        node.prove(&ELF, stdin.clone(), SP1Context::default()).await
-    })
-    .await?
-    .into();
-    timed_sync(
-        "verify_compressed_public_values",
-        || -> Result<(), BoxError> {
-            verify_public_values(
-                &compressed_proof.public_values.to_vec(),
+    let compressed_artifacts = match config.prover_backend {
+        ProverBackend::Cpu => {
+            let prover = timed_async("build_cpu_prover", || async {
+                Ok::<_, BoxError>(ProverClient::builder().cpu().build().await)
+            })
+            .await?;
+            generate_compressed_proof_with_prover(
+                "cpu",
+                &prover,
+                &current_state,
+                previous_proof.as_ref(),
+                &headers,
                 &expected_pv,
-                "compressed proof",
             )
-        },
-    )?;
-    timed_sync("verify_compressed_proof", || -> Result<(), BoxError> {
-        Ok(node.verify(&vk, &compressed_proof.proof)?)
-    })?;
+            .await?
+        }
+        ProverBackend::Cuda => {
+            let report = timed_sync("cuda_preflight", || run_cuda_preflight(config))?;
+            log_cuda_preflight(&report);
+
+            #[cfg(feature = "CUDA")]
+            {
+                let prover = timed_async("build_cuda_prover", || async {
+                    let device_id = config.cuda_device_id;
+                    let handle = tokio::spawn(async move {
+                        let builder = if let Some(device_id) = device_id {
+                            ProverClient::builder().cuda().with_device_id(device_id)
+                        } else {
+                            ProverClient::builder().cuda()
+                        };
+                        builder.build().await
+                    });
+                    handle.await.map_err(|err| -> BoxError {
+                        format!("failed to initialize CUDA prover task: {err}").into()
+                    })
+                })
+                .await?;
+
+                generate_compressed_proof_with_prover(
+                    "cuda",
+                    &prover,
+                    &current_state,
+                    previous_proof.as_ref(),
+                    &headers,
+                    &expected_pv,
+                )
+                .await?
+            }
+
+            #[cfg(not(feature = "CUDA"))]
+            {
+                unreachable!(
+                    "CUDA config should already be rejected when the CUDA feature is absent"
+                )
+            }
+        }
+    };
+    let vk = compressed_artifacts.vk;
+    let compressed_proof = compressed_artifacts.compressed_proof;
 
     timed_sync("create_output_dir", || -> Result<(), BoxError> {
         std::fs::create_dir_all(&config.output_dir)?;
@@ -233,6 +642,12 @@ pub async fn generate_and_save_proofs(
     })?;
 
     let (groth16_path, groth16_proof) = if config.generate_groth16 {
+        let node = timed_async("build_local_node", || async {
+            SP1LocalNodeBuilder::from_worker_client_builder(cpu_worker_builder())
+                .build()
+                .await
+        })
+        .await?;
         let wrap_proof = timed_async("shrink_wrap", || async {
             node.shrink_wrap(&compressed_proof.proof).await
         })
@@ -254,13 +669,8 @@ pub async fn generate_and_save_proofs(
             tokio::task::spawn_blocking(move || {
                 let prover = Groth16Bn254Prover::new();
                 let proof = prover.prove(witness, &build_dir);
-                let [
-                    vkey_hash,
-                    committed_values_digest,
-                    exit_code,
-                    vk_root,
-                    proof_nonce,
-                ] = proof.public_inputs.clone();
+                let [vkey_hash, committed_values_digest, exit_code, vk_root, proof_nonce] =
+                    proof.public_inputs.clone();
 
                 assert_eq!(
                     vkey_hash, expected_vkey_hash,
@@ -383,7 +793,13 @@ fn verify_public_values(pv: &[u8], expected_pv: &[u8], label: &str) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, OnceLock};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
 
     fn unique_test_output_dir() -> PathBuf {
         let nanos = SystemTime::now()
@@ -406,6 +822,8 @@ mod tests {
             db_path: PathBuf::from(DEFAULT_DB_PATH),
             output_dir: output_dir.clone(),
             generate_groth16: true,
+            prover_backend: ProverBackend::Cpu,
+            cuda_device_id: None,
         };
 
         let artifacts = generate_and_save_proofs(&config)
@@ -415,12 +833,10 @@ mod tests {
         assert_eq!(artifacts.first_new_height, 1);
         assert_eq!(artifacts.end_height, 1);
         assert!(artifacts.compressed_path.exists());
-        assert!(
-            artifacts
-                .groth16_path
-                .as_ref()
-                .is_some_and(|path| path.exists())
-        );
+        assert!(artifacts
+            .groth16_path
+            .as_ref()
+            .is_some_and(|path| path.exists()));
 
         let saved_compressed = SP1ProofWithPublicValues::load(&artifacts.compressed_path)
             .expect("saved compressed proof should load");
@@ -460,6 +876,8 @@ mod tests {
             db_path: PathBuf::from(DEFAULT_DB_PATH),
             output_dir,
             generate_groth16: false,
+            prover_backend: ProverBackend::Cpu,
+            cuda_device_id: None,
         };
 
         let artifacts = generate_and_save_proofs(&config)
@@ -482,6 +900,7 @@ mod tests {
 
     #[test]
     fn parses_generate_groth16_env() {
+        let _guard = env_lock().lock().expect("env lock should not be poisoned");
         let key = "GENERATE_GROTH16";
         let original = std::env::var_os(key);
 
@@ -500,6 +919,97 @@ mod tests {
         match original {
             Some(value) => std::env::set_var(key, value),
             None => std::env::remove_var(key),
+        }
+    }
+
+    #[test]
+    fn parses_cuda_version_from_nvidia_smi_banner() {
+        let banner = r#"
+| NVIDIA-SMI 555.52.04             Driver Version: 555.52.04     CUDA Version: 12.6     |
+"#;
+
+        let parsed = parse_cuda_version_from_nvidia_smi_output(banner)
+            .expect("banner should parse")
+            .expect("banner should contain a CUDA version");
+        assert_eq!(
+            parsed,
+            NumericVersion {
+                major: 12,
+                minor: 6,
+                patch: 0
+            }
+        );
+    }
+
+    #[test]
+    fn parses_nvidia_smi_gpu_query_rows() {
+        let query = "\
+NVIDIA RTX 4090, 8.9, 24564\n\
+NVIDIA RTX 3090, 8.6, 24268\n";
+
+        let parsed = parse_nvidia_smi_gpu_query(query).expect("query output should parse");
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].name, "NVIDIA RTX 4090");
+        assert_eq!(
+            parsed[0].compute_capability,
+            ComputeCapability { major: 8, minor: 9 }
+        );
+        assert_eq!(parsed[1].memory_total_mib, 24268);
+    }
+
+    #[test]
+    fn rejects_cuda_device_without_cuda_flag() {
+        let _guard = env_lock().lock().expect("env lock should not be poisoned");
+        let originals = [
+            ("CUDA", std::env::var_os("CUDA")),
+            ("CUDA_DEVICE_ID", std::env::var_os("CUDA_DEVICE_ID")),
+            ("GENERATE_GROTH16", std::env::var_os("GENERATE_GROTH16")),
+            ("OUTPUT_DIR", std::env::var_os("OUTPUT_DIR")),
+            ("PREV_PROOF", std::env::var_os("PREV_PROOF")),
+            ("NUM_HEADERS", std::env::var_os("NUM_HEADERS")),
+        ];
+
+        std::env::remove_var("CUDA");
+        std::env::set_var("CUDA_DEVICE_ID", "0");
+
+        assert!(config_from_env().is_err());
+
+        for (key, value) in originals {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(not(feature = "CUDA"))]
+    fn rejects_cuda_when_feature_is_not_compiled_in() {
+        let _guard = env_lock().lock().expect("env lock should not be poisoned");
+        let originals = [
+            ("CUDA", std::env::var_os("CUDA")),
+            ("CUDA_DEVICE_ID", std::env::var_os("CUDA_DEVICE_ID")),
+            ("GENERATE_GROTH16", std::env::var_os("GENERATE_GROTH16")),
+            ("OUTPUT_DIR", std::env::var_os("OUTPUT_DIR")),
+            ("PREV_PROOF", std::env::var_os("PREV_PROOF")),
+            ("NUM_HEADERS", std::env::var_os("NUM_HEADERS")),
+        ];
+
+        std::env::set_var("CUDA", "1");
+        std::env::remove_var("CUDA_DEVICE_ID");
+
+        let err =
+            config_from_env().expect_err("CUDA should be rejected when the feature is absent");
+        assert!(
+            err.to_string().contains("--features CUDA"),
+            "unexpected error: {err}",
+        );
+
+        for (key, value) in originals {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
         }
     }
 }
