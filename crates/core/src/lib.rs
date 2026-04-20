@@ -584,7 +584,7 @@ impl State {
         F: FnOnce(&Header) -> BlockHash,
     {
         cycle_track("state/next", || {
-            let mut next_state = self.clone();
+            let mut next_state = cycle_track("state/next/clone_state", || self.clone());
             let new_height = self.height + 1;
             let required_nbits = self.next_nbits;
             let header = cycle_track("state/next/build_header", || {
@@ -603,7 +603,9 @@ impl State {
             });
 
             if new_height % 2016 == 0 {
-                next_state.epoch_start_timestamp = new_header.timestamp;
+                cycle_track("state/next/epoch_timestamp", || {
+                    next_state.epoch_start_timestamp = new_header.timestamp;
+                });
             }
 
             if (new_height + 1) % 2016 == 0 {
@@ -628,13 +630,15 @@ impl State {
             next_state.chain_work = cycle_track("state/next/chain_work", || {
                 u256_add(self.chain_work, work_from_bits(required_nbits))
             });
-            next_state.header = header;
-            next_state.block_hash = block_hash;
-            next_state.height = new_height;
-            NextState {
+            cycle_track("state/next/assign_state", || {
+                next_state.header = header;
+                next_state.block_hash = block_hash;
+                next_state.height = new_height;
+            });
+            cycle_track("state/next/construct_result", || NextState {
                 current: self,
                 next: next_state,
-            }
+            })
         })
     }
 
@@ -964,15 +968,19 @@ fn add_timestamp_window(
     slot: usize,
 ) -> u64 {
     if prev_count < WINDOW_SIZE {
-        timestamps[slot] = timestamp;
-        let pos = find_insert_position(timestamps, packed, prev_count, timestamp);
-        insert_nibble(packed, pos, slot as u8, prev_count)
+        cycle_track("timestamp/grow_window", || {
+            timestamps[slot] = timestamp;
+            let pos = find_insert_position(timestamps, packed, prev_count, timestamp);
+            insert_nibble(packed, pos, slot as u8, prev_count)
+        })
     } else {
-        let pos_old = find_index_position(packed, WINDOW_SIZE, slot);
-        let without = remove_nibble(packed, pos_old);
-        let pos_new = find_insert_position(timestamps, without, WINDOW_SIZE - 1, timestamp);
-        timestamps[slot] = timestamp;
-        insert_nibble(without, pos_new, slot as u8, WINDOW_SIZE - 1)
+        cycle_track("timestamp/rotate_window", || {
+            let pos_old = find_index_position(packed, WINDOW_SIZE, slot);
+            let without = remove_nibble(packed, pos_old);
+            let pos_new = find_insert_position(timestamps, without, WINDOW_SIZE - 1, timestamp);
+            timestamps[slot] = timestamp;
+            insert_nibble(without, pos_new, slot as u8, WINDOW_SIZE - 1)
+        })
     }
 }
 
@@ -1142,36 +1150,44 @@ fn find_insert_position(
     count: usize,
     timestamp: BlockTimestamp,
 ) -> usize {
-    for i in 0..count {
-        let idx = get_nibble(packed, i) as usize;
-        if timestamp < timestamps[idx] {
-            return i;
+    cycle_track("timestamp/find_insert_position", || {
+        for i in 0..count {
+            let idx = get_nibble(packed, i) as usize;
+            if timestamp < timestamps[idx] {
+                return i;
+            }
         }
-    }
-    count
+        count
+    })
 }
 
 fn find_index_position(packed: u64, count: usize, target: usize) -> usize {
-    for i in 0..count {
-        if get_nibble(packed, i) as usize == target {
-            return i;
+    cycle_track("timestamp/find_index_position", || {
+        for i in 0..count {
+            if get_nibble(packed, i) as usize == target {
+                return i;
+            }
         }
-    }
-    count
+        count
+    })
 }
 
 fn remove_nibble(packed: u64, pos: usize) -> u64 {
-    let lower_mask = (1u64 << (pos * NIBBLE_BITS)) - 1;
-    let lower = packed & lower_mask;
-    let upper = (packed >> ((pos + 1) * NIBBLE_BITS)) << (pos * NIBBLE_BITS);
-    lower | upper
+    cycle_track("timestamp/remove_nibble", || {
+        let lower_mask = (1u64 << (pos * NIBBLE_BITS)) - 1;
+        let lower = packed & lower_mask;
+        let upper = (packed >> ((pos + 1) * NIBBLE_BITS)) << (pos * NIBBLE_BITS);
+        lower | upper
+    })
 }
 
 fn insert_nibble(packed: u64, pos: usize, val: u8, count: usize) -> u64 {
-    let lower_mask = (1u64 << (pos * NIBBLE_BITS)) - 1;
-    let lower = packed & lower_mask;
-    let upper = (packed & !lower_mask) << NIBBLE_BITS;
-    let new_packed = lower | ((val as u64) << (pos * NIBBLE_BITS)) | upper;
-    let new_mask = (1u64 << ((count + 1) * NIBBLE_BITS)) - 1;
-    new_packed & new_mask
+    cycle_track("timestamp/insert_nibble", || {
+        let lower_mask = (1u64 << (pos * NIBBLE_BITS)) - 1;
+        let lower = packed & lower_mask;
+        let upper = (packed & !lower_mask) << NIBBLE_BITS;
+        let new_packed = lower | ((val as u64) << (pos * NIBBLE_BITS)) | upper;
+        let new_mask = (1u64 << ((count + 1) * NIBBLE_BITS)) - 1;
+        new_packed & new_mask
+    })
 }

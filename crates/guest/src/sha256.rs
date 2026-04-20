@@ -209,7 +209,7 @@ pub fn sha256_240(data: &[u8; 240]) -> [u8; 32] {
     state_to_hash(&state)
 }
 
-/// Compute double SHA-256 of exactly 80 bytes: SHA-256(SHA-256(data)).
+/// Compute SHA256d of exactly 80 bytes: SHA-256(SHA-256(data)).
 pub fn double_sha256_80(data: &[u8; 80]) -> [u8; 32] {
     let inner = sha256_80(data);
     sha256_32(&inner)

@@ -43,7 +43,7 @@ fn commit_error(state: &State, error_code: ValidationErrorCode, header_index: u3
     })
 }
 
-/// Hash a full Bitcoin header with double SHA-256.
+/// Hash a full Bitcoin header with SHA256d.
 fn hash_header(header: &Header) -> BlockHash {
     cycle_track("hash/sha256d", || {
         BlockHash::from_raw(double_sha256_80(&header.to_bytes()))

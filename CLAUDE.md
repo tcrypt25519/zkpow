@@ -10,11 +10,11 @@ Proves that a batch of block headers are valid (PoW, chain linkage, difficulty r
 cargo build --release
 
 # Run prover (genesis → block 99)
-cd script && cargo run --release --bin bitcoin-header-chain-script
+cd script && cargo run --release --bin zkpow-script
 
 # Run prover extending a previous proof
 PREV_PROOF=proof_height_0_to_99.bin START_HEIGHT=100 NUM_HEADERS=100 \
-  cargo run --release --bin bitcoin-header-chain-script
+  cargo run --release --bin zkpow-script
 
 # Run test suite (fast, no proving)
 cargo run --release --bin test_errors
@@ -29,7 +29,7 @@ cargo clippy --all-targets -- -D warnings
 ## Project Structure
 
 ```
-bitcoin-header-chain/
+zkpow/
 ├── program/                    # zkVM program (constrained execution)
 │   ├── Cargo.toml              # Only sp1-zkvm (verify feature)
 │   └── src/

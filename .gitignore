@@ -8,6 +8,7 @@ target/
 # Development
 *.bin
 *.log
+logs/
 profiling/
 docs/plans/
 

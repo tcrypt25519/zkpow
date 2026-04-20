@@ -4,9 +4,9 @@
 //! The prover supplies 44-byte NewHeader structs (version, merkle_root, timestamp, nonce).
 //! The host constructs full 80-byte headers from state + NewHeader, matching the circuit.
 
-use zkpow_core::{work_from_bits, WINDOW_SIZE};
 use sha2::{Digest, Sha256};
 use sp1_sdk::SP1PublicValues;
+use zkpow_core::{work_from_bits, WINDOW_SIZE};
 
 pub use zkpow_core::{
     BlockHash, BlockTimestamp, ChainWork, CompactTarget, Header, HeaderChainPublicValues, Input,
@@ -26,7 +26,7 @@ pub fn load_headers_from_db(db_path: &str, start_height: u64, count: u64) -> Vec
         .prepare(
             "SELECT raw_header FROM headers WHERE height >= ?1 AND height < ?2 ORDER BY height ASC",
         )
-        .expect("failed to prepare SQL statement");
+        .expect(format!("failed to prepare SQL statement for db: {}", db_path).as_str());
 
     let end_height = start_height + count;
     let rows = stmt
@@ -91,20 +91,18 @@ pub fn load_header_from_db(db_path: &str, height: u64) -> Header {
 // SHA-256 (host-side)
 // ============================================================================
 
-/// Compute double SHA-256 of the given data (host-side).
-pub fn double_sha256_host(data: &[u8]) -> [u8; 32] {
-    let inner = Sha256::digest(data);
-    let outer = Sha256::digest(inner);
-    outer.into()
+/// Compute SHA256d of the given data.
+pub fn sha256d(data: &[u8]) -> [u8; 32] {
+    Sha256::digest(Sha256::digest(data)).into()
 }
 
-/// Hash a full Bitcoin header with double SHA-256 (host-side).
+/// Hash a full Bitcoin header with SHA256d.
 #[must_use]
 pub fn hash_header(header: &Header) -> BlockHash {
-    BlockHash::from_raw(double_sha256_host(&header.to_bytes()))
+    BlockHash::from_raw(sha256d(&header.to_bytes()))
 }
 
-/// Compute SHA-256 digest (host-side).
+/// Compute SHA-256 digest of public values.
 pub fn compute_pv_digest(committed_bytes: &[u8]) -> [u8; 32] {
     let digest = SP1PublicValues::from(committed_bytes).hash();
     digest

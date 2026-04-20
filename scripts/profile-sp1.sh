@@ -16,10 +16,11 @@ LATEST_LINK="${LATEST_LINK:-$ROOT/logs/latest}"
 PROOFS_DIR="${PROOFS_DIR:-$RUN_DIR/proofs}"
 
 # Set defaults for the guest program
+unset sp1_core
 export SP1_ENABLE_TOKIO_CONSOLE="${SP1_ENABLE_TOKIO_CONSOLE:-true}"
 export TRACE_FILE="${TRACE_FILE:-$RUN_DIR/tracing.json}"
 export RUST_BACKTRACE="${RUST_BACKTRACE:-1}"
-export RUST_LOG="${RUST_LOG:-trace}"
+export RUST_LOG="${RUST_LOG:-info}"
 export NUM_HEADERS="${NUM_HEADERS:-100}"
 export OUTPUT_DIR="${OUTPUT_DIR:-$PROOFS_DIR}"
 
