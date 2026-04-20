@@ -1,3 +1,4 @@
+use std::env::VarError;
 use std::error::Error;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -8,7 +9,7 @@ use crate::util::{
 };
 use num_bigint::BigUint;
 use sp1_prover::build::{build_constraints_and_witness, try_build_groth16_artifacts_dir};
-use sp1_prover::worker::{cpu_worker_builder, SP1LocalNodeBuilder};
+use sp1_prover::worker::{SP1LocalNodeBuilder, cpu_worker_builder};
 use sp1_recursion_gnark_ffi::Groth16Bn254Prover;
 use sp1_sdk::prelude::*;
 use sp1_sdk::proof::SP1Proof;
@@ -19,8 +20,7 @@ pub type BoxError = Box<dyn Error + Send + Sync + 'static>;
 pub const ELF: Elf = include_elf!("zkpow-guest");
 pub const GENESIS_HASH_HEX: &str =
     "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f";
-pub const DEFAULT_DB_PATH: &str =
-    concat!(env!("CARGO_MANIFEST_DIR"), "/../../bitcoin_headers.sqlite");
+pub const DEFAULT_DB_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../headers.db");
 
 #[derive(Debug, Clone)]
 pub struct ProofGenerationConfig {
@@ -28,16 +28,18 @@ pub struct ProofGenerationConfig {
     pub num_headers: u32,
     pub db_path: PathBuf,
     pub output_dir: PathBuf,
+    pub generate_groth16: bool,
 }
 
 #[derive(Debug)]
 pub struct ProofArtifacts {
     pub compressed_path: PathBuf,
-    pub groth16_path: PathBuf,
+    pub groth16_path: Option<PathBuf>,
     pub compressed_proof: SP1ProofWithPublicValues,
-    pub groth16_proof: SP1ProofWithPublicValues,
+    pub groth16_proof: Option<SP1ProofWithPublicValues>,
     pub first_new_height: u32,
     pub end_height: u32,
+    pub total_duration_secs: f64,
 }
 
 fn parse_genesis_hash() -> Result<util::BlockHash, BoxError> {
@@ -48,8 +50,23 @@ fn parse_genesis_hash() -> Result<util::BlockHash, BoxError> {
     Ok(util::BlockHash::from_raw(genesis_hash))
 }
 
-pub fn config_from_env() -> ProofGenerationConfig {
-    ProofGenerationConfig {
+fn parse_bool_env(var_name: &'static str) -> Result<bool, BoxError> {
+    match std::env::var(var_name) {
+        Ok(value) => match value.to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => Ok(true),
+            "0" | "false" | "no" | "off" => Ok(false),
+            _ => Err(format!(
+                "invalid {var_name} value `{value}`; expected one of 1,true,yes,on,0,false,no,off"
+            )
+            .into()),
+        },
+        Err(VarError::NotPresent) => Ok(false),
+        Err(err) => Err(err.into()),
+    }
+}
+
+pub fn config_from_env() -> Result<ProofGenerationConfig, BoxError> {
+    Ok(ProofGenerationConfig {
         prev_proof_path: std::env::var("PREV_PROOF").ok().map(PathBuf::from),
         num_headers: std::env::var("NUM_HEADERS")
             .ok()
@@ -60,12 +77,15 @@ pub fn config_from_env() -> ProofGenerationConfig {
             .ok()
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from(".")),
-    }
+        generate_groth16: parse_bool_env("GENERATE_GROTH16")?,
+    })
 }
 
 pub async fn generate_and_save_proofs(
     config: &ProofGenerationConfig,
 ) -> Result<ProofArtifacts, BoxError> {
+    let overall_start = Instant::now();
+
     let previous_proof: Option<SP1ProofWithPublicValues> =
         timed_sync("load_previous_proof", || {
             config
@@ -212,77 +232,90 @@ pub async fn generate_and_save_proofs(
         Ok(())
     })?;
 
-    let wrap_proof = timed_async("shrink_wrap", || async {
-        node.shrink_wrap(&compressed_proof.proof).await
-    })
-    .await?;
-    let build_dir = timed_async("build_groth16_artifacts", || async {
-        try_build_groth16_artifacts_dir(&wrap_proof.vk, &wrap_proof.proof).await
-    })
-    .await?;
-    let (_, witness) = timed_sync("build_groth16_witness", || -> Result<_, BoxError> {
-        Ok(build_constraints_and_witness(
-            &wrap_proof.vk,
-            &wrap_proof.proof,
-        )?)
-    })?;
-    let expected_vkey_hash = BigUint::from_bytes_be(&vk.bytes32_raw()).to_string();
-    let expected_public_values_digest = compressed_proof.public_values.hash_bn254().to_string();
-
-    let groth16_inner = timed_async("prove_groth16", || async move {
-        tokio::task::spawn_blocking(move || {
-            let prover = Groth16Bn254Prover::new();
-            let proof = prover.prove(witness, &build_dir);
-            let [vkey_hash, committed_values_digest, exit_code, vk_root, proof_nonce] =
-                proof.public_inputs.clone();
-
-            assert_eq!(
-                vkey_hash, expected_vkey_hash,
-                "Groth16 proof verifying-key hash does not match the program VK",
-            );
-            assert_eq!(
-                committed_values_digest, expected_public_values_digest,
-                "Groth16 proof public-values digest does not match the compressed proof",
-            );
-
-            let parse_biguint = |value: &str, label: &str| {
-                value
-                    .parse::<BigUint>()
-                    .unwrap_or_else(|_| panic!("failed to parse {label} as BigUint"))
-            };
-
-            prover
-                .verify(
-                    &proof,
-                    &parse_biguint(&vkey_hash, "Groth16 vkey hash"),
-                    &parse_biguint(&committed_values_digest, "Groth16 public-values digest"),
-                    &parse_biguint(&exit_code, "Groth16 exit code"),
-                    &parse_biguint(&vk_root, "Groth16 recursion VK root"),
-                    &parse_biguint(&proof_nonce, "Groth16 proof nonce"),
-                    &build_dir,
-                )
-                .expect("native Groth16 verification failed");
-
-            proof
+    let (groth16_path, groth16_proof) = if config.generate_groth16 {
+        let wrap_proof = timed_async("shrink_wrap", || async {
+            node.shrink_wrap(&compressed_proof.proof).await
         })
-        .await
-    })
-    .await?;
+        .await?;
+        let build_dir = timed_async("build_groth16_artifacts", || async {
+            try_build_groth16_artifacts_dir(&wrap_proof.vk, &wrap_proof.proof).await
+        })
+        .await?;
+        let (_, witness) = timed_sync("build_groth16_witness", || -> Result<_, BoxError> {
+            Ok(build_constraints_and_witness(
+                &wrap_proof.vk,
+                &wrap_proof.proof,
+            )?)
+        })?;
+        let expected_vkey_hash = BigUint::from_bytes_be(&vk.bytes32_raw()).to_string();
+        let expected_public_values_digest = compressed_proof.public_values.hash_bn254().to_string();
 
-    let groth16_proof = SP1ProofWithPublicValues::new(
-        SP1Proof::Groth16(groth16_inner),
-        compressed_proof.public_values.clone(),
-        compressed_proof.sp1_version.clone(),
-    );
-    let groth16_path = config.output_dir.join(format!(
-        "proof_height_{}_to_{}_groth16.bin",
-        first_new_height,
-        start_height + loaded_count,
-    ));
-    timed_sync("save_groth16_proof", || -> Result<(), BoxError> {
-        groth16_proof.save(&groth16_path)?;
-        Ok(())
-    })?;
+        let groth16_inner = timed_async("prove_groth16", || async move {
+            tokio::task::spawn_blocking(move || {
+                let prover = Groth16Bn254Prover::new();
+                let proof = prover.prove(witness, &build_dir);
+                let [
+                    vkey_hash,
+                    committed_values_digest,
+                    exit_code,
+                    vk_root,
+                    proof_nonce,
+                ] = proof.public_inputs.clone();
+
+                assert_eq!(
+                    vkey_hash, expected_vkey_hash,
+                    "Groth16 proof verifying-key hash does not match the program VK",
+                );
+                assert_eq!(
+                    committed_values_digest, expected_public_values_digest,
+                    "Groth16 proof public-values digest does not match the compressed proof",
+                );
+
+                let parse_biguint = |value: &str, label: &str| {
+                    value
+                        .parse::<BigUint>()
+                        .unwrap_or_else(|_| panic!("failed to parse {label} as BigUint"))
+                };
+
+                prover
+                    .verify(
+                        &proof,
+                        &parse_biguint(&vkey_hash, "Groth16 vkey hash"),
+                        &parse_biguint(&committed_values_digest, "Groth16 public-values digest"),
+                        &parse_biguint(&exit_code, "Groth16 exit code"),
+                        &parse_biguint(&vk_root, "Groth16 recursion VK root"),
+                        &parse_biguint(&proof_nonce, "Groth16 proof nonce"),
+                        &build_dir,
+                    )
+                    .expect("native Groth16 verification failed");
+
+                proof
+            })
+            .await
+        })
+        .await?;
+
+        let groth16_proof = SP1ProofWithPublicValues::new(
+            SP1Proof::Groth16(groth16_inner),
+            compressed_proof.public_values.clone(),
+            compressed_proof.sp1_version.clone(),
+        );
+        let groth16_path = config.output_dir.join(format!(
+            "proof_height_{}_to_{}_groth16.bin",
+            first_new_height,
+            start_height + loaded_count,
+        ));
+        timed_sync("save_groth16_proof", || -> Result<(), BoxError> {
+            groth16_proof.save(&groth16_path)?;
+            Ok(())
+        })?;
+        (Some(groth16_path), Some(groth16_proof))
+    } else {
+        tracing::info!("Skipping Groth16 wrapping; set GENERATE_GROTH16=1 to enable it");
+        (None, None)
+    };
+
+    let total_duration = overall_start.elapsed();
 
     Ok(ProofArtifacts {
         compressed_path,
@@ -291,6 +324,7 @@ pub async fn generate_and_save_proofs(
         groth16_proof,
         first_new_height,
         end_height: start_height + loaded_count,
+        total_duration_secs: total_duration.as_secs_f64(),
     })
 }
 
@@ -371,6 +405,7 @@ mod tests {
             num_headers: 1,
             db_path: PathBuf::from(DEFAULT_DB_PATH),
             output_dir: output_dir.clone(),
+            generate_groth16: true,
         };
 
         let artifacts = generate_and_save_proofs(&config)
@@ -380,12 +415,22 @@ mod tests {
         assert_eq!(artifacts.first_new_height, 1);
         assert_eq!(artifacts.end_height, 1);
         assert!(artifacts.compressed_path.exists());
-        assert!(artifacts.groth16_path.exists());
+        assert!(
+            artifacts
+                .groth16_path
+                .as_ref()
+                .is_some_and(|path| path.exists())
+        );
 
         let saved_compressed = SP1ProofWithPublicValues::load(&artifacts.compressed_path)
             .expect("saved compressed proof should load");
-        let saved_groth16 = SP1ProofWithPublicValues::load(&artifacts.groth16_path)
-            .expect("saved groth16 proof should load");
+        let saved_groth16 = SP1ProofWithPublicValues::load(
+            artifacts
+                .groth16_path
+                .as_ref()
+                .expect("Groth16 path should be present when wrapping is enabled"),
+        )
+        .expect("saved groth16 proof should load");
 
         assert_eq!(
             saved_compressed.public_values.to_vec(),
@@ -403,6 +448,58 @@ mod tests {
         match saved_compressed.proof {
             SP1Proof::Compressed(_) => {}
             other => panic!("expected compressed proof, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn generates_compressed_proof_without_groth16_by_default() {
+        let output_dir = unique_test_output_dir();
+        let config = ProofGenerationConfig {
+            prev_proof_path: None,
+            num_headers: 1,
+            db_path: PathBuf::from(DEFAULT_DB_PATH),
+            output_dir,
+            generate_groth16: false,
+        };
+
+        let artifacts = generate_and_save_proofs(&config)
+            .await
+            .expect("proof pipeline should succeed");
+
+        assert_eq!(artifacts.first_new_height, 1);
+        assert_eq!(artifacts.end_height, 1);
+        assert!(artifacts.compressed_path.exists());
+        assert!(artifacts.groth16_path.is_none());
+        assert!(artifacts.groth16_proof.is_none());
+
+        let saved_compressed = SP1ProofWithPublicValues::load(&artifacts.compressed_path)
+            .expect("saved compressed proof should load");
+        match saved_compressed.proof {
+            SP1Proof::Compressed(_) => {}
+            other => panic!("expected compressed proof, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_generate_groth16_env() {
+        let key = "GENERATE_GROTH16";
+        let original = std::env::var_os(key);
+
+        std::env::remove_var(key);
+        assert!(!parse_bool_env(key).expect("missing env should default to false"));
+
+        std::env::set_var(key, "true");
+        assert!(parse_bool_env(key).expect("true should parse"));
+
+        std::env::set_var(key, "0");
+        assert!(!parse_bool_env(key).expect("0 should parse"));
+
+        std::env::set_var(key, "definitely");
+        assert!(parse_bool_env(key).is_err());
+
+        match original {
+            Some(value) => std::env::set_var(key, value),
+            None => std::env::remove_var(key),
         }
     }
 }
