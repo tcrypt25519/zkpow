@@ -62,6 +62,7 @@ fn commit_header_index(header_index: u32) {
     sp1_zkvm::io::commit_slice(&header_index.to_le_bytes());
 }
 
+#[sp1_derive::cycle_tracker]
 fn serialize_state(state: &State) -> [u8; STATE_SIZE] {
     state.to_bytes()
 }
