@@ -15,10 +15,10 @@
 sp1_zkvm::entrypoint!(main);
 
 use zkpow_core::cycle_track;
-use zkpow_core::{BlockHash, Header, Input, State, ValidationErrorCode};
+use zkpow_core::{BlockHash, Header, Input, InputError, State, ValidationErrorCode, STATE_SIZE};
 
 mod sha256;
-use sha256::{double_sha256_80, sha256_240};
+use sha256::{double_sha256_80, sha256_232};
 
 // ============================================================================
 // Error Handling
@@ -43,6 +43,21 @@ fn commit_error(state: &State, error_code: ValidationErrorCode, header_index: u3
     })
 }
 
+/// Commit a header-payload parse failure using the authenticated input state.
+fn commit_header_payload_length_error(input_bytes: &[u8]) -> ! {
+    let mut state = cycle_track("program/commit_parse_error/parse_state", || {
+        State::parse(&input_bytes[..STATE_SIZE]).expect("input should contain an initial state")
+    });
+    if state.height == 0 && state.genesis_hash == BlockHash::default() {
+        cycle_track("program/commit_parse_error/genesis_hash", || {
+            let block_hash = hash_header(&state.header);
+            state.block_hash = block_hash;
+            state.genesis_hash = block_hash;
+        });
+    }
+    commit_error(&state, ValidationErrorCode::HeaderPayloadLengthInvalid, 0)
+}
+
 /// Hash a full Bitcoin header with SHA256d.
 fn hash_header(header: &Header) -> BlockHash {
     cycle_track("hash/sha256d", || {
@@ -57,7 +72,13 @@ fn hash_header(header: &Header) -> BlockHash {
 pub fn main() {
     let input_bytes = sp1_zkvm::io::read_vec();
     let input = cycle_track("program/parse_input", || {
-        Input::parse(&input_bytes, hash_header).expect("input should parse")
+        match Input::parse(&input_bytes, hash_header) {
+            Ok(input) => input,
+            Err(InputError::HeaderPayloadLengthInvalid { .. }) => {
+                commit_header_payload_length_error(&input_bytes)
+            }
+            Err(err) => panic!("input should parse: {err:?}"),
+        }
     });
 
     let state = input.state.clone();
@@ -69,7 +90,7 @@ pub fn main() {
                 recursive_proof.public_values_digest.as_raw(),
             );
 
-            let actual_public_values_digest = sha256_240(&state.to_bytes());
+            let actual_public_values_digest = sha256_232(&state.to_bytes());
             if actual_public_values_digest != recursive_proof.public_values_digest.into_raw() {
                 panic!("recursive proof public values digest mismatch");
             }

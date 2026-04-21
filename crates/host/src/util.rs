@@ -134,7 +134,6 @@ pub fn genesis_state(genesis_header: Header, genesis_hash: BlockHash) -> State {
         chain_work: work_from_bits(genesis_header.nbits),
         epoch_start_timestamp: genesis_header.timestamp,
         timestamps,
-        sorted_nibbles: 0,
     }
 }
 

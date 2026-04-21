@@ -1,8 +1,9 @@
 //! SHA-256 via SP1 precompile syscalls.
 //!
-//! Two specialized functions for the exact sizes we need:
+//! Three specialized functions for the exact sizes we need:
 //! - `sha256_80`: hashes exactly 80 bytes (Bitcoin block header)
 //! - `sha256_32`: hashes exactly 32 bytes (intermediate hash output)
+//! - `sha256_232`: hashes exactly 232 bytes (serialized recursive state)
 //!
 //! No loops, no branching on block count — the padding and block layout
 //! are hardcoded for each size.
@@ -118,14 +119,14 @@ pub fn sha256_32(data: &[u8; 32]) -> [u8; 32] {
     state_to_hash(&state)
 }
 
-/// Compute SHA-256 of exactly 240 bytes.
+/// Compute SHA-256 of exactly 232 bytes.
 ///
 /// Produces four blocks:
 /// - Block 1: bytes 0–63
 /// - Block 2: bytes 64–127
 /// - Block 3: bytes 128–191
-/// - Block 4: bytes 192–239 + 0x80 + zeros + 8-byte length (1920 bits)
-pub fn sha256_240(data: &[u8; 240]) -> [u8; 32] {
+/// - Block 4: bytes 192–231 + 0x80 + zeros + 8-byte length (1856 bits)
+pub fn sha256_232(data: &[u8; 232]) -> [u8; 32] {
     let mut state = SHA256_IV;
 
     let mut w = [0u64; 64];
@@ -199,10 +200,8 @@ pub fn sha256_240(data: &[u8; 240]) -> [u8; 32] {
     w[7] = be_u64(data[220], data[221], data[222], data[223]);
     w[8] = be_u64(data[224], data[225], data[226], data[227]);
     w[9] = be_u64(data[228], data[229], data[230], data[231]);
-    w[10] = be_u64(data[232], data[233], data[234], data[235]);
-    w[11] = be_u64(data[236], data[237], data[238], data[239]);
-    w[12] = 0x80000000;
-    w[15] = 0x780;
+    w[10] = 0x80000000;
+    w[15] = 0x740;
     syscall_sha256_extend(&mut w);
     syscall_sha256_compress(&mut w, &mut state);
 

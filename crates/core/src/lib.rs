@@ -50,12 +50,6 @@ pub const BLOCK_HEADER_SIZE: usize = 80;
 /// Sliding window size used for median-time-past checks.
 pub const WINDOW_SIZE: usize = 11;
 
-/// Packed nibble width used for sorted timestamp indices.
-pub const NIBBLE_BITS: usize = 4;
-
-/// Bitmask for a single packed nibble.
-pub const NIBBLE_MASK: u64 = 0xF;
-
 /// Mainnet PoW limit in compact form.
 pub const GENESIS_NBITS: u32 = 0x1d00ffff;
 
@@ -512,7 +506,6 @@ pub struct State {
     pub chain_work: ChainWork,
     pub epoch_start_timestamp: BlockTimestamp,
     pub timestamps: [BlockTimestamp; WINDOW_SIZE],
-    pub sorted_nibbles: u64,
 }
 
 impl State {
@@ -571,9 +564,12 @@ impl State {
                 return None;
             }
 
+            let mut sorted = self.timestamps;
+            cycle_track("state/median_time_past/sort", || {
+                sorted[..count].sort_unstable();
+            });
             let median_pos = (count - 1) / 2;
-            let idx = get_nibble(self.sorted_nibbles, median_pos) as usize;
-            Some(self.timestamps[idx])
+            Some(sorted[median_pos])
         })
     }
 
@@ -592,14 +588,8 @@ impl State {
             });
             let block_hash = cycle_track("state/next/hash_header", || hash_header(&header));
 
-            next_state.sorted_nibbles = cycle_track("state/next/timestamp_window", || {
-                add_timestamp_window(
-                    &mut next_state.timestamps,
-                    self.timestamp_count(),
-                    self.sorted_nibbles,
-                    new_header.timestamp,
-                    self.next_timestamp_slot(),
-                )
+            cycle_track("state/next/timestamp_window", || {
+                next_state.timestamps[self.next_timestamp_slot()] = new_header.timestamp;
             });
 
             if new_height % 2016 == 0 {
@@ -684,7 +674,6 @@ impl Default for State {
             chain_work: ChainWork::default(),
             epoch_start_timestamp: BlockTimestamp::default(),
             timestamps: [BlockTimestamp::default(); WINDOW_SIZE],
-            sorted_nibbles: 0,
         }
     }
 }
@@ -958,32 +947,6 @@ pub fn u256_add(a: ChainWork, b: ChainWork) -> ChainWork {
     ChainWork::from_limbs(result)
 }
 
-/// Insert a new timestamp into the circular window and update the packed sort order.
-#[must_use]
-fn add_timestamp_window(
-    timestamps: &mut [BlockTimestamp; WINDOW_SIZE],
-    prev_count: usize,
-    packed: u64,
-    timestamp: BlockTimestamp,
-    slot: usize,
-) -> u64 {
-    if prev_count < WINDOW_SIZE {
-        cycle_track("timestamp/grow_window", || {
-            timestamps[slot] = timestamp;
-            let pos = find_insert_position(timestamps, packed, prev_count, timestamp);
-            insert_nibble(packed, pos, slot as u8, prev_count)
-        })
-    } else {
-        cycle_track("timestamp/rotate_window", || {
-            let pos_old = find_index_position(packed, WINDOW_SIZE, slot);
-            let without = remove_nibble(packed, pos_old);
-            let pos_new = find_insert_position(timestamps, without, WINDOW_SIZE - 1, timestamp);
-            timestamps[slot] = timestamp;
-            insert_nibble(without, pos_new, slot as u8, WINDOW_SIZE - 1)
-        })
-    }
-}
-
 /// Compute a retargeted 256-bit target from the previous target and measured timespan.
 #[must_use]
 pub fn retarget_target(old_target: Target, actual_timespan: u32, expected_timespan: u32) -> Target {
@@ -1139,55 +1102,87 @@ fn q_le_r_shifted(q: &[u64; 4], r: u32, k: u32) -> bool {
     true
 }
 
-#[inline]
-fn get_nibble(packed: u64, pos: usize) -> u8 {
-    ((packed >> (pos * NIBBLE_BITS)) & NIBBLE_MASK) as u8
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-fn find_insert_position(
-    timestamps: &[BlockTimestamp; WINDOW_SIZE],
-    packed: u64,
-    count: usize,
-    timestamp: BlockTimestamp,
-) -> usize {
-    cycle_track("timestamp/find_insert_position", || {
-        for i in 0..count {
-            let idx = get_nibble(packed, i) as usize;
-            if timestamp < timestamps[idx] {
-                return i;
-            }
-        }
-        count
-    })
-}
+    fn ts(seconds: u32) -> BlockTimestamp {
+        BlockTimestamp::from_consensus(seconds)
+    }
 
-fn find_index_position(packed: u64, count: usize, target: usize) -> usize {
-    cycle_track("timestamp/find_index_position", || {
-        for i in 0..count {
-            if get_nibble(packed, i) as usize == target {
-                return i;
-            }
-        }
-        count
-    })
-}
+    #[test]
+    fn median_time_past_sorts_partial_window_each_read() {
+        let mut state = State {
+            height: 4,
+            ..State::default()
+        };
+        state.timestamps[0] = ts(400);
+        state.timestamps[1] = ts(100);
+        state.timestamps[2] = ts(300);
+        state.timestamps[3] = ts(200);
 
-fn remove_nibble(packed: u64, pos: usize) -> u64 {
-    cycle_track("timestamp/remove_nibble", || {
-        let lower_mask = (1u64 << (pos * NIBBLE_BITS)) - 1;
-        let lower = packed & lower_mask;
-        let upper = (packed >> ((pos + 1) * NIBBLE_BITS)) << (pos * NIBBLE_BITS);
-        lower | upper
-    })
-}
+        assert_eq!(state.median_time_past(), Some(ts(200)));
+    }
 
-fn insert_nibble(packed: u64, pos: usize, val: u8, count: usize) -> u64 {
-    cycle_track("timestamp/insert_nibble", || {
-        let lower_mask = (1u64 << (pos * NIBBLE_BITS)) - 1;
-        let lower = packed & lower_mask;
-        let upper = (packed & !lower_mask) << NIBBLE_BITS;
-        let new_packed = lower | ((val as u64) << (pos * NIBBLE_BITS)) | upper;
-        let new_mask = (1u64 << ((count + 1) * NIBBLE_BITS)) - 1;
-        new_packed & new_mask
-    })
+    #[test]
+    fn median_time_past_sorts_full_ring_buffer_each_read() {
+        let mut state = State {
+            height: WINDOW_SIZE as u32,
+            ..State::default()
+        };
+        state.timestamps = [
+            ts(700),
+            ts(100),
+            ts(1100),
+            ts(500),
+            ts(300),
+            ts(900),
+            ts(200),
+            ts(1000),
+            ts(400),
+            ts(800),
+            ts(600),
+        ];
+
+        assert_eq!(state.median_time_past(), Some(ts(600)));
+    }
+
+    #[test]
+    fn next_overwrites_only_the_next_ring_slot() {
+        let original = [
+            ts(10),
+            ts(20),
+            ts(30),
+            ts(40),
+            ts(50),
+            ts(60),
+            ts(70),
+            ts(80),
+            ts(90),
+            ts(100),
+            ts(110),
+        ];
+        let state = State {
+            block_hash: BlockHash::from_raw([0x11; 32]),
+            next_nbits: CompactTarget::from_consensus(GENESIS_NBITS),
+            height: WINDOW_SIZE as u32,
+            timestamps: original,
+            ..State::default()
+        };
+        let next_state = state
+            .next(
+                NewHeader {
+                    version: 1,
+                    merkle_root: [0x22; 32],
+                    timestamp: ts(999),
+                    nonce: 7,
+                },
+                |_| BlockHash::from_raw([0x33; 32]),
+            )
+            .into_state();
+
+        let mut expected = original;
+        expected[0] = ts(999);
+        assert_eq!(next_state.timestamps, expected);
+    }
 }

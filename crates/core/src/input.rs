@@ -6,7 +6,7 @@ use rkyv::{Archive, Deserialize, Serialize};
 
 use crate::{
     cycle_track, BlockHash, Header, NewHeader, ParseError, PublicValuesDigest, State,
-    VerifierKeyDigest, NEW_HEADER_SIZE,
+    VerifierKeyDigest, NEW_HEADER_SIZE, RECURSIVE_PROOF_SIZE, STATE_SIZE,
 };
 
 // Helper to take a fixed-size byte array from a slice and advance the offset.
@@ -144,12 +144,33 @@ impl Input {
         F: FnOnce(&Header) -> BlockHash + Copy,
     {
         cycle_track("input/parse", || {
-            let mut input: Self = cycle_track("input/parse/rkyv_deserialize", || {
-                let archived = unsafe { rkyv::archived_root::<Self>(bytes) };
-                archived
-                    .deserialize(&mut rkyv::Infallible)
-                    .expect("rkyv input deserialization should be infallible")
+            let mut off = 0usize;
+            let state = cycle_track("input/parse/state", || {
+                let state_bytes = take_bytes::<STATE_SIZE>(bytes, &mut off)?;
+                State::parse(&state_bytes).map_err(InputError::from)
             });
+            let mut input = Self {
+                state: state?,
+                recursive_proof: RecursiveProof::parse_from_bytes(bytes, &mut off)?,
+                headers: Vec::new(),
+            };
+
+            let header_payload_len = bytes.len().saturating_sub(off);
+            if header_payload_len % NEW_HEADER_SIZE != 0 {
+                return Err(InputError::HeaderPayloadLengthInvalid {
+                    actual: header_payload_len,
+                });
+            }
+
+            cycle_track("input/parse/headers", || {
+                let header_count = header_payload_len / NEW_HEADER_SIZE;
+                input.headers = Vec::with_capacity(header_count);
+                while off < bytes.len() {
+                    input.headers.push(NewHeader::parse_at(bytes, off)?);
+                    off += NEW_HEADER_SIZE;
+                }
+                Ok::<(), InputError>(())
+            })?;
 
             if input.state.height == 0 {
                 if input.state.genesis_hash != BlockHash::default() {
@@ -175,9 +196,18 @@ impl Input {
             input.state.genesis_hash = BlockHash::default();
         }
 
-        rkyv::to_bytes::<_, 1024>(&input)
-            .expect("failed to serialize input with rkyv")
-            .into_vec()
+        let mut bytes = Vec::with_capacity(
+            STATE_SIZE + RECURSIVE_PROOF_SIZE + (input.headers.len() * NEW_HEADER_SIZE),
+        );
+        bytes.extend_from_slice(&input.state.to_bytes());
+        for limb in input.recursive_proof.verifier_key.as_raw() {
+            bytes.extend_from_slice(&limb.to_le_bytes());
+        }
+        bytes.extend_from_slice(input.recursive_proof.public_values_digest.as_raw());
+        for header in &input.headers {
+            bytes.extend_from_slice(&header.to_bytes());
+        }
+        bytes
     }
 }
 
