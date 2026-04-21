@@ -4456,7 +4456,7 @@ dependencies = [
  "sp1-core-executor",
  "sp1-core-executor-runner",
  "sp1-curves",
- "sp1-derive",
+ "sp1-derive 6.1.0 (git+https://github.com/succinctlabs/sp1?tag=v6.1.0)",
  "sp1-hypercube",
  "sp1-jit",
  "sp1-primitives",
@@ -4515,6 +4515,17 @@ dependencies = [
 [[package]]
 name = "sp1-derive"
 version = "6.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "caa1235972b67b86514c3f23ba690972b712dd009159c2e50f723d7ac02173d8"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
+]
+
+[[package]]
+name = "sp1-derive"
+version = "6.1.0"
 source = "git+https://github.com/succinctlabs/sp1?tag=v6.1.0#d454975ac7c1126097e36eceda9bce2cb9899da4"
 dependencies = [
  "proc-macro2",
@@ -4560,7 +4571,7 @@ dependencies = [
  "slop-tensor",
  "slop-uni-stark",
  "slop-whir",
- "sp1-derive",
+ "sp1-derive 6.1.0 (git+https://github.com/succinctlabs/sp1?tag=v6.1.0)",
  "sp1-primitives",
  "strum",
  "thiserror 1.0.69",
@@ -4658,7 +4669,7 @@ dependencies = [
  "sp1-core-executor",
  "sp1-core-executor-runner",
  "sp1-core-machine",
- "sp1-derive",
+ "sp1-derive 6.1.0 (git+https://github.com/succinctlabs/sp1?tag=v6.1.0)",
  "sp1-hypercube",
  "sp1-jit",
  "sp1-primitives",
@@ -4730,7 +4741,7 @@ dependencies = [
  "slop-whir",
  "sp1-core-executor",
  "sp1-core-machine",
- "sp1-derive",
+ "sp1-derive 6.1.0 (git+https://github.com/succinctlabs/sp1?tag=v6.1.0)",
  "sp1-hypercube",
  "sp1-primitives",
  "sp1-recursion-compiler",
@@ -4775,7 +4786,7 @@ dependencies = [
  "slop-poseidon2",
  "slop-symmetric",
  "smallvec",
- "sp1-derive",
+ "sp1-derive 6.1.0 (git+https://github.com/succinctlabs/sp1?tag=v6.1.0)",
  "sp1-hypercube",
  "static_assertions",
  "thiserror 1.0.69",
@@ -4819,7 +4830,7 @@ dependencies = [
  "slop-matrix",
  "slop-maybe-rayon",
  "slop-symmetric",
- "sp1-derive",
+ "sp1-derive 6.1.0 (git+https://github.com/succinctlabs/sp1?tag=v6.1.0)",
  "sp1-hypercube",
  "sp1-primitives",
  "sp1-recursion-executor",
@@ -6437,6 +6448,7 @@ dependencies = [
 name = "zkpow-guest"
 version = "0.1.0"
 dependencies = [
+ "sp1-derive 6.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "sp1-zkvm",
  "zkpow-core",
 ]
