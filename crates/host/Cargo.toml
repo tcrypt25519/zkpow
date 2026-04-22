@@ -25,3 +25,5 @@ sp1-build = { workspace = true }
 [features]
 default = []
 CUDA = ["sp1-sdk/cuda"]
+# Opt in to the slow proof-generation tests.
+slow-tests = []

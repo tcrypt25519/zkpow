@@ -821,107 +821,112 @@ pub fn log_execution_report(report: &ExecutionReport) {
 mod tests {
     use super::*;
     use std::sync::{Mutex, OnceLock};
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn env_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| Mutex::new(()))
     }
 
-    fn unique_test_output_dir() -> PathBuf {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock should be after unix epoch")
-            .as_nanos();
-        std::env::temp_dir().join(format!(
-            "bitcoin-header-chain-proof-pipeline-{}-{}",
-            std::process::id(),
-            nanos,
-        ))
-    }
+    #[cfg(feature = "slow-tests")]
+    mod slow_tests {
+        use super::*;
+        use std::time::{SystemTime, UNIX_EPOCH};
 
-    #[tokio::test]
-    async fn generates_linked_compressed_and_groth16_proofs() {
-        let output_dir = unique_test_output_dir();
-        let config = ProofGenerationConfig {
-            prev_proof_path: None,
-            num_headers: 1,
-            db_path: PathBuf::from(DEFAULT_DB_PATH),
-            output_dir: output_dir.clone(),
-            generate_groth16: true,
-            prover_backend: ProverBackend::Cpu,
-            cuda_device_id: None,
-        };
+        fn unique_test_output_dir() -> PathBuf {
+            let nanos = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock should be after unix epoch")
+                .as_nanos();
+            std::env::temp_dir().join(format!(
+                "bitcoin-header-chain-proof-pipeline-{}-{}",
+                std::process::id(),
+                nanos,
+            ))
+        }
 
-        let artifacts = generate_and_save_proofs(&config)
-            .await
-            .expect("proof pipeline should succeed");
+        #[tokio::test]
+        async fn generates_linked_compressed_and_groth16_proofs() {
+            let output_dir = unique_test_output_dir();
+            let config = ProofGenerationConfig {
+                prev_proof_path: None,
+                num_headers: 1,
+                db_path: PathBuf::from(DEFAULT_DB_PATH),
+                output_dir: output_dir.clone(),
+                generate_groth16: true,
+                prover_backend: ProverBackend::Cpu,
+                cuda_device_id: None,
+            };
 
-        assert_eq!(artifacts.first_new_height, 1);
-        assert_eq!(artifacts.end_height, 1);
-        assert!(artifacts.compressed_path.exists());
-        assert!(artifacts
-            .groth16_path
-            .as_ref()
-            .is_some_and(|path| path.exists()));
+            let artifacts = generate_and_save_proofs(&config)
+                .await
+                .expect("proof pipeline should succeed");
 
-        let saved_compressed = SP1ProofWithPublicValues::load(&artifacts.compressed_path)
-            .expect("saved compressed proof should load");
-        let saved_groth16 = SP1ProofWithPublicValues::load(
-            artifacts
+            assert_eq!(artifacts.first_new_height, 1);
+            assert_eq!(artifacts.end_height, 1);
+            assert!(artifacts.compressed_path.exists());
+            assert!(artifacts
                 .groth16_path
                 .as_ref()
-                .expect("Groth16 path should be present when wrapping is enabled"),
-        )
-        .expect("saved groth16 proof should load");
+                .is_some_and(|path| path.exists()));
 
-        assert_eq!(
-            saved_compressed.public_values.to_vec(),
-            saved_groth16.public_values.to_vec(),
-            "saved Groth16 proof should commit to the same public values as the compressed proof",
-        );
-        assert_eq!(
-            saved_compressed.public_values.hash_bn254().to_string(),
-            match &saved_groth16.proof {
-                SP1Proof::Groth16(proof) => proof.public_inputs[1].clone(),
-                other => panic!("expected Groth16 proof, got {other:?}"),
-            },
-            "saved Groth16 proof should carry the compressed proof public-values digest",
-        );
-        match saved_compressed.proof {
-            SP1Proof::Compressed(_) => {}
-            other => panic!("expected compressed proof, got {other:?}"),
+            let saved_compressed = SP1ProofWithPublicValues::load(&artifacts.compressed_path)
+                .expect("saved compressed proof should load");
+            let saved_groth16 = SP1ProofWithPublicValues::load(
+                artifacts
+                    .groth16_path
+                    .as_ref()
+                    .expect("Groth16 path should be present when wrapping is enabled"),
+            )
+            .expect("saved groth16 proof should load");
+
+            assert_eq!(
+                saved_compressed.public_values.to_vec(),
+                saved_groth16.public_values.to_vec(),
+                "saved Groth16 proof should commit to the same public values as the compressed proof",
+            );
+            assert_eq!(
+                saved_compressed.public_values.hash_bn254().to_string(),
+                match &saved_groth16.proof {
+                    SP1Proof::Groth16(proof) => proof.public_inputs[1].clone(),
+                    other => panic!("expected Groth16 proof, got {other:?}"),
+                },
+                "saved Groth16 proof should carry the compressed proof public-values digest",
+            );
+            match saved_compressed.proof {
+                SP1Proof::Compressed(_) => {}
+                other => panic!("expected compressed proof, got {other:?}"),
+            }
         }
-    }
 
-    #[tokio::test]
-    async fn generates_compressed_proof_without_groth16_by_default() {
-        let output_dir = unique_test_output_dir();
-        let config = ProofGenerationConfig {
-            prev_proof_path: None,
-            num_headers: 1,
-            db_path: PathBuf::from(DEFAULT_DB_PATH),
-            output_dir,
-            generate_groth16: false,
-            prover_backend: ProverBackend::Cpu,
-            cuda_device_id: None,
-        };
+        #[tokio::test]
+        async fn generates_compressed_proof_without_groth16_by_default() {
+            let output_dir = unique_test_output_dir();
+            let config = ProofGenerationConfig {
+                prev_proof_path: None,
+                num_headers: 1,
+                db_path: PathBuf::from(DEFAULT_DB_PATH),
+                output_dir,
+                generate_groth16: false,
+                prover_backend: ProverBackend::Cpu,
+                cuda_device_id: None,
+            };
 
-        let artifacts = generate_and_save_proofs(&config)
-            .await
-            .expect("proof pipeline should succeed");
+            let artifacts = generate_and_save_proofs(&config)
+                .await
+                .expect("proof pipeline should succeed");
 
-        assert_eq!(artifacts.first_new_height, 1);
-        assert_eq!(artifacts.end_height, 1);
-        assert!(artifacts.compressed_path.exists());
-        assert!(artifacts.groth16_path.is_none());
-        assert!(artifacts.groth16_proof.is_none());
+            assert_eq!(artifacts.first_new_height, 1);
+            assert_eq!(artifacts.end_height, 1);
+            assert!(artifacts.compressed_path.exists());
+            assert!(artifacts.groth16_path.is_none());
+            assert!(artifacts.groth16_proof.is_none());
 
-        let saved_compressed = SP1ProofWithPublicValues::load(&artifacts.compressed_path)
-            .expect("saved compressed proof should load");
-        match saved_compressed.proof {
-            SP1Proof::Compressed(_) => {}
-            other => panic!("expected compressed proof, got {other:?}"),
+            let saved_compressed = SP1ProofWithPublicValues::load(&artifacts.compressed_path)
+                .expect("saved compressed proof should load");
+            match saved_compressed.proof {
+                SP1Proof::Compressed(_) => {}
+                other => panic!("expected compressed proof, got {other:?}"),
+            }
         }
     }
 
