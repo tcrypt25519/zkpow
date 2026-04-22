@@ -20,7 +20,7 @@ use zkpow_core::{
 };
 
 mod sha256;
-use sha256::{sha256_4blocks, sha256d_2blocks};
+use sha256::{sha256_232bytes, sha256d_80bytes};
 
 // ============================================================================
 // Error Handling
@@ -41,10 +41,10 @@ fn commit_header_payload_length_error(input_bytes: &[u8]) -> ! {
     commit_error(&state, ValidationErrorCode::HeaderPayloadLengthInvalid, 0)
 }
 
-/// Hash a full Bitcoin header with SHA256d.
+/// Hash a full 80-byte Bitcoin header with SHA256d.
 #[sp1_derive::cycle_tracker]
 fn hash_header(header: &Header) -> BlockHash {
-    BlockHash::from_raw(sha256d_2blocks(&header.to_bytes()))
+    BlockHash::from_raw(sha256d_80bytes(&header.to_bytes()))
 }
 
 #[sp1_derive::cycle_tracker]
@@ -97,7 +97,7 @@ fn verify_recursive_proof(state: &State, recursive_proof: &RecursiveProof) {
         recursive_proof.public_values_digest.as_raw(),
     );
 
-    let actual_public_values_digest = sha256_4blocks(&state.to_bytes());
+    let actual_public_values_digest = sha256_232bytes(&state.to_bytes());
     if actual_public_values_digest != recursive_proof.public_values_digest.into_raw() {
         panic!("recursive proof public values digest mismatch");
     }

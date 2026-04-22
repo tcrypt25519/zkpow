@@ -555,84 +555,102 @@ impl State {
         bits_to_target(self.next_nbits)
     }
 
-    /// Return the median time past for the currently tracked timestamps.
+    /// Return the upper median time past for the currently tracked timestamps.
     #[must_use]
     pub fn median_time_past(&self) -> Option<BlockTimestamp> {
         cycle_track("state/median_time_past", || {
-            let count = self.timestamp_count();
-            if count == 0 {
+            let height = self.height as usize;
+            if height == 0 {
                 return None;
             }
 
             let mut sorted = self.timestamps;
+            if height >= WINDOW_SIZE {
+                cycle_track("state/median_time_past/sort", || {
+                    sorted.sort_unstable();
+                });
+                return Some(sorted[WINDOW_SIZE / 2]);
+            }
+
             cycle_track("state/median_time_past/sort", || {
-                sorted[..count].sort_unstable();
+                sorted[..height].sort_unstable();
             });
-            let median_pos = (count - 1) / 2;
-            Some(sorted[median_pos])
+            Some(sorted[height / 2])
         })
     }
 
     /// Build the next authenticated state from the current state and a prover-supplied header.
-    #[must_use]
-    pub fn next<F>(&self, new_header: NewHeader, hash_header: F) -> NextState<'_>
-    where
-        F: FnOnce(&Header) -> BlockHash,
-    {
-        cycle_track("state/next", || {
-            let mut next_state = cycle_track("state/next/clone_state", || self.clone());
-            let new_height = self.height + 1;
-            let required_nbits = self.next_nbits;
-            let header = cycle_track("state/next/build_header", || {
-                new_header.into_header(self.block_hash, required_nbits)
-            });
-            let block_hash = cycle_track("state/next/hash_header", || hash_header(&header));
+pub fn next<F>(&mut self, new_header: NewHeader, hash_header: F) -> Result<(), ValidationErrorCode>
+where
+    F: FnOnce(&Header) -> BlockHash,
+{
+    cycle_track("state/next", || {
+        let required_nbits = self.next_nbits;
+        let timestamp_slot = self.next_timestamp_slot();
+        let header = cycle_track("state/next/build_header", || {
+            new_header.into_header(self.block_hash, required_nbits)
+        });
+        let block_hash = cycle_track("state/next/hash_header", || hash_header(&header));
 
-            cycle_track("state/next/timestamp_window", || {
-                next_state.timestamps[self.next_timestamp_slot()] = new_header.timestamp;
-            });
-
-            if new_height % 2016 == 0 {
-                cycle_track("state/next/epoch_timestamp", || {
-                    next_state.epoch_start_timestamp = new_header.timestamp;
-                });
+        // Validate timestamp
+        cycle_track("state/validate/median_time_past", || {
+            if let Some(median_time_past) = self.median_time_past() {
+                if header.timestamp <= median_time_past {
+                    return Err(ValidationErrorCode::TimestampTooOld);
+                }
             }
+            Ok(())
+        })?;
 
-            if (new_height + 1) % 2016 == 0 {
-                cycle_track("state/next/retarget", || {
-                    let actual_timespan = new_header
-                        .timestamp
-                        .wrapping_sub(next_state.epoch_start_timestamp);
-                    let expected_timespan: u32 = 2016 * 600;
-                    let clamped = actual_timespan
-                        .max(expected_timespan / 4)
-                        .min(expected_timespan * 4);
-                    let pow_limit = bits_to_target(CompactTarget::from_consensus(GENESIS_NBITS));
-                    let mut new_target =
-                        retarget_target(self.next_target(), clamped, expected_timespan);
-                    if target_exceeds(new_target, pow_limit) {
-                        new_target = pow_limit;
-                    }
-                    next_state.next_nbits = target_to_bits(new_target);
-                });
+        // Validate pow
+        cycle_track("state/validate/pow", || {
+            if !hash_meets_target(block_hash, required_nbits) {
+                return Err(ValidationErrorCode::PowInsufficient);
             }
+            Ok(())
+        })?;
 
-            next_state.chain_work = cycle_track("state/next/chain_work", || {
-                u256_add(self.chain_work, work_from_bits(required_nbits))
-            });
-            cycle_track("state/next/assign_state", || {
-                next_state.header = header;
-                next_state.block_hash = block_hash;
-                next_state.height = new_height;
-            });
-            cycle_track("state/next/construct_result", || NextState {
-                current: self,
-                next: next_state,
-            })
-        })
-    }
+        // Now update self
+        self.height += 1;
+        cycle_track("state/next/timestamp_window", || {
+            self.timestamps[timestamp_slot] = new_header.timestamp;
+        });
 
-    /// Apply a batch of new headers, returning either the final state or the first failure.
+        if self.height % 2016 == 0 {
+            cycle_track("state/next/epoch_timestamp", || {
+                self.epoch_start_timestamp = new_header.timestamp;
+            });
+        }
+
+        if (self.height + 1) % 2016 == 0 {
+            cycle_track("state/next/retarget", || {
+                let actual_timespan = new_header
+                    .timestamp
+                    .wrapping_sub(self.epoch_start_timestamp);
+                let expected_timespan: u32 = 2016 * 600;
+                let clamped = actual_timespan
+                    .max(expected_timespan / 4)
+                    .min(expected_timespan * 4);
+                let pow_limit = bits_to_target(CompactTarget::from_consensus(GENESIS_NBITS));
+                let mut new_target =
+                    retarget_target(self.next_target(), clamped, expected_timespan);
+                if target_exceeds(new_target, pow_limit) {
+                    new_target = pow_limit;
+                }
+                self.next_nbits = target_to_bits(new_target);
+            });
+        }
+
+        self.chain_work = cycle_track("state/next/chain_work", || {
+            u256_add(self.chain_work, work_from_bits(required_nbits))
+        });
+        cycle_track("state/next/assign_state", || {
+            self.header = header;
+            self.block_hash = block_hash;
+        });
+        Ok(())
+    })
+}
     pub fn apply_headers<F>(
         &self,
         headers: &[NewHeader],
@@ -645,17 +663,13 @@ impl State {
             let mut state = self.clone();
 
             for (header_index, new_header) in headers.iter().copied().enumerate() {
-                let next_state = cycle_track("state/apply_headers/header", || {
-                    state.next(new_header, hash_header)
-                });
-                if let Err(error_code) = next_state.validate() {
+                if let Err(error_code) = state.next(new_header, hash_header) {
                     return Err(ProofFailure {
                         last_valid_state: state,
                         error_code,
                         header_index: header_index as u32,
                     });
                 }
-                state = next_state.into_state();
             }
 
             Ok(state)
@@ -1110,41 +1124,63 @@ mod tests {
         BlockTimestamp::from_consensus(seconds)
     }
 
-    #[test]
-    fn median_time_past_sorts_partial_window_each_read() {
-        let mut state = State {
-            height: 4,
-            ..State::default()
-        };
-        state.timestamps[0] = ts(400);
-        state.timestamps[1] = ts(100);
-        state.timestamps[2] = ts(300);
-        state.timestamps[3] = ts(200);
+    fn zero_hash() -> BlockHash {
+        BlockHash::from_raw([0; 32])
+    }
 
-        assert_eq!(state.median_time_past(), Some(ts(200)));
+    fn test_state() -> State {
+        State {
+            next_nbits: CompactTarget::from_consensus(GENESIS_NBITS),
+            ..State::default()
+        }
+    }
+
+    fn apply_header(state: &mut State, timestamp: u32) {
+        state
+            .next(
+                NewHeader {
+                    version: 1,
+                    merkle_root: [0x22; 32],
+                    timestamp: ts(timestamp),
+                    nonce: 7,
+                },
+                |_| zero_hash(),
+            )
+            .unwrap();
+    }
+
+    fn expected_upper_median(height: u32) -> Option<BlockTimestamp> {
+        if height == 0 {
+            None
+        } else if height < WINDOW_SIZE as u32 {
+            Some(ts(height / 2 + 1))
+        } else {
+            Some(ts(height - (WINDOW_SIZE as u32 / 2)))
+        }
     }
 
     #[test]
-    fn median_time_past_sorts_full_ring_buffer_each_read() {
-        let mut state = State {
-            height: WINDOW_SIZE as u32,
-            ..State::default()
-        };
-        state.timestamps = [
-            ts(700),
-            ts(100),
-            ts(1100),
-            ts(500),
-            ts(300),
-            ts(900),
-            ts(200),
-            ts(1000),
-            ts(400),
-            ts(800),
-            ts(600),
-        ];
+    fn median_time_past_uses_upper_median_for_heights_zero_through_twelve() {
+        let mut state = test_state();
 
-        assert_eq!(state.median_time_past(), Some(ts(600)));
+        assert_eq!(state.median_time_past(), expected_upper_median(0));
+
+        for height in 1..=12 {
+            apply_header(&mut state, height);
+            assert_eq!(state.height, height);
+            assert_eq!(state.median_time_past(), expected_upper_median(height));
+        }
+    }
+
+    #[test]
+    fn median_time_past_keeps_upper_median_after_two_wraps() {
+        let mut state = test_state();
+
+        for height in 1..=23 {
+            apply_header(&mut state, height);
+            assert_eq!(state.height, height);
+            assert_eq!(state.median_time_past(), expected_upper_median(height));
+        }
     }
 
     #[test]
@@ -1162,14 +1198,14 @@ mod tests {
             ts(100),
             ts(110),
         ];
-        let state = State {
+        let mut state = State {
             block_hash: BlockHash::from_raw([0x11; 32]),
             next_nbits: CompactTarget::from_consensus(GENESIS_NBITS),
             height: WINDOW_SIZE as u32,
             timestamps: original,
             ..State::default()
         };
-        let next_state = state
+        state
             .next(
                 NewHeader {
                     version: 1,
@@ -1177,12 +1213,12 @@ mod tests {
                     timestamp: ts(999),
                     nonce: 7,
                 },
-                |_| BlockHash::from_raw([0x33; 32]),
+                |_| BlockHash::from_raw([0; 32]), // Use zero hash which meets any target
             )
-            .into_state();
+        .unwrap();
 
         let mut expected = original;
         expected[0] = ts(999);
-        assert_eq!(next_state.timestamps, expected);
+        assert_eq!(state.timestamps, expected);
     }
 }

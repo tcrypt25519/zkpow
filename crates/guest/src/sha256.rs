@@ -1,9 +1,10 @@
 //! SHA-256 via SP1 precompile syscalls.
 //!
-//! Three specialized functions for the exact sizes we need:
-//! - `sha256_80`: hashes exactly 80 bytes (Bitcoin block header)
-//! - `sha256_32`: hashes exactly 32 bytes (intermediate hash output)
-//! - `sha256_232`: hashes exactly 232 bytes (serialized recursive state)
+//! Four specialized functions for the exact sizes we need:
+//! - `sha256_80bytes`: hashes exactly 80 bytes (Bitcoin block header)
+//! - `sha256_32bytes`: hashes exactly 32 bytes (intermediate hash output)
+//! - `sha256_232bytes`: hashes exactly 232 bytes (serialized recursive state)
+//! - `sha256d_80bytes`: hashes exactly 80 bytes with SHA256d
 //!
 //! No loops, no branching on block count — the padding and block layout
 //! are hardcoded for each size.
@@ -49,7 +50,7 @@ const fn be_u64(a: u8, b: u8, c: u8, d: u8) -> u64 {
 /// Produces two blocks:
 /// - Block 1: bytes 0–63 of the input (all data)
 /// - Block 2: bytes 64–79 (16 data bytes) + 0x80 + 47 zeros + 8-byte length (640 bits)
-pub fn sha256_80(data: &[u8; 80]) -> [u8; 32] {
+pub fn sha256_80bytes(data: &[u8; 80]) -> [u8; 32] {
     let mut state = SHA256_IV;
 
     // ── Block 1: bytes 0–63 ──
@@ -95,7 +96,7 @@ pub fn sha256_80(data: &[u8; 80]) -> [u8; 32] {
 ///
 /// Produces one block:
 /// bytes 0–31 (all data) + 0x80 + 23 zeros + 8-byte length (256 bits)
-pub fn sha256_32(data: &[u8; 32]) -> [u8; 32] {
+pub fn sha256_32bytes(data: &[u8; 32]) -> [u8; 32] {
     let mut state = SHA256_IV;
 
     // ── Single block: 32 bytes + padding + length ──
@@ -126,7 +127,7 @@ pub fn sha256_32(data: &[u8; 32]) -> [u8; 32] {
 /// - Block 2: bytes 64–127
 /// - Block 3: bytes 128–191
 /// - Block 4: bytes 192–231 + 0x80 + zeros + 8-byte length (1856 bits)
-pub fn sha256_232(data: &[u8; 232]) -> [u8; 32] {
+pub fn sha256_232bytes(data: &[u8; 232]) -> [u8; 32] {
     let mut state = SHA256_IV;
 
     let mut w = [0u64; 64];
@@ -209,7 +210,7 @@ pub fn sha256_232(data: &[u8; 232]) -> [u8; 32] {
 }
 
 /// Compute SHA256d of exactly 80 bytes: SHA-256(SHA-256(data)).
-pub fn double_sha256_80(data: &[u8; 80]) -> [u8; 32] {
-    let inner = sha256_80(data);
-    sha256_32(&inner)
+pub fn sha256d_80bytes(data: &[u8; 80]) -> [u8; 32] {
+    let inner = sha256_80bytes(data);
+    sha256_32bytes(&inner)
 }
