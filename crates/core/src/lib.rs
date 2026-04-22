@@ -6,9 +6,6 @@ extern crate alloc;
 
 use rkyv::{Archive, Deserialize, Serialize};
 
-#[cfg(target_os = "zkvm")]
-use sp1_zkvm::syscalls::syscall_uint256_add_with_carry;
-
 pub mod input;
 pub use input::{Input, InputError, RecursiveProof};
 
@@ -595,10 +592,11 @@ impl State {
     }
 
     /// Build the next authenticated state from the current state and a prover-supplied header.
-    pub fn next<F>(
+    fn next_inner<F>(
         &mut self,
         new_header: NewHeader,
         hash_header: F,
+        update_chain_work: bool,
     ) -> Result<(), ValidationErrorCode>
     where
         F: FnOnce(&Header) -> BlockHash,
@@ -660,15 +658,28 @@ impl State {
                 });
             }
 
-            self.chain_work = cycle_track("state/next/chain_work", || {
-                u256_add(self.chain_work, work_from_bits(required_nbits))
-            });
+            if update_chain_work {
+                self.chain_work = cycle_track("state/next/chain_work", || {
+                    u256_add(self.chain_work, work_from_bits(required_nbits))
+                });
+            }
             cycle_track("state/next/assign_state", || {
                 self.header = header;
                 self.block_hash = block_hash;
             });
             Ok(())
         })
+    }
+
+    pub fn next<F>(
+        &mut self,
+        new_header: NewHeader,
+        hash_header: F,
+    ) -> Result<(), ValidationErrorCode>
+    where
+        F: FnOnce(&Header) -> BlockHash,
+    {
+        self.next_inner(new_header, hash_header, true)
     }
     pub fn apply_headers<F>(
         &self,
@@ -680,16 +691,58 @@ impl State {
     {
         cycle_track("state/apply_headers", || {
             let mut state = self.clone();
+            let mut pending_run_nbits: Option<CompactTarget> = None;
+            let mut pending_run_count: u32 = 0;
+
+            let flush_pending_chain_work =
+                |state: &mut State, run_nbits: &mut Option<CompactTarget>, run_count: &mut u32| {
+                    if let (Some(run_nbits), count) = (run_nbits.take(), *run_count) {
+                        if count > 0 {
+                            cycle_track("state/apply_headers/chain_work_flush", || {
+                                let work_per_block = work_from_bits(run_nbits);
+                                let accumulated_work = u256_mul_u32(work_per_block, count);
+                                state.chain_work = u256_add(state.chain_work, accumulated_work);
+                            });
+                        }
+                    }
+                    *run_count = 0;
+                };
 
             for (header_index, new_header) in headers.iter().copied().enumerate() {
-                if let Err(error_code) = state.next(new_header, hash_header) {
+                let required_nbits = state.next_nbits;
+                if pending_run_nbits != Some(required_nbits) {
+                    flush_pending_chain_work(
+                        &mut state,
+                        &mut pending_run_nbits,
+                        &mut pending_run_count,
+                    );
+                    pending_run_nbits = Some(required_nbits);
+                }
+
+                if let Err(error_code) = state.next_inner(new_header, hash_header, false) {
+                    flush_pending_chain_work(
+                        &mut state,
+                        &mut pending_run_nbits,
+                        &mut pending_run_count,
+                    );
                     return Err(ProofFailure {
                         last_valid_state: state,
                         error_code,
                         header_index: header_index as u32,
                     });
                 }
+
+                pending_run_count += 1;
+                if state.next_nbits != required_nbits {
+                    flush_pending_chain_work(
+                        &mut state,
+                        &mut pending_run_nbits,
+                        &mut pending_run_count,
+                    );
+                }
             }
+
+            flush_pending_chain_work(&mut state, &mut pending_run_nbits, &mut pending_run_count);
 
             Ok(state)
         })
@@ -968,32 +1021,33 @@ pub fn hash_meets_target(hash: BlockHash, nbits: CompactTarget) -> bool {
 /// Add two little-endian `u256` values.
 #[must_use]
 pub fn u256_add(a: ChainWork, b: ChainWork) -> ChainWork {
-    cycle_track("pow/u256_add", || {
-        #[cfg(target_os = "zkvm")]
-        {
-            let a = a.into_limbs();
-            let b = b.into_limbs();
-            let c = [0u64; 4];
-            let mut result = [0u64; 4];
-            let mut carry = [0u64; 4];
-            syscall_uint256_add_with_carry(&a, &b, &c, &mut result, &mut carry);
-            ChainWork::from_limbs(result)
-        }
+    let a = a.as_limbs();
+    let b = b.as_limbs();
+    let mut result = [0u64; 4];
+    let mut carry = 0u128;
+    for i in 0..4 {
+        let sum = (a[i] as u128) + (b[i] as u128) + carry;
+        result[i] = sum as u64;
+        carry = sum >> 64;
+    }
+    ChainWork::from_limbs(result)
+}
 
-        #[cfg(not(target_os = "zkvm"))]
-        {
-            let a = a.as_limbs();
-            let b = b.as_limbs();
-            let mut result = [0u64; 4];
-            let mut carry = 0u128;
-            for i in 0..4 {
-                let sum = (a[i] as u128) + (b[i] as u128) + carry;
-                result[i] = sum as u64;
-                carry = sum >> 64;
-            }
-            ChainWork::from_limbs(result)
-        }
-    })
+/// Multiply a little-endian `u256` by a small scalar.
+#[must_use]
+pub fn u256_mul_u32(value: ChainWork, multiplier: u32) -> ChainWork {
+    let limbs = value.as_limbs();
+    let mut result = [0u64; 4];
+    let mut carry = 0u128;
+    let multiplier = multiplier as u128;
+
+    for i in 0..4 {
+        let product = (limbs[i] as u128) * multiplier + carry;
+        result[i] = product as u64;
+        carry = product >> 64;
+    }
+
+    ChainWork::from_limbs(result)
 }
 
 /// Compute a retargeted 256-bit target from the previous target and measured timespan.
@@ -1208,6 +1262,70 @@ mod tests {
         let b = ChainWork::from_limbs([1, 0, 0, 0]);
 
         assert_eq!(u256_add(a, b), ChainWork::default());
+    }
+
+    #[test]
+    fn u256_mul_u32_scales_by_small_count() {
+        let value = ChainWork::from_limbs([3, 0, 0, 0]);
+
+        assert_eq!(u256_mul_u32(value, 7), ChainWork::from_limbs([21, 0, 0, 0]));
+    }
+
+    #[test]
+    fn apply_headers_flushes_deferred_chain_work_on_success() {
+        let state = test_state();
+        let headers = [
+            NewHeader {
+                version: 1,
+                merkle_root: [0x22; 32],
+                timestamp: ts(10),
+                nonce: 7,
+            },
+            NewHeader {
+                version: 1,
+                merkle_root: [0x33; 32],
+                timestamp: ts(20),
+                nonce: 8,
+            },
+        ];
+
+        let result = state
+            .apply_headers(&headers, |_| zero_hash())
+            .expect("headers should validate");
+
+        let work = work_from_bits(CompactTarget::from_consensus(GENESIS_NBITS));
+        let expected = u256_add(u256_mul_u32(work, 2), ChainWork::default());
+        assert_eq!(result.chain_work, expected);
+    }
+
+    #[test]
+    fn apply_headers_flushes_deferred_chain_work_before_failure() {
+        let state = test_state();
+        let headers = [
+            NewHeader {
+                version: 1,
+                merkle_root: [0x22; 32],
+                timestamp: ts(10),
+                nonce: 7,
+            },
+            NewHeader {
+                version: 1,
+                merkle_root: [0x33; 32],
+                timestamp: ts(0),
+                nonce: 8,
+            },
+        ];
+
+        let failure = state
+            .apply_headers(&headers, |_| zero_hash())
+            .expect_err("second header should fail timestamp validation");
+
+        let work = work_from_bits(CompactTarget::from_consensus(GENESIS_NBITS));
+        assert_eq!(
+            failure.last_valid_state.chain_work,
+            u256_add(ChainWork::default(), work)
+        );
+        assert_eq!(failure.header_index, 1);
     }
 
     #[test]
