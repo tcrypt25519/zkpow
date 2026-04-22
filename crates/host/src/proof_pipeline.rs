@@ -13,6 +13,7 @@ use sp1_prover::build::{build_constraints_and_witness, try_build_groth16_artifac
 use sp1_prover::worker::{cpu_worker_builder, SP1LocalNodeBuilder};
 use sp1_recursion_gnark_ffi::Groth16Bn254Prover;
 use sp1_sdk::prelude::*;
+use sp1_sdk::ExecutionReport;
 use sp1_sdk::proof::SP1Proof;
 use sp1_sdk::{
     HashableKey, ProveRequest, Prover, ProverClient, ProvingKey, SP1ProofWithPublicValues,
@@ -55,6 +56,7 @@ pub struct ProofArtifacts {
     pub groth16_path: Option<PathBuf>,
     pub compressed_proof: SP1ProofWithPublicValues,
     pub groth16_proof: Option<SP1ProofWithPublicValues>,
+    pub execution_report: ExecutionReport,
     pub first_new_height: u32,
     pub end_height: u32,
     pub total_duration_secs: f64,
@@ -91,6 +93,7 @@ struct CudaPreflightReport {
 struct CompressedProofArtifacts {
     vk: sp1_prover::SP1VerifyingKey,
     compressed_proof: SP1ProofWithPublicValues,
+    execution_report: ExecutionReport,
 }
 
 fn parse_genesis_hash() -> Result<util::BlockHash, BoxError> {
@@ -471,11 +474,7 @@ where
         prover.execute(ELF, stdin.clone()).await
     })
     .await?;
-    tracing::info!(
-        prover = prover_name,
-        "Execution succeeded: {} cycles",
-        report.total_instruction_count()
-    );
+    tracing::info!(prover = prover_name, "Execution succeeded");
 
     timed_sync(
         "verify_execution_public_values",
@@ -505,6 +504,7 @@ where
     Ok(CompressedProofArtifacts {
         vk: pk.verifying_key().clone(),
         compressed_proof,
+        execution_report: report,
     })
 }
 
@@ -626,6 +626,7 @@ pub async fn generate_and_save_proofs(
     };
     let vk = compressed_artifacts.vk;
     let compressed_proof = compressed_artifacts.compressed_proof;
+    let execution_report = compressed_artifacts.execution_report;
 
     timed_sync("create_output_dir", || -> Result<(), BoxError> {
         std::fs::create_dir_all(&config.output_dir)?;
@@ -732,6 +733,7 @@ pub async fn generate_and_save_proofs(
         groth16_path,
         compressed_proof,
         groth16_proof,
+        execution_report,
         first_new_height,
         end_height: start_height + loaded_count,
         total_duration_secs: total_duration.as_secs_f64(),
@@ -787,6 +789,31 @@ fn verify_public_values(pv: &[u8], expected_pv: &[u8], label: &str) -> Result<()
             failure.error_code, failure.header_index,
         )
         .into()),
+    }
+}
+
+pub fn log_execution_report(report: &ExecutionReport) {
+    tracing::info!("Execution report");
+    tracing::info!("  total instructions: {}", report.total_instruction_count());
+
+    if report.cycle_tracker.is_empty() {
+        tracing::info!("  cycle tracker: unavailable or empty");
+        return;
+    }
+
+    let mut entries: Vec<_> = report.cycle_tracker.iter().collect();
+    entries.sort_unstable_by(|(label_a, cycles_a), (label_b, cycles_b)| {
+        cycles_b.cmp(cycles_a).then_with(|| label_a.cmp(label_b))
+    });
+
+    tracing::info!("  cycle tracker:");
+    for (label, cycles) in entries {
+        let invocations = report.invocation_tracker.get(label.as_str()).copied().unwrap_or(1);
+        if invocations > 1 {
+            tracing::info!("    {label}: {cycles} cycles across {invocations} invocations");
+        } else {
+            tracing::info!("    {label}: {cycles} cycles");
+        }
     }
 }
 

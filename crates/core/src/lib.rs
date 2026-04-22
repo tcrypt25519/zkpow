@@ -9,10 +9,10 @@ use rkyv::{Archive, Deserialize, Serialize};
 pub mod input;
 pub use input::{Input, InputError, RecursiveProof};
 
-/// Execute a closure while emitting stable cycle-tracker markers in the guest.
+/// Execute a closure while emitting stable, report-backed cycle-tracker markers in the guest.
 #[cfg(target_os = "zkvm")]
 #[inline(always)]
-pub fn cycle_track<T, F>(label: &'static str, f: F) -> T
+pub fn cycle_track_report<T, F>(label: &'static str, f: F) -> T
 where
     F: FnOnce() -> T,
 {
@@ -28,11 +28,20 @@ where
 /// Execute a closure while preserving the call shape on host builds.
 #[cfg(not(target_os = "zkvm"))]
 #[inline(always)]
-pub fn cycle_track<T, F>(_label: &'static str, f: F) -> T
+pub fn cycle_track_report<T, F>(_label: &'static str, f: F) -> T
 where
     F: FnOnce() -> T,
 {
     f()
+}
+
+/// Backwards-compatible helper for existing call sites.
+#[inline(always)]
+pub fn cycle_track<T, F>(label: &'static str, f: F) -> T
+where
+    F: FnOnce() -> T,
+{
+    cycle_track_report(label, f)
 }
 
 /// Size of the serialized [`State`] in bytes.

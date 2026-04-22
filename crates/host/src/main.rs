@@ -14,7 +14,7 @@
 //!   CUDA=1 cargo run --release -p zkpow-host --features CUDA --bin zkpow-host
 
 use zkpow_host::observability;
-use zkpow_host::proof_pipeline::{config_from_env, generate_and_save_proofs};
+use zkpow_host::proof_pipeline::{config_from_env, generate_and_save_proofs, log_execution_report};
 
 #[tokio::main]
 async fn main() {
@@ -54,4 +54,5 @@ async fn main() {
         "Total proving time: {:.2} seconds",
         artifacts.total_duration_secs,
     );
+    log_execution_report(&artifacts.execution_report);
 }
