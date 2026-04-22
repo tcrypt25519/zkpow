@@ -6,6 +6,9 @@ extern crate alloc;
 
 use rkyv::{Archive, Deserialize, Serialize};
 
+#[cfg(target_os = "zkvm")]
+use sp1_zkvm::syscalls::syscall_uint256_add_with_carry;
+
 pub mod input;
 pub use input::{Input, InputError, RecursiveProof};
 
@@ -592,77 +595,81 @@ impl State {
     }
 
     /// Build the next authenticated state from the current state and a prover-supplied header.
-pub fn next<F>(&mut self, new_header: NewHeader, hash_header: F) -> Result<(), ValidationErrorCode>
-where
-    F: FnOnce(&Header) -> BlockHash,
-{
-    cycle_track("state/next", || {
-        let required_nbits = self.next_nbits;
-        let timestamp_slot = self.next_timestamp_slot();
-        let header = cycle_track("state/next/build_header", || {
-            new_header.into_header(self.block_hash, required_nbits)
-        });
-        let block_hash = cycle_track("state/next/hash_header", || hash_header(&header));
-
-        // Validate timestamp
-        cycle_track("state/validate/median_time_past", || {
-            if let Some(median_time_past) = self.median_time_past() {
-                if header.timestamp <= median_time_past {
-                    return Err(ValidationErrorCode::TimestampTooOld);
-                }
-            }
-            Ok(())
-        })?;
-
-        // Validate pow
-        cycle_track("state/validate/pow", || {
-            if !hash_meets_target(block_hash, required_nbits) {
-                return Err(ValidationErrorCode::PowInsufficient);
-            }
-            Ok(())
-        })?;
-
-        // Now update self
-        self.height += 1;
-        cycle_track("state/next/timestamp_window", || {
-            self.timestamps[timestamp_slot] = new_header.timestamp;
-        });
-
-        if self.height % 2016 == 0 {
-            cycle_track("state/next/epoch_timestamp", || {
-                self.epoch_start_timestamp = new_header.timestamp;
+    pub fn next<F>(
+        &mut self,
+        new_header: NewHeader,
+        hash_header: F,
+    ) -> Result<(), ValidationErrorCode>
+    where
+        F: FnOnce(&Header) -> BlockHash,
+    {
+        cycle_track("state/next", || {
+            let required_nbits = self.next_nbits;
+            let timestamp_slot = self.next_timestamp_slot();
+            let header = cycle_track("state/next/build_header", || {
+                new_header.into_header(self.block_hash, required_nbits)
             });
-        }
+            let block_hash = cycle_track("state/next/hash_header", || hash_header(&header));
 
-        if (self.height + 1) % 2016 == 0 {
-            cycle_track("state/next/retarget", || {
-                let actual_timespan = new_header
-                    .timestamp
-                    .wrapping_sub(self.epoch_start_timestamp);
-                let expected_timespan: u32 = 2016 * 600;
-                let clamped = actual_timespan
-                    .max(expected_timespan / 4)
-                    .min(expected_timespan * 4);
-                let pow_limit = bits_to_target(CompactTarget::from_consensus(GENESIS_NBITS));
-                let mut new_target =
-                    retarget_target(self.next_target(), clamped, expected_timespan);
-                if target_exceeds(new_target, pow_limit) {
-                    new_target = pow_limit;
+            // Validate timestamp
+            cycle_track("state/validate/median_time_past", || {
+                if let Some(median_time_past) = self.median_time_past() {
+                    if header.timestamp <= median_time_past {
+                        return Err(ValidationErrorCode::TimestampTooOld);
+                    }
                 }
-                self.next_nbits = target_to_bits(new_target);
-            });
-        }
+                Ok(())
+            })?;
 
-        self.chain_work = cycle_track("state/next/chain_work", || {
-            u256_add(self.chain_work, work_from_bits(required_nbits))
-        });
-        cycle_track("state/next/assign_state", || {
-            self.header = header;
-            self.block_hash = block_hash;
-        });
-        Ok(())
-    })
-}
+            // Validate pow
+            cycle_track("state/validate/pow", || {
+                if !hash_meets_target(block_hash, required_nbits) {
+                    return Err(ValidationErrorCode::PowInsufficient);
+                }
+                Ok(())
+            })?;
+
+            // Now update self
+            self.height += 1;
+            cycle_track("state/next/timestamp_window", || {
+                self.timestamps[timestamp_slot] = new_header.timestamp;
+            });
+
+            if self.height % 2016 == 0 {
+                cycle_track("state/next/epoch_timestamp", || {
+                    self.epoch_start_timestamp = new_header.timestamp;
+                });
+            }
+
+            if (self.height + 1) % 2016 == 0 {
+                cycle_track("state/next/retarget", || {
+                    let actual_timespan = new_header
+                        .timestamp
+                        .wrapping_sub(self.epoch_start_timestamp);
+                    let expected_timespan: u32 = 2016 * 600;
+                    let clamped = actual_timespan
+                        .max(expected_timespan / 4)
+                        .min(expected_timespan * 4);
+                    let pow_limit = bits_to_target(CompactTarget::from_consensus(GENESIS_NBITS));
+                    let mut new_target =
+                        retarget_target(self.next_target(), clamped, expected_timespan);
+                    if target_exceeds(new_target, pow_limit) {
+                        new_target = pow_limit;
+                    }
+                    self.next_nbits = target_to_bits(new_target);
+                });
+            }
+
+            self.chain_work = cycle_track("state/next/chain_work", || {
+                u256_add(self.chain_work, work_from_bits(required_nbits))
+            });
+            cycle_track("state/next/assign_state", || {
+                self.header = header;
+                self.block_hash = block_hash;
+            });
+            Ok(())
+        })
+    }
     pub fn apply_headers<F>(
         &self,
         headers: &[NewHeader],
@@ -961,16 +968,32 @@ pub fn hash_meets_target(hash: BlockHash, nbits: CompactTarget) -> bool {
 /// Add two little-endian `u256` values.
 #[must_use]
 pub fn u256_add(a: ChainWork, b: ChainWork) -> ChainWork {
-    let a = a.as_limbs();
-    let b = b.as_limbs();
-    let mut result = [0u64; 4];
-    let mut carry = 0u128;
-    for i in 0..4 {
-        let sum = (a[i] as u128) + (b[i] as u128) + carry;
-        result[i] = sum as u64;
-        carry = sum >> 64;
-    }
-    ChainWork::from_limbs(result)
+    cycle_track("pow/u256_add", || {
+        #[cfg(target_os = "zkvm")]
+        {
+            let a = a.into_limbs();
+            let b = b.into_limbs();
+            let c = [0u64; 4];
+            let mut result = [0u64; 4];
+            let mut carry = [0u64; 4];
+            syscall_uint256_add_with_carry(&a, &b, &c, &mut result, &mut carry);
+            ChainWork::from_limbs(result)
+        }
+
+        #[cfg(not(target_os = "zkvm"))]
+        {
+            let a = a.as_limbs();
+            let b = b.as_limbs();
+            let mut result = [0u64; 4];
+            let mut carry = 0u128;
+            for i in 0..4 {
+                let sum = (a[i] as u128) + (b[i] as u128) + carry;
+                result[i] = sum as u64;
+                carry = sum >> 64;
+            }
+            ChainWork::from_limbs(result)
+        }
+    })
 }
 
 /// Compute a retargeted 256-bit target from the previous target and measured timespan.
@@ -1172,6 +1195,22 @@ mod tests {
     }
 
     #[test]
+    fn u256_add_handles_carry_propagation() {
+        let a = ChainWork::from_limbs([u64::MAX, 0, 0, 0]);
+        let b = ChainWork::from_limbs([1, 0, 0, 0]);
+
+        assert_eq!(u256_add(a, b), ChainWork::from_limbs([0, 1, 0, 0]));
+    }
+
+    #[test]
+    fn u256_add_wraps_at_256_bits() {
+        let a = ChainWork::from_limbs([u64::MAX; 4]);
+        let b = ChainWork::from_limbs([1, 0, 0, 0]);
+
+        assert_eq!(u256_add(a, b), ChainWork::default());
+    }
+
+    #[test]
     fn median_time_past_uses_upper_median_for_heights_zero_through_twelve() {
         let mut state = test_state();
 
@@ -1227,7 +1266,7 @@ mod tests {
                 },
                 |_| BlockHash::from_raw([0; 32]), // Use zero hash which meets any target
             )
-        .unwrap();
+            .unwrap();
 
         let mut expected = original;
         expected[0] = ts(999);
