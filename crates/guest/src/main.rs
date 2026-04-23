@@ -15,7 +15,7 @@
 sp1_zkvm::entrypoint!(main);
 
 use zkpow_core::{
-    encode_failure_metadata, BlockHash, Header, Input, InputError, NewHeader, RecursiveProof,
+    encode_failure_metadata, BlockHash, Header, InputError, InputRef, NewHeader, RecursiveProof,
     State, ValidationErrorCode, STATE_SIZE,
 };
 
@@ -76,8 +76,8 @@ fn initialize_genesis_hash(state: &mut State) {
 }
 
 #[sp1_derive::cycle_tracker]
-fn parse_input(input_bytes: &[u8]) -> Input {
-    match Input::parse(input_bytes, hash_header) {
+fn parse_input<'a>(input_bytes: &'a [u8]) -> InputRef<'a> {
+    match InputRef::parse(input_bytes) {
         Ok(input) => input,
         Err(InputError::HeaderPayloadLengthInvalid { .. }) => {
             commit_header_payload_length_error(input_bytes)
@@ -133,12 +133,16 @@ pub fn main() {
     let input_bytes = sp1_zkvm::io::read_vec();
     let input = parse_input(&input_bytes);
 
-    let state = input.state.clone();
-    if state.height > 0 {
-        verify_recursive_proof(&state, &input.recursive_proof);
+    let mut state = input.state.clone();
+    if state.height == 0 && state.genesis_hash == BlockHash::default() {
+        initialize_genesis_hash(&mut state);
     }
 
-    let final_state = apply_headers_or_commit(&state, &input.headers);
+    if state.height > 0 {
+        verify_recursive_proof(&state, input.recursive_proof);
+    }
+
+    let final_state = apply_headers_or_commit(&state, input.headers);
     commit_success(&final_state);
     sp1_zkvm::syscalls::syscall_halt(0);
 }

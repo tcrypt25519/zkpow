@@ -2,11 +2,10 @@
 
 use alloc::vec::Vec;
 
-use rkyv::{Archive, Deserialize, Serialize};
-
 use crate::{
-    cycle_track, BlockHash, Header, NewHeader, ParseError, PublicValuesDigest, State,
-    VerifierKeyDigest, NEW_HEADER_SIZE, RECURSIVE_PROOF_SIZE, STATE_SIZE,
+    check_exact_len, copy_from_bytes, copy_to_bytes, cycle_track, BlockHash, Header, NewHeader,
+    ParseError, PublicValuesDigest, State, VerifierKeyDigest, NEW_HEADER_SIZE,
+    RECURSIVE_PROOF_SIZE, STATE_SIZE,
 };
 
 // ============================================================================
@@ -14,15 +13,24 @@ use crate::{
 // ============================================================================
 
 /// Complete typed prover input.
-#[derive(Archive, Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Input {
     pub state: State,
     pub recursive_proof: RecursiveProof,
     pub headers: Vec<NewHeader>,
 }
 
+/// Borrowed view of the prover input wire format.
+#[derive(Debug, Clone, Copy)]
+pub struct InputRef<'a> {
+    pub state: &'a State,
+    pub recursive_proof: &'a RecursiveProof,
+    pub headers: &'a [NewHeader],
+}
+
 /// Recursive proof metadata that authenticates the current [`State`].
-#[derive(Archive, Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RecursiveProof {
     pub verifier_key: VerifierKeyDigest,
     pub public_values_digest: PublicValuesDigest,
@@ -86,32 +94,95 @@ impl RecursiveProof {
     /// Parse and validate a RecursiveProof from exactly [`RECURSIVE_PROOF_SIZE`] bytes.
     pub fn parse(bytes: &[u8]) -> Result<Self, InputError> {
         cycle_track("input/recursive_proof", || {
-            if bytes.len() != RECURSIVE_PROOF_SIZE {
-                return Err(InputError::InvalidRecursiveProofLength {
-                    actual: bytes.len(),
-                    expected: RECURSIVE_PROOF_SIZE,
-                });
-            }
-
-            let archived = unsafe { rkyv::archived_root::<Self>(bytes) };
-            archived.deserialize(&mut rkyv::Infallible).map_err(|_| {
+            check_exact_len(bytes, RECURSIVE_PROOF_SIZE).map_err(|_| {
                 InputError::InvalidRecursiveProofLength {
                     actual: bytes.len(),
                     expected: RECURSIVE_PROOF_SIZE,
                 }
-            })
+            })?;
+            copy_from_bytes(bytes).map_err(InputError::from)
         })
     }
 
     /// Serialize to exactly [`RECURSIVE_PROOF_SIZE`] bytes.
     #[must_use]
     pub fn to_bytes(&self) -> [u8; RECURSIVE_PROOF_SIZE] {
-        let bytes =
-            rkyv::to_bytes::<_, 1024>(self).expect("failed to serialize recursive proof metadata");
-        bytes
-            .as_slice()
-            .try_into()
-            .expect("rkyv recursive proof serialization should fit in RECURSIVE_PROOF_SIZE")
+        copy_to_bytes(self)
+    }
+
+    /// Borrow a [`RecursiveProof`] directly from aligned protocol bytes.
+    pub fn ref_from_bytes(bytes: &[u8], offset: usize) -> Result<&Self, InputError> {
+        crate::ref_from_bytes(bytes, offset).map_err(InputError::from)
+    }
+}
+
+impl<'a> InputRef<'a> {
+    /// Parse and validate input from the aligned host/guest wire format.
+    pub fn parse(bytes: &'a [u8]) -> Result<Self, InputError> {
+        cycle_track("input/parse", || {
+            let state_end = STATE_SIZE;
+            let state_bytes = bytes.get(..state_end).ok_or(ParseError::Truncated {
+                offset: 0,
+                needed: STATE_SIZE,
+                actual: bytes.len(),
+            })?;
+            let state = cycle_track("input/parse/state", || {
+                State::ref_from_bytes(state_bytes, 0).map_err(InputError::from)
+            })?;
+
+            let proof_start = state_end;
+            let proof_end = proof_start.checked_add(RECURSIVE_PROOF_SIZE).ok_or(
+                InputError::InvalidRecursiveProofLength {
+                    actual: bytes.len().saturating_sub(proof_start),
+                    expected: RECURSIVE_PROOF_SIZE,
+                },
+            )?;
+            let proof_bytes = bytes.get(proof_start..proof_end).ok_or(
+                InputError::InvalidRecursiveProofLength {
+                    actual: bytes.len().saturating_sub(proof_start),
+                    expected: RECURSIVE_PROOF_SIZE,
+                },
+            )?;
+            let recursive_proof = RecursiveProof::ref_from_bytes(proof_bytes, proof_start)?;
+
+            let header_payload = &bytes[proof_end..];
+            if header_payload.len() % NEW_HEADER_SIZE != 0 {
+                return Err(InputError::HeaderPayloadLengthInvalid {
+                    actual: header_payload.len(),
+                });
+            }
+
+            let headers = cycle_track("input/parse/headers", || {
+                NewHeader::slice_from_bytes(header_payload, proof_end).map_err(InputError::from)
+            })?;
+
+            if state.height == 0 && state.genesis_hash != BlockHash::default() {
+                return Err(InputError::GenesisHashMustBeZero);
+            }
+
+            Ok(Self {
+                state,
+                recursive_proof,
+                headers,
+            })
+        })
+    }
+
+    pub fn to_owned<F>(&self, hash_header: F) -> Input
+    where
+        F: FnOnce(&Header) -> BlockHash + Copy,
+    {
+        let mut state = self.state.clone();
+        if state.height == 0 {
+            let block_hash = hash_header(&state.header);
+            state.block_hash = block_hash;
+            state.genesis_hash = block_hash;
+        }
+        Input {
+            state,
+            recursive_proof: *self.recursive_proof,
+            headers: self.headers.to_vec(),
+        }
     }
 }
 
@@ -134,72 +205,7 @@ impl Input {
     where
         F: FnOnce(&Header) -> BlockHash + Copy,
     {
-        cycle_track("input/parse", || {
-            let mut off = 0usize;
-            let state = cycle_track("input/parse/state", || {
-                let end = off.checked_add(STATE_SIZE).ok_or(ParseError::Truncated {
-                    offset: off,
-                    needed: STATE_SIZE,
-                    actual: bytes.len().saturating_sub(off),
-                })?;
-                let state_bytes = bytes.get(off..end).ok_or(ParseError::Truncated {
-                    offset: off,
-                    needed: STATE_SIZE,
-                    actual: bytes.len().saturating_sub(off),
-                })?;
-                off = end;
-                State::parse(&state_bytes).map_err(InputError::from)
-            });
-            let proof_end = off.checked_add(RECURSIVE_PROOF_SIZE).ok_or(
-                InputError::InvalidRecursiveProofLength {
-                    actual: bytes.len().saturating_sub(off),
-                    expected: RECURSIVE_PROOF_SIZE,
-                },
-            )?;
-            let proof_bytes =
-                bytes
-                    .get(off..proof_end)
-                    .ok_or(InputError::InvalidRecursiveProofLength {
-                        actual: bytes.len().saturating_sub(off),
-                        expected: RECURSIVE_PROOF_SIZE,
-                    })?;
-            let mut input = Self {
-                state: state?,
-                recursive_proof: RecursiveProof::parse(proof_bytes)?,
-                headers: Vec::new(),
-            };
-            off = proof_end;
-
-            let header_payload_len = bytes.len().saturating_sub(off);
-            if header_payload_len % NEW_HEADER_SIZE != 0 {
-                return Err(InputError::HeaderPayloadLengthInvalid {
-                    actual: header_payload_len,
-                });
-            }
-
-            cycle_track("input/parse/headers", || {
-                let header_count = header_payload_len / NEW_HEADER_SIZE;
-                input.headers = Vec::with_capacity(header_count);
-                for header_bytes in bytes[off..].chunks_exact(NEW_HEADER_SIZE) {
-                    input.headers.push(NewHeader::parse(header_bytes)?);
-                }
-                Ok::<(), InputError>(())
-            })?;
-
-            if input.state.height == 0 {
-                if input.state.genesis_hash != BlockHash::default() {
-                    return Err(InputError::GenesisHashMustBeZero);
-                }
-
-                cycle_track("input/parse/genesis_hash", || {
-                    let block_hash = hash_header(&input.state.header);
-                    input.state.block_hash = block_hash;
-                    input.state.genesis_hash = block_hash;
-                });
-            }
-
-            Ok(input)
-        })
+        InputRef::parse(bytes).map(|input| input.to_owned(hash_header))
     }
 
     /// Serialize to the host/guest wire format.
@@ -330,5 +336,30 @@ mod tests {
         assert_eq!(input.state.height, 0);
         assert_eq!(input.recursive_proof, RecursiveProof::default());
         assert_eq!(input.headers, headers);
+    }
+
+    #[test]
+    fn test_input_ref_rejects_misaligned_state() {
+        let genesis_state = State {
+            height: 0,
+            genesis_hash: BlockHash::default(),
+            ..Default::default()
+        };
+        let input = Input::new(genesis_state, RecursiveProof::default(), Vec::new())
+            .unwrap()
+            .to_bytes();
+
+        let mut misaligned = Vec::with_capacity(input.len() + 1);
+        misaligned.push(0);
+        misaligned.extend_from_slice(&input);
+
+        let err = InputRef::parse(&misaligned[1..]).unwrap_err();
+        assert_eq!(
+            err,
+            InputError::Parse(ParseError::Misaligned {
+                offset: 0,
+                required: core::mem::align_of::<State>(),
+            })
+        );
     }
 }

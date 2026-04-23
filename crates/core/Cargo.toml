@@ -8,5 +8,4 @@ publish = false
 path = "src/lib.rs"
 
 [dependencies]
-rkyv = { version = "0.7.43", default-features = false, features = ["alloc", "size_64"] }
 sp1-zkvm = { workspace = true }

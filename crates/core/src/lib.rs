@@ -4,10 +4,16 @@
 
 extern crate alloc;
 
-use rkyv::{Archive, Deserialize, Serialize};
+use core::{
+    mem::{align_of, size_of, MaybeUninit},
+    ptr, slice,
+};
 
 pub mod input;
-pub use input::{Input, InputError, RecursiveProof};
+pub use input::{Input, InputError, InputRef, RecursiveProof};
+
+#[cfg(not(target_endian = "little"))]
+compile_error!("bitcoin-header-chain wire types require a little-endian target");
 
 /// Execute a closure while emitting stable, report-backed cycle-tracker markers in the guest.
 #[cfg(target_os = "zkvm")]
@@ -48,13 +54,13 @@ where
 }
 
 /// Size of the serialized [`State`] in bytes.
-pub const STATE_SIZE: usize = core::mem::size_of::<rkyv::Archived<State>>();
+pub const STATE_SIZE: usize = size_of::<State>();
 
 /// Size of each [`NewHeader`] input from the prover.
 pub const NEW_HEADER_SIZE: usize = 44;
 
 /// Size of a serialized [`RecursiveProof`] in bytes.
-pub const RECURSIVE_PROOF_SIZE: usize = core::mem::size_of::<rkyv::Archived<RecursiveProof>>();
+pub const RECURSIVE_PROOF_SIZE: usize = size_of::<RecursiveProof>();
 
 /// Size of a serialized Bitcoin block header in bytes.
 pub const BLOCK_HEADER_SIZE: usize = 80;
@@ -72,7 +78,8 @@ pub const MAINNET_GENESIS_HASH_RAW: [u8; 32] = [
 ];
 
 /// Bitcoin block hash stored in Bitcoin's internal little-endian byte order.
-#[derive(Archive, Deserialize, Serialize, Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct BlockHash([u8; 32]);
 
 impl BlockHash {
@@ -108,7 +115,8 @@ impl From<BlockHash> for [u8; 32] {
 }
 
 /// Bitcoin compact difficulty encoding (`nBits`).
-#[derive(Archive, Deserialize, Serialize, Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct CompactTarget(u32);
 
 impl CompactTarget {
@@ -138,7 +146,8 @@ impl From<CompactTarget> for u32 {
 }
 
 /// Expanded 256-bit proof-of-work target in little-endian byte order.
-#[derive(Archive, Deserialize, Serialize, Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Target([u8; 32]);
 
 impl Target {
@@ -174,7 +183,8 @@ impl From<Target> for [u8; 32] {
 }
 
 /// Cumulative proof-of-work as a 256-bit little-endian limb array.
-#[derive(Archive, Deserialize, Serialize, Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ChainWork([u64; 4]);
 
 impl ChainWork {
@@ -210,9 +220,8 @@ impl From<ChainWork> for [u64; 4] {
 }
 
 /// Bitcoin block timestamp encoded as Unix seconds in consensus serialization.
-#[derive(
-    Archive, Deserialize, Serialize, Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord,
-)]
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub struct BlockTimestamp(u32);
 
 impl BlockTimestamp {
@@ -248,7 +257,8 @@ impl From<BlockTimestamp> for u32 {
 }
 
 /// A Bitcoin block header with typed fields.
-#[derive(Archive, Deserialize, Serialize, Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Header {
     pub version: u32,
     pub prev_blockhash: BlockHash,
@@ -262,44 +272,18 @@ impl Header {
     /// Serialize to exactly [`BLOCK_HEADER_SIZE`] bytes.
     #[must_use]
     pub fn to_bytes(&self) -> [u8; BLOCK_HEADER_SIZE] {
-        let mut bytes = [0u8; BLOCK_HEADER_SIZE];
-        bytes[0..4].copy_from_slice(&self.version.to_le_bytes());
-        bytes[4..36].copy_from_slice(self.prev_blockhash.as_raw());
-        bytes[36..68].copy_from_slice(&self.merkle_root);
-        bytes[68..72].copy_from_slice(&self.timestamp.to_consensus().to_le_bytes());
-        bytes[72..76].copy_from_slice(&self.nbits.to_consensus().to_le_bytes());
-        bytes[76..80].copy_from_slice(&self.nonce.to_le_bytes());
-        bytes
+        copy_to_bytes(self)
     }
 
     /// Deserialize from exactly [`BLOCK_HEADER_SIZE`] bytes.
     pub fn parse(bytes: &[u8]) -> Result<Self, ParseError> {
-        cycle_track("parse/header", || {
-            if bytes.len() != BLOCK_HEADER_SIZE {
-                return Err(ParseError::InvalidLength {
-                    expected: BLOCK_HEADER_SIZE,
-                    actual: bytes.len(),
-                });
-            }
-
-            Ok(Self {
-                version: u32::from_le_bytes(bytes[0..4].try_into().unwrap()),
-                prev_blockhash: BlockHash::from_raw(bytes[4..36].try_into().unwrap()),
-                merkle_root: bytes[36..68].try_into().unwrap(),
-                timestamp: BlockTimestamp::from_consensus(
-                    u32::from_le_bytes(bytes[68..72].try_into().unwrap()),
-                ),
-                nbits: CompactTarget::from_consensus(
-                    u32::from_le_bytes(bytes[72..76].try_into().unwrap()),
-                ),
-                nonce: u32::from_le_bytes(bytes[76..80].try_into().unwrap()),
-            })
-        })
+        cycle_track("parse/header", || copy_from_bytes(bytes))
     }
 }
 
 /// Digest of a program verifier key.
-#[derive(Archive, Deserialize, Serialize, Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct VerifierKeyDigest([u32; 8]);
 
 impl VerifierKeyDigest {
@@ -332,7 +316,8 @@ impl From<VerifierKeyDigest> for [u32; 8] {
 }
 
 /// Digest of committed public values.
-#[derive(Archive, Deserialize, Serialize, Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PublicValuesDigest([u8; 32]);
 
 impl PublicValuesDigest {
@@ -365,11 +350,15 @@ impl From<PublicValuesDigest> for [u8; 32] {
 }
 
 /// Parse errors for fixed-width serialized core types.
-#[derive(Archive, Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParseError {
     InvalidLength {
         expected: usize,
         actual: usize,
+    },
+    Misaligned {
+        offset: usize,
+        required: usize,
     },
     Truncated {
         offset: usize,
@@ -383,6 +372,13 @@ impl core::fmt::Display for ParseError {
         match self {
             Self::InvalidLength { expected, actual } => {
                 write!(f, "invalid length: expected {}, got {}", expected, actual)
+            }
+            Self::Misaligned { offset, required } => {
+                write!(
+                    f,
+                    "misaligned input at offset {}: requires {}-byte alignment",
+                    offset, required
+                )
             }
             Self::Truncated {
                 offset,
@@ -399,40 +395,67 @@ impl core::fmt::Display for ParseError {
     }
 }
 
-fn parse_rkyv_exact<T>(bytes: &[u8], expected: usize) -> Result<T, ParseError>
-where
-    T: Archive,
-    T::Archived: Deserialize<T, rkyv::Infallible>,
-{
+pub(crate) fn check_exact_len(bytes: &[u8], expected: usize) -> Result<(), ParseError> {
     if bytes.len() != expected {
         return Err(ParseError::InvalidLength {
             expected,
             actual: bytes.len(),
         });
     }
-
-    let archived = unsafe { rkyv::archived_root::<T>(bytes) };
-    archived
-        .deserialize(&mut rkyv::Infallible)
-        .map_err(|_| ParseError::InvalidLength {
-            expected,
-            actual: bytes.len(),
-        })
+    Ok(())
 }
 
-fn serialize_rkyv_exact<const N: usize, T>(value: &T, err: &'static str) -> [u8; N]
-where
-    T: Serialize<rkyv::ser::serializers::AllocSerializer<1024>>,
-{
-    let bytes = rkyv::to_bytes::<_, 1024>(value).expect(err);
+pub(crate) fn check_aligned<T>(bytes: &[u8], offset: usize) -> Result<(), ParseError> {
+    let required = align_of::<T>();
+    let address = bytes.as_ptr() as usize;
+    if address % required != 0 {
+        return Err(ParseError::Misaligned { offset, required });
+    }
+    Ok(())
+}
+
+pub(crate) fn copy_from_bytes<T>(bytes: &[u8]) -> Result<T, ParseError> {
+    check_exact_len(bytes, size_of::<T>())?;
+    let mut value = MaybeUninit::<T>::uninit();
+    unsafe {
+        ptr::copy_nonoverlapping(
+            bytes.as_ptr(),
+            value.as_mut_ptr() as *mut u8,
+            size_of::<T>(),
+        );
+        Ok(value.assume_init())
+    }
+}
+
+pub(crate) fn copy_to_bytes<const N: usize, T>(value: &T) -> [u8; N] {
+    assert_eq!(size_of::<T>(), N);
+    let mut bytes = [0u8; N];
+    unsafe {
+        ptr::copy_nonoverlapping(value as *const T as *const u8, bytes.as_mut_ptr(), N);
+    }
     bytes
-        .as_slice()
-        .try_into()
-        .expect("rkyv serialization should fit in the fixed-width wire size")
+}
+
+pub(crate) fn ref_from_bytes<T>(bytes: &[u8], offset: usize) -> Result<&T, ParseError> {
+    check_exact_len(bytes, size_of::<T>())?;
+    check_aligned::<T>(bytes, offset)?;
+    Ok(unsafe { &*(bytes.as_ptr() as *const T) })
+}
+
+pub(crate) fn slice_from_bytes<T>(bytes: &[u8], offset: usize) -> Result<&[T], ParseError> {
+    if bytes.len() % size_of::<T>() != 0 {
+        return Err(ParseError::InvalidLength {
+            expected: bytes.len().div_ceil(size_of::<T>()) * size_of::<T>(),
+            actual: bytes.len(),
+        });
+    }
+    check_aligned::<T>(bytes, offset)?;
+    Ok(unsafe { slice::from_raw_parts(bytes.as_ptr() as *const T, bytes.len() / size_of::<T>()) })
 }
 
 /// Prover-supplied fields for a new header.
-#[derive(Archive, Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NewHeader {
     pub version: u32,
     pub merkle_root: [u8; 32],
@@ -460,34 +483,18 @@ impl NewHeader {
 
     /// Parse a [`NewHeader`] from exactly [`NEW_HEADER_SIZE`] bytes.
     pub fn parse(bytes: &[u8]) -> Result<Self, ParseError> {
-        cycle_track("parse/new_header", || {
-            if bytes.len() != NEW_HEADER_SIZE {
-                return Err(ParseError::InvalidLength {
-                    expected: NEW_HEADER_SIZE,
-                    actual: bytes.len(),
-                });
-            }
+        cycle_track("parse/new_header", || copy_from_bytes(bytes))
+    }
 
-            Ok(Self {
-                version: u32::from_le_bytes(bytes[0..4].try_into().unwrap()),
-                merkle_root: bytes[4..36].try_into().unwrap(),
-                timestamp: BlockTimestamp::from_consensus(
-                    u32::from_le_bytes(bytes[36..40].try_into().unwrap()),
-                ),
-                nonce: u32::from_le_bytes(bytes[40..44].try_into().unwrap()),
-            })
-        })
+    /// Borrow a slice of [`NewHeader`] records directly from aligned protocol bytes.
+    pub fn slice_from_bytes(bytes: &[u8], offset: usize) -> Result<&[Self], ParseError> {
+        cycle_track("parse/new_header_slice", || slice_from_bytes(bytes, offset))
     }
 
     /// Serialize to exactly [`NEW_HEADER_SIZE`] bytes.
     #[must_use]
     pub fn to_bytes(&self) -> [u8; NEW_HEADER_SIZE] {
-        let mut bytes = [0u8; NEW_HEADER_SIZE];
-        bytes[0..4].copy_from_slice(&self.version.to_le_bytes());
-        bytes[4..36].copy_from_slice(&self.merkle_root);
-        bytes[36..40].copy_from_slice(&self.timestamp.to_consensus().to_le_bytes());
-        bytes[40..44].copy_from_slice(&self.nonce.to_le_bytes());
-        bytes
+        copy_to_bytes(self)
     }
 
     /// Materialize a full [`Header`] using authenticated chain context.
@@ -523,7 +530,8 @@ impl NewHeader {
 }
 
 /// Complete authenticated validation state, serialized between recursive iterations.
-#[derive(Archive, Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
+#[repr(C)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct State {
     pub header: Header,
     pub block_hash: BlockHash,
@@ -551,12 +559,17 @@ impl State {
     /// Serialize to exactly [`STATE_SIZE`] bytes.
     #[must_use]
     pub fn to_bytes(&self) -> [u8; STATE_SIZE] {
-        serialize_rkyv_exact(self, "failed to serialize state with rkyv")
+        copy_to_bytes(self)
     }
 
     /// Deserialize from exactly [`STATE_SIZE`] bytes.
     pub fn parse(bytes: &[u8]) -> Result<Self, ParseError> {
-        cycle_track("parse/state", || parse_rkyv_exact(bytes, STATE_SIZE))
+        cycle_track("parse/state", || copy_from_bytes(bytes))
+    }
+
+    /// Borrow a [`State`] directly from aligned protocol bytes.
+    pub fn ref_from_bytes(bytes: &[u8], offset: usize) -> Result<&Self, ParseError> {
+        cycle_track("parse/state_ref", || ref_from_bytes(bytes, offset))
     }
 
     /// The expanded proof-of-work target required for the next header.
@@ -885,7 +898,7 @@ impl NextState<'_> {
 }
 
 /// Validation status emitted by the program on failure.
-#[derive(Archive, Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum ValidationErrorCode {
     HeaderPayloadLengthInvalid = 1,
@@ -934,7 +947,7 @@ impl TryFrom<u8> for ValidationErrorCode {
 }
 
 /// Failure payload committed by the program when validation stops early.
-#[derive(Archive, Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProofFailure {
     pub last_valid_state: State,
     pub error_code: ValidationErrorCode,
@@ -942,16 +955,17 @@ pub struct ProofFailure {
 }
 
 /// Typed public values committed by the prover.
-#[derive(Archive, Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HeaderChainPublicValues {
     Success(State),
     Failure(ProofFailure),
 }
 
-#[derive(Archive, Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct FailureMetadataWire([u8; 5]);
 
-const FAILURE_METADATA_SIZE: usize = core::mem::size_of::<rkyv::Archived<FailureMetadataWire>>();
+const FAILURE_METADATA_SIZE: usize = size_of::<FailureMetadataWire>();
 
 impl FailureMetadataWire {
     fn new(error_code: ValidationErrorCode, header_index: u32) -> Self {
@@ -962,8 +976,8 @@ impl FailureMetadataWire {
     }
 
     fn parse(bytes: &[u8]) -> Result<(ValidationErrorCode, u32), PublicValuesParseError> {
-        let wire = parse_rkyv_exact::<Self>(bytes, FAILURE_METADATA_SIZE)
-            .map_err(PublicValuesParseError::FailureMetadataParse)?;
+        let wire =
+            copy_from_bytes::<Self>(bytes).map_err(PublicValuesParseError::FailureMetadataParse)?;
         let error_code = ValidationErrorCode::try_from(wire.0[0])?;
         let header_index = u32::from_le_bytes(wire.0[1..].try_into().unwrap());
         Ok((error_code, header_index))
@@ -971,7 +985,7 @@ impl FailureMetadataWire {
 
     #[must_use]
     fn to_bytes(&self) -> [u8; FAILURE_METADATA_SIZE] {
-        serialize_rkyv_exact(self, "failed to serialize failure metadata")
+        copy_to_bytes(self)
     }
 }
 
@@ -1015,7 +1029,7 @@ impl HeaderChainPublicValues {
 }
 
 /// Parse errors for committed public values.
-#[derive(Archive, Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PublicValuesParseError {
     InvalidLength { actual: usize },
     UnknownErrorCode { code: u8 },
@@ -1369,7 +1383,12 @@ mod tests {
         assert_eq!(BLOCK_HEADER_SIZE, 80);
         assert_eq!(NEW_HEADER_SIZE, 44);
         assert_eq!(RECURSIVE_PROOF_SIZE, 64);
+        assert_eq!(STATE_SIZE, 232);
         assert_eq!(FAILURE_METADATA_SIZE, 5);
+        assert_eq!(core::mem::align_of::<Header>(), 4);
+        assert_eq!(core::mem::align_of::<NewHeader>(), 4);
+        assert_eq!(core::mem::align_of::<RecursiveProof>(), 4);
+        assert_eq!(core::mem::align_of::<State>(), 8);
     }
 
     #[test]
@@ -1396,7 +1415,10 @@ mod tests {
         assert_eq!(header.version, 0x1122_3344);
         assert_eq!(header.prev_blockhash, BlockHash::from_raw([0x55; 32]));
         assert_eq!(header.merkle_root, [0x66; 32]);
-        assert_eq!(header.timestamp, BlockTimestamp::from_consensus(0x7788_99aa));
+        assert_eq!(
+            header.timestamp,
+            BlockTimestamp::from_consensus(0x7788_99aa)
+        );
         assert_eq!(header.nbits, CompactTarget::from_consensus(0x1d00_ffff));
         assert_eq!(header.nonce, 0xbbcc_ddee);
         assert_eq!(header.to_bytes(), header_bytes);
@@ -1410,7 +1432,10 @@ mod tests {
         let new_header = NewHeader::parse(&new_header_bytes).unwrap();
         assert_eq!(new_header.version, 0x1122_3344);
         assert_eq!(new_header.merkle_root, [0x66; 32]);
-        assert_eq!(new_header.timestamp, BlockTimestamp::from_consensus(0x7788_99aa));
+        assert_eq!(
+            new_header.timestamp,
+            BlockTimestamp::from_consensus(0x7788_99aa)
+        );
         assert_eq!(new_header.nonce, 0xbbcc_ddee);
         assert_eq!(new_header.to_bytes(), new_header_bytes);
     }
