@@ -596,6 +596,7 @@ impl State {
         &mut self,
         new_header: NewHeader,
         hash_header: F,
+        median_time_past: Option<BlockTimestamp>,
         update_chain_work: bool,
     ) -> Result<(), ValidationErrorCode>
     where
@@ -611,7 +612,8 @@ impl State {
 
             // Validate timestamp
             cycle_track("state/validate/median_time_past", || {
-                if let Some(median_time_past) = self.median_time_past() {
+                if let Some(median_time_past) = median_time_past.or_else(|| self.median_time_past())
+                {
                     if header.timestamp <= median_time_past {
                         return Err(ValidationErrorCode::TimestampTooOld);
                     }
@@ -679,7 +681,7 @@ impl State {
     where
         F: FnOnce(&Header) -> BlockHash,
     {
-        self.next_inner(new_header, hash_header, true)
+        self.next_inner(new_header, hash_header, None, true)
     }
     pub fn apply_headers<F>(
         &self,
@@ -691,6 +693,14 @@ impl State {
     {
         cycle_track("state/apply_headers", || {
             let mut state = self.clone();
+            let mut median_window = state.timestamps;
+            let mut median_window_len = state.timestamp_count();
+            if median_window_len >= WINDOW_SIZE {
+                median_window.sort_unstable();
+            } else {
+                median_window[..median_window_len].sort_unstable();
+            }
+
             let mut pending_run_nbits: Option<CompactTarget> = None;
             let mut pending_run_count: u32 = 0;
 
@@ -708,8 +718,48 @@ impl State {
                     *run_count = 0;
                 };
 
+            let median_window_remove =
+                |window: &mut [BlockTimestamp; WINDOW_SIZE],
+                 window_len: &mut usize,
+                 value: BlockTimestamp| {
+                    if *window_len == 0 {
+                        return;
+                    }
+
+                    let search_len = *window_len;
+                    let idx = window[..search_len]
+                        .binary_search(&value)
+                        .expect("tracked median window should contain the evicted timestamp");
+
+                    for i in idx..search_len - 1 {
+                        window[i] = window[i + 1];
+                    }
+                    *window_len -= 1;
+                };
+
+            let median_window_insert =
+                |window: &mut [BlockTimestamp; WINDOW_SIZE],
+                 window_len: &mut usize,
+                 value: BlockTimestamp| {
+                    let search_len = *window_len;
+                    let idx = window[..search_len]
+                        .binary_search(&value)
+                        .unwrap_or_else(|idx| idx);
+
+                    for i in (idx..search_len).rev() {
+                        window[i + 1] = window[i];
+                    }
+                    window[idx] = value;
+                    *window_len += 1;
+                };
+
             for (header_index, new_header) in headers.iter().copied().enumerate() {
                 let required_nbits = state.next_nbits;
+                let median_time_past = if median_window_len == 0 {
+                    None
+                } else {
+                    Some(median_window[median_window_len / 2])
+                };
                 if pending_run_nbits != Some(required_nbits) {
                     flush_pending_chain_work(
                         &mut state,
@@ -719,7 +769,12 @@ impl State {
                     pending_run_nbits = Some(required_nbits);
                 }
 
-                if let Err(error_code) = state.next_inner(new_header, hash_header, false) {
+                let timestamp_slot = state.next_timestamp_slot();
+                let old_timestamp = state.timestamps[timestamp_slot];
+
+                if let Err(error_code) =
+                    state.next_inner(new_header, hash_header, median_time_past, false)
+                {
                     flush_pending_chain_work(
                         &mut state,
                         &mut pending_run_nbits,
@@ -730,6 +785,24 @@ impl State {
                         error_code,
                         header_index: header_index as u32,
                     });
+                }
+
+                if state.height == 1 {
+                    median_window[0] = new_header.timestamp;
+                    median_window_len = 1;
+                } else if median_window_len < WINDOW_SIZE {
+                    median_window_insert(
+                        &mut median_window,
+                        &mut median_window_len,
+                        new_header.timestamp,
+                    );
+                } else {
+                    median_window_remove(&mut median_window, &mut median_window_len, old_timestamp);
+                    median_window_insert(
+                        &mut median_window,
+                        &mut median_window_len,
+                        new_header.timestamp,
+                    );
                 }
 
                 pending_run_count += 1;
@@ -1207,6 +1280,8 @@ fn q_le_r_shifted(q: &[u64; 4], r: u32, k: u32) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use alloc::vec::Vec;
+
     use super::*;
 
     fn ts(seconds: u32) -> BlockTimestamp {
@@ -1326,6 +1401,31 @@ mod tests {
             u256_add(ChainWork::default(), work)
         );
         assert_eq!(failure.header_index, 1);
+    }
+
+    #[test]
+    fn apply_headers_matches_sequential_next_across_median_window_wrap() {
+        let headers: Vec<NewHeader> = (1..=23)
+            .map(|timestamp| NewHeader {
+                version: 1,
+                merkle_root: [timestamp as u8; 32],
+                timestamp: ts(timestamp),
+                nonce: timestamp,
+            })
+            .collect();
+
+        let mut sequential = test_state();
+        for header in headers.iter().copied() {
+            sequential
+                .next(header, |_| zero_hash())
+                .expect("sequential validation should succeed");
+        }
+
+        let batched = test_state()
+            .apply_headers(&headers, |_| zero_hash())
+            .expect("batched validation should succeed");
+
+        assert_eq!(batched, sequential);
     }
 
     #[test]
