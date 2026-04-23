@@ -15,8 +15,8 @@
 sp1_zkvm::entrypoint!(main);
 
 use zkpow_core::{
-    BlockHash, Header, Input, InputError, NewHeader, RecursiveProof, State, ValidationErrorCode,
-    STATE_SIZE,
+    encode_failure_metadata, BlockHash, Header, Input, InputError, NewHeader, RecursiveProof,
+    State, ValidationErrorCode, STATE_SIZE,
 };
 
 mod sha256;
@@ -53,13 +53,9 @@ fn commit_state(state_bytes: &[u8; STATE_SIZE]) {
 }
 
 #[sp1_derive::cycle_tracker]
-fn commit_error_code(error_code: ValidationErrorCode) {
-    sp1_zkvm::io::commit_slice(&[error_code.as_byte()]);
-}
-
-#[sp1_derive::cycle_tracker]
-fn commit_header_index(header_index: u32) {
-    sp1_zkvm::io::commit_slice(&header_index.to_le_bytes());
+fn commit_failure_metadata(error_code: ValidationErrorCode, header_index: u32) {
+    let metadata = encode_failure_metadata(error_code, header_index);
+    sp1_zkvm::io::commit_slice(&metadata);
 }
 
 #[sp1_derive::cycle_tracker]
@@ -119,8 +115,7 @@ fn apply_headers_or_commit(state: &State, headers: &[NewHeader]) -> State {
 fn commit_error_output(state: &State, error_code: ValidationErrorCode, header_index: u32) {
     let state_bytes = serialize_state(state);
     commit_state(&state_bytes);
-    commit_error_code(error_code);
-    commit_header_index(header_index);
+    commit_failure_metadata(error_code, header_index);
 }
 
 #[sp1_derive::cycle_tracker]

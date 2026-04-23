@@ -51,13 +51,13 @@ where
 pub const STATE_SIZE: usize = core::mem::size_of::<rkyv::Archived<State>>();
 
 /// Size of each [`NewHeader`] input from the prover.
-pub const NEW_HEADER_SIZE: usize = 44;
+pub const NEW_HEADER_SIZE: usize = core::mem::size_of::<rkyv::Archived<NewHeader>>();
 
 /// Size of a serialized [`RecursiveProof`] in bytes.
-pub const RECURSIVE_PROOF_SIZE: usize = (8 * 4) + 32;
+pub const RECURSIVE_PROOF_SIZE: usize = core::mem::size_of::<rkyv::Archived<RecursiveProof>>();
 
 /// Size of a serialized Bitcoin block header in bytes.
-pub const BLOCK_HEADER_SIZE: usize = 80;
+pub const BLOCK_HEADER_SIZE: usize = core::mem::size_of::<rkyv::Archived<Header>>();
 
 /// Sliding window size used for median-time-past checks.
 pub const WINDOW_SIZE: usize = 11;
@@ -262,44 +262,13 @@ impl Header {
     /// Serialize to exactly [`BLOCK_HEADER_SIZE`] bytes.
     #[must_use]
     pub fn to_bytes(&self) -> [u8; BLOCK_HEADER_SIZE] {
-        let mut bytes = [0u8; BLOCK_HEADER_SIZE];
-        bytes[0..4].copy_from_slice(&self.version.to_le_bytes());
-        bytes[4..36].copy_from_slice(self.prev_blockhash.as_raw());
-        bytes[36..68].copy_from_slice(&self.merkle_root);
-        bytes[68..72].copy_from_slice(&self.timestamp.to_consensus().to_le_bytes());
-        bytes[72..76].copy_from_slice(&self.nbits.to_consensus().to_le_bytes());
-        bytes[76..80].copy_from_slice(&self.nonce.to_le_bytes());
-        bytes
+        serialize_rkyv_exact(self, "failed to serialize header with rkyv")
     }
 
     /// Deserialize from exactly [`BLOCK_HEADER_SIZE`] bytes.
     pub fn parse(bytes: &[u8]) -> Result<Self, ParseError> {
         cycle_track("parse/header", || {
-            if bytes.len() != BLOCK_HEADER_SIZE {
-                return Err(ParseError::InvalidLength {
-                    expected: BLOCK_HEADER_SIZE,
-                    actual: bytes.len(),
-                });
-            }
-
-            let mut off = 0;
-            let version = u32::from_le_bytes(take::<4>(bytes, &mut off)?);
-            let prev_blockhash = BlockHash::from_raw(take::<32>(bytes, &mut off)?);
-            let merkle_root = take::<32>(bytes, &mut off)?;
-            let timestamp =
-                BlockTimestamp::from_consensus(u32::from_le_bytes(take::<4>(bytes, &mut off)?));
-            let nbits =
-                CompactTarget::from_consensus(u32::from_le_bytes(take::<4>(bytes, &mut off)?));
-            let nonce = u32::from_le_bytes(take::<4>(bytes, &mut off)?);
-
-            Ok(Self {
-                version,
-                prev_blockhash,
-                merkle_root,
-                timestamp,
-                nbits,
-                nonce,
-            })
+            parse_rkyv_exact(bytes, BLOCK_HEADER_SIZE)
         })
     }
 }
@@ -405,24 +374,36 @@ impl core::fmt::Display for ParseError {
     }
 }
 
-fn take<const N: usize>(data: &[u8], off: &mut usize) -> Result<[u8; N], ParseError> {
-    let start = *off;
-    let end = start.checked_add(N).ok_or(ParseError::Truncated {
-        offset: start,
-        needed: N,
-        actual: data.len().saturating_sub(start),
-    })?;
-    let bytes = data.get(start..end).ok_or(ParseError::Truncated {
-        offset: start,
-        needed: N,
-        actual: data.len().saturating_sub(start),
-    })?;
-    *off = end;
-    bytes.try_into().map_err(|_| ParseError::Truncated {
-        offset: start,
-        needed: N,
-        actual: data.len().saturating_sub(start),
-    })
+fn parse_rkyv_exact<T>(bytes: &[u8], expected: usize) -> Result<T, ParseError>
+where
+    T: Archive,
+    T::Archived: Deserialize<T, rkyv::Infallible>,
+{
+    if bytes.len() != expected {
+        return Err(ParseError::InvalidLength {
+            expected,
+            actual: bytes.len(),
+        });
+    }
+
+    let archived = unsafe { rkyv::archived_root::<T>(bytes) };
+    archived
+        .deserialize(&mut rkyv::Infallible)
+        .map_err(|_| ParseError::InvalidLength {
+            expected,
+            actual: bytes.len(),
+        })
+}
+
+fn serialize_rkyv_exact<const N: usize, T>(value: &T, err: &'static str) -> [u8; N]
+where
+    T: Serialize<rkyv::ser::serializers::AllocSerializer<1024>>,
+{
+    let bytes = rkyv::to_bytes::<_, 1024>(value).expect(err);
+    bytes
+        .as_slice()
+        .try_into()
+        .expect("rkyv serialization should fit in the fixed-width wire size")
 }
 
 /// Prover-supplied fields for a new header.
@@ -449,30 +430,20 @@ impl NewHeader {
             needed: NEW_HEADER_SIZE,
             actual: data.len().saturating_sub(offset),
         })?;
+        Self::parse(bytes)
+    }
 
-        let version = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
-        let mut merkle_root = [0u8; 32];
-        merkle_root.copy_from_slice(&bytes[4..36]);
-        let timestamp =
-            BlockTimestamp::from_consensus(u32::from_le_bytes(bytes[36..40].try_into().unwrap()));
-        let nonce = u32::from_le_bytes(bytes[40..44].try_into().unwrap());
-        Ok(Self {
-            version,
-            merkle_root,
-            timestamp,
-            nonce,
+    /// Parse a [`NewHeader`] from exactly [`NEW_HEADER_SIZE`] bytes.
+    pub fn parse(bytes: &[u8]) -> Result<Self, ParseError> {
+        cycle_track("parse/new_header", || {
+            parse_rkyv_exact(bytes, NEW_HEADER_SIZE)
         })
     }
 
     /// Serialize to exactly [`NEW_HEADER_SIZE`] bytes.
     #[must_use]
     pub fn to_bytes(&self) -> [u8; NEW_HEADER_SIZE] {
-        let mut bytes = [0u8; NEW_HEADER_SIZE];
-        bytes[0..4].copy_from_slice(&self.version.to_le_bytes());
-        bytes[4..36].copy_from_slice(&self.merkle_root);
-        bytes[36..40].copy_from_slice(&self.timestamp.to_consensus().to_le_bytes());
-        bytes[40..44].copy_from_slice(&self.nonce.to_le_bytes());
-        bytes
+        serialize_rkyv_exact(self, "failed to serialize new header with rkyv")
     }
 
     /// Materialize a full [`Header`] using authenticated chain context.
@@ -536,29 +507,12 @@ impl State {
     /// Serialize to exactly [`STATE_SIZE`] bytes.
     #[must_use]
     pub fn to_bytes(&self) -> [u8; STATE_SIZE] {
-        let bytes = rkyv::to_bytes::<_, 1024>(self).expect("failed to serialize state with rkyv");
-        bytes
-            .as_slice()
-            .try_into()
-            .expect("rkyv state serialization should fit in STATE_SIZE")
+        serialize_rkyv_exact(self, "failed to serialize state with rkyv")
     }
 
     /// Deserialize from exactly [`STATE_SIZE`] bytes.
     pub fn parse(bytes: &[u8]) -> Result<Self, ParseError> {
-        cycle_track("parse/state", || {
-            if bytes.len() != STATE_SIZE {
-                return Err(ParseError::InvalidLength {
-                    expected: STATE_SIZE,
-                    actual: bytes.len(),
-                });
-            }
-
-            let archived = unsafe { rkyv::archived_root::<Self>(bytes) };
-            let state: Self = archived
-                .deserialize(&mut rkyv::Infallible)
-                .expect("rkyv state deserialization should be infallible");
-            Ok(state)
-        })
+        cycle_track("parse/state", || parse_rkyv_exact(bytes, STATE_SIZE))
     }
 
     /// The expanded proof-of-work target required for the next header.
@@ -950,6 +904,41 @@ pub enum HeaderChainPublicValues {
     Failure(ProofFailure),
 }
 
+#[derive(Archive, Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq)]
+struct FailureMetadataWire([u8; 5]);
+
+const FAILURE_METADATA_SIZE: usize = core::mem::size_of::<rkyv::Archived<FailureMetadataWire>>();
+
+impl FailureMetadataWire {
+    fn new(error_code: ValidationErrorCode, header_index: u32) -> Self {
+        let mut bytes = [0u8; 5];
+        bytes[0] = error_code.as_byte();
+        bytes[1..].copy_from_slice(&header_index.to_le_bytes());
+        Self(bytes)
+    }
+
+    fn parse(bytes: &[u8]) -> Result<(ValidationErrorCode, u32), PublicValuesParseError> {
+        let wire = parse_rkyv_exact::<Self>(bytes, FAILURE_METADATA_SIZE)
+            .map_err(PublicValuesParseError::FailureMetadataParse)?;
+        let error_code = ValidationErrorCode::try_from(wire.0[0])?;
+        let header_index = u32::from_le_bytes(wire.0[1..].try_into().unwrap());
+        Ok((error_code, header_index))
+    }
+
+    #[must_use]
+    fn to_bytes(&self) -> [u8; FAILURE_METADATA_SIZE] {
+        serialize_rkyv_exact(self, "failed to serialize failure metadata")
+    }
+}
+
+#[must_use]
+pub fn encode_failure_metadata(
+    error_code: ValidationErrorCode,
+    header_index: u32,
+) -> [u8; FAILURE_METADATA_SIZE] {
+    FailureMetadataWire::new(error_code, header_index).to_bytes()
+}
+
 impl HeaderChainPublicValues {
     /// Parse committed public values into the typed representation.
     pub fn parse(bytes: &[u8]) -> Result<Self, PublicValuesParseError> {
@@ -957,12 +946,10 @@ impl HeaderChainPublicValues {
             STATE_SIZE => Ok(Self::Success(
                 State::parse(bytes).map_err(PublicValuesParseError::StateParse)?,
             )),
-            len if len == STATE_SIZE + 1 + 4 => {
+            len if len == STATE_SIZE + FAILURE_METADATA_SIZE => {
                 let state = State::parse(&bytes[..STATE_SIZE])
                     .map_err(PublicValuesParseError::StateParse)?;
-                let error_code = ValidationErrorCode::try_from(bytes[STATE_SIZE])?;
-                let header_index =
-                    u32::from_le_bytes(bytes[STATE_SIZE + 1..STATE_SIZE + 5].try_into().unwrap());
+                let (error_code, header_index) = FailureMetadataWire::parse(&bytes[STATE_SIZE..])?;
                 Ok(Self::Failure(ProofFailure {
                     last_valid_state: state,
                     error_code,
@@ -989,6 +976,7 @@ pub enum PublicValuesParseError {
     InvalidLength { actual: usize },
     UnknownErrorCode { code: u8 },
     StateParse(ParseError),
+    FailureMetadataParse(ParseError),
 }
 
 impl core::fmt::Display for PublicValuesParseError {
@@ -999,7 +987,7 @@ impl core::fmt::Display for PublicValuesParseError {
                     f,
                     "invalid public values length: expected {} or {}, got {}",
                     STATE_SIZE,
-                    STATE_SIZE + 1 + 4,
+                    STATE_SIZE + FAILURE_METADATA_SIZE,
                     actual
                 )
             }
@@ -1007,6 +995,9 @@ impl core::fmt::Display for PublicValuesParseError {
                 write!(f, "unknown validation error code: {}", code)
             }
             Self::StateParse(err) => write!(f, "invalid state payload: {}", err),
+            Self::FailureMetadataParse(err) => {
+                write!(f, "invalid failure metadata payload: {}", err)
+            }
         }
     }
 }
@@ -1327,6 +1318,47 @@ mod tests {
         } else {
             Some(ts(height - (WINDOW_SIZE as u32 / 2)))
         }
+    }
+
+    #[test]
+    fn fixed_width_wire_sizes_match_protocol() {
+        assert_eq!(BLOCK_HEADER_SIZE, 80);
+        assert_eq!(NEW_HEADER_SIZE, 44);
+        assert_eq!(RECURSIVE_PROOF_SIZE, 64);
+        assert_eq!(FAILURE_METADATA_SIZE, 5);
+    }
+
+    #[test]
+    fn failure_metadata_encoding_round_trips() {
+        let bytes = encode_failure_metadata(ValidationErrorCode::TimestampTooOld, 42);
+        let (error_code, header_index) = FailureMetadataWire::parse(&bytes).unwrap();
+
+        assert_eq!(bytes.len(), FAILURE_METADATA_SIZE);
+        assert_eq!(error_code, ValidationErrorCode::TimestampTooOld);
+        assert_eq!(header_index, 42);
+    }
+
+    #[test]
+    fn header_and_new_header_round_trip_exact_wire_bytes() {
+        let mut header_bytes = [0u8; BLOCK_HEADER_SIZE];
+        header_bytes[0..4].copy_from_slice(&0x1122_3344u32.to_le_bytes());
+        header_bytes[4..36].copy_from_slice(&[0x55; 32]);
+        header_bytes[36..68].copy_from_slice(&[0x66; 32]);
+        header_bytes[68..72].copy_from_slice(&0x7788_99aau32.to_le_bytes());
+        header_bytes[72..76].copy_from_slice(&0x1d00_ffffu32.to_le_bytes());
+        header_bytes[76..80].copy_from_slice(&0xbbcc_ddeeu32.to_le_bytes());
+
+        let header = Header::parse(&header_bytes).unwrap();
+        assert_eq!(header.to_bytes(), header_bytes);
+
+        let mut new_header_bytes = [0u8; NEW_HEADER_SIZE];
+        new_header_bytes[0..4].copy_from_slice(&0x1122_3344u32.to_le_bytes());
+        new_header_bytes[4..36].copy_from_slice(&[0x66; 32]);
+        new_header_bytes[36..40].copy_from_slice(&0x7788_99aau32.to_le_bytes());
+        new_header_bytes[40..44].copy_from_slice(&0xbbcc_ddeeu32.to_le_bytes());
+
+        let new_header = NewHeader::parse(&new_header_bytes).unwrap();
+        assert_eq!(new_header.to_bytes(), new_header_bytes);
     }
 
     #[test]

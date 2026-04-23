@@ -9,27 +9,6 @@ use crate::{
     VerifierKeyDigest, NEW_HEADER_SIZE, RECURSIVE_PROOF_SIZE, STATE_SIZE,
 };
 
-// Helper to take a fixed-size byte array from a slice and advance the offset.
-pub fn take_bytes<const N: usize>(data: &[u8], off: &mut usize) -> Result<[u8; N], ParseError> {
-    let start = *off;
-    let end = start.checked_add(N).ok_or(ParseError::Truncated {
-        offset: start,
-        needed: N,
-        actual: data.len().saturating_sub(start),
-    })?;
-    let bytes = data.get(start..end).ok_or(ParseError::Truncated {
-        offset: start,
-        needed: N,
-        actual: data.len().saturating_sub(start),
-    })?;
-    *off = end;
-    bytes.try_into().map_err(|_| ParseError::Truncated {
-        offset: start,
-        needed: N,
-        actual: data.len().saturating_sub(start),
-    })
-}
-
 // ============================================================================
 // Input & InputError
 // ============================================================================
@@ -104,23 +83,35 @@ impl core::fmt::Display for InputError {
 }
 
 impl RecursiveProof {
-    /// Parse and validate a RecursiveProof from a byte slice.
-    pub fn parse_from_bytes(bytes: &[u8], off: &mut usize) -> Result<Self, InputError> {
+    /// Parse and validate a RecursiveProof from exactly [`RECURSIVE_PROOF_SIZE`] bytes.
+    pub fn parse(bytes: &[u8]) -> Result<Self, InputError> {
         cycle_track("input/recursive_proof", || {
-            let verifier_key_raw = take_bytes::<32>(bytes, off)?;
-            let mut verifier_key_limbs = [0u32; 8];
-            for i in 0..8 {
-                verifier_key_limbs[i] =
-                    u32::from_le_bytes(verifier_key_raw[i * 4..(i * 4) + 4].try_into().unwrap());
+            if bytes.len() != RECURSIVE_PROOF_SIZE {
+                return Err(InputError::InvalidRecursiveProofLength {
+                    actual: bytes.len(),
+                    expected: RECURSIVE_PROOF_SIZE,
+                });
             }
 
-            let public_values_digest = PublicValuesDigest::from_raw(take_bytes::<32>(bytes, off)?);
-
-            Ok(Self {
-                verifier_key: VerifierKeyDigest::from_raw(verifier_key_limbs),
-                public_values_digest,
+            let archived = unsafe { rkyv::archived_root::<Self>(bytes) };
+            archived.deserialize(&mut rkyv::Infallible).map_err(|_| {
+                InputError::InvalidRecursiveProofLength {
+                    actual: bytes.len(),
+                    expected: RECURSIVE_PROOF_SIZE,
+                }
             })
         })
+    }
+
+    /// Serialize to exactly [`RECURSIVE_PROOF_SIZE`] bytes.
+    #[must_use]
+    pub fn to_bytes(&self) -> [u8; RECURSIVE_PROOF_SIZE] {
+        let bytes =
+            rkyv::to_bytes::<_, 1024>(self).expect("failed to serialize recursive proof metadata");
+        bytes
+            .as_slice()
+            .try_into()
+            .expect("rkyv recursive proof serialization should fit in RECURSIVE_PROOF_SIZE")
     }
 }
 
@@ -146,14 +137,38 @@ impl Input {
         cycle_track("input/parse", || {
             let mut off = 0usize;
             let state = cycle_track("input/parse/state", || {
-                let state_bytes = take_bytes::<STATE_SIZE>(bytes, &mut off)?;
+                let end = off.checked_add(STATE_SIZE).ok_or(ParseError::Truncated {
+                    offset: off,
+                    needed: STATE_SIZE,
+                    actual: bytes.len().saturating_sub(off),
+                })?;
+                let state_bytes = bytes.get(off..end).ok_or(ParseError::Truncated {
+                    offset: off,
+                    needed: STATE_SIZE,
+                    actual: bytes.len().saturating_sub(off),
+                })?;
+                off = end;
                 State::parse(&state_bytes).map_err(InputError::from)
             });
+            let proof_end = off.checked_add(RECURSIVE_PROOF_SIZE).ok_or(
+                InputError::InvalidRecursiveProofLength {
+                    actual: bytes.len().saturating_sub(off),
+                    expected: RECURSIVE_PROOF_SIZE,
+                },
+            )?;
+            let proof_bytes =
+                bytes
+                    .get(off..proof_end)
+                    .ok_or(InputError::InvalidRecursiveProofLength {
+                        actual: bytes.len().saturating_sub(off),
+                        expected: RECURSIVE_PROOF_SIZE,
+                    })?;
             let mut input = Self {
                 state: state?,
-                recursive_proof: RecursiveProof::parse_from_bytes(bytes, &mut off)?,
+                recursive_proof: RecursiveProof::parse(proof_bytes)?,
                 headers: Vec::new(),
             };
+            off = proof_end;
 
             let header_payload_len = bytes.len().saturating_sub(off);
             if header_payload_len % NEW_HEADER_SIZE != 0 {
@@ -165,9 +180,8 @@ impl Input {
             cycle_track("input/parse/headers", || {
                 let header_count = header_payload_len / NEW_HEADER_SIZE;
                 input.headers = Vec::with_capacity(header_count);
-                while off < bytes.len() {
-                    input.headers.push(NewHeader::parse_at(bytes, off)?);
-                    off += NEW_HEADER_SIZE;
+                for header_bytes in bytes[off..].chunks_exact(NEW_HEADER_SIZE) {
+                    input.headers.push(NewHeader::parse(header_bytes)?);
                 }
                 Ok::<(), InputError>(())
             })?;
@@ -200,10 +214,7 @@ impl Input {
             STATE_SIZE + RECURSIVE_PROOF_SIZE + (input.headers.len() * NEW_HEADER_SIZE),
         );
         bytes.extend_from_slice(&input.state.to_bytes());
-        for limb in input.recursive_proof.verifier_key.as_raw() {
-            bytes.extend_from_slice(&limb.to_le_bytes());
-        }
-        bytes.extend_from_slice(input.recursive_proof.public_values_digest.as_raw());
+        bytes.extend_from_slice(&input.recursive_proof.to_bytes());
         for header in &input.headers {
             bytes.extend_from_slice(&header.to_bytes());
         }
