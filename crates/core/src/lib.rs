@@ -51,13 +51,13 @@ where
 pub const STATE_SIZE: usize = core::mem::size_of::<rkyv::Archived<State>>();
 
 /// Size of each [`NewHeader`] input from the prover.
-pub const NEW_HEADER_SIZE: usize = core::mem::size_of::<rkyv::Archived<NewHeader>>();
+pub const NEW_HEADER_SIZE: usize = 44;
 
 /// Size of a serialized [`RecursiveProof`] in bytes.
 pub const RECURSIVE_PROOF_SIZE: usize = core::mem::size_of::<rkyv::Archived<RecursiveProof>>();
 
 /// Size of a serialized Bitcoin block header in bytes.
-pub const BLOCK_HEADER_SIZE: usize = core::mem::size_of::<rkyv::Archived<Header>>();
+pub const BLOCK_HEADER_SIZE: usize = 80;
 
 /// Sliding window size used for median-time-past checks.
 pub const WINDOW_SIZE: usize = 11;
@@ -262,13 +262,38 @@ impl Header {
     /// Serialize to exactly [`BLOCK_HEADER_SIZE`] bytes.
     #[must_use]
     pub fn to_bytes(&self) -> [u8; BLOCK_HEADER_SIZE] {
-        serialize_rkyv_exact(self, "failed to serialize header with rkyv")
+        let mut bytes = [0u8; BLOCK_HEADER_SIZE];
+        bytes[0..4].copy_from_slice(&self.version.to_le_bytes());
+        bytes[4..36].copy_from_slice(self.prev_blockhash.as_raw());
+        bytes[36..68].copy_from_slice(&self.merkle_root);
+        bytes[68..72].copy_from_slice(&self.timestamp.to_consensus().to_le_bytes());
+        bytes[72..76].copy_from_slice(&self.nbits.to_consensus().to_le_bytes());
+        bytes[76..80].copy_from_slice(&self.nonce.to_le_bytes());
+        bytes
     }
 
     /// Deserialize from exactly [`BLOCK_HEADER_SIZE`] bytes.
     pub fn parse(bytes: &[u8]) -> Result<Self, ParseError> {
         cycle_track("parse/header", || {
-            parse_rkyv_exact(bytes, BLOCK_HEADER_SIZE)
+            if bytes.len() != BLOCK_HEADER_SIZE {
+                return Err(ParseError::InvalidLength {
+                    expected: BLOCK_HEADER_SIZE,
+                    actual: bytes.len(),
+                });
+            }
+
+            Ok(Self {
+                version: u32::from_le_bytes(bytes[0..4].try_into().unwrap()),
+                prev_blockhash: BlockHash::from_raw(bytes[4..36].try_into().unwrap()),
+                merkle_root: bytes[36..68].try_into().unwrap(),
+                timestamp: BlockTimestamp::from_consensus(
+                    u32::from_le_bytes(bytes[68..72].try_into().unwrap()),
+                ),
+                nbits: CompactTarget::from_consensus(
+                    u32::from_le_bytes(bytes[72..76].try_into().unwrap()),
+                ),
+                nonce: u32::from_le_bytes(bytes[76..80].try_into().unwrap()),
+            })
         })
     }
 }
@@ -436,14 +461,33 @@ impl NewHeader {
     /// Parse a [`NewHeader`] from exactly [`NEW_HEADER_SIZE`] bytes.
     pub fn parse(bytes: &[u8]) -> Result<Self, ParseError> {
         cycle_track("parse/new_header", || {
-            parse_rkyv_exact(bytes, NEW_HEADER_SIZE)
+            if bytes.len() != NEW_HEADER_SIZE {
+                return Err(ParseError::InvalidLength {
+                    expected: NEW_HEADER_SIZE,
+                    actual: bytes.len(),
+                });
+            }
+
+            Ok(Self {
+                version: u32::from_le_bytes(bytes[0..4].try_into().unwrap()),
+                merkle_root: bytes[4..36].try_into().unwrap(),
+                timestamp: BlockTimestamp::from_consensus(
+                    u32::from_le_bytes(bytes[36..40].try_into().unwrap()),
+                ),
+                nonce: u32::from_le_bytes(bytes[40..44].try_into().unwrap()),
+            })
         })
     }
 
     /// Serialize to exactly [`NEW_HEADER_SIZE`] bytes.
     #[must_use]
     pub fn to_bytes(&self) -> [u8; NEW_HEADER_SIZE] {
-        serialize_rkyv_exact(self, "failed to serialize new header with rkyv")
+        let mut bytes = [0u8; NEW_HEADER_SIZE];
+        bytes[0..4].copy_from_slice(&self.version.to_le_bytes());
+        bytes[4..36].copy_from_slice(&self.merkle_root);
+        bytes[36..40].copy_from_slice(&self.timestamp.to_consensus().to_le_bytes());
+        bytes[40..44].copy_from_slice(&self.nonce.to_le_bytes());
+        bytes
     }
 
     /// Materialize a full [`Header`] using authenticated chain context.
@@ -1349,6 +1393,12 @@ mod tests {
         header_bytes[76..80].copy_from_slice(&0xbbcc_ddeeu32.to_le_bytes());
 
         let header = Header::parse(&header_bytes).unwrap();
+        assert_eq!(header.version, 0x1122_3344);
+        assert_eq!(header.prev_blockhash, BlockHash::from_raw([0x55; 32]));
+        assert_eq!(header.merkle_root, [0x66; 32]);
+        assert_eq!(header.timestamp, BlockTimestamp::from_consensus(0x7788_99aa));
+        assert_eq!(header.nbits, CompactTarget::from_consensus(0x1d00_ffff));
+        assert_eq!(header.nonce, 0xbbcc_ddee);
         assert_eq!(header.to_bytes(), header_bytes);
 
         let mut new_header_bytes = [0u8; NEW_HEADER_SIZE];
@@ -1358,6 +1408,10 @@ mod tests {
         new_header_bytes[40..44].copy_from_slice(&0xbbcc_ddeeu32.to_le_bytes());
 
         let new_header = NewHeader::parse(&new_header_bytes).unwrap();
+        assert_eq!(new_header.version, 0x1122_3344);
+        assert_eq!(new_header.merkle_root, [0x66; 32]);
+        assert_eq!(new_header.timestamp, BlockTimestamp::from_consensus(0x7788_99aa));
+        assert_eq!(new_header.nonce, 0xbbcc_ddee);
         assert_eq!(new_header.to_bytes(), new_header_bytes);
     }
 
