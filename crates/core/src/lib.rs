@@ -603,8 +603,9 @@ impl State {
         F: FnOnce(&Header) -> BlockHash,
     {
         cycle_track("state/next", || {
-            let required_nbits = self.next_nbits;
-            let timestamp_slot = self.next_timestamp_slot();
+            let (required_nbits, timestamp_slot) = cycle_track("state/next/setup", || {
+                (self.next_nbits, self.next_timestamp_slot())
+            });
             let header = cycle_track("state/next/build_header", || {
                 new_header.into_header(self.block_hash, required_nbits)
             });
@@ -630,18 +631,24 @@ impl State {
             })?;
 
             // Now update self
-            self.height += 1;
+            cycle_track("state/next/update_height", || {
+                self.height += 1;
+            });
             cycle_track("state/next/timestamp_window", || {
                 self.timestamps[timestamp_slot] = new_header.timestamp;
             });
 
-            if self.height % 2016 == 0 {
+            if cycle_track("state/next/check_epoch_timestamp", || {
+                self.height % 2016 == 0
+            }) {
                 cycle_track("state/next/epoch_timestamp", || {
                     self.epoch_start_timestamp = new_header.timestamp;
                 });
             }
 
-            if (self.height + 1) % 2016 == 0 {
+            if cycle_track("state/next/check_retarget", || {
+                (self.height + 1) % 2016 == 0
+            }) {
                 cycle_track("state/next/retarget", || {
                     let actual_timespan = new_header
                         .timestamp
@@ -693,14 +700,6 @@ impl State {
     {
         cycle_track("state/apply_headers", || {
             let mut state = self.clone();
-            let mut median_window = state.timestamps;
-            let mut median_window_len = state.timestamp_count();
-            if median_window_len >= WINDOW_SIZE {
-                median_window.sort_unstable();
-            } else {
-                median_window[..median_window_len].sort_unstable();
-            }
-
             let mut pending_run_nbits: Option<CompactTarget> = None;
             let mut pending_run_count: u32 = 0;
 
@@ -718,48 +717,11 @@ impl State {
                     *run_count = 0;
                 };
 
-            let median_window_remove =
-                |window: &mut [BlockTimestamp; WINDOW_SIZE],
-                 window_len: &mut usize,
-                 value: BlockTimestamp| {
-                    if *window_len == 0 {
-                        return;
-                    }
-
-                    let search_len = *window_len;
-                    let idx = window[..search_len]
-                        .binary_search(&value)
-                        .expect("tracked median window should contain the evicted timestamp");
-
-                    for i in idx..search_len - 1 {
-                        window[i] = window[i + 1];
-                    }
-                    *window_len -= 1;
-                };
-
-            let median_window_insert =
-                |window: &mut [BlockTimestamp; WINDOW_SIZE],
-                 window_len: &mut usize,
-                 value: BlockTimestamp| {
-                    let search_len = *window_len;
-                    let idx = window[..search_len]
-                        .binary_search(&value)
-                        .unwrap_or_else(|idx| idx);
-
-                    for i in (idx..search_len).rev() {
-                        window[i + 1] = window[i];
-                    }
-                    window[idx] = value;
-                    *window_len += 1;
-                };
-
             for (header_index, new_header) in headers.iter().copied().enumerate() {
                 let required_nbits = state.next_nbits;
-                let median_time_past = if median_window_len == 0 {
-                    None
-                } else {
-                    Some(median_window[median_window_len / 2])
-                };
+                let median_time_past = cycle_track("state/apply_headers/median_time_past", || {
+                    median_time_past_network(&state.timestamps, state.timestamp_count())
+                });
                 if pending_run_nbits != Some(required_nbits) {
                     flush_pending_chain_work(
                         &mut state,
@@ -768,9 +730,6 @@ impl State {
                     );
                     pending_run_nbits = Some(required_nbits);
                 }
-
-                let timestamp_slot = state.next_timestamp_slot();
-                let old_timestamp = state.timestamps[timestamp_slot];
 
                 if let Err(error_code) =
                     state.next_inner(new_header, hash_header, median_time_past, false)
@@ -785,24 +744,6 @@ impl State {
                         error_code,
                         header_index: header_index as u32,
                     });
-                }
-
-                if state.height == 1 {
-                    median_window[0] = new_header.timestamp;
-                    median_window_len = 1;
-                } else if median_window_len < WINDOW_SIZE {
-                    median_window_insert(
-                        &mut median_window,
-                        &mut median_window_len,
-                        new_header.timestamp,
-                    );
-                } else {
-                    median_window_remove(&mut median_window, &mut median_window_len, old_timestamp);
-                    median_window_insert(
-                        &mut median_window,
-                        &mut median_window_len,
-                        new_header.timestamp,
-                    );
                 }
 
                 pending_run_count += 1;
@@ -1278,6 +1219,40 @@ fn q_le_r_shifted(q: &[u64; 4], r: u32, k: u32) -> bool {
     true
 }
 
+fn compare_swap_timestamps(lanes: &mut [BlockTimestamp; WINDOW_SIZE], left: usize, right: usize) {
+    if lanes[left] > lanes[right] {
+        lanes.swap(left, right);
+    }
+}
+
+fn sort_timestamps_network(lanes: &mut [BlockTimestamp; WINDOW_SIZE]) {
+    // Fixed compare-swap schedule so the prover does the same work each iteration.
+    for pass in 0..WINDOW_SIZE {
+        let start = pass % 2;
+        let mut lane = start;
+        while lane + 1 < WINDOW_SIZE {
+            compare_swap_timestamps(lanes, lane, lane + 1);
+            lane += 2;
+        }
+    }
+}
+
+fn median_time_past_network(
+    timestamps: &[BlockTimestamp; WINDOW_SIZE],
+    count: usize,
+) -> Option<BlockTimestamp> {
+    if count == 0 {
+        return None;
+    }
+
+    cycle_track("state/apply_headers/median_time_past/sort_network", || {
+        let mut lanes = [BlockTimestamp::from_consensus(u32::MAX); WINDOW_SIZE];
+        lanes[..count].copy_from_slice(&timestamps[..count]);
+        sort_timestamps_network(&mut lanes);
+        Some(lanes[count / 2])
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use alloc::vec::Vec;
@@ -1426,6 +1401,28 @@ mod tests {
             .expect("batched validation should succeed");
 
         assert_eq!(batched, sequential);
+    }
+
+    #[test]
+    fn median_time_past_network_matches_sort_semantics() {
+        let timestamps = [
+            ts(9),
+            ts(1),
+            ts(7),
+            ts(2),
+            ts(11),
+            ts(5),
+            ts(3),
+            ts(8),
+            ts(4),
+            ts(10),
+            ts(6),
+        ];
+
+        assert_eq!(median_time_past_network(&timestamps, 11), Some(ts(6)));
+        assert_eq!(median_time_past_network(&timestamps, 5), Some(ts(7)));
+        assert_eq!(median_time_past_network(&timestamps, 1), Some(ts(9)));
+        assert_eq!(median_time_past_network(&timestamps, 0), None);
     }
 
     #[test]
