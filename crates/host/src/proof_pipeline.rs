@@ -13,8 +13,8 @@ use sp1_prover::build::{build_constraints_and_witness, try_build_groth16_artifac
 use sp1_prover::worker::{cpu_worker_builder, SP1LocalNodeBuilder};
 use sp1_recursion_gnark_ffi::Groth16Bn254Prover;
 use sp1_sdk::prelude::*;
-use sp1_sdk::ExecutionReport;
 use sp1_sdk::proof::SP1Proof;
+use sp1_sdk::ExecutionReport;
 use sp1_sdk::{
     HashableKey, ProveRequest, Prover, ProverClient, ProvingKey, SP1ProofWithPublicValues,
 };
@@ -808,7 +808,11 @@ pub fn log_execution_report(report: &ExecutionReport) {
 
     tracing::info!("  cycle tracker:");
     for (label, cycles) in entries {
-        let invocations = report.invocation_tracker.get(label.as_str()).copied().unwrap_or(1);
+        let invocations = report
+            .invocation_tracker
+            .get(label.as_str())
+            .copied()
+            .unwrap_or(1);
         if invocations > 1 {
             tracing::info!("    {label}: {cycles} cycles across {invocations} invocations");
         } else {

@@ -3,9 +3,7 @@
 use sp1_sdk::SP1ProofWithPublicValues;
 
 use zkpow_host::util;
-use zkpow_host::util::{
-    HeaderChainPublicValues, PublicValuesParseError, ValidationErrorCode,
-};
+use zkpow_host::util::{HeaderChainPublicValues, PublicValuesParseError, ValidationErrorCode};
 
 const MAINNET_GENESIS_HEX: &str =
     "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f";
