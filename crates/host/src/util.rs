@@ -6,14 +6,21 @@
 
 use sha2::{Digest, Sha256};
 use sp1_sdk::SP1PublicValues;
-use zkpow_core::{work_from_bits, WINDOW_SIZE};
 
 pub use zkpow_core::{
     BlockHash, BlockTimestamp, ChainWork, CompactTarget, Header, HeaderChainPublicValues, Input,
     InputError, MedianTimePastHints, NewHeader, ParseError, ProofFailure, PublicValuesDigest,
-    PublicValuesParseError, RecursiveProof, State, ValidationErrorCode, VerifierKeyDigest,
+    PublicValuesParseError, RecursiveProof, State, Target, ValidationErrorCode, VerifierKeyDigest,
     NEW_HEADER_SIZE, STATE_SIZE,
 };
+
+#[derive(Debug, Clone)]
+pub struct HeaderRecord {
+    pub height: u64,
+    pub header: Header,
+    pub chain_work: ChainWork,
+    pub median_time_past: BlockTimestamp,
+}
 
 // ============================================================================
 // Database & I/O
@@ -25,14 +32,35 @@ pub fn load_headers_from_db(db_path: &str, start_height: u64, count: u64) -> Vec
 
     let mut stmt = conn
         .prepare(
-            "SELECT raw_header FROM headers WHERE height >= ?1 AND height < ?2 ORDER BY height ASC",
+            "SELECT version, prev, merkle_root, timestamp, n_bits, nonce FROM headers WHERE height >= ?1 AND height < ?2 ORDER BY height ASC",
         )
-        .unwrap_or_else(|_| panic!("failed to prepare SQL statement for db: {}", db_path));
+        .unwrap_or_else(|err| {
+            panic!("failed to prepare SQL statement for db {}: {}", db_path, err)
+        });
 
     let end_height = start_height + count;
     let rows = stmt
         .query_map(rusqlite::params![start_height, end_height], |row| {
-            row.get::<_, Vec<u8>>(0)
+            let version: i64 = row.get(0)?;
+            let prev: Vec<u8> = row.get(1)?;
+            let merkle_root: Vec<u8> = row.get(2)?;
+            let timestamp: i64 = row.get(3)?;
+            let nbits: i64 = row.get(4)?;
+            let nonce: i64 = row.get(5)?;
+
+            let header = Header {
+                version: version as u32,
+                prev_blockhash: BlockHash::from_raw(
+                    prev.try_into().expect("prev must be 32 bytes"),
+                ),
+                merkle_root: merkle_root
+                    .try_into()
+                    .expect("merkle_root must be 32 bytes"),
+                timestamp: BlockTimestamp::from_consensus(timestamp as u32),
+                nbits: zkpow_core::CompactTarget::from_consensus(nbits as u32),
+                nonce: nonce as u32,
+            };
+            Ok(header.to_bytes())
         })
         .expect("failed to execute query");
 
@@ -40,14 +68,7 @@ pub fn load_headers_from_db(db_path: &str, start_height: u64, count: u64) -> Vec
     let mut loaded = 0u64;
 
     for row_result in rows {
-        let header_bytes: Vec<u8> = row_result.expect("failed to read raw_header from database");
-        assert_eq!(
-            header_bytes.len(),
-            80,
-            "Expected 80-byte header at height {}, got {} bytes",
-            start_height + loaded,
-            header_bytes.len(),
-        );
+        let header_bytes: [u8; 80] = row_result.expect("failed to read header from database");
         all_headers.extend_from_slice(&header_bytes);
         loaded += 1;
     }
@@ -59,6 +80,84 @@ pub fn load_headers_from_db(db_path: &str, start_height: u64, count: u64) -> Vec
     );
 
     all_headers
+}
+
+pub fn load_header_records_from_db(
+    db_path: &str,
+    start_height: u64,
+    count: u64,
+) -> Vec<HeaderRecord> {
+    let conn = rusqlite::Connection::open(db_path).expect("failed to open SQLite database");
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT height, version, prev, merkle_root, timestamp, n_bits, nonce, chainwork, median_time_past FROM headers WHERE height >= ?1 AND height < ?2 ORDER BY height ASC",
+        )
+        .unwrap_or_else(|err| {
+            panic!("failed to prepare SQL statement for db {}: {}", db_path, err)
+        });
+
+    let end_height = start_height + count;
+    let rows = stmt
+        .query_map(rusqlite::params![start_height, end_height], |row| {
+            let height: i64 = row.get(0)?;
+            let version: i64 = row.get(1)?;
+            let prev: Vec<u8> = row.get(2)?;
+            let merkle_root: Vec<u8> = row.get(3)?;
+            let timestamp: i64 = row.get(4)?;
+            let nbits: i64 = row.get(5)?;
+            let nonce: i64 = row.get(6)?;
+            let chainwork: Vec<u8> = row.get(7)?;
+            let median_time_past: i64 = row.get(8)?;
+
+            let header = Header {
+                version: version as u32,
+                prev_blockhash: BlockHash::from_raw(
+                    prev.try_into().expect("prev must be 32 bytes"),
+                ),
+                merkle_root: merkle_root
+                    .try_into()
+                    .expect("merkle_root must be 32 bytes"),
+                timestamp: BlockTimestamp::from_consensus(timestamp as u32),
+                nbits: CompactTarget::from_consensus(nbits as u32),
+                nonce: nonce as u32,
+            };
+
+            Ok(HeaderRecord {
+                height: height as u64,
+                header,
+                chain_work: chain_work_from_db_bytes(&chainwork),
+                median_time_past: BlockTimestamp::from_consensus(median_time_past as u32),
+            })
+        })
+        .expect("failed to execute query");
+
+    let mut records = Vec::with_capacity(count as usize);
+    for row_result in rows {
+        records.push(row_result.expect("failed to read header record from database"));
+    }
+
+    assert_eq!(
+        records.len() as u64,
+        count,
+        "Expected to load {} headers, but only loaded {} from database",
+        count,
+        records.len(),
+    );
+
+    records
+}
+
+pub fn chain_work_from_db_bytes(bytes: &[u8]) -> ChainWork {
+    let raw: [u8; 32] = bytes.try_into().expect("chainwork must be 32 bytes");
+    let mut little_endian = raw;
+    little_endian.reverse();
+    let mut limbs = [0u64; 4];
+    for (idx, limb) in limbs.iter_mut().enumerate() {
+        let start = idx * 8;
+        *limb = u64::from_le_bytes(little_endian[start..start + 8].try_into().unwrap());
+    }
+    ChainWork::from_limbs(limbs)
 }
 
 /// Convert raw 80-byte headers (from DB) to typed [`NewHeader`] values.
@@ -86,6 +185,13 @@ pub fn load_header_from_db(db_path: &str, height: u64) -> Header {
         .try_into()
         .expect("exactly one raw header should be returned");
     Header::parse(&raw_header).expect("raw Bitcoin header should parse")
+}
+
+pub fn load_header_record_from_db(db_path: &str, height: u64) -> HeaderRecord {
+    load_header_records_from_db(db_path, height, 1)
+        .into_iter()
+        .next()
+        .expect("exactly one header record should be returned")
 }
 
 // ============================================================================
@@ -123,19 +229,24 @@ pub fn genesis_state(genesis_header: Header, genesis_hash: BlockHash) -> State {
         "configured genesis hash must match the supplied genesis header",
     );
 
-    let mut timestamps = [BlockTimestamp::default(); WINDOW_SIZE];
-    timestamps[0] = genesis_header.timestamp;
-
     State {
         header: genesis_header,
         block_hash,
         genesis_hash,
         next_nbits: genesis_header.nbits,
         height: 0,
-        chain_work: work_from_bits(genesis_header.nbits),
+        chain_work: Target::from(genesis_header.nbits).work(),
+        next_work: Target::from(genesis_header.nbits).work(),
         epoch_start_timestamp: genesis_header.timestamp,
-        timestamps,
+        timestamps: [BlockTimestamp::default(); zkpow_core::WINDOW_SIZE],
     }
+}
+
+pub fn genesis_state_from_record(genesis: HeaderRecord, genesis_hash: BlockHash) -> State {
+    let mut state = genesis_state(genesis.header, genesis_hash);
+    state.height = genesis.height as u32;
+    state.chain_work = genesis.chain_work;
+    state
 }
 
 /// Simulate the zkVM program locally to compute the expected [`State`] after
@@ -146,19 +257,18 @@ pub fn compute_final_state(initial_state: &State, headers: &[NewHeader]) -> Stat
         .expect("host state transition should succeed")
 }
 
-/// Build one private MTP hint per header. The hint for each header is computed
-/// from the timestamp window before that header is applied.
-pub fn build_median_time_past_hints(
-    initial_state: &State,
-    headers: &[NewHeader],
-) -> MedianTimePastHints {
-    let mut state = initial_state.clone();
-    let mut medians = Vec::with_capacity(headers.len());
-    for header in headers {
-        medians.push(state.median_time_past().unwrap_or_default());
-        let timestamp_slot = (state.height as usize) % WINDOW_SIZE;
-        state.timestamps[timestamp_slot] = header.timestamp;
-        state.height += 1;
-    }
-    MedianTimePastHints::new(medians)
+pub fn records_to_new_headers(records: &[HeaderRecord]) -> Vec<NewHeader> {
+    records
+        .iter()
+        .map(|record| NewHeader::from_header(&record.header))
+        .collect()
+}
+
+pub fn records_to_median_time_past_hints(records: &[HeaderRecord]) -> MedianTimePastHints {
+    MedianTimePastHints::new(
+        records
+            .iter()
+            .map(|record| record.median_time_past)
+            .collect(),
+    )
 }

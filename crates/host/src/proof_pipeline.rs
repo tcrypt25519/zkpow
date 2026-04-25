@@ -511,6 +511,7 @@ async fn generate_compressed_proof_with_prover<P>(
     current_state: &util::State,
     previous_proof: Option<&SP1ProofWithPublicValues>,
     headers: &[util::NewHeader],
+    median_hints: &util::MedianTimePastHints,
     expected_pv: &[u8],
 ) -> Result<CompressedProofArtifacts, BoxError>
 where
@@ -525,11 +526,8 @@ where
         Input::new(current_state.clone(), recursive_proof, headers.to_vec())
             .map_err(|err| err.to_string().into())
     })?;
-    let median_hints = timed_sync("build_median_time_past_hints", || -> Result<_, BoxError> {
-        Ok(util::build_median_time_past_hints(current_state, headers))
-    })?;
     let stdin = timed_sync("serialize_input", || {
-        build_stdin(&input, &median_hints, previous_proof, pk.verifying_key())
+        build_stdin(&input, median_hints, previous_proof, pk.verifying_key())
     })?;
 
     let (public_values, report) = timed_async("execute_program", || async {
@@ -608,22 +606,25 @@ pub async fn generate_and_save_proofs(
             }
             Ok(state)
         } else {
-            let genesis_header = util::load_header_from_db(path_to_str(&config.db_path)?, 0);
-            Ok(util::genesis_state(genesis_header, genesis_hash))
+            let genesis = util::load_header_record_from_db(path_to_str(&config.db_path)?, 0);
+            Ok(util::genesis_state_from_record(genesis, genesis_hash))
         }
     })?;
 
     let start_height = current_state.height;
     let first_new_height = start_height + 1;
-    let raw_headers = timed_sync("load_headers", || -> Result<_, BoxError> {
-        Ok(util::load_headers_from_db(
+    let header_records = timed_sync("load_header_records", || -> Result<_, BoxError> {
+        Ok(util::load_header_records_from_db(
             path_to_str(&config.db_path)?,
             first_new_height as u64,
             config.num_headers as u64,
         ))
     })?;
     let headers = timed_sync("decode_headers", || -> Result<_, BoxError> {
-        Ok(util::raw_headers_to_new_headers(&raw_headers))
+        Ok(util::records_to_new_headers(&header_records))
+    })?;
+    let median_hints = timed_sync("load_median_time_past_hints", || -> Result<_, BoxError> {
+        Ok(util::records_to_median_time_past_hints(&header_records))
     })?;
     let loaded_count = headers.len() as u32;
     let expected_state = timed_sync("simulate_expected_state", || -> Result<_, BoxError> {
@@ -642,6 +643,7 @@ pub async fn generate_and_save_proofs(
                 &current_state,
                 previous_proof.as_ref(),
                 &headers,
+                &median_hints,
                 &expected_pv,
             )
             .await?
@@ -674,6 +676,7 @@ pub async fn generate_and_save_proofs(
                     &current_state,
                     previous_proof.as_ref(),
                     &headers,
+                    &median_hints,
                     &expected_pv,
                 )
                 .await?
@@ -974,7 +977,7 @@ pub fn log_execution_report(report: &ExecutionReport, total_proving_time_secs: f
             .get((*label).as_str())
             .copied()
             .unwrap_or(1);
-        tree.insert(label, **cycles, invocations as u64);
+        tree.insert(label, **cycles, invocations);
     }
     tree.finalize_totals();
     tracing::info!("  cycle hierarchy:");

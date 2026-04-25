@@ -171,6 +171,12 @@ impl Target {
     pub const fn into_raw(self) -> [u8; 32] {
         self.0
     }
+
+    /// Return the cumulative-work increment for one block at this target.
+    #[must_use]
+    pub fn work(self) -> ChainWork {
+        work_from_target(self)
+    }
 }
 
 impl From<[u8; 32]> for Target {
@@ -542,6 +548,7 @@ pub struct State {
     pub next_nbits: CompactTarget,
     pub height: u32,
     pub chain_work: ChainWork,
+    pub next_work: ChainWork,
     pub epoch_start_timestamp: BlockTimestamp,
     pub timestamps: [BlockTimestamp; WINDOW_SIZE],
 }
@@ -646,9 +653,15 @@ impl State {
         F: FnOnce(&Header) -> BlockHash,
     {
         cycle_track("state/next", || {
-            let (required_nbits, timestamp_slot) = cycle_track("state/next/setup", || {
-                (self.next_nbits, self.next_timestamp_slot())
-            });
+            let (required_nbits, required_target, required_work, timestamp_slot) =
+                cycle_track("state/next/setup", || {
+                    (
+                        self.next_nbits,
+                        self.next_target(),
+                        self.next_work,
+                        self.next_timestamp_slot(),
+                    )
+                });
             let header = cycle_track("state/next/build_header", || {
                 new_header.into_header(self.block_hash, required_nbits)
             });
@@ -702,17 +715,18 @@ impl State {
                         .min(expected_timespan * 4);
                     let pow_limit = bits_to_target(CompactTarget::from_consensus(GENESIS_NBITS));
                     let mut new_target =
-                        retarget_target(self.next_target(), clamped, expected_timespan);
+                        retarget_target(required_target, clamped, expected_timespan);
                     if target_exceeds(new_target, pow_limit) {
                         new_target = pow_limit;
                     }
                     self.next_nbits = target_to_bits(new_target);
+                    self.next_work = new_target.work();
                 });
             }
 
             if update_chain_work {
                 self.chain_work = cycle_track("state/next/chain_work", || {
-                    u256_add(self.chain_work, work_from_bits(required_nbits))
+                    u256_add(self.chain_work, required_work)
                 });
             }
             cycle_track("state/next/assign_state", || {
@@ -751,16 +765,15 @@ impl State {
             } else {
                 median_window[..median_window_len].sort_unstable();
             }
-            let mut pending_run_nbits: Option<CompactTarget> = None;
+            let mut pending_run_work: Option<ChainWork> = None;
             let mut pending_run_count: u32 = 0;
 
             let flush_pending_chain_work =
-                |state: &mut State, run_nbits: &mut Option<CompactTarget>, run_count: &mut u32| {
-                    if let (Some(run_nbits), count) = (run_nbits.take(), *run_count) {
+                |state: &mut State, run_work: &mut Option<ChainWork>, run_count: &mut u32| {
+                    if let (Some(run_work), count) = (run_work.take(), *run_count) {
                         if count > 0 {
                             cycle_track("state/apply_headers/chain_work_flush", || {
-                                let work_per_block = work_from_bits(run_nbits);
-                                let accumulated_work = u256_mul_u32(work_per_block, count);
+                                let accumulated_work = u256_mul_u32(run_work, count);
                                 state.chain_work = u256_add(state.chain_work, accumulated_work);
                             });
                         }
@@ -805,18 +818,19 @@ impl State {
 
             for (header_index, new_header) in headers.iter().copied().enumerate() {
                 let required_nbits = state.next_nbits;
+                let required_work = state.next_work;
                 let median_time_past = if median_window_len == 0 {
                     None
                 } else {
                     Some(median_window[median_window_len / 2])
                 };
-                if pending_run_nbits != Some(required_nbits) {
+                if pending_run_work != Some(required_work) {
                     flush_pending_chain_work(
                         &mut state,
-                        &mut pending_run_nbits,
+                        &mut pending_run_work,
                         &mut pending_run_count,
                     );
-                    pending_run_nbits = Some(required_nbits);
+                    pending_run_work = Some(required_work);
                 }
 
                 let timestamp_slot = state.next_timestamp_slot();
@@ -827,7 +841,7 @@ impl State {
                 {
                     flush_pending_chain_work(
                         &mut state,
-                        &mut pending_run_nbits,
+                        &mut pending_run_work,
                         &mut pending_run_count,
                     );
                     return Err(ProofFailure {
@@ -859,13 +873,13 @@ impl State {
                 if state.next_nbits != required_nbits {
                     flush_pending_chain_work(
                         &mut state,
-                        &mut pending_run_nbits,
+                        &mut pending_run_work,
                         &mut pending_run_count,
                     );
                 }
             }
 
-            flush_pending_chain_work(&mut state, &mut pending_run_nbits, &mut pending_run_count);
+            flush_pending_chain_work(&mut state, &mut pending_run_work, &mut pending_run_count);
 
             Ok(state)
         })
@@ -889,16 +903,15 @@ impl State {
             );
 
             let mut state = self.clone();
-            let mut pending_run_nbits: Option<CompactTarget> = None;
+            let mut pending_run_work: Option<ChainWork> = None;
             let mut pending_run_count: u32 = 0;
 
             let flush_pending_chain_work =
-                |state: &mut State, run_nbits: &mut Option<CompactTarget>, run_count: &mut u32| {
-                    if let (Some(run_nbits), count) = (run_nbits.take(), *run_count) {
+                |state: &mut State, run_work: &mut Option<ChainWork>, run_count: &mut u32| {
+                    if let (Some(run_work), count) = (run_work.take(), *run_count) {
                         if count > 0 {
                             cycle_track("state/apply_headers/chain_work_flush", || {
-                                let work_per_block = work_from_bits(run_nbits);
-                                let accumulated_work = u256_mul_u32(work_per_block, count);
+                                let accumulated_work = u256_mul_u32(run_work, count);
                                 state.chain_work = u256_add(state.chain_work, accumulated_work);
                             });
                         }
@@ -913,6 +926,7 @@ impl State {
                 .enumerate()
             {
                 let required_nbits = state.next_nbits;
+                let required_work = state.next_work;
                 let median_time_past = if state.timestamp_count() == 0 {
                     None
                 } else {
@@ -925,13 +939,13 @@ impl State {
                     });
                     Some(claimed_median)
                 };
-                if pending_run_nbits != Some(required_nbits) {
+                if pending_run_work != Some(required_work) {
                     flush_pending_chain_work(
                         &mut state,
-                        &mut pending_run_nbits,
+                        &mut pending_run_work,
                         &mut pending_run_count,
                     );
-                    pending_run_nbits = Some(required_nbits);
+                    pending_run_work = Some(required_work);
                 }
 
                 if let Err(error_code) =
@@ -939,7 +953,7 @@ impl State {
                 {
                     flush_pending_chain_work(
                         &mut state,
-                        &mut pending_run_nbits,
+                        &mut pending_run_work,
                         &mut pending_run_count,
                     );
                     return Err(ProofFailure {
@@ -953,13 +967,13 @@ impl State {
                 if state.next_nbits != required_nbits {
                     flush_pending_chain_work(
                         &mut state,
-                        &mut pending_run_nbits,
+                        &mut pending_run_work,
                         &mut pending_run_count,
                     );
                 }
             }
 
-            flush_pending_chain_work(&mut state, &mut pending_run_nbits, &mut pending_run_count);
+            flush_pending_chain_work(&mut state, &mut pending_run_work, &mut pending_run_count);
 
             Ok(state)
         })
@@ -975,6 +989,7 @@ impl Default for State {
             next_nbits: CompactTarget::default(),
             height: 0,
             chain_work: ChainWork::default(),
+            next_work: ChainWork::default(),
             epoch_start_timestamp: BlockTimestamp::default(),
             timestamps: [BlockTimestamp::default(); WINDOW_SIZE],
         }
@@ -1240,6 +1255,18 @@ pub fn target_to_bits(target: Target) -> CompactTarget {
     CompactTarget::from_consensus(((nbytes as u32) << 24) | (mantissa & 0x00ff_ffff))
 }
 
+impl From<CompactTarget> for Target {
+    fn from(value: CompactTarget) -> Self {
+        bits_to_target(value)
+    }
+}
+
+impl From<Target> for CompactTarget {
+    fn from(value: Target) -> Self {
+        target_to_bits(value)
+    }
+}
+
 /// Return `true` when `lhs` is strictly greater than `rhs` as unsigned 256-bit integers.
 #[must_use]
 pub fn target_exceeds(lhs: Target, rhs: Target) -> bool {
@@ -1305,6 +1332,85 @@ pub fn u256_mul_u32(value: ChainWork, multiplier: u32) -> ChainWork {
     ChainWork::from_limbs(result)
 }
 
+fn target_plus_one(target: Target) -> [u64; 5] {
+    let target = target.as_raw();
+    let mut out = [0u64; 5];
+    let mut carry = 1u128;
+    for (i, limb_out) in out.iter_mut().enumerate().take(4) {
+        let base = i * 8;
+        let limb = u64::from_le_bytes(target[base..base + 8].try_into().unwrap()) as u128;
+        let sum = limb + carry;
+        *limb_out = sum as u64;
+        carry = sum >> 64;
+    }
+    out[4] = carry as u64;
+    out
+}
+
+fn u320_ge(lhs: &[u64; 5], rhs: &[u64; 5]) -> bool {
+    for i in (0..5).rev() {
+        if lhs[i] > rhs[i] {
+            return true;
+        }
+        if lhs[i] < rhs[i] {
+            return false;
+        }
+    }
+    true
+}
+
+fn u320_sub_assign(lhs: &mut [u64; 5], rhs: &[u64; 5]) {
+    let mut borrow = 0u128;
+    for i in 0..5 {
+        let rhs = rhs[i] as u128 + borrow;
+        let lhs_limb = lhs[i] as u128;
+        if lhs_limb >= rhs {
+            lhs[i] = (lhs_limb - rhs) as u64;
+            borrow = 0;
+        } else {
+            lhs[i] = ((1u128 << 64) + lhs_limb - rhs) as u64;
+            borrow = 1;
+        }
+    }
+}
+
+fn u320_shl1(value: &mut [u64; 5]) {
+    let mut carry = 0u64;
+    for limb in value.iter_mut() {
+        let next_carry = *limb >> 63;
+        *limb = (*limb << 1) | carry;
+        carry = next_carry;
+    }
+}
+
+/// Compute one-block cumulative-work units from the expanded target.
+#[must_use]
+pub fn work_from_target(target: Target) -> ChainWork {
+    cycle_track("pow/work_from_target", || {
+        let divisor = target_plus_one(target);
+        if divisor == [1, 0, 0, 0, 0] {
+            return ChainWork::default();
+        }
+
+        let mut remainder = [0u64; 5];
+        let mut quotient = [0u64; 4];
+        for bit in (0..=256).rev() {
+            u320_shl1(&mut remainder);
+            if bit == 256 {
+                remainder[0] |= 1;
+            }
+            if u320_ge(&remainder, &divisor) {
+                u320_sub_assign(&mut remainder, &divisor);
+                if bit < 256 {
+                    quotient[(bit / 64) as usize] |= 1u64 << (bit % 64);
+                }
+            }
+        }
+
+        ChainWork::from_limbs(quotient)
+    })
+}
+
 /// Compute a retargeted 256-bit target from the previous target and measured timespan.
 #[must_use]
 pub fn retarget_target(old_target: Target, actual_timespan: u32, expected_timespan: u32) -> Target {
@@ -1343,121 +1449,7 @@ pub fn retarget_target(old_target: Target, actual_timespan: u32, expected_timesp
 /// Convert compact `bits` into cumulative-work units.
 #[must_use]
 pub fn work_from_bits(bits: CompactTarget) -> ChainWork {
-    cycle_track("pow/work_from_bits", || {
-        let bits = bits.to_consensus();
-        let exponent = bits >> 24;
-        let mantissa = bits & 0x00ff_ffff;
-        let k = 8 * (exponent - 3);
-        let n = 256 - k;
-
-        if mantissa == 0 || n == 0 {
-            return ChainWork::default();
-        }
-
-        let r = pow_mod_2(n, mantissa);
-        let q = div_2n_minus_r_by_u32(n, r, mantissa);
-
-        let mut work = q;
-        if !q_le_r_shifted(&q, r, k) {
-            for limb in &mut work {
-                if *limb > 0 {
-                    *limb -= 1;
-                    break;
-                }
-                *limb = u64::MAX;
-            }
-        }
-
-        ChainWork::from_limbs(work)
-    })
-}
-
-fn pow_mod_2(exp: u32, m: u32) -> u32 {
-    if m <= 1 {
-        return 0;
-    }
-    let m64 = m as u64;
-    let mut result: u64 = 1;
-    let mut base: u64 = 2;
-    let mut e = exp;
-    while e > 0 {
-        if e & 1 != 0 {
-            result = (result * base) % m64;
-        }
-        base = (base * base) % m64;
-        e >>= 1;
-    }
-    result as u32
-}
-
-fn div_2n_minus_r_by_u32(n: u32, r: u32, m: u32) -> [u64; 4] {
-    if n <= 63 {
-        let val = ((1u64 << n) - r as u64) / m as u64;
-        return [val, 0, 0, 0];
-    }
-    if n <= 127 {
-        let val = ((1u128 << n) - r as u128) / m as u128;
-        return [val as u64, (val >> 64) as u64, 0, 0];
-    }
-
-    let bit_limb = (n / 64) as usize;
-    let bit_offset = n % 64;
-
-    let mut limbs = [0u64; 5];
-    limbs[0] = u64::MAX.wrapping_sub(r as u64 - 1);
-    for limb in limbs.iter_mut().take(bit_limb.min(4)).skip(1) {
-        *limb = u64::MAX;
-    }
-    if bit_limb < 4 {
-        limbs[bit_limb] = (1u64 << bit_offset).wrapping_sub(1);
-    } else if bit_limb == 4 {
-        limbs[4] = (1u64 << bit_offset).wrapping_sub(1);
-    }
-
-    let m64 = m as u64;
-    let mut q = [0u64; 4];
-    let mut rem = 0u64;
-    for i in (0..5).rev() {
-        let val = ((rem as u128) << 64) | (limbs[i] as u128);
-        let quot = (val / m64 as u128) as u64;
-        rem = (val % m64 as u128) as u64;
-        if i < 4 {
-            q[i] = quot;
-        }
-    }
-
-    q
-}
-
-fn q_le_r_shifted(q: &[u64; 4], r: u32, k: u32) -> bool {
-    if r == 0 {
-        return q.iter().all(|&x| x == 0);
-    }
-    if k >= 256 {
-        return true;
-    }
-
-    let r64 = r as u64;
-    let lo = k % 64;
-    let hi_limb = (k / 64) as usize;
-
-    let mut rv = [0u64; 4];
-    if hi_limb < 4 {
-        rv[hi_limb] = r64 << lo;
-    }
-    if hi_limb + 1 < 4 && lo > 0 {
-        rv[hi_limb + 1] = r64 >> (64 - lo);
-    }
-
-    for i in (0..4).rev() {
-        if q[i] < rv[i] {
-            return true;
-        }
-        if q[i] > rv[i] {
-            return false;
-        }
-    }
-    true
+    cycle_track("pow/work_from_bits", || Target::from(bits).work())
 }
 
 #[cfg(test)]
@@ -1478,6 +1470,7 @@ mod tests {
     fn test_state() -> State {
         State {
             next_nbits: CompactTarget::from_consensus(GENESIS_NBITS),
+            next_work: work_from_bits(CompactTarget::from_consensus(GENESIS_NBITS)),
             ..State::default()
         }
     }
@@ -1526,7 +1519,7 @@ mod tests {
         assert_eq!(BLOCK_HEADER_SIZE, 80);
         assert_eq!(NEW_HEADER_SIZE, 44);
         assert_eq!(RECURSIVE_PROOF_SIZE, 64);
-        assert_eq!(STATE_SIZE, 232);
+        assert_eq!(STATE_SIZE, 264);
         assert_eq!(FAILURE_METADATA_SIZE, 5);
         assert_eq!(core::mem::align_of::<Header>(), 4);
         assert_eq!(core::mem::align_of::<NewHeader>(), 4);
@@ -1716,6 +1709,7 @@ mod tests {
         let state = State {
             height: WINDOW_SIZE as u32,
             next_nbits: CompactTarget::from_consensus(GENESIS_NBITS),
+            next_work: work_from_bits(CompactTarget::from_consensus(GENESIS_NBITS)),
             timestamps: [
                 ts(1),
                 ts(2),
@@ -1748,6 +1742,7 @@ mod tests {
         let state = State {
             height: WINDOW_SIZE as u32,
             next_nbits: CompactTarget::from_consensus(GENESIS_NBITS),
+            next_work: work_from_bits(CompactTarget::from_consensus(GENESIS_NBITS)),
             timestamps: [
                 ts(1),
                 ts(2),
@@ -1821,6 +1816,7 @@ mod tests {
         let mut state = State {
             block_hash: BlockHash::from_raw([0x11; 32]),
             next_nbits: CompactTarget::from_consensus(GENESIS_NBITS),
+            next_work: work_from_bits(CompactTarget::from_consensus(GENESIS_NBITS)),
             height: WINDOW_SIZE as u32,
             timestamps: original,
             ..State::default()

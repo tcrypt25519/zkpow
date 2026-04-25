@@ -21,7 +21,7 @@ use zkpow_core::{
 };
 
 mod sha256;
-use sha256::{sha256_232bytes, sha256d_80bytes};
+use sha256::{sha256_264bytes, sha256d_80bytes};
 
 // ============================================================================
 // Error Handling
@@ -100,7 +100,7 @@ fn verify_recursive_proof(state: &State, recursive_proof: &RecursiveProof) {
         recursive_proof.public_values_digest.as_raw(),
     );
 
-    let actual_public_values_digest = sha256_232bytes(&state.to_bytes());
+    let actual_public_values_digest = sha256_264bytes(&state.to_bytes());
     if actual_public_values_digest != recursive_proof.public_values_digest.into_raw() {
         panic!("recursive proof public values digest mismatch");
     }
