@@ -122,6 +122,7 @@ fn mainnet_genesis_state() -> util::State {
 fn stdin_for_input(input: &Input) -> SP1Stdin {
     let mut stdin = SP1Stdin::new();
     stdin.write_vec(input.to_bytes());
+    stdin.write_vec(util::build_median_time_past_hints(&input.state, &input.headers).to_bytes());
     stdin
 }
 

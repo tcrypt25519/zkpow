@@ -201,7 +201,6 @@ fn parse_cuda_version_from_nvidia_smi_output(
         return Ok(None);
     };
     let version = output[start + marker.len()..]
-        .trim_start()
         .split_whitespace()
         .next()
         .ok_or_else(|| "missing CUDA version after `CUDA Version:`".to_string())?;
@@ -430,11 +429,13 @@ fn build_recursive_proof(
 
 fn build_stdin(
     input: &Input,
+    median_hints: &util::MedianTimePastHints,
     previous_proof: Option<&SP1ProofWithPublicValues>,
     vk: &sp1_prover::SP1VerifyingKey,
 ) -> Result<SP1Stdin, BoxError> {
     let mut stdin = SP1Stdin::new();
     stdin.write_vec(input.to_bytes());
+    stdin.write_vec(median_hints.to_bytes());
 
     if let Some(prev_proof) = previous_proof {
         let SP1Proof::Compressed(inner_proof) = &prev_proof.proof else {
@@ -466,8 +467,11 @@ where
         Input::new(current_state.clone(), recursive_proof, headers.to_vec())
             .map_err(|err| err.to_string().into())
     })?;
+    let median_hints = timed_sync("build_median_time_past_hints", || -> Result<_, BoxError> {
+        Ok(util::build_median_time_past_hints(current_state, headers))
+    })?;
     let stdin = timed_sync("serialize_input", || {
-        build_stdin(&input, previous_proof, pk.verifying_key())
+        build_stdin(&input, &median_hints, previous_proof, pk.verifying_key())
     })?;
 
     let (public_values, report) = timed_async("execute_program", || async {

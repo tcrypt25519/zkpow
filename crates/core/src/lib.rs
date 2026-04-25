@@ -10,7 +10,10 @@ use core::{
 };
 
 pub mod input;
-pub use input::{Input, InputError, InputRef, RecursiveProof};
+pub use input::{
+    Input, InputError, InputRef, MedianTimePastHintError, MedianTimePastHints,
+    MedianTimePastHintsRef, RecursiveProof,
+};
 
 #[cfg(not(target_endian = "little"))]
 compile_error!("bitcoin-header-chain wire types require a little-endian target");
@@ -408,7 +411,7 @@ pub(crate) fn check_exact_len(bytes: &[u8], expected: usize) -> Result<(), Parse
 pub(crate) fn check_aligned<T>(bytes: &[u8], offset: usize) -> Result<(), ParseError> {
     let required = align_of::<T>();
     let address = bytes.as_ptr() as usize;
-    if address % required != 0 {
+    if !address.is_multiple_of(required) {
         return Err(ParseError::Misaligned { offset, required });
     }
     Ok(())
@@ -443,7 +446,7 @@ pub(crate) fn ref_from_bytes<T>(bytes: &[u8], offset: usize) -> Result<&T, Parse
 }
 
 pub(crate) fn slice_from_bytes<T>(bytes: &[u8], offset: usize) -> Result<&[T], ParseError> {
-    if bytes.len() % size_of::<T>() != 0 {
+    if !bytes.len().is_multiple_of(size_of::<T>()) {
         return Err(ParseError::InvalidLength {
             expected: bytes.len().div_ceil(size_of::<T>()) * size_of::<T>(),
             actual: bytes.len(),
@@ -602,6 +605,35 @@ impl State {
         })
     }
 
+    #[must_use]
+    fn median_hint_is_valid(&self, claimed_median: BlockTimestamp) -> bool {
+        cycle_track("state/validate/median_time_past_hint/rank", || {
+            let window_len = self.timestamp_count();
+            if window_len == 0 {
+                return true;
+            }
+
+            let median_index = window_len / 2;
+            let mut less_count = 0usize;
+            let mut equal_count = 0usize;
+            let mut greater_count = 0usize;
+
+            for timestamp in self.timestamps.iter().take(window_len) {
+                if *timestamp < claimed_median {
+                    less_count += 1;
+                } else if *timestamp > claimed_median {
+                    greater_count += 1;
+                } else {
+                    equal_count += 1;
+                }
+            }
+
+            less_count + equal_count + greater_count == window_len
+                && less_count <= median_index
+                && less_count + equal_count > median_index
+        })
+    }
+
     /// Build the next authenticated state from the current state and a prover-supplied header.
     fn next_inner<F>(
         &mut self,
@@ -650,7 +682,7 @@ impl State {
             });
 
             if cycle_track("state/next/check_epoch_timestamp", || {
-                self.height % 2016 == 0
+                self.height.is_multiple_of(2016)
             }) {
                 cycle_track("state/next/epoch_timestamp", || {
                     self.epoch_start_timestamp = new_header.timestamp;
@@ -658,7 +690,7 @@ impl State {
             }
 
             if cycle_track("state/next/check_retarget", || {
-                (self.height + 1) % 2016 == 0
+                (self.height + 1).is_multiple_of(2016)
             }) {
                 cycle_track("state/next/retarget", || {
                     let actual_timespan = new_header
@@ -701,6 +733,7 @@ impl State {
     {
         self.next_inner(new_header, hash_header, None, true)
     }
+    #[allow(clippy::result_large_err)]
     pub fn apply_headers<F>(
         &self,
         headers: &[NewHeader],
@@ -820,6 +853,100 @@ impl State {
                         &mut median_window_len,
                         new_header.timestamp,
                     );
+                }
+
+                pending_run_count += 1;
+                if state.next_nbits != required_nbits {
+                    flush_pending_chain_work(
+                        &mut state,
+                        &mut pending_run_nbits,
+                        &mut pending_run_count,
+                    );
+                }
+            }
+
+            flush_pending_chain_work(&mut state, &mut pending_run_nbits, &mut pending_run_count);
+
+            Ok(state)
+        })
+    }
+
+    #[allow(clippy::result_large_err)]
+    pub fn apply_headers_with_median_hints<F>(
+        &self,
+        headers: &[NewHeader],
+        median_hints: &[BlockTimestamp],
+        hash_header: F,
+    ) -> Result<Self, ProofFailure>
+    where
+        F: Copy + Fn(&Header) -> BlockHash,
+    {
+        cycle_track("state/apply_headers", || {
+            assert_eq!(
+                headers.len(),
+                median_hints.len(),
+                "median hint count must match header count"
+            );
+
+            let mut state = self.clone();
+            let mut pending_run_nbits: Option<CompactTarget> = None;
+            let mut pending_run_count: u32 = 0;
+
+            let flush_pending_chain_work =
+                |state: &mut State, run_nbits: &mut Option<CompactTarget>, run_count: &mut u32| {
+                    if let (Some(run_nbits), count) = (run_nbits.take(), *run_count) {
+                        if count > 0 {
+                            cycle_track("state/apply_headers/chain_work_flush", || {
+                                let work_per_block = work_from_bits(run_nbits);
+                                let accumulated_work = u256_mul_u32(work_per_block, count);
+                                state.chain_work = u256_add(state.chain_work, accumulated_work);
+                            });
+                        }
+                    }
+                    *run_count = 0;
+                };
+
+            for (header_index, (new_header, claimed_median)) in headers
+                .iter()
+                .copied()
+                .zip(median_hints.iter().copied())
+                .enumerate()
+            {
+                let required_nbits = state.next_nbits;
+                let median_time_past = if state.timestamp_count() == 0 {
+                    None
+                } else {
+                    cycle_track("state/apply_headers/median_hint_check", || {
+                        assert!(
+                            state.median_hint_is_valid(claimed_median),
+                            "invalid median time past hint at header index {}",
+                            header_index
+                        );
+                    });
+                    Some(claimed_median)
+                };
+                if pending_run_nbits != Some(required_nbits) {
+                    flush_pending_chain_work(
+                        &mut state,
+                        &mut pending_run_nbits,
+                        &mut pending_run_count,
+                    );
+                    pending_run_nbits = Some(required_nbits);
+                }
+
+                if let Err(error_code) =
+                    state.next_inner(new_header, hash_header, median_time_past, false)
+                {
+                    flush_pending_chain_work(
+                        &mut state,
+                        &mut pending_run_nbits,
+                        &mut pending_run_count,
+                    );
+                    return Err(ProofFailure {
+                        last_valid_state: state,
+                        error_code,
+                        header_index: header_index as u32,
+                    });
                 }
 
                 pending_run_count += 1;
@@ -984,8 +1111,8 @@ impl FailureMetadataWire {
     }
 
     #[must_use]
-    fn to_bytes(&self) -> [u8; FAILURE_METADATA_SIZE] {
-        copy_to_bytes(self)
+    fn to_bytes(self) -> [u8; FAILURE_METADATA_SIZE] {
+        copy_to_bytes(&self)
     }
 }
 
@@ -1336,6 +1463,7 @@ fn q_le_r_shifted(q: &[u64; 4], r: u32, k: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use alloc::vec::Vec;
+    extern crate std;
 
     use super::*;
 
@@ -1366,6 +1494,21 @@ mod tests {
                 |_| zero_hash(),
             )
             .unwrap();
+    }
+
+    fn median_hints_for_headers(
+        initial_state: &State,
+        headers: &[NewHeader],
+    ) -> Vec<BlockTimestamp> {
+        let mut state = initial_state.clone();
+        let mut medians = Vec::with_capacity(headers.len());
+        for header in headers {
+            medians.push(state.median_time_past().unwrap_or_default());
+            let timestamp_slot = state.next_timestamp_slot();
+            state.timestamps[timestamp_slot] = header.timestamp;
+            state.height += 1;
+        }
+        medians
     }
 
     fn expected_upper_median(height: u32) -> Option<BlockTimestamp> {
@@ -1543,6 +1686,97 @@ mod tests {
             .expect("batched validation should succeed");
 
         assert_eq!(batched, sequential);
+    }
+
+    #[test]
+    fn hinted_apply_headers_matches_sorted_apply_headers_across_window_wrap() {
+        let headers: Vec<NewHeader> = (1..=23)
+            .map(|timestamp| NewHeader {
+                version: 1,
+                merkle_root: [timestamp as u8; 32],
+                timestamp: ts(timestamp),
+                nonce: timestamp,
+            })
+            .collect();
+        let state = test_state();
+        let hints = median_hints_for_headers(&state, &headers);
+
+        let sorted = state
+            .apply_headers(&headers, |_| zero_hash())
+            .expect("sorted-window validation should succeed");
+        let hinted = state
+            .apply_headers_with_median_hints(&headers, &hints, |_| zero_hash())
+            .expect("hinted validation should succeed");
+
+        assert_eq!(hinted, sorted);
+    }
+
+    #[test]
+    fn hinted_median_validation_accepts_duplicate_median_values() {
+        let state = State {
+            height: WINDOW_SIZE as u32,
+            next_nbits: CompactTarget::from_consensus(GENESIS_NBITS),
+            timestamps: [
+                ts(1),
+                ts(2),
+                ts(3),
+                ts(4),
+                ts(5),
+                ts(6),
+                ts(6),
+                ts(6),
+                ts(7),
+                ts(8),
+                ts(9),
+            ],
+            ..State::default()
+        };
+        let headers = [NewHeader {
+            version: 1,
+            merkle_root: [0x22; 32],
+            timestamp: ts(10),
+            nonce: 7,
+        }];
+
+        state
+            .apply_headers_with_median_hints(&headers, &[ts(6)], |_| zero_hash())
+            .expect("duplicate median values should be accepted");
+    }
+
+    #[test]
+    fn hinted_median_validation_rejects_wrong_rank_hint() {
+        let state = State {
+            height: WINDOW_SIZE as u32,
+            next_nbits: CompactTarget::from_consensus(GENESIS_NBITS),
+            timestamps: [
+                ts(1),
+                ts(2),
+                ts(3),
+                ts(4),
+                ts(5),
+                ts(6),
+                ts(7),
+                ts(8),
+                ts(9),
+                ts(10),
+                ts(11),
+            ],
+            ..State::default()
+        };
+        let headers = [NewHeader {
+            version: 1,
+            merkle_root: [0x22; 32],
+            timestamp: ts(12),
+            nonce: 7,
+        }];
+
+        let result = std::panic::catch_unwind(|| {
+            state
+                .apply_headers_with_median_hints(&headers, &[ts(4)], |_| zero_hash())
+                .unwrap();
+        });
+
+        assert!(result.is_err());
     }
 
     #[test]

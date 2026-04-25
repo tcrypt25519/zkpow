@@ -7,7 +7,8 @@
 //!
 //! Input protocol:
 //!   1. encoded_input: Vec<u8>
-//!   2. If `state.height > 0`: a recursive proof witness written via `write_proof`
+//!   2. median_time_past_hints: Vec<u8>
+//!   3. If `state.height > 0`: a recursive proof witness written via `write_proof`
 //!
 //! Output: serialized State on success, or state + error_code + header_index on error.
 
@@ -15,8 +16,8 @@
 sp1_zkvm::entrypoint!(main);
 
 use zkpow_core::{
-    encode_failure_metadata, BlockHash, Header, InputError, InputRef, NewHeader, RecursiveProof,
-    State, ValidationErrorCode, STATE_SIZE,
+    encode_failure_metadata, BlockHash, Header, InputError, InputRef, MedianTimePastHintsRef,
+    NewHeader, RecursiveProof, State, ValidationErrorCode, STATE_SIZE,
 };
 
 mod sha256;
@@ -87,6 +88,12 @@ fn parse_input<'a>(input_bytes: &'a [u8]) -> InputRef<'a> {
 }
 
 #[sp1_derive::cycle_tracker]
+fn parse_median_hints<'a>(hint_bytes: &'a [u8], header_count: usize) -> MedianTimePastHintsRef<'a> {
+    MedianTimePastHintsRef::parse(hint_bytes, header_count)
+        .expect("median time past hints should parse")
+}
+
+#[sp1_derive::cycle_tracker]
 fn verify_recursive_proof(state: &State, recursive_proof: &RecursiveProof) {
     sp1_zkvm::lib::verify::verify_sp1_proof(
         recursive_proof.verifier_key.as_raw(),
@@ -100,8 +107,12 @@ fn verify_recursive_proof(state: &State, recursive_proof: &RecursiveProof) {
 }
 
 #[sp1_derive::cycle_tracker]
-fn apply_headers_or_commit(state: &State, headers: &[NewHeader]) -> State {
-    match state.apply_headers(headers, hash_header) {
+fn apply_headers_or_commit(
+    state: &State,
+    headers: &[NewHeader],
+    median_hints: &MedianTimePastHintsRef<'_>,
+) -> State {
+    match state.apply_headers_with_median_hints(headers, median_hints.medians, hash_header) {
         Ok(state) => state,
         Err(failure) => commit_error(
             &failure.last_valid_state,
@@ -132,6 +143,8 @@ fn commit_success(final_state: &State) {
 pub fn main() {
     let input_bytes = sp1_zkvm::io::read_vec();
     let input = parse_input(&input_bytes);
+    let median_hint_bytes = sp1_zkvm::io::read_vec();
+    let median_hints = parse_median_hints(&median_hint_bytes, input.headers.len());
 
     let mut state = input.state.clone();
     if state.height == 0 && state.genesis_hash == BlockHash::default() {
@@ -142,7 +155,7 @@ pub fn main() {
         verify_recursive_proof(&state, input.recursive_proof);
     }
 
-    let final_state = apply_headers_or_commit(&state, input.headers);
+    let final_state = apply_headers_or_commit(&state, input.headers, &median_hints);
     commit_success(&final_state);
     sp1_zkvm::syscalls::syscall_halt(0);
 }

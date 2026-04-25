@@ -10,8 +10,9 @@ use zkpow_core::{work_from_bits, WINDOW_SIZE};
 
 pub use zkpow_core::{
     BlockHash, BlockTimestamp, ChainWork, CompactTarget, Header, HeaderChainPublicValues, Input,
-    InputError, NewHeader, ParseError, ProofFailure, PublicValuesDigest, PublicValuesParseError,
-    RecursiveProof, State, ValidationErrorCode, VerifierKeyDigest, NEW_HEADER_SIZE, STATE_SIZE,
+    InputError, MedianTimePastHints, NewHeader, ParseError, ProofFailure, PublicValuesDigest,
+    PublicValuesParseError, RecursiveProof, State, ValidationErrorCode, VerifierKeyDigest,
+    NEW_HEADER_SIZE, STATE_SIZE,
 };
 
 // ============================================================================
@@ -26,7 +27,7 @@ pub fn load_headers_from_db(db_path: &str, start_height: u64, count: u64) -> Vec
         .prepare(
             "SELECT raw_header FROM headers WHERE height >= ?1 AND height < ?2 ORDER BY height ASC",
         )
-        .expect(format!("failed to prepare SQL statement for db: {}", db_path).as_str());
+        .unwrap_or_else(|_| panic!("failed to prepare SQL statement for db: {}", db_path));
 
     let end_height = start_height + count;
     let rows = stmt
@@ -143,4 +144,21 @@ pub fn compute_final_state(initial_state: &State, headers: &[NewHeader]) -> Stat
     initial_state
         .apply_headers(headers, hash_header)
         .expect("host state transition should succeed")
+}
+
+/// Build one private MTP hint per header. The hint for each header is computed
+/// from the timestamp window before that header is applied.
+pub fn build_median_time_past_hints(
+    initial_state: &State,
+    headers: &[NewHeader],
+) -> MedianTimePastHints {
+    let mut state = initial_state.clone();
+    let mut medians = Vec::with_capacity(headers.len());
+    for header in headers {
+        medians.push(state.median_time_past().unwrap_or_default());
+        let timestamp_slot = (state.height as usize) % WINDOW_SIZE;
+        state.timestamps[timestamp_slot] = header.timestamp;
+        state.height += 1;
+    }
+    MedianTimePastHints::new(medians)
 }

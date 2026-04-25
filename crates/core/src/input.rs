@@ -3,9 +3,9 @@
 use alloc::vec::Vec;
 
 use crate::{
-    check_exact_len, copy_from_bytes, copy_to_bytes, cycle_track, BlockHash, Header, NewHeader,
-    ParseError, PublicValuesDigest, State, VerifierKeyDigest, NEW_HEADER_SIZE,
-    RECURSIVE_PROOF_SIZE, STATE_SIZE,
+    check_exact_len, copy_from_bytes, copy_to_bytes, cycle_track, slice_from_bytes, BlockHash,
+    BlockTimestamp, Header, NewHeader, ParseError, PublicValuesDigest, State, VerifierKeyDigest,
+    NEW_HEADER_SIZE, RECURSIVE_PROOF_SIZE, STATE_SIZE,
 };
 
 // ============================================================================
@@ -26,6 +26,18 @@ pub struct InputRef<'a> {
     pub state: &'a State,
     pub recursive_proof: &'a RecursiveProof,
     pub headers: &'a [NewHeader],
+}
+
+/// Owned private witness payload containing one claimed MTP value per header.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MedianTimePastHints {
+    pub medians: Vec<BlockTimestamp>,
+}
+
+/// Borrowed private witness payload containing one claimed MTP value per header.
+#[derive(Debug, Clone, Copy)]
+pub struct MedianTimePastHintsRef<'a> {
+    pub medians: &'a [BlockTimestamp],
 }
 
 /// Recursive proof metadata that authenticates the current [`State`].
@@ -54,6 +66,15 @@ pub enum InputError {
     GenesisHashMustBeZero,
     HeaderPayloadLengthInvalid { actual: usize },
     InvalidRecursiveProofLength { actual: usize, expected: usize },
+}
+
+/// Parse and validation errors for median-time-past private witness hints.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MedianTimePastHintError {
+    TruncatedCount { actual: usize },
+    CountMismatch { expected: usize, actual: usize },
+    PayloadLengthInvalid { expected: usize, actual: usize },
+    Parse(ParseError),
 }
 
 impl From<ParseError> for InputError {
@@ -90,6 +111,27 @@ impl core::fmt::Display for InputError {
     }
 }
 
+impl core::fmt::Display for MedianTimePastHintError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::TruncatedCount { actual } => {
+                write!(f, "median hint payload missing count: got {} bytes", actual)
+            }
+            Self::CountMismatch { expected, actual } => write!(
+                f,
+                "median hint count mismatch: expected {}, got {}",
+                expected, actual
+            ),
+            Self::PayloadLengthInvalid { expected, actual } => write!(
+                f,
+                "median hint payload length mismatch: expected {} bytes, got {}",
+                expected, actual
+            ),
+            Self::Parse(err) => write!(f, "median hint parse error: {}", err),
+        }
+    }
+}
+
 impl RecursiveProof {
     /// Parse and validate a RecursiveProof from exactly [`RECURSIVE_PROOF_SIZE`] bytes.
     pub fn parse(bytes: &[u8]) -> Result<Self, InputError> {
@@ -113,6 +155,73 @@ impl RecursiveProof {
     /// Borrow a [`RecursiveProof`] directly from aligned protocol bytes.
     pub fn ref_from_bytes(bytes: &[u8], offset: usize) -> Result<&Self, InputError> {
         crate::ref_from_bytes(bytes, offset).map_err(InputError::from)
+    }
+}
+
+impl<'a> MedianTimePastHintsRef<'a> {
+    /// Parse private witness MTP hints. The format is:
+    ///
+    /// ```text
+    /// count: u32 little-endian
+    /// medians: [BlockTimestamp; count]
+    /// ```
+    pub fn parse(bytes: &'a [u8], expected_count: usize) -> Result<Self, MedianTimePastHintError> {
+        cycle_track("input/parse/median_time_past_hints", || {
+            let count_bytes = bytes
+                .get(..4)
+                .ok_or(MedianTimePastHintError::TruncatedCount {
+                    actual: bytes.len(),
+                })?;
+            let actual_count =
+                u32::from_le_bytes(count_bytes.try_into().expect("slice length checked above"))
+                    as usize;
+            if actual_count != expected_count {
+                return Err(MedianTimePastHintError::CountMismatch {
+                    expected: expected_count,
+                    actual: actual_count,
+                });
+            }
+
+            let expected_len = 4 + (expected_count * core::mem::size_of::<BlockTimestamp>());
+            if bytes.len() != expected_len {
+                return Err(MedianTimePastHintError::PayloadLengthInvalid {
+                    expected: expected_len,
+                    actual: bytes.len(),
+                });
+            }
+
+            let medians = slice_from_bytes::<BlockTimestamp>(&bytes[4..], 4)
+                .map_err(MedianTimePastHintError::Parse)?;
+            Ok(Self { medians })
+        })
+    }
+
+    #[must_use]
+    pub fn to_owned(&self) -> MedianTimePastHints {
+        MedianTimePastHints {
+            medians: self.medians.to_vec(),
+        }
+    }
+}
+
+impl MedianTimePastHints {
+    #[must_use]
+    pub fn new(medians: Vec<BlockTimestamp>) -> Self {
+        Self { medians }
+    }
+
+    pub fn parse(bytes: &[u8], expected_count: usize) -> Result<Self, MedianTimePastHintError> {
+        MedianTimePastHintsRef::parse(bytes, expected_count).map(|hints| hints.to_owned())
+    }
+
+    #[must_use]
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(4 + self.medians.len() * 4);
+        bytes.extend_from_slice(&(self.medians.len() as u32).to_le_bytes());
+        for median in &self.medians {
+            bytes.extend_from_slice(&median.to_consensus().to_le_bytes());
+        }
+        bytes
     }
 }
 
@@ -146,7 +255,7 @@ impl<'a> InputRef<'a> {
             let recursive_proof = RecursiveProof::ref_from_bytes(proof_bytes, proof_start)?;
 
             let header_payload = &bytes[proof_end..];
-            if header_payload.len() % NEW_HEADER_SIZE != 0 {
+            if !header_payload.len().is_multiple_of(NEW_HEADER_SIZE) {
                 return Err(InputError::HeaderPayloadLengthInvalid {
                     actual: header_payload.len(),
                 });
@@ -360,6 +469,52 @@ mod tests {
                 offset: 0,
                 required: core::mem::align_of::<State>(),
             })
+        );
+    }
+
+    #[test]
+    fn median_time_past_hints_round_trip() {
+        let hints = MedianTimePastHints::new(vec![
+            BlockTimestamp::from_consensus(0),
+            BlockTimestamp::from_consensus(123),
+            BlockTimestamp::from_consensus(456),
+        ]);
+
+        let bytes = hints.to_bytes();
+        let parsed = MedianTimePastHints::parse(&bytes, 3).unwrap();
+
+        assert_eq!(parsed, hints);
+    }
+
+    #[test]
+    fn median_time_past_hints_reject_count_mismatch() {
+        let bytes = MedianTimePastHints::new(vec![BlockTimestamp::from_consensus(123)]).to_bytes();
+
+        let err = MedianTimePastHintsRef::parse(&bytes, 2).unwrap_err();
+
+        assert_eq!(
+            err,
+            MedianTimePastHintError::CountMismatch {
+                expected: 2,
+                actual: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn median_time_past_hints_reject_truncated_payload() {
+        let mut bytes =
+            MedianTimePastHints::new(vec![BlockTimestamp::from_consensus(123)]).to_bytes();
+        bytes.pop();
+
+        let err = MedianTimePastHintsRef::parse(&bytes, 1).unwrap_err();
+
+        assert_eq!(
+            err,
+            MedianTimePastHintError::PayloadLengthInvalid {
+                expected: 8,
+                actual: 7,
+            }
         );
     }
 }
