@@ -942,6 +942,28 @@ impl State {
                 let median_time_past = if state.timestamp_count() == 0 {
                     None
                 } else {
+                    #[cfg(target_os = "zkvm")]
+                    {
+                        let window_len = state.timestamp_count();
+                        let tracked_window: alloc::vec::Vec<u32> = state
+                            .timestamps
+                            .iter()
+                            .take(window_len)
+                            .map(|timestamp| timestamp.to_consensus())
+                            .collect();
+                        sp1_zkvm::io::write(
+                            1,
+                            alloc::format!(
+                                "median-hint-debug: header_index={} height={} claimed_median={} computed_median={:?} tracked_window={:?}\n",
+                                header_index,
+                                state.height,
+                                claimed_median.to_consensus(),
+                                state.median_time_past().map(|timestamp| timestamp.to_consensus()),
+                                tracked_window,
+                            )
+                            .as_bytes(),
+                        );
+                    }
                     cycle_track("state/apply_headers/median_hint_check", || {
                         assert!(
                             state.median_hint_is_valid(claimed_median),
