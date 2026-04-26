@@ -11,8 +11,8 @@ if [[ -f "$ROOT/.env" ]]; then
 fi
 
 # Set defaults for run configuration
-RUN_DIR="${RUN_DIR:-$ROOT/logs/$TIMESTAMP}"
-LATEST_LINK="${LATEST_LINK:-$ROOT/logs/latest}"
+RUN_DIR="${RUN_DIR:-$ROOT/profiling/sp1/$TIMESTAMP}"
+LATEST_LINK="${LATEST_LINK:-$ROOT/profiling/sp1/latest}"
 PROOFS_DIR="${PROOFS_DIR:-$RUN_DIR/proofs}"
 
 # Set defaults for the guest program
@@ -30,6 +30,7 @@ export CARGO_TERM_COLOR=never
 
 mkdir -p "$RUN_DIR"
 mkdir -p "$PROOFS_DIR"
+mkdir -p "$(dirname "$LATEST_LINK")"
 ln -sfn "$RUN_DIR" "$LATEST_LINK"
 
 if [[ -n "${PREV_PROOF:-}" ]]; then
@@ -77,11 +78,36 @@ fi
 status=${PIPESTATUS[0]}
 set -e
 
+report_file="$RUN_DIR/report.txt"
+timings_file="$RUN_DIR/timings.txt"
+cycle_tracker_file="$RUN_DIR/cycle-tracker.txt"
+prover_gas_file="$RUN_DIR/prover-gas.txt"
+
+{
+  rg 'Execution report|cycle tracker:|top hot spans:|cycle hierarchy:|prover gas:|total prover_gas|estimated gas by hot span|assumptions:|TOTAL PROVING TIME|Total proving time|Proving time breakdown:' "$RUN_DIR/run.log" || true
+} >"$report_file"
+
+{
+  rg 'finished in|TOTAL PROVING TIME|Total proving time|Proving time breakdown:' "$RUN_DIR/run.log" || true
+} >"$timings_file"
+
+{
+  rg 'cycle tracker:|top hot spans:|cycle hierarchy:|cycles' "$RUN_DIR/run.log" || true
+} >"$cycle_tracker_file"
+
+{
+  rg 'prover gas:|total prover_gas|estimated gas by hot span|assumptions:' "$RUN_DIR/run.log" || true
+} >"$prover_gas_file"
+
 printf '\n=== Run Summary ===\n'
 printf 'RUN_DIR: %s\n' "$RUN_DIR"
 printf 'PROOFS_DIR: %s\n' "$PROOFS_DIR"
 printf 'OUTPUT_DIR: %s\n' "$OUTPUT_DIR"
 printf 'run.log: %s\n' "$RUN_DIR/run.log"
+printf 'report: %s\n' "$report_file"
+printf 'timings: %s\n' "$timings_file"
+printf 'cycle tracker report: %s\n' "$cycle_tracker_file"
+printf 'prover gas report: %s\n' "$prover_gas_file"
 printf 'profiling output written to %s\n' "$RUN_DIR"
 printf '\nProofs should be in: %s\n' "$OUTPUT_DIR"
 ls -la "$OUTPUT_DIR" 2>/dev/null || printf '(directory may be empty if proving failed)\n'
