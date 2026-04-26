@@ -38,9 +38,6 @@ fn main() {
                 ValidationErrorCode::PowInsufficient => "PoW insufficient",
                 ValidationErrorCode::TimestampTooOld => "Timestamp too old",
                 ValidationErrorCode::GenesisHashMismatch => "Genesis hash mismatch",
-                ValidationErrorCode::MedianTimePastHintInvalid => {
-                    "Median time past hint invalid"
-                }
             };
             println!(
                 "Error Code:        {} ({})",

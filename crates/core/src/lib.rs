@@ -942,20 +942,13 @@ impl State {
                 let median_time_past = if state.timestamp_count() == 0 {
                     None
                 } else {
-                    if !cycle_track("state/apply_headers/median_hint_check", || {
-                        state.median_hint_is_valid(claimed_median)
-                    }) {
-                        flush_pending_chain_work(
-                            &mut state,
-                            &mut pending_run_work,
-                            &mut pending_run_count,
+                    cycle_track("state/apply_headers/median_hint_check", || {
+                        assert!(
+                            state.median_hint_is_valid(claimed_median),
+                            "invalid median time past hint at header index {}",
+                            header_index
                         );
-                        return Err(ProofFailure {
-                            last_valid_state: state,
-                            error_code: ValidationErrorCode::MedianTimePastHintInvalid,
-                            header_index: header_index as u32,
-                        });
-                    }
+                    });
                     Some(claimed_median)
                 };
                 if pending_run_work != Some(required_work) {
@@ -1066,7 +1059,6 @@ pub enum ValidationErrorCode {
     PowInsufficient = 2,
     TimestampTooOld = 3,
     GenesisHashMismatch = 4,
-    MedianTimePastHintInvalid = 5,
 }
 
 impl ValidationErrorCode {
@@ -1084,7 +1076,6 @@ impl ValidationErrorCode {
             Self::PowInsufficient => "PoW insufficient",
             Self::TimestampTooOld => "Timestamp too old",
             Self::GenesisHashMismatch => "Genesis hash mismatch",
-            Self::MedianTimePastHintInvalid => "Median time past hint invalid",
         }
     }
 }
@@ -1104,7 +1095,6 @@ impl TryFrom<u8> for ValidationErrorCode {
             2 => Ok(Self::PowInsufficient),
             3 => Ok(Self::TimestampTooOld),
             4 => Ok(Self::GenesisHashMismatch),
-            5 => Ok(Self::MedianTimePastHintInvalid),
             _ => Err(PublicValuesParseError::UnknownErrorCode { code: value }),
         }
     }
@@ -1807,15 +1797,13 @@ mod tests {
             nonce: 7,
         }];
 
-        let failure = state
-            .apply_headers_with_median_hints(&headers, &[ts(4)], |_| zero_hash())
-            .expect_err("wrong-rank hint should fail");
-        assert_eq!(
-            failure.error_code,
-            ValidationErrorCode::MedianTimePastHintInvalid
-        );
-        assert_eq!(failure.header_index, 0);
-        assert_eq!(failure.last_valid_state, state);
+        let result = std::panic::catch_unwind(|| {
+            state
+                .apply_headers_with_median_hints(&headers, &[ts(4)], |_| zero_hash())
+                .unwrap();
+        });
+
+        assert!(result.is_err());
     }
 
     #[test]
