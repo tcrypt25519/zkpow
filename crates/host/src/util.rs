@@ -264,11 +264,20 @@ pub fn records_to_new_headers(records: &[HeaderRecord]) -> Vec<NewHeader> {
         .collect()
 }
 
-pub fn records_to_median_time_past_hints(records: &[HeaderRecord]) -> MedianTimePastHints {
-    MedianTimePastHints::new(
-        records
-            .iter()
-            .map(|record| record.median_time_past)
-            .collect(),
-    )
+/// Build the median-time-past witness hints by mirroring the validator state.
+pub fn median_time_past_hints_for_headers(
+    initial_state: &State,
+    headers: &[NewHeader],
+) -> MedianTimePastHints {
+    let mut state = initial_state.clone();
+    let mut medians = Vec::with_capacity(headers.len());
+
+    for header in headers {
+        medians.push(state.median_time_past().unwrap_or_default());
+        let timestamp_slot = (state.height as usize) % zkpow_core::WINDOW_SIZE;
+        state.timestamps[timestamp_slot] = header.timestamp;
+        state.height += 1;
+    }
+
+    MedianTimePastHints::new(medians)
 }

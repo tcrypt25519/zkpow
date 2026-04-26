@@ -32,9 +32,13 @@ async fn main() {
             .map(|id| format!(" (CUDA device {})", id))
             .unwrap_or_default(),
     );
-    let artifacts = generate_and_save_proofs(&config)
-        .await
-        .expect("proof generation pipeline failed");
+    let artifacts = match generate_and_save_proofs(&config).await {
+        Ok(artifacts) => artifacts,
+        Err(err) => {
+            tracing::error!("proof generation pipeline failed: {err}");
+            std::process::exit(1);
+        }
+    };
 
     tracing::info!(
         "Complete: validated headers from height {} to {}",
@@ -50,9 +54,34 @@ async fn main() {
     } else {
         tracing::info!("Skipped Groth16 wrapping; set GENERATE_GROTH16=1 to emit it");
     }
+    tracing::info!("========================================");
     tracing::info!(
-        "Total proving time: {:.2} seconds",
+        "TOTAL PROVING TIME: {:.2} seconds",
         artifacts.total_duration_secs,
     );
-    log_execution_report(&artifacts.execution_report);
+    tracing::info!("========================================");
+    if artifacts.phase_timings.is_empty() {
+        tracing::info!("Proving time breakdown: unavailable");
+    } else {
+        tracing::info!("Proving time breakdown:");
+        for phase in &artifacts.phase_timings {
+            let pct = if artifacts.total_duration_secs > 0.0 {
+                (phase.total_duration_secs * 100.0) / artifacts.total_duration_secs
+            } else {
+                0.0
+            };
+            tracing::info!(
+                "  {}: {:.2}s ({:.2}%){}",
+                phase.label,
+                phase.total_duration_secs,
+                pct,
+                if phase.invocations > 1 {
+                    format!(" across {} invocations", phase.invocations)
+                } else {
+                    String::new()
+                }
+            );
+        }
+    }
+    log_execution_report(&artifacts.execution_report, artifacts.total_duration_secs);
 }

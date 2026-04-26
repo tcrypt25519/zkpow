@@ -405,61 +405,73 @@ impl core::fmt::Display for ParseError {
 }
 
 pub(crate) fn check_exact_len(bytes: &[u8], expected: usize) -> Result<(), ParseError> {
-    if bytes.len() != expected {
-        return Err(ParseError::InvalidLength {
-            expected,
-            actual: bytes.len(),
-        });
-    }
-    Ok(())
+    cycle_track("util/check_exact_len", || {
+        if bytes.len() != expected {
+            return Err(ParseError::InvalidLength {
+                expected,
+                actual: bytes.len(),
+            });
+        }
+        Ok(())
+    })
 }
 
 pub(crate) fn check_aligned<T>(bytes: &[u8], offset: usize) -> Result<(), ParseError> {
-    let required = align_of::<T>();
-    let address = bytes.as_ptr() as usize;
-    if !address.is_multiple_of(required) {
-        return Err(ParseError::Misaligned { offset, required });
-    }
-    Ok(())
+    cycle_track("util/check_aligned", || {
+        let required = align_of::<T>();
+        let address = bytes.as_ptr() as usize;
+        if !address.is_multiple_of(required) {
+            return Err(ParseError::Misaligned { offset, required });
+        }
+        Ok(())
+    })
 }
 
 pub(crate) fn copy_from_bytes<T>(bytes: &[u8]) -> Result<T, ParseError> {
-    check_exact_len(bytes, size_of::<T>())?;
-    let mut value = MaybeUninit::<T>::uninit();
-    unsafe {
-        ptr::copy_nonoverlapping(
-            bytes.as_ptr(),
-            value.as_mut_ptr() as *mut u8,
-            size_of::<T>(),
-        );
-        Ok(value.assume_init())
-    }
+    cycle_track("util/copy_from_bytes", || {
+        check_exact_len(bytes, size_of::<T>())?;
+        let mut value = MaybeUninit::<T>::uninit();
+        unsafe {
+            ptr::copy_nonoverlapping(
+                bytes.as_ptr(),
+                value.as_mut_ptr() as *mut u8,
+                size_of::<T>(),
+            );
+            Ok(value.assume_init())
+        }
+    })
 }
 
 pub(crate) fn copy_to_bytes<const N: usize, T>(value: &T) -> [u8; N] {
-    assert_eq!(size_of::<T>(), N);
-    let mut bytes = [0u8; N];
-    unsafe {
-        ptr::copy_nonoverlapping(value as *const T as *const u8, bytes.as_mut_ptr(), N);
-    }
-    bytes
+    cycle_track("util/copy_to_bytes", || {
+        assert_eq!(size_of::<T>(), N);
+        let mut bytes = [0u8; N];
+        unsafe {
+            ptr::copy_nonoverlapping(value as *const T as *const u8, bytes.as_mut_ptr(), N);
+        }
+        bytes
+    })
 }
 
 pub(crate) fn ref_from_bytes<T>(bytes: &[u8], offset: usize) -> Result<&T, ParseError> {
-    check_exact_len(bytes, size_of::<T>())?;
-    check_aligned::<T>(bytes, offset)?;
-    Ok(unsafe { &*(bytes.as_ptr() as *const T) })
+    cycle_track("util/ref_from_bytes", || {
+        check_exact_len(bytes, size_of::<T>())?;
+        check_aligned::<T>(bytes, offset)?;
+        Ok(unsafe { &*(bytes.as_ptr() as *const T) })
+    })
 }
 
 pub(crate) fn slice_from_bytes<T>(bytes: &[u8], offset: usize) -> Result<&[T], ParseError> {
-    if !bytes.len().is_multiple_of(size_of::<T>()) {
-        return Err(ParseError::InvalidLength {
-            expected: bytes.len().div_ceil(size_of::<T>()) * size_of::<T>(),
-            actual: bytes.len(),
-        });
-    }
-    check_aligned::<T>(bytes, offset)?;
-    Ok(unsafe { slice::from_raw_parts(bytes.as_ptr() as *const T, bytes.len() / size_of::<T>()) })
+    cycle_track("util/slice_from_bytes", || {
+        if !bytes.len().is_multiple_of(size_of::<T>()) {
+            return Err(ParseError::InvalidLength {
+                expected: bytes.len().div_ceil(size_of::<T>()) * size_of::<T>(),
+                actual: bytes.len(),
+            });
+        }
+        check_aligned::<T>(bytes, offset)?;
+        Ok(unsafe { slice::from_raw_parts(bytes.as_ptr() as *const T, bytes.len() / size_of::<T>()) })
+    })
 }
 
 /// Prover-supplied fields for a new header.
@@ -930,13 +942,20 @@ impl State {
                 let median_time_past = if state.timestamp_count() == 0 {
                     None
                 } else {
-                    cycle_track("state/apply_headers/median_hint_check", || {
-                        assert!(
-                            state.median_hint_is_valid(claimed_median),
-                            "invalid median time past hint at header index {}",
-                            header_index
+                    if !cycle_track("state/apply_headers/median_hint_check", || {
+                        state.median_hint_is_valid(claimed_median)
+                    }) {
+                        flush_pending_chain_work(
+                            &mut state,
+                            &mut pending_run_work,
+                            &mut pending_run_count,
                         );
-                    });
+                        return Err(ProofFailure {
+                            last_valid_state: state,
+                            error_code: ValidationErrorCode::MedianTimePastHintInvalid,
+                            header_index: header_index as u32,
+                        });
+                    }
                     Some(claimed_median)
                 };
                 if pending_run_work != Some(required_work) {
@@ -1047,6 +1066,7 @@ pub enum ValidationErrorCode {
     PowInsufficient = 2,
     TimestampTooOld = 3,
     GenesisHashMismatch = 4,
+    MedianTimePastHintInvalid = 5,
 }
 
 impl ValidationErrorCode {
@@ -1064,6 +1084,7 @@ impl ValidationErrorCode {
             Self::PowInsufficient => "PoW insufficient",
             Self::TimestampTooOld => "Timestamp too old",
             Self::GenesisHashMismatch => "Genesis hash mismatch",
+            Self::MedianTimePastHintInvalid => "Median time past hint invalid",
         }
     }
 }
@@ -1083,6 +1104,7 @@ impl TryFrom<u8> for ValidationErrorCode {
             2 => Ok(Self::PowInsufficient),
             3 => Ok(Self::TimestampTooOld),
             4 => Ok(Self::GenesisHashMismatch),
+            5 => Ok(Self::MedianTimePastHintInvalid),
             _ => Err(PublicValuesParseError::UnknownErrorCode { code: value }),
         }
     }
@@ -1205,54 +1227,58 @@ impl core::fmt::Display for PublicValuesParseError {
 /// Convert compact `bits` encoding into a 256-bit target.
 #[must_use]
 pub fn bits_to_target(bits: CompactTarget) -> Target {
-    let bits = bits.to_consensus();
-    let exponent = bits >> 24;
-    let mantissa = bits & 0x00ff_ffff;
-    let mut target = [0u8; 32];
-    if mantissa == 0 {
-        return Target::from_raw(target);
-    }
-    let byte_offset = (exponent - 3) as usize;
-    if byte_offset < 32 {
-        target[byte_offset] = (mantissa & 0xff) as u8;
-    }
-    if byte_offset + 1 < 32 {
-        target[byte_offset + 1] = ((mantissa >> 8) & 0xff) as u8;
-    }
-    if byte_offset + 2 < 32 {
-        target[byte_offset + 2] = ((mantissa >> 16) & 0xff) as u8;
-    }
-    Target::from_raw(target)
+    cycle_track("pow/bits_to_target", || {
+        let bits = bits.to_consensus();
+        let exponent = bits >> 24;
+        let mantissa = bits & 0x00ff_ffff;
+        let mut target = [0u8; 32];
+        if mantissa == 0 {
+            return Target::from_raw(target);
+        }
+        let byte_offset = (exponent - 3) as usize;
+        if byte_offset < 32 {
+            target[byte_offset] = (mantissa & 0xff) as u8;
+        }
+        if byte_offset + 1 < 32 {
+            target[byte_offset + 1] = ((mantissa >> 8) & 0xff) as u8;
+        }
+        if byte_offset + 2 < 32 {
+            target[byte_offset + 2] = ((mantissa >> 16) & 0xff) as u8;
+        }
+        Target::from_raw(target)
+    })
 }
 
 /// Convert a full 256-bit target into compact `bits` encoding.
 #[must_use]
 pub fn target_to_bits(target: Target) -> CompactTarget {
-    let target = target.as_raw();
-    let mut high_byte = 31usize;
-    while high_byte > 0 && target[high_byte] == 0 {
-        high_byte -= 1;
-    }
-    if target[high_byte] == 0 {
-        return CompactTarget::from_consensus(0);
-    }
-    let bit_length = high_byte * 8 + (8 - target[high_byte].leading_zeros() as usize);
-    let nbytes = bit_length.div_ceil(8);
-    let mantissa = if high_byte >= 2 {
-        (target[high_byte] as u32) << 16
-            | (target[high_byte - 1] as u32) << 8
-            | target[high_byte - 2] as u32
-    } else if high_byte == 1 {
-        (target[1] as u32) << 8 | target[0] as u32
-    } else {
-        target[0] as u32
-    };
-    let (mantissa, nbytes) = if mantissa & 0x800000 != 0 {
-        (mantissa >> 8, nbytes + 1)
-    } else {
-        (mantissa, nbytes)
-    };
-    CompactTarget::from_consensus(((nbytes as u32) << 24) | (mantissa & 0x00ff_ffff))
+    cycle_track("pow/target_to_bits", || {
+        let target = target.as_raw();
+        let mut high_byte = 31usize;
+        while high_byte > 0 && target[high_byte] == 0 {
+            high_byte -= 1;
+        }
+        if target[high_byte] == 0 {
+            return CompactTarget::from_consensus(0);
+        }
+        let bit_length = high_byte * 8 + (8 - target[high_byte].leading_zeros() as usize);
+        let nbytes = bit_length.div_ceil(8);
+        let mantissa = if high_byte >= 2 {
+            (target[high_byte] as u32) << 16
+                | (target[high_byte - 1] as u32) << 8
+                | target[high_byte - 2] as u32
+        } else if high_byte == 1 {
+            (target[1] as u32) << 8 | target[0] as u32
+        } else {
+            target[0] as u32
+        };
+        let (mantissa, nbytes) = if mantissa & 0x800000 != 0 {
+            (mantissa >> 8, nbytes + 1)
+        } else {
+            (mantissa, nbytes)
+        };
+        CompactTarget::from_consensus(((nbytes as u32) << 24) | (mantissa & 0x00ff_ffff))
+    })
 }
 
 impl From<CompactTarget> for Target {
@@ -1270,117 +1296,133 @@ impl From<Target> for CompactTarget {
 /// Return `true` when `lhs` is strictly greater than `rhs` as unsigned 256-bit integers.
 #[must_use]
 pub fn target_exceeds(lhs: Target, rhs: Target) -> bool {
-    let lhs = lhs.as_raw();
-    let rhs = rhs.as_raw();
-    for i in (0..32).rev() {
-        if lhs[i] > rhs[i] {
-            return true;
+    cycle_track("pow/target_exceeds", || {
+        let lhs = lhs.as_raw();
+        let rhs = rhs.as_raw();
+        for i in (0..32).rev() {
+            if lhs[i] > rhs[i] {
+                return true;
+            }
+            if lhs[i] < rhs[i] {
+                return false;
+            }
         }
-        if lhs[i] < rhs[i] {
-            return false;
-        }
-    }
-    false
+        false
+    })
 }
 
 /// Check whether a header hash satisfies the compact target in `nbits`.
 #[must_use]
 pub fn hash_meets_target(hash: BlockHash, nbits: CompactTarget) -> bool {
-    let target = bits_to_target(nbits);
-    let hash = hash.as_raw();
-    let target = target.as_raw();
-    for i in (0..32).rev() {
-        if hash[i] > target[i] {
-            return false;
+    cycle_track("pow/hash_meets_target", || {
+        let target = bits_to_target(nbits);
+        let hash = hash.as_raw();
+        let target = target.as_raw();
+        for i in (0..32).rev() {
+            if hash[i] > target[i] {
+                return false;
+            }
+            if hash[i] < target[i] {
+                return true;
+            }
         }
-        if hash[i] < target[i] {
-            return true;
-        }
-    }
-    true
+        true
+    })
 }
 
 /// Add two little-endian `u256` values.
 #[must_use]
 pub fn u256_add(a: ChainWork, b: ChainWork) -> ChainWork {
-    let a = a.as_limbs();
-    let b = b.as_limbs();
-    let mut result = [0u64; 4];
-    let mut carry = 0u128;
-    for i in 0..4 {
-        let sum = (a[i] as u128) + (b[i] as u128) + carry;
-        result[i] = sum as u64;
-        carry = sum >> 64;
-    }
-    ChainWork::from_limbs(result)
+    cycle_track("u256/add", || {
+        let a = a.as_limbs();
+        let b = b.as_limbs();
+        let mut result = [0u64; 4];
+        let mut carry = 0u128;
+        for i in 0..4 {
+            let sum = (a[i] as u128) + (b[i] as u128) + carry;
+            result[i] = sum as u64;
+            carry = sum >> 64;
+        }
+        ChainWork::from_limbs(result)
+    })
 }
 
 /// Multiply a little-endian `u256` by a small scalar.
 #[must_use]
 pub fn u256_mul_u32(value: ChainWork, multiplier: u32) -> ChainWork {
-    let limbs = value.as_limbs();
-    let mut result = [0u64; 4];
-    let mut carry = 0u128;
-    let multiplier = multiplier as u128;
+    cycle_track("u256/mul_u32", || {
+        let limbs = value.as_limbs();
+        let mut result = [0u64; 4];
+        let mut carry = 0u128;
+        let multiplier = multiplier as u128;
 
-    for i in 0..4 {
-        let product = (limbs[i] as u128) * multiplier + carry;
-        result[i] = product as u64;
-        carry = product >> 64;
-    }
+        for i in 0..4 {
+            let product = (limbs[i] as u128) * multiplier + carry;
+            result[i] = product as u64;
+            carry = product >> 64;
+        }
 
-    ChainWork::from_limbs(result)
+        ChainWork::from_limbs(result)
+    })
 }
 
 fn target_plus_one(target: Target) -> [u64; 5] {
-    let target = target.as_raw();
-    let mut out = [0u64; 5];
-    let mut carry = 1u128;
-    for (i, limb_out) in out.iter_mut().enumerate().take(4) {
-        let base = i * 8;
-        let limb = u64::from_le_bytes(target[base..base + 8].try_into().unwrap()) as u128;
-        let sum = limb + carry;
-        *limb_out = sum as u64;
-        carry = sum >> 64;
-    }
-    out[4] = carry as u64;
-    out
+    cycle_track("pow/work/target_plus_one", || {
+        let target = target.as_raw();
+        let mut out = [0u64; 5];
+        let mut carry = 1u128;
+        for (i, limb_out) in out.iter_mut().enumerate().take(4) {
+            let base = i * 8;
+            let limb = u64::from_le_bytes(target[base..base + 8].try_into().unwrap()) as u128;
+            let sum = limb + carry;
+            *limb_out = sum as u64;
+            carry = sum >> 64;
+        }
+        out[4] = carry as u64;
+        out
+    })
 }
 
 fn u320_ge(lhs: &[u64; 5], rhs: &[u64; 5]) -> bool {
-    for i in (0..5).rev() {
-        if lhs[i] > rhs[i] {
-            return true;
+    cycle_track("pow/work/u320_ge", || {
+        for i in (0..5).rev() {
+            if lhs[i] > rhs[i] {
+                return true;
+            }
+            if lhs[i] < rhs[i] {
+                return false;
+            }
         }
-        if lhs[i] < rhs[i] {
-            return false;
-        }
-    }
-    true
+        true
+    })
 }
 
 fn u320_sub_assign(lhs: &mut [u64; 5], rhs: &[u64; 5]) {
-    let mut borrow = 0u128;
-    for i in 0..5 {
-        let rhs = rhs[i] as u128 + borrow;
-        let lhs_limb = lhs[i] as u128;
-        if lhs_limb >= rhs {
-            lhs[i] = (lhs_limb - rhs) as u64;
-            borrow = 0;
-        } else {
-            lhs[i] = ((1u128 << 64) + lhs_limb - rhs) as u64;
-            borrow = 1;
+    cycle_track("pow/work/u320_sub_assign", || {
+        let mut borrow = 0u128;
+        for i in 0..5 {
+            let rhs = rhs[i] as u128 + borrow;
+            let lhs_limb = lhs[i] as u128;
+            if lhs_limb >= rhs {
+                lhs[i] = (lhs_limb - rhs) as u64;
+                borrow = 0;
+            } else {
+                lhs[i] = ((1u128 << 64) + lhs_limb - rhs) as u64;
+                borrow = 1;
+            }
         }
-    }
+    })
 }
 
 fn u320_shl1(value: &mut [u64; 5]) {
-    let mut carry = 0u64;
-    for limb in value.iter_mut() {
-        let next_carry = *limb >> 63;
-        *limb = (*limb << 1) | carry;
-        carry = next_carry;
-    }
+    cycle_track("pow/work/u320_shl1", || {
+        let mut carry = 0u64;
+        for limb in value.iter_mut() {
+            let next_carry = *limb >> 63;
+            *limb = (*limb << 1) | carry;
+            carry = next_carry;
+        }
+    })
 }
 
 /// Compute one-block cumulative-work units from the expanded target.
@@ -1765,13 +1807,15 @@ mod tests {
             nonce: 7,
         }];
 
-        let result = std::panic::catch_unwind(|| {
-            state
-                .apply_headers_with_median_hints(&headers, &[ts(4)], |_| zero_hash())
-                .unwrap();
-        });
-
-        assert!(result.is_err());
+        let failure = state
+            .apply_headers_with_median_hints(&headers, &[ts(4)], |_| zero_hash())
+            .expect_err("wrong-rank hint should fail");
+        assert_eq!(
+            failure.error_code,
+            ValidationErrorCode::MedianTimePastHintInvalid
+        );
+        assert_eq!(failure.header_index, 0);
+        assert_eq!(failure.last_valid_state, state);
     }
 
     #[test]

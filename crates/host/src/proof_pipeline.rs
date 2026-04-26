@@ -534,14 +534,29 @@ where
         prover.execute(ELF, stdin.clone()).await
     })
     .await?;
-    tracing::info!(prover = prover_name, "Execution succeeded");
+    tracing::info!(prover = prover_name, "Execution completed");
 
-    timed_sync(
-        "verify_execution_public_values",
-        || -> Result<(), BoxError> {
-            verify_public_values(&public_values.to_vec(), expected_pv, "execution")
-        },
-    )?;
+    let execution_public_values = public_values.to_vec();
+    match HeaderChainPublicValues::parse(&execution_public_values) {
+        Ok(HeaderChainPublicValues::Success(_)) => {
+            timed_sync(
+                "verify_execution_public_values",
+                || -> Result<(), BoxError> {
+                    verify_public_values(&execution_public_values, expected_pv, "execution")
+                },
+            )?;
+        }
+        Ok(HeaderChainPublicValues::Failure(failure)) => {
+            return Err(format!(
+                "execution failed with {} at header {}",
+                failure.error_code, failure.header_index
+            )
+            .into());
+        }
+        Err(err) => {
+            return Err(format!("execution produced malformed public values: {err}").into());
+        }
+    }
 
     let compressed_proof = timed_async("prove_compressed", || async {
         prover.prove(&pk, stdin.clone()).compressed().await
@@ -624,7 +639,10 @@ pub async fn generate_and_save_proofs(
         Ok(util::records_to_new_headers(&header_records))
     })?;
     let median_hints = timed_sync("load_median_time_past_hints", || -> Result<_, BoxError> {
-        Ok(util::records_to_median_time_past_hints(&header_records))
+        Ok(util::median_time_past_hints_for_headers(
+            &current_state,
+            &headers,
+        ))
     })?;
     let loaded_count = headers.len() as u32;
     let expected_state = timed_sync("simulate_expected_state", || -> Result<_, BoxError> {
