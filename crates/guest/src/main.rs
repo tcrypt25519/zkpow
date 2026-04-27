@@ -45,7 +45,8 @@ fn commit_header_payload_length_error(input_bytes: &[u8]) -> ! {
 /// Hash a full 80-byte Bitcoin header with SHA256d.
 #[sp1_derive::cycle_tracker]
 fn hash_header(header: &Header) -> BlockHash {
-    BlockHash::from_raw(sha256d_80bytes(&header.to_bytes()))
+    let header_bytes: &[u8; 80] = unsafe { &*(header as *const Header as *const [u8; 80]) };
+    BlockHash::from_raw(sha256d_80bytes(header_bytes))
 }
 
 #[sp1_derive::cycle_tracker]
