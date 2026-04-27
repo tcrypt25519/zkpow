@@ -653,18 +653,16 @@ impl State {
         })
     }
 
-    /// Build the next authenticated state from the current state and a prover-supplied header.
-    fn next_inner<F>(
+    /// Build the next authenticated state from the current state, a prover-supplied header,
+    /// and a pre-computed block hash.
+    fn next_inner(
         &mut self,
-        new_header: NewHeader,
-        hash_header: F,
+        header: Header,
+        block_hash: BlockHash,
         median_time_past: Option<BlockTimestamp>,
         update_chain_work: bool,
-    ) -> Result<(), ValidationErrorCode>
-    where
-        F: FnOnce(&Header) -> BlockHash,
-    {
-        cycle_track("state/next", || {
+    ) -> Result<(), ValidationErrorCode> {
+        cycle_track("state/next_inner", || {
             let (required_nbits, required_target, required_work, timestamp_slot) =
                 cycle_track("state/next/setup", || {
                     (
@@ -674,13 +672,8 @@ impl State {
                         self.next_timestamp_slot(),
                     )
                 });
-            let header = cycle_track("state/next/build_header", || {
-                new_header.into_header(self.block_hash, required_nbits)
-            });
-            let block_hash = cycle_track("state/next/hash_header", || hash_header(&header));
-
             // Validate timestamp
-            cycle_track("state/validate/median_time_past", || {
+            cycle_track("state/next_inner/validate/median_time_past", || {
                 if let Some(median_time_past) = median_time_past.or_else(|| self.median_time_past())
                 {
                     if header.timestamp <= median_time_past {
@@ -691,7 +684,7 @@ impl State {
             })?;
 
             // Validate pow
-            cycle_track("state/validate/pow", || {
+            cycle_track("state/next_inner/validate/pow", || {
                 if !hash_meets_target(block_hash, required_nbits) {
                     return Err(ValidationErrorCode::PowInsufficient);
                 }
@@ -699,28 +692,26 @@ impl State {
             })?;
 
             // Now update self
-            cycle_track("state/next/update_height", || {
+            cycle_track("state/next_inner/update_height", || {
                 self.height += 1;
             });
-            cycle_track("state/next/timestamp_window", || {
-                self.timestamps[timestamp_slot] = new_header.timestamp;
+            cycle_track("state/next_inner/timestamp_window", || {
+                self.timestamps[timestamp_slot] = header.timestamp;
             });
 
-            if cycle_track("state/next/check_epoch_timestamp", || {
+            if cycle_track("state/next_innernext_inner/check_epoch_timestamp", || {
                 self.height.is_multiple_of(2016)
             }) {
-                cycle_track("state/next/epoch_timestamp", || {
-                    self.epoch_start_timestamp = new_header.timestamp;
+                cycle_track("state/next_inner/epoch_timestamp", || {
+                    self.epoch_start_timestamp = header.timestamp;
                 });
             }
 
-            if cycle_track("state/next/check_retarget", || {
+            if cycle_track("state/next_inner/check_retarget", || {
                 (self.height + 1).is_multiple_of(2016)
             }) {
-                cycle_track("state/next/retarget", || {
-                    let actual_timespan = new_header
-                        .timestamp
-                        .wrapping_sub(self.epoch_start_timestamp);
+                cycle_track("state/next_inner/retarget", || {
+                    let actual_timespan = header.timestamp.wrapping_sub(self.epoch_start_timestamp);
                     let expected_timespan: u32 = 2016 * 600;
                     let clamped = actual_timespan
                         .max(expected_timespan / 4)
@@ -737,11 +728,11 @@ impl State {
             }
 
             if update_chain_work {
-                self.chain_work = cycle_track("state/next/chain_work", || {
+                self.chain_work = cycle_track("state/next_inner/chain_work", || {
                     u256_add(self.chain_work, required_work)
                 });
             }
-            cycle_track("state/next/assign_state", || {
+            cycle_track("state/next_inner/assign_state", || {
                 self.header = header;
                 self.block_hash = block_hash;
             });
@@ -749,6 +740,7 @@ impl State {
         })
     }
 
+    #[cfg(test)]
     pub fn next<F>(
         &mut self,
         new_header: NewHeader,
@@ -757,155 +749,22 @@ impl State {
     where
         F: FnOnce(&Header) -> BlockHash,
     {
-        self.next_inner(new_header, hash_header, None, true)
-    }
-    #[allow(clippy::result_large_err)]
-    pub fn apply_headers<F>(
-        &self,
-        headers: &[NewHeader],
-        hash_header: F,
-    ) -> Result<Self, ProofFailure>
-    where
-        F: Copy + Fn(&Header) -> BlockHash,
-    {
-        cycle_track("state/apply_headers", || {
-            let mut state = self.clone();
-            let mut median_window = state.timestamps;
-            let mut median_window_len = state.timestamp_count();
-            if median_window_len >= WINDOW_SIZE {
-                median_window.sort_unstable();
-            } else {
-                median_window[..median_window_len].sort_unstable();
-            }
-            let mut pending_run_work: Option<ChainWork> = None;
-            let mut pending_run_count: u32 = 0;
-
-            let flush_pending_chain_work =
-                |state: &mut State, run_work: &mut Option<ChainWork>, run_count: &mut u32| {
-                    if let (Some(run_work), count) = (run_work.take(), *run_count) {
-                        if count > 0 {
-                            cycle_track("state/apply_headers/chain_work_flush", || {
-                                let accumulated_work = u256_mul_u32(run_work, count);
-                                state.chain_work = u256_add(state.chain_work, accumulated_work);
-                            });
-                        }
-                    }
-                    *run_count = 0;
-                };
-
-            let median_window_remove =
-                |window: &mut [BlockTimestamp; WINDOW_SIZE],
-                 window_len: &mut usize,
-                 value: BlockTimestamp| {
-                    if *window_len == 0 {
-                        return;
-                    }
-
-                    let search_len = *window_len;
-                    let idx = window[..search_len]
-                        .binary_search(&value)
-                        .expect("tracked median window should contain the evicted timestamp");
-
-                    for i in idx..search_len - 1 {
-                        window[i] = window[i + 1];
-                    }
-                    *window_len -= 1;
-                };
-
-            let median_window_insert =
-                |window: &mut [BlockTimestamp; WINDOW_SIZE],
-                 window_len: &mut usize,
-                 value: BlockTimestamp| {
-                    let search_len = *window_len;
-                    let idx = window[..search_len]
-                        .binary_search(&value)
-                        .unwrap_or_else(|idx| idx);
-
-                    for i in (idx..search_len).rev() {
-                        window[i + 1] = window[i];
-                    }
-                    window[idx] = value;
-                    *window_len += 1;
-                };
-
-            for (header_index, new_header) in headers.iter().copied().enumerate() {
-                let required_nbits = state.next_nbits;
-                let required_work = state.next_work;
-                let median_time_past = if median_window_len == 0 {
-                    None
-                } else {
-                    Some(median_window[median_window_len / 2])
-                };
-                if pending_run_work != Some(required_work) {
-                    flush_pending_chain_work(
-                        &mut state,
-                        &mut pending_run_work,
-                        &mut pending_run_count,
-                    );
-                    pending_run_work = Some(required_work);
-                }
-
-                let timestamp_slot = state.next_timestamp_slot();
-                let old_timestamp = state.timestamps[timestamp_slot];
-
-                if let Err(error_code) =
-                    state.next_inner(new_header, hash_header, median_time_past, false)
-                {
-                    flush_pending_chain_work(
-                        &mut state,
-                        &mut pending_run_work,
-                        &mut pending_run_count,
-                    );
-                    return Err(ProofFailure {
-                        last_valid_state: state,
-                        error_code,
-                        header_index: header_index as u32,
-                    });
-                }
-
-                if state.height == 1 {
-                    median_window[0] = new_header.timestamp;
-                    median_window_len = 1;
-                } else if median_window_len < WINDOW_SIZE {
-                    median_window_insert(
-                        &mut median_window,
-                        &mut median_window_len,
-                        new_header.timestamp,
-                    );
-                } else {
-                    median_window_remove(&mut median_window, &mut median_window_len, old_timestamp);
-                    median_window_insert(
-                        &mut median_window,
-                        &mut median_window_len,
-                        new_header.timestamp,
-                    );
-                }
-
-                pending_run_count += 1;
-                if state.next_nbits != required_nbits {
-                    flush_pending_chain_work(
-                        &mut state,
-                        &mut pending_run_work,
-                        &mut pending_run_count,
-                    );
-                }
-            }
-
-            flush_pending_chain_work(&mut state, &mut pending_run_work, &mut pending_run_count);
-
-            Ok(state)
+        cycle_track("state/next", || {
+            let header = new_header.into_header(self.block_hash, self.next_nbits);
+            let block_hash = hash_header(&header);
+            self.next_inner(header, block_hash, None, true)
         })
     }
 
     #[allow(clippy::result_large_err)]
-    pub fn apply_headers_with_median_hints<F>(
+    pub fn apply_headers<F>(
         &self,
         headers: &[NewHeader],
         median_hints: &[BlockTimestamp],
-        hash_header: F,
+        mut hash_header: F,
     ) -> Result<Self, ProofFailure>
     where
-        F: Copy + Fn(&Header) -> BlockHash,
+        F: FnMut(&Header) -> BlockHash,
     {
         cycle_track("state/apply_headers", || {
             assert_eq!(
@@ -939,31 +798,36 @@ impl State {
             {
                 let required_nbits = state.next_nbits;
                 let required_work = state.next_work;
+                let header = cycle_track("state/apply_headers/build_header", || {
+                    new_header.into_header(state.block_hash, required_nbits)
+                });
+                let block_hash =
+                    cycle_track("state/apply_headers/hash_header", || hash_header(&header));
                 let median_time_past = if state.timestamp_count() == 0 {
                     None
                 } else {
-                    #[cfg(target_os = "zkvm")]
-                    {
-                        let window_len = state.timestamp_count();
-                        let tracked_window: alloc::vec::Vec<u32> = state
-                            .timestamps
-                            .iter()
-                            .take(window_len)
-                            .map(|timestamp| timestamp.to_consensus())
-                            .collect();
-                        sp1_zkvm::io::write(
-                            1,
-                            alloc::format!(
-                                "median-hint-debug: header_index={} height={} claimed_median={} computed_median={:?} tracked_window={:?}\n",
-                                header_index,
-                                state.height,
-                                claimed_median.to_consensus(),
-                                state.median_time_past().map(|timestamp| timestamp.to_consensus()),
-                                tracked_window,
-                            )
-                            .as_bytes(),
-                        );
-                    }
+                    // #[cfg(target_os = "zkvm")]
+                    // {
+                    //     let window_len = state.timestamp_count();
+                    //     let tracked_window: alloc::vec::Vec<u32> = state
+                    //         .timestamps
+                    //         .iter()
+                    //         .take(window_len)
+                    //         .map(|timestamp| timestamp.to_consensus())
+                    //         .collect();
+                    //     sp1_zkvm::io::write(
+                    //         1,
+                    //         alloc::format!(
+                    //             "median-hint-debug: header_index={} height={} claimed_median={} computed_median={:?} tracked_window={:?}\n",
+                    //             header_index,
+                    //             state.height,
+                    //             claimed_median.to_consensus(),
+                    //             state.median_time_past().map(|timestamp| timestamp.to_consensus()),
+                    //             tracked_window,
+                    //         )
+                    //         .as_bytes(),
+                    //     );
+                    // }
                     cycle_track("state/apply_headers/median_hint_check", || {
                         assert!(
                             state.median_hint_is_valid(claimed_median),
@@ -983,7 +847,7 @@ impl State {
                 }
 
                 if let Err(error_code) =
-                    state.next_inner(new_header, hash_header, median_time_past, false)
+                    state.next_inner(header, block_hash, median_time_past, false)
                 {
                     flush_pending_chain_work(
                         &mut state,
@@ -1030,48 +894,7 @@ impl Default for State {
     }
 }
 
-/// A typed state transition built from an authenticated current state and a new header.
-pub struct NextState<'a> {
-    current: &'a State,
-    next: State,
-}
 
-impl NextState<'_> {
-    /// Validate the transition-specific constraints on the candidate next state.
-    pub fn validate(&self) -> Result<(), ValidationErrorCode> {
-        cycle_track("state/validate", || {
-            cycle_track("state/validate/median_time_past", || {
-                if let Some(median_time_past) = self.current.median_time_past() {
-                    if self.next.header.timestamp <= median_time_past {
-                        return Err(ValidationErrorCode::TimestampTooOld);
-                    }
-                }
-                Ok(())
-            })?;
-
-            cycle_track("state/validate/pow", || {
-                if !hash_meets_target(self.next.block_hash, self.next.header.nbits) {
-                    return Err(ValidationErrorCode::PowInsufficient);
-                }
-                Ok(())
-            })?;
-
-            Ok(())
-        })
-    }
-
-    /// Borrow the next-state candidate.
-    #[must_use]
-    pub fn state(&self) -> &State {
-        &self.next
-    }
-
-    /// Consume the transition and return the next-state candidate.
-    #[must_use]
-    pub fn into_state(self) -> State {
-        self.next
-    }
-}
 
 /// Validation status emitted by the program on failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1305,21 +1128,25 @@ impl From<Target> for CompactTarget {
     }
 }
 
+/// Compare two 256-bit little-endian byte arrays.
+#[must_use]
+fn u256_le(lhs: &[u8; 32], rhs: &[u8; 32]) -> core::cmp::Ordering {
+    cycle_track("pow/u256_le", || {
+        for i in (0..32).rev() {
+            match lhs[i].cmp(&rhs[i]) {
+                core::cmp::Ordering::Equal => continue,
+                other => return other,
+            }
+        }
+        core::cmp::Ordering::Equal
+    })
+}
+
 /// Return `true` when `lhs` is strictly greater than `rhs` as unsigned 256-bit integers.
 #[must_use]
 pub fn target_exceeds(lhs: Target, rhs: Target) -> bool {
     cycle_track("pow/target_exceeds", || {
-        let lhs = lhs.as_raw();
-        let rhs = rhs.as_raw();
-        for i in (0..32).rev() {
-            if lhs[i] > rhs[i] {
-                return true;
-            }
-            if lhs[i] < rhs[i] {
-                return false;
-            }
-        }
-        false
+        u256_le(lhs.as_raw(), rhs.as_raw()) == core::cmp::Ordering::Greater
     })
 }
 
@@ -1328,17 +1155,7 @@ pub fn target_exceeds(lhs: Target, rhs: Target) -> bool {
 pub fn hash_meets_target(hash: BlockHash, nbits: CompactTarget) -> bool {
     cycle_track("pow/hash_meets_target", || {
         let target = bits_to_target(nbits);
-        let hash = hash.as_raw();
-        let target = target.as_raw();
-        for i in (0..32).rev() {
-            if hash[i] > target[i] {
-                return false;
-            }
-            if hash[i] < target[i] {
-                return true;
-            }
-        }
-        true
+        u256_le(hash.as_raw(), target.as_raw()) != core::cmp::Ordering::Greater
     })
 }
 
@@ -1671,8 +1488,9 @@ mod tests {
             },
         ];
 
+        let hints = median_hints_for_headers(&state, &headers);
         let result = state
-            .apply_headers(&headers, |_| zero_hash())
+            .apply_headers(&headers, &hints, |_| zero_hash())
             .expect("headers should validate");
 
         let work = work_from_bits(CompactTarget::from_consensus(GENESIS_NBITS));
@@ -1698,8 +1516,10 @@ mod tests {
             },
         ];
 
+        let hints = median_hints_for_headers(&state, &headers);
+
         let failure = state
-            .apply_headers(&headers, |_| zero_hash())
+            .apply_headers(&headers, &hints, |_| zero_hash())
             .expect_err("second header should fail timestamp validation");
 
         let work = work_from_bits(CompactTarget::from_consensus(GENESIS_NBITS));
@@ -1728,8 +1548,9 @@ mod tests {
                 .expect("sequential validation should succeed");
         }
 
+        let hints = median_hints_for_headers(&test_state(), &headers);
         let batched = test_state()
-            .apply_headers(&headers, |_| zero_hash())
+            .apply_headers(&headers, &hints, |_| zero_hash())
             .expect("batched validation should succeed");
 
         assert_eq!(batched, sequential);
@@ -1748,14 +1569,10 @@ mod tests {
         let state = test_state();
         let hints = median_hints_for_headers(&state, &headers);
 
-        let sorted = state
-            .apply_headers(&headers, |_| zero_hash())
-            .expect("sorted-window validation should succeed");
         let hinted = state
-            .apply_headers_with_median_hints(&headers, &hints, |_| zero_hash())
+            .apply_headers(&headers, &hints, |_| zero_hash())
             .expect("hinted validation should succeed");
-
-        assert_eq!(hinted, sorted);
+        assert_eq!(hinted.height, 23);
     }
 
     #[test]
@@ -1787,7 +1604,7 @@ mod tests {
         }];
 
         state
-            .apply_headers_with_median_hints(&headers, &[ts(6)], |_| zero_hash())
+            .apply_headers(&headers, &[ts(6)], |_| zero_hash())
             .expect("duplicate median values should be accepted");
     }
 
@@ -1821,7 +1638,7 @@ mod tests {
 
         let result = std::panic::catch_unwind(|| {
             state
-                .apply_headers_with_median_hints(&headers, &[ts(4)], |_| zero_hash())
+                .apply_headers(&headers, &[ts(4)], |_| zero_hash())
                 .unwrap();
         });
 

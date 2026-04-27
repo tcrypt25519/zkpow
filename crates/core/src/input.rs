@@ -281,17 +281,28 @@ impl<'a> InputRef<'a> {
     where
         F: FnOnce(&Header) -> BlockHash + Copy,
     {
-        let mut state = self.state.clone();
-        if state.height == 0 {
+        Input {
+            state: self.state.with_genesis_hash(hash_header),
+            recursive_proof: *self.recursive_proof,
+            headers: self.headers.to_vec(),
+        }
+    }
+}
+
+impl State {
+    /// Clone this state and fill in the genesis hash when the wire input leaves it unset.
+    #[must_use]
+    pub fn with_genesis_hash<F>(&self, hash_header: F) -> Self
+    where
+        F: FnOnce(&Header) -> BlockHash + Copy,
+    {
+        let mut state = self.clone();
+        if state.height == 0 && state.genesis_hash == BlockHash::default() {
             let block_hash = hash_header(&state.header);
             state.block_hash = block_hash;
             state.genesis_hash = block_hash;
         }
-        Input {
-            state,
-            recursive_proof: *self.recursive_proof,
-            headers: self.headers.to_vec(),
-        }
+        state
     }
 }
 
@@ -320,17 +331,17 @@ impl Input {
     /// Serialize to the host/guest wire format.
     #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut input = self.clone();
-        if input.state.height == 0 {
-            input.state.genesis_hash = BlockHash::default();
-        }
-
         let mut bytes = Vec::with_capacity(
-            STATE_SIZE + RECURSIVE_PROOF_SIZE + (input.headers.len() * NEW_HEADER_SIZE),
+            STATE_SIZE + RECURSIVE_PROOF_SIZE + (self.headers.len() * NEW_HEADER_SIZE),
         );
-        bytes.extend_from_slice(&input.state.to_bytes());
-        bytes.extend_from_slice(&input.recursive_proof.to_bytes());
-        for header in &input.headers {
+        let mut state = self.state.clone();
+        // TODO: This genesis_hash setting logic shoudl be somewhere; but not here.
+        if state.height == 0 {
+            state.genesis_hash = BlockHash::default();
+        }
+        bytes.extend_from_slice(&state.to_bytes());
+        bytes.extend_from_slice(&self.recursive_proof.to_bytes());
+        for header in &self.headers {
             bytes.extend_from_slice(&header.to_bytes());
         }
         bytes
