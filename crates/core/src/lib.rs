@@ -19,7 +19,7 @@ pub use input::{
 compile_error!("bitcoin-header-chain wire types require a little-endian target");
 
 /// Execute a closure while emitting stable, report-backed cycle-tracker markers in the guest.
-#[cfg(target_os = "zkvm")]
+#[cfg(all(target_os = "zkvm", feature = "profiling"))]
 #[inline(always)]
 pub fn cycle_track_report<T, F>(label: &'static str, f: F) -> T
 where
@@ -38,7 +38,7 @@ where
 }
 
 /// Execute a closure while preserving the call shape on host builds.
-#[cfg(not(target_os = "zkvm"))]
+#[cfg(any(target_os = "zkvm", not(feature = "profiling")))]
 #[inline(always)]
 pub fn cycle_track_report<T, F>(_label: &'static str, f: F) -> T
 where
