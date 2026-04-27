@@ -252,8 +252,9 @@ pub fn genesis_state_from_record(genesis: HeaderRecord, genesis_hash: BlockHash)
 /// Simulate the zkVM program locally to compute the expected [`State`] after
 /// validating a batch of headers.
 pub fn compute_final_state(initial_state: &State, headers: &[NewHeader]) -> State {
+    let hints = median_time_past_hints_for_headers(initial_state, headers);
     initial_state
-        .apply_headers(headers, hash_header)
+        .apply_headers(headers, &hints.medians, hash_header)
         .expect("host state transition should succeed")
 }
 

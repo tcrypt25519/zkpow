@@ -35,10 +35,9 @@ fn commit_error(state: &State, error_code: ValidationErrorCode, header_index: u3
 
 /// Commit a header-payload parse failure using the authenticated input state.
 fn commit_header_payload_length_error(input_bytes: &[u8]) -> ! {
-    let mut state = parse_state(input_bytes);
-    if state.height == 0 && state.genesis_hash == BlockHash::default() {
-        initialize_genesis_hash(&mut state);
-    }
+    let state = State::ref_from_bytes(&input_bytes[..STATE_SIZE], 0)
+        .expect("input should contain an initial state")
+        .with_genesis_hash(hash_header);
     commit_error(&state, ValidationErrorCode::HeaderPayloadLengthInvalid, 0)
 }
 
@@ -63,18 +62,6 @@ fn commit_failure_metadata(error_code: ValidationErrorCode, header_index: u32) {
 #[sp1_derive::cycle_tracker]
 fn serialize_state(state: &State) -> [u8; STATE_SIZE] {
     state.to_bytes()
-}
-
-#[sp1_derive::cycle_tracker]
-fn parse_state(input_bytes: &[u8]) -> State {
-    State::parse(&input_bytes[..STATE_SIZE]).expect("input should contain an initial state")
-}
-
-#[sp1_derive::cycle_tracker]
-fn initialize_genesis_hash(state: &mut State) {
-    let block_hash = hash_header(&state.header);
-    state.block_hash = block_hash;
-    state.genesis_hash = block_hash;
 }
 
 #[sp1_derive::cycle_tracker]
@@ -113,7 +100,7 @@ fn apply_headers_or_commit(
     headers: &[NewHeader],
     median_hints: &MedianTimePastHintsRef<'_>,
 ) -> State {
-    match state.apply_headers_with_median_hints(headers, median_hints.medians, hash_header) {
+    match state.apply_headers(headers, median_hints.medians, hash_header) {
         Ok(state) => state,
         Err(failure) => commit_error(
             &failure.last_valid_state,
@@ -147,10 +134,7 @@ pub fn main() {
     let median_hint_bytes = sp1_zkvm::io::read_vec();
     let median_hints = parse_median_hints(&median_hint_bytes, input.headers.len());
 
-    let mut state = input.state.clone();
-    if state.height == 0 && state.genesis_hash == BlockHash::default() {
-        initialize_genesis_hash(&mut state);
-    }
+    let state = input.state.with_genesis_hash(hash_header);
 
     if state.height > 0 {
         verify_recursive_proof(&state, input.recursive_proof);

@@ -7,7 +7,7 @@ publish = false
 [dependencies]
 zkpow-core = { workspace = true }
 sp1-zkvm = { workspace = true, features = ["lib", "verify"] }
-sp1-derive = "6.1.0"
+sp1-derive = { workspace = true }
 
 [features]
 default = []
