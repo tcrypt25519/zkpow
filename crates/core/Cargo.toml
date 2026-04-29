@@ -12,3 +12,4 @@ profiling = []
 
 [dependencies]
 sp1-zkvm = { workspace = true }
+thiserror = { version = "2.0", default-features = false }

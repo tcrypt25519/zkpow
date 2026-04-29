@@ -11,7 +11,7 @@ use core::{
 
 pub mod input;
 pub use input::{
-    Input, InputError, InputRef, MedianTimePastHintError, MedianTimePastHints,
+    Input, InputError, InputMut, InputRef, MedianTimePastHintError, MedianTimePastHints,
     MedianTimePastHintsRef, RecursiveProof,
 };
 
@@ -58,15 +58,15 @@ where
 
 /// Size of the serialized [`State`] in bytes.
 pub const STATE_SIZE: usize = size_of::<State>();
-
-/// Size of each [`NewHeader`] input from the prover.
-pub const NEW_HEADER_SIZE: usize = 44;
-
 /// Size of a serialized [`RecursiveProof`] in bytes.
 pub const RECURSIVE_PROOF_SIZE: usize = size_of::<RecursiveProof>();
+/// Size of each [`NewHeader`] input from the prover.
+pub const NEW_HEADER_SIZE: usize = size_of::<NewHeader>();
+
+pub const PROOF_CARRYING_STATE_SIZE: usize = RECURSIVE_PROOF_SIZE;
 
 /// Size of a serialized Bitcoin block header in bytes.
-pub const BLOCK_HEADER_SIZE: usize = 80;
+pub const BLOCK_HEADER_SIZE: usize = size_of::<Header>();
 
 /// Sliding window size used for median-time-past checks.
 pub const WINDOW_SIZE: usize = 11;
@@ -359,49 +359,18 @@ impl From<PublicValuesDigest> for [u8; 32] {
 }
 
 /// Parse errors for fixed-width serialized core types.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum ParseError {
-    InvalidLength {
-        expected: usize,
-        actual: usize,
-    },
-    Misaligned {
-        offset: usize,
-        required: usize,
-    },
+    #[error("invalid length: expected {expected}, got {actual}")]
+    InvalidLength { expected: usize, actual: usize },
+    #[error("misaligned input requires {required}-byte alignment")]
+    Misaligned { required: usize },
+    #[error("truncated input at offset {offset}: need {needed} bytes, got {actual}")]
     Truncated {
         offset: usize,
         needed: usize,
         actual: usize,
     },
-}
-
-impl core::fmt::Display for ParseError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::InvalidLength { expected, actual } => {
-                write!(f, "invalid length: expected {}, got {}", expected, actual)
-            }
-            Self::Misaligned { offset, required } => {
-                write!(
-                    f,
-                    "misaligned input at offset {}: requires {}-byte alignment",
-                    offset, required
-                )
-            }
-            Self::Truncated {
-                offset,
-                needed,
-                actual,
-            } => {
-                write!(
-                    f,
-                    "truncated input at offset {}: need {} bytes, got {}",
-                    offset, needed, actual
-                )
-            }
-        }
-    }
 }
 
 pub(crate) fn check_exact_len(bytes: &[u8], expected: usize) -> Result<(), ParseError> {
@@ -416,12 +385,12 @@ pub(crate) fn check_exact_len(bytes: &[u8], expected: usize) -> Result<(), Parse
     })
 }
 
-pub(crate) fn check_aligned<T>(bytes: &[u8], offset: usize) -> Result<(), ParseError> {
+pub(crate) fn check_aligned<T>(bytes: &[u8]) -> Result<(), ParseError> {
     cycle_track("util/check_aligned", || {
         let required = align_of::<T>();
         let address = bytes.as_ptr() as usize;
         if !address.is_multiple_of(required) {
-            return Err(ParseError::Misaligned { offset, required });
+            return Err(ParseError::Misaligned { required });
         }
         Ok(())
     })
@@ -453,15 +422,23 @@ pub(crate) fn copy_to_bytes<const N: usize, T>(value: &T) -> [u8; N] {
     })
 }
 
-pub(crate) fn ref_from_bytes<T>(bytes: &[u8], offset: usize) -> Result<&T, ParseError> {
+pub(crate) fn ref_from_bytes<T>(bytes: &[u8]) -> Result<&T, ParseError> {
     cycle_track("util/ref_from_bytes", || {
         check_exact_len(bytes, size_of::<T>())?;
-        check_aligned::<T>(bytes, offset)?;
+        check_aligned::<T>(bytes)?;
         Ok(unsafe { &*(bytes.as_ptr() as *const T) })
     })
 }
 
-pub(crate) fn slice_from_bytes<T>(bytes: &[u8], offset: usize) -> Result<&[T], ParseError> {
+pub(crate) fn mut_from_bytes<T>(bytes: &mut [u8]) -> Result<&mut T, ParseError> {
+    cycle_track("util/mut_from_bytes", || {
+        check_exact_len(bytes, size_of::<T>())?;
+        check_aligned::<T>(bytes)?;
+        Ok(unsafe { &mut *(bytes.as_mut_ptr() as *mut T) })
+    })
+}
+
+pub(crate) fn slice_from_bytes<T>(bytes: &[u8]) -> Result<&[T], ParseError> {
     cycle_track("util/slice_from_bytes", || {
         if !bytes.len().is_multiple_of(size_of::<T>()) {
             return Err(ParseError::InvalidLength {
@@ -469,8 +446,10 @@ pub(crate) fn slice_from_bytes<T>(bytes: &[u8], offset: usize) -> Result<&[T], P
                 actual: bytes.len(),
             });
         }
-        check_aligned::<T>(bytes, offset)?;
-        Ok(unsafe { slice::from_raw_parts(bytes.as_ptr() as *const T, bytes.len() / size_of::<T>()) })
+        check_aligned::<T>(bytes)?;
+        Ok(unsafe {
+            slice::from_raw_parts(bytes.as_ptr() as *const T, bytes.len() / size_of::<T>())
+        })
     })
 }
 
@@ -508,8 +487,8 @@ impl NewHeader {
     }
 
     /// Borrow a slice of [`NewHeader`] records directly from aligned protocol bytes.
-    pub fn slice_from_bytes(bytes: &[u8], offset: usize) -> Result<&[Self], ParseError> {
-        cycle_track("parse/new_header_slice", || slice_from_bytes(bytes, offset))
+    pub fn slice_from_bytes(bytes: &[u8]) -> Result<&[Self], ParseError> {
+        cycle_track("parse/new_header_slice", || slice_from_bytes(bytes))
     }
 
     /// Serialize to exactly [`NEW_HEADER_SIZE`] bytes.
@@ -590,8 +569,8 @@ impl State {
     }
 
     /// Borrow a [`State`] directly from aligned protocol bytes.
-    pub fn ref_from_bytes(bytes: &[u8], offset: usize) -> Result<&Self, ParseError> {
-        cycle_track("parse/state_ref", || ref_from_bytes(bytes, offset))
+    pub fn ref_from_bytes(bytes: &[u8]) -> Result<&Self, ParseError> {
+        cycle_track("parse/state_ref", || ref_from_bytes(bytes))
     }
 
     /// The expanded proof-of-work target required for the next header.
@@ -757,12 +736,12 @@ impl State {
     }
 
     #[allow(clippy::result_large_err)]
-    pub fn apply_headers<F>(
-        &self,
+    pub fn apply_headers_in_place<F>(
+        &mut self,
         headers: &[NewHeader],
         median_hints: &[BlockTimestamp],
         mut hash_header: F,
-    ) -> Result<Self, ProofFailure>
+    ) -> Result<(), ProofFailure>
     where
         F: FnMut(&Header) -> BlockHash,
     {
@@ -773,7 +752,6 @@ impl State {
                 "median hint count must match header count"
             );
 
-            let mut state = self.clone();
             let mut pending_run_work: Option<ChainWork> = None;
             let mut pending_run_count: u32 = 0;
 
@@ -796,20 +774,20 @@ impl State {
                 .zip(median_hints.iter().copied())
                 .enumerate()
             {
-                let required_nbits = state.next_nbits;
-                let required_work = state.next_work;
+                let required_nbits = self.next_nbits;
+                let required_work = self.next_work;
                 let header = cycle_track("state/apply_headers/build_header", || {
-                    new_header.into_header(state.block_hash, required_nbits)
+                    new_header.into_header(self.block_hash, required_nbits)
                 });
                 let block_hash =
                     cycle_track("state/apply_headers/hash_header", || hash_header(&header));
-                let median_time_past = if state.timestamp_count() == 0 {
+                let median_time_past = if self.timestamp_count() == 0 {
                     None
                 } else {
                     // #[cfg(target_os = "zkvm")]
                     // {
-                    //     let window_len = state.timestamp_count();
-                    //     let tracked_window: alloc::vec::Vec<u32> = state
+                    //     let window_len = self.timestamp_count();
+                    //     let tracked_window: alloc::vec::Vec<u32> = self
                     //         .timestamps
                     //         .iter()
                     //         .take(window_len)
@@ -820,9 +798,9 @@ impl State {
                     //         alloc::format!(
                     //             "median-hint-debug: header_index={} height={} claimed_median={} computed_median={:?} tracked_window={:?}\n",
                     //             header_index,
-                    //             state.height,
+                    //             self.height,
                     //             claimed_median.to_consensus(),
-                    //             state.median_time_past().map(|timestamp| timestamp.to_consensus()),
+                    //             self.median_time_past().map(|timestamp| timestamp.to_consensus()),
                     //             tracked_window,
                     //         )
                     //         .as_bytes(),
@@ -830,7 +808,7 @@ impl State {
                     // }
                     cycle_track("state/apply_headers/median_hint_check", || {
                         assert!(
-                            state.median_hint_is_valid(claimed_median),
+                            self.median_hint_is_valid(claimed_median),
                             "invalid median time past hint at header index {}",
                             header_index
                         );
@@ -838,41 +816,46 @@ impl State {
                     Some(claimed_median)
                 };
                 if pending_run_work != Some(required_work) {
-                    flush_pending_chain_work(
-                        &mut state,
-                        &mut pending_run_work,
-                        &mut pending_run_count,
-                    );
+                    flush_pending_chain_work(self, &mut pending_run_work, &mut pending_run_count);
                     pending_run_work = Some(required_work);
                 }
 
                 if let Err(error_code) =
-                    state.next_inner(header, block_hash, median_time_past, false)
+                    self.next_inner(header, block_hash, median_time_past, false)
                 {
-                    flush_pending_chain_work(
-                        &mut state,
-                        &mut pending_run_work,
-                        &mut pending_run_count,
-                    );
+                    flush_pending_chain_work(self, &mut pending_run_work, &mut pending_run_count);
                     return Err(ProofFailure {
-                        last_valid_state: state,
+                        last_valid_state: self.clone(),
                         error_code,
                         header_index: header_index as u32,
                     });
                 }
 
                 pending_run_count += 1;
-                if state.next_nbits != required_nbits {
-                    flush_pending_chain_work(
-                        &mut state,
-                        &mut pending_run_work,
-                        &mut pending_run_count,
-                    );
+                if self.next_nbits != required_nbits {
+                    flush_pending_chain_work(self, &mut pending_run_work, &mut pending_run_count);
                 }
             }
 
-            flush_pending_chain_work(&mut state, &mut pending_run_work, &mut pending_run_count);
+            flush_pending_chain_work(self, &mut pending_run_work, &mut pending_run_count);
 
+            Ok(())
+        })
+    }
+
+    #[allow(clippy::result_large_err)]
+    pub fn apply_headers<F>(
+        &self,
+        headers: &[NewHeader],
+        median_hints: &[BlockTimestamp],
+        hash_header: F,
+    ) -> Result<Self, ProofFailure>
+    where
+        F: FnMut(&Header) -> BlockHash,
+    {
+        cycle_track("state/apply_headers/clone_wrapper", || {
+            let mut state = self.clone();
+            state.apply_headers_in_place(headers, median_hints, hash_header)?;
             Ok(state)
         })
     }
@@ -893,8 +876,6 @@ impl Default for State {
         }
     }
 }
-
-
 
 /// Validation status emitted by the program on failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1155,7 +1136,7 @@ pub fn target_exceeds(lhs: Target, rhs: Target) -> bool {
 pub fn hash_meets_target(hash: BlockHash, nbits: CompactTarget) -> bool {
     cycle_track("pow/hash_meets_target", || {
         let target = bits_to_target(nbits);
-        u256_le(hash.as_raw(), target.as_raw()) != core::cmp::Ordering::Greater
+        u256_le(hash.as_raw(), target.as_raw()) == core::cmp::Ordering::Less
     })
 }
 
@@ -1317,12 +1298,6 @@ pub fn retarget_target(old_target: Target, actual_timespan: u32, expected_timesp
     })
 }
 
-/// Convert compact `bits` into cumulative-work units.
-#[must_use]
-pub fn work_from_bits(bits: CompactTarget) -> ChainWork {
-    cycle_track("pow/work_from_bits", || Target::from(bits).work())
-}
-
 #[cfg(test)]
 mod tests {
     use alloc::vec::Vec;
@@ -1336,6 +1311,12 @@ mod tests {
 
     fn zero_hash() -> BlockHash {
         BlockHash::from_raw([0; 32])
+    }
+
+    /// Convert compact `bits` into cumulative-work units.
+    #[must_use]
+    pub fn work_from_bits(bits: CompactTarget) -> ChainWork {
+        cycle_track("pow/work_from_bits", || Target::from(bits).work())
     }
 
     fn test_state() -> State {

@@ -17,7 +17,8 @@ rusqlite = { workspace = true }
 sha2 = "0.10.9"
 tokio = { workspace = true }
 tracing = { workspace = true }
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+tracing-appender = "0.2"
 
 [build-dependencies]
 sp1-build = { workspace = true }

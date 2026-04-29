@@ -16,8 +16,8 @@
 sp1_zkvm::entrypoint!(main);
 
 use zkpow_core::{
-    encode_failure_metadata, BlockHash, Header, InputError, InputRef, MedianTimePastHintsRef,
-    NewHeader, RecursiveProof, State, ValidationErrorCode, STATE_SIZE,
+    encode_failure_metadata, BlockHash, Header, InputMut, MedianTimePastHintsRef, NewHeader,
+    RecursiveProof, State, ValidationErrorCode, NEW_HEADER_SIZE, RECURSIVE_PROOF_SIZE, STATE_SIZE,
 };
 
 mod sha256;
@@ -35,7 +35,7 @@ fn commit_error(state: &State, error_code: ValidationErrorCode, header_index: u3
 
 /// Commit a header-payload parse failure using the authenticated input state.
 fn commit_header_payload_length_error(input_bytes: &[u8]) -> ! {
-    let state = State::ref_from_bytes(&input_bytes[..STATE_SIZE], 0)
+    let state = State::ref_from_bytes(&input_bytes[..STATE_SIZE])
         .expect("input should contain an initial state")
         .with_genesis_hash(hash_header);
     commit_error(&state, ValidationErrorCode::HeaderPayloadLengthInvalid, 0)
@@ -64,15 +64,15 @@ fn serialize_state(state: &State) -> [u8; STATE_SIZE] {
     state.to_bytes()
 }
 
-#[sp1_derive::cycle_tracker]
-fn parse_input<'a>(input_bytes: &'a [u8]) -> InputRef<'a> {
-    match InputRef::parse(input_bytes) {
-        Ok(input) => input,
-        Err(InputError::HeaderPayloadLengthInvalid { .. }) => {
-            commit_header_payload_length_error(input_bytes)
-        }
-        Err(err) => panic!("input should parse: {err:?}"),
+fn parse_input<'a>(input_bytes: &'a mut [u8]) -> InputMut<'a> {
+    let min_len = STATE_SIZE + RECURSIVE_PROOF_SIZE;
+    if input_bytes.len() >= min_len
+        && !(input_bytes.len() - min_len).is_multiple_of(NEW_HEADER_SIZE)
+    {
+        commit_header_payload_length_error(input_bytes);
     }
+
+    InputMut::parse(input_bytes).expect("input should parse")
 }
 
 #[sp1_derive::cycle_tracker]
@@ -96,17 +96,16 @@ fn verify_recursive_proof(state: &State, recursive_proof: &RecursiveProof) {
 
 #[sp1_derive::cycle_tracker]
 fn apply_headers_or_commit(
-    state: &State,
+    state: &mut State,
     headers: &[NewHeader],
     median_hints: &MedianTimePastHintsRef<'_>,
-) -> State {
-    match state.apply_headers(headers, median_hints.medians, hash_header) {
-        Ok(state) => state,
-        Err(failure) => commit_error(
+) {
+    if let Err(failure) = state.apply_headers_in_place(headers, median_hints.medians, hash_header) {
+        commit_error(
             &failure.last_valid_state,
             failure.error_code,
             failure.header_index,
-        ),
+        );
     }
 }
 
@@ -118,9 +117,8 @@ fn commit_error_output(state: &State, error_code: ValidationErrorCode, header_in
 }
 
 #[sp1_derive::cycle_tracker]
-fn commit_success(final_state: &State) {
-    let final_state_bytes = serialize_state(final_state);
-    commit_state(&final_state_bytes);
+fn commit_success(state_bytes: &[u8]) {
+    sp1_zkvm::io::commit_slice(state_bytes);
 }
 
 // ============================================================================
@@ -129,18 +127,21 @@ fn commit_success(final_state: &State) {
 
 #[sp1_derive::cycle_tracker]
 pub fn main() {
-    let input_bytes = sp1_zkvm::io::read_vec();
-    let input = parse_input(&input_bytes);
-    let median_hint_bytes = sp1_zkvm::io::read_vec();
-    let median_hints = parse_median_hints(&median_hint_bytes, input.headers.len());
+    let mut input_bytes = sp1_zkvm::io::read_vec();
+    {
+        let input = parse_input(&mut input_bytes);
+        let median_hint_bytes = sp1_zkvm::io::read_vec();
+        let median_hints = parse_median_hints(&median_hint_bytes, input.headers.len());
 
-    let state = input.state.with_genesis_hash(hash_header);
+        input.state.update_genesis_hash(hash_header);
 
-    if state.height > 0 {
-        verify_recursive_proof(&state, input.recursive_proof);
+        if input.state.height > 0 {
+            verify_recursive_proof(input.state, input.recursive_proof);
+        }
+
+        apply_headers_or_commit(input.state, input.headers, &median_hints);
     }
 
-    let final_state = apply_headers_or_commit(&state, input.headers, &median_hints);
-    commit_success(&final_state);
+    commit_success(&input_bytes[..STATE_SIZE]);
     sp1_zkvm::syscalls::syscall_halt(0);
 }

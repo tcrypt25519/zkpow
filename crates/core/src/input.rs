@@ -3,9 +3,9 @@
 use alloc::vec::Vec;
 
 use crate::{
-    check_exact_len, copy_from_bytes, copy_to_bytes, cycle_track, slice_from_bytes, BlockHash,
-    BlockTimestamp, Header, NewHeader, ParseError, PublicValuesDigest, State, VerifierKeyDigest,
-    NEW_HEADER_SIZE, RECURSIVE_PROOF_SIZE, STATE_SIZE,
+    check_exact_len, copy_from_bytes, copy_to_bytes, cycle_track, mut_from_bytes, slice_from_bytes,
+    BlockHash, BlockTimestamp, Header, NewHeader, ParseError, PublicValuesDigest, State,
+    VerifierKeyDigest, NEW_HEADER_SIZE, RECURSIVE_PROOF_SIZE, STATE_SIZE,
 };
 
 // ============================================================================
@@ -24,6 +24,14 @@ pub struct Input {
 #[derive(Debug, Clone, Copy)]
 pub struct InputRef<'a> {
     pub state: &'a State,
+    pub recursive_proof: &'a RecursiveProof,
+    pub headers: &'a [NewHeader],
+}
+
+/// Mutable borrowed view of the prover input wire format.
+#[derive(Debug)]
+pub struct InputMut<'a> {
+    pub state: &'a mut State,
     pub recursive_proof: &'a RecursiveProof,
     pub headers: &'a [NewHeader],
 }
@@ -58,77 +66,38 @@ impl Default for RecursiveProof {
 }
 
 /// Parse and validation errors for [`Input`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum InputError {
+    #[error("input parse error: {0}")]
     Parse(ParseError),
+    #[error("missing recursive proof metadata for non-genesis state")]
     MissingRecursiveProof,
+    #[error("genesis state must not carry recursive proof metadata")]
     UnexpectedRecursiveProof,
+    #[error("genesis state input must carry an all-zero genesis hash placeholder")]
     GenesisHashMustBeZero,
+    #[error("header payload length {actual} is not a multiple of {NEW_HEADER_SIZE} bytes")]
     HeaderPayloadLengthInvalid { actual: usize },
+    #[error("invalid recursive proof length: expected {expected} bytes, got {actual}")]
     InvalidRecursiveProofLength { actual: usize, expected: usize },
 }
 
 /// Parse and validation errors for median-time-past private witness hints.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum MedianTimePastHintError {
+    #[error("median hint payload missing count: got {actual} bytes")]
     TruncatedCount { actual: usize },
+    #[error("median hint count mismatch: expected {expected}, got {actual}")]
     CountMismatch { expected: usize, actual: usize },
+    #[error("median hint payload length mismatch: expected {expected} bytes, got {actual}")]
     PayloadLengthInvalid { expected: usize, actual: usize },
+    #[error("median hint parse error: {0}")]
     Parse(ParseError),
 }
 
 impl From<ParseError> for InputError {
     fn from(value: ParseError) -> Self {
         Self::Parse(value)
-    }
-}
-
-impl core::fmt::Display for InputError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::Parse(err) => write!(f, "input parse error: {}", err),
-            Self::MissingRecursiveProof => {
-                write!(f, "missing recursive proof metadata for non-genesis state")
-            }
-            Self::UnexpectedRecursiveProof => {
-                write!(f, "genesis state must not carry recursive proof metadata")
-            }
-            Self::GenesisHashMustBeZero => write!(
-                f,
-                "genesis state input must carry an all-zero genesis hash placeholder"
-            ),
-            Self::HeaderPayloadLengthInvalid { actual } => write!(
-                f,
-                "header payload length {} is not a multiple of {} bytes",
-                actual, NEW_HEADER_SIZE
-            ),
-            Self::InvalidRecursiveProofLength { actual, expected } => write!(
-                f,
-                "invalid recursive proof length: expected {} bytes, got {}",
-                expected, actual
-            ),
-        }
-    }
-}
-
-impl core::fmt::Display for MedianTimePastHintError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::TruncatedCount { actual } => {
-                write!(f, "median hint payload missing count: got {} bytes", actual)
-            }
-            Self::CountMismatch { expected, actual } => write!(
-                f,
-                "median hint count mismatch: expected {}, got {}",
-                expected, actual
-            ),
-            Self::PayloadLengthInvalid { expected, actual } => write!(
-                f,
-                "median hint payload length mismatch: expected {} bytes, got {}",
-                expected, actual
-            ),
-            Self::Parse(err) => write!(f, "median hint parse error: {}", err),
-        }
     }
 }
 
@@ -153,8 +122,8 @@ impl RecursiveProof {
     }
 
     /// Borrow a [`RecursiveProof`] directly from aligned protocol bytes.
-    pub fn ref_from_bytes(bytes: &[u8], offset: usize) -> Result<&Self, InputError> {
-        crate::ref_from_bytes(bytes, offset).map_err(InputError::from)
+    pub fn ref_from_bytes(bytes: &[u8]) -> Result<&Self, InputError> {
+        crate::ref_from_bytes(bytes).map_err(InputError::from)
     }
 }
 
@@ -190,7 +159,7 @@ impl<'a> MedianTimePastHintsRef<'a> {
                 });
             }
 
-            let medians = slice_from_bytes::<BlockTimestamp>(&bytes[4..], 4)
+            let medians = slice_from_bytes::<BlockTimestamp>(&bytes[4..])
                 .map_err(MedianTimePastHintError::Parse)?;
             Ok(Self { medians })
         })
@@ -236,7 +205,7 @@ impl<'a> InputRef<'a> {
                 actual: bytes.len(),
             })?;
             let state = cycle_track("input/parse/state", || {
-                State::ref_from_bytes(state_bytes, 0).map_err(InputError::from)
+                State::ref_from_bytes(state_bytes).map_err(InputError::from)
             })?;
 
             let proof_start = state_end;
@@ -252,7 +221,7 @@ impl<'a> InputRef<'a> {
                     expected: RECURSIVE_PROOF_SIZE,
                 },
             )?;
-            let recursive_proof = RecursiveProof::ref_from_bytes(proof_bytes, proof_start)?;
+            let recursive_proof = RecursiveProof::ref_from_bytes(proof_bytes)?;
 
             let header_payload = &bytes[proof_end..];
             if !header_payload.len().is_multiple_of(NEW_HEADER_SIZE) {
@@ -262,7 +231,7 @@ impl<'a> InputRef<'a> {
             }
 
             let headers = cycle_track("input/parse/headers", || {
-                NewHeader::slice_from_bytes(header_payload, proof_end).map_err(InputError::from)
+                NewHeader::slice_from_bytes(header_payload).map_err(InputError::from)
             })?;
 
             if state.height == 0 && state.genesis_hash != BlockHash::default() {
@@ -289,7 +258,67 @@ impl<'a> InputRef<'a> {
     }
 }
 
+fn ensure_min_len(bytes_len: usize, expected: usize) -> Result<usize, InputError> {
+    expected.checked_sub(bytes_len).ok_or_else(|| {
+        InputError::from(ParseError::InvalidLength {
+            expected,
+            actual: bytes_len,
+        })
+    })
+}
+
+impl<'a> InputMut<'a> {
+    /// Parse and validate input from the aligned host/guest wire format.
+    pub fn parse(bytes: &'a mut [u8]) -> Result<Self, InputError> {
+        cycle_track("input/parse_mut", || {
+            let state_and_proof_size = STATE_SIZE + RECURSIVE_PROOF_SIZE;
+            let headers_size = ensure_min_len(bytes.len(), state_and_proof_size)?;
+
+            let (state_bytes, proof_and_headers) = bytes.split_at_mut(STATE_SIZE);
+            let (proof_bytes, headers_bytes) = proof_and_headers.split_at_mut(RECURSIVE_PROOF_SIZE);
+
+            let state = cycle_track("input/parse_mut/state", || {
+                mut_from_bytes::<State>(state_bytes).map_err(InputError::from)
+            })?;
+
+            let recursive_proof = RecursiveProof::ref_from_bytes(proof_bytes)?;
+
+            if !headers_size.is_multiple_of(NEW_HEADER_SIZE) {
+                return Err(InputError::HeaderPayloadLengthInvalid {
+                    actual: headers_size,
+                });
+            }
+
+            let headers = cycle_track("input/parse_mut/headers", || {
+                NewHeader::slice_from_bytes(headers_bytes).map_err(InputError::from)
+            })?;
+
+            if state.height == 0 && state.genesis_hash != BlockHash::default() {
+                return Err(InputError::GenesisHashMustBeZero);
+            }
+
+            Ok(Self {
+                state,
+                recursive_proof,
+                headers,
+            })
+        })
+    }
+}
+
 impl State {
+    /// Fill in the genesis hash when the wire input leaves it unset.
+    pub fn update_genesis_hash<F>(&mut self, hash_header: F)
+    where
+        F: FnOnce(&Header) -> BlockHash + Copy,
+    {
+        if self.height == 0 && self.genesis_hash == BlockHash::default() {
+            let block_hash = hash_header(&self.header);
+            self.block_hash = block_hash;
+            self.genesis_hash = block_hash;
+        }
+    }
+
     /// Clone this state and fill in the genesis hash when the wire input leaves it unset.
     #[must_use]
     pub fn with_genesis_hash<F>(&self, hash_header: F) -> Self
@@ -297,11 +326,7 @@ impl State {
         F: FnOnce(&Header) -> BlockHash + Copy,
     {
         let mut state = self.clone();
-        if state.height == 0 && state.genesis_hash == BlockHash::default() {
-            let block_hash = hash_header(&state.header);
-            state.block_hash = block_hash;
-            state.genesis_hash = block_hash;
-        }
+        state.update_genesis_hash(hash_header);
         state
     }
 }
@@ -335,7 +360,7 @@ impl Input {
             STATE_SIZE + RECURSIVE_PROOF_SIZE + (self.headers.len() * NEW_HEADER_SIZE),
         );
         let mut state = self.state.clone();
-        // TODO: This genesis_hash setting logic shoudl be somewhere; but not here.
+        // TODO: This genesis_hash setting logic should be somewhere; but not here.
         if state.height == 0 {
             state.genesis_hash = BlockHash::default();
         }
@@ -477,7 +502,6 @@ mod tests {
         assert_eq!(
             err,
             InputError::Parse(ParseError::Misaligned {
-                offset: 0,
                 required: core::mem::align_of::<State>(),
             })
         );
