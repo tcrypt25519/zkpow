@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 
+[[bin]]
+name = "zkpow-guest"
+path = "src/main.rs"
+
 [dependencies]
 zkpow-core = { workspace = true }
 sp1-zkvm = { workspace = true, features = ["lib", "verify"] }

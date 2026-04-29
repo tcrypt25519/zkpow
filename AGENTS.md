@@ -126,9 +126,55 @@ for the script binary because the `sp1-build` dependency triggers ELF
 compilation which clippy suppresses. This is expected. Run
 `cargo build --release` to verify the script compiles.
 
-## Cycle Tracker
+## Debugging
 
-Run with `RUST_LOG=info` to see cycle tracker output:
+### Structured JSON logs
+
+Every run writes newline-delimited JSON to `logs/run.jsonl` (created automatically,
+overwritten each run). No environment variable needed — the file is always produced.
+
+**Quick queries:**
+
+```bash
+# All log entries from the last run
+cat logs/run.jsonl | jq .
+
+# Errors only
+cat logs/run.jsonl | jq 'select(.level == "ERROR")'
+
+# Proof pipeline progress (info-level events)
+cat logs/run.jsonl | jq 'select(.level == "INFO") | .fields.message'
+
+# Cycle tracker / execution report entries
+cat logs/run.jsonl | jq 'select(.fields.message | test("cycle|instruction|span|gas"; "i"))'
+
+# Last N entries
+tail -n 20 logs/run.jsonl | jq .
+```
+
+**Log entry schema:**
+
+```json
+{
+  "timestamp": "2026-04-29T07:00:00.000000Z",
+  "level": "INFO",
+  "fields": { "message": "Human-readable description" },
+  "target": "zkpow_host::proof_pipeline",
+  "span": { "name": "span-name" },
+  "spans": [{ "name": "parent-span" }]
+}
+```
+
+**Common debugging workflows:**
+
+- Proof failed → `cat logs/run.jsonl | jq 'select(.level == "ERROR")'`
+- Check backend/config used → `cat logs/run.jsonl | jq 'select(.fields.message | test("Starting proof|backend"))'`
+- Inspect cycle breakdown → `cat logs/run.jsonl | jq 'select(.fields.message | test("cycles|hot span|hierarchy"))'`
+- Timing summary → `cat logs/run.jsonl | jq 'select(.fields.message | test("PROVING TIME|breakdown|seconds"))'`
+
+### Cycle Tracker (stderr)
+
+Run with `RUST_LOG=info` to also see cycle tracker output on stderr:
 
 ```shell
 stdout: cycle-tracker-start: parse
@@ -138,3 +184,5 @@ stdout: cycle-tracker-end: sha256d
 stdout: cycle-tracker-start: retarget
 stdout: cycle-tracker-end: retarget
 ```
+
+The same data appears in `logs/run.jsonl` without needing `RUST_LOG=info`.
