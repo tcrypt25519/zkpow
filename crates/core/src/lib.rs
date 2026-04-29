@@ -642,10 +642,9 @@ impl State {
         update_chain_work: bool,
     ) -> Result<(), ValidationErrorCode> {
         cycle_track("state/next_inner", || {
-            let (required_nbits, required_target, required_work, timestamp_slot) =
+            let (required_target, required_work, timestamp_slot) =
                 cycle_track("state/next/setup", || {
                     (
-                        self.next_nbits,
                         self.next_target(),
                         self.next_work,
                         self.next_timestamp_slot(),
@@ -664,7 +663,7 @@ impl State {
 
             // Validate pow
             cycle_track("state/next_inner/validate/pow", || {
-                if !hash_meets_target(block_hash, required_nbits) {
+                if !hash_meets_expanded_target(block_hash, required_target) {
                     return Err(ValidationErrorCode::PowInsufficient);
                 }
                 Ok(())
@@ -1135,8 +1134,18 @@ pub fn target_exceeds(lhs: Target, rhs: Target) -> bool {
 #[must_use]
 pub fn hash_meets_target(hash: BlockHash, nbits: CompactTarget) -> bool {
     cycle_track("pow/hash_meets_target", || {
-        let target = bits_to_target(nbits);
-        u256_le(hash.as_raw(), target.as_raw()) == core::cmp::Ordering::Less
+        hash_meets_expanded_target(hash, bits_to_target(nbits))
+    })
+}
+
+/// Check whether a header hash satisfies an expanded target.
+#[must_use]
+pub fn hash_meets_expanded_target(hash: BlockHash, target: Target) -> bool {
+    cycle_track("pow/hash_meets_expanded_target", || {
+        matches!(
+            u256_le(hash.as_raw(), target.as_raw()),
+            core::cmp::Ordering::Less | core::cmp::Ordering::Equal
+        )
     })
 }
 
@@ -1449,6 +1458,16 @@ mod tests {
         let value = ChainWork::from_limbs([3, 0, 0, 0]);
 
         assert_eq!(u256_mul_u32(value, 7), ChainWork::from_limbs([21, 0, 0, 0]));
+    }
+
+    #[test]
+    fn hash_meets_target_accepts_exact_target_boundary() {
+        let bits = CompactTarget::from_consensus(GENESIS_NBITS);
+        let target = bits_to_target(bits);
+        let hash = BlockHash::from_raw(target.into_raw());
+
+        assert!(hash_meets_expanded_target(hash, target));
+        assert!(hash_meets_target(hash, bits));
     }
 
     #[test]

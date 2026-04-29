@@ -17,7 +17,7 @@ sp1_zkvm::entrypoint!(main);
 
 use zkpow_core::{
     encode_failure_metadata, BlockHash, Header, InputMut, MedianTimePastHintsRef, NewHeader,
-    RecursiveProof, State, ValidationErrorCode, NEW_HEADER_SIZE, RECURSIVE_PROOF_SIZE, STATE_SIZE,
+    RecursiveProof, State, ValidationErrorCode, STATE_SIZE,
 };
 
 mod sha256;
@@ -65,14 +65,17 @@ fn serialize_state(state: &State) -> [u8; STATE_SIZE] {
 }
 
 fn parse_input<'a>(input_bytes: &'a mut [u8]) -> InputMut<'a> {
-    let min_len = STATE_SIZE + RECURSIVE_PROOF_SIZE;
-    if input_bytes.len() >= min_len
-        && !(input_bytes.len() - min_len).is_multiple_of(NEW_HEADER_SIZE)
-    {
-        commit_header_payload_length_error(input_bytes);
-    }
+    let input_ptr = input_bytes.as_ptr();
+    let input_len = input_bytes.len();
 
-    InputMut::parse(input_bytes).expect("input should parse")
+    match InputMut::parse(input_bytes) {
+        Ok(input) => return input,
+        Err(zkpow_core::InputError::HeaderPayloadLengthInvalid { .. }) => {
+            let input_bytes = unsafe { core::slice::from_raw_parts(input_ptr, input_len) };
+            commit_header_payload_length_error(input_bytes);
+        }
+        Err(_) => panic!("input should parse"),
+    }
 }
 
 #[sp1_derive::cycle_tracker]

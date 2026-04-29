@@ -70,10 +70,6 @@ impl Default for RecursiveProof {
 pub enum InputError {
     #[error("input parse error: {0}")]
     Parse(ParseError),
-    #[error("missing recursive proof metadata for non-genesis state")]
-    MissingRecursiveProof,
-    #[error("genesis state must not carry recursive proof metadata")]
-    UnexpectedRecursiveProof,
     #[error("genesis state input must carry an all-zero genesis hash placeholder")]
     GenesisHashMustBeZero,
     #[error("header payload length {actual} is not a multiple of {NEW_HEADER_SIZE} bytes")]
@@ -99,6 +95,34 @@ impl From<ParseError> for InputError {
     fn from(value: ParseError) -> Self {
         Self::Parse(value)
     }
+}
+
+fn validate_genesis_placeholder(state: &State) -> Result<(), InputError> {
+    if state.height == 0 && state.genesis_hash != BlockHash::default() {
+        return Err(InputError::GenesisHashMustBeZero);
+    }
+
+    Ok(())
+}
+
+fn parse_shared_input_parts<'a>(
+    proof_bytes: &'a [u8],
+    header_bytes: &'a [u8],
+    header_label: &'static str,
+) -> Result<(&'a RecursiveProof, &'a [NewHeader]), InputError> {
+    let recursive_proof = RecursiveProof::ref_from_bytes(proof_bytes)?;
+
+    if !header_bytes.len().is_multiple_of(NEW_HEADER_SIZE) {
+        return Err(InputError::HeaderPayloadLengthInvalid {
+            actual: header_bytes.len(),
+        });
+    }
+
+    let headers = cycle_track(header_label, || {
+        NewHeader::slice_from_bytes(header_bytes).map_err(InputError::from)
+    })?;
+
+    Ok((recursive_proof, headers))
 }
 
 impl RecursiveProof {
@@ -221,22 +245,10 @@ impl<'a> InputRef<'a> {
                     expected: RECURSIVE_PROOF_SIZE,
                 },
             )?;
-            let recursive_proof = RecursiveProof::ref_from_bytes(proof_bytes)?;
-
             let header_payload = &bytes[proof_end..];
-            if !header_payload.len().is_multiple_of(NEW_HEADER_SIZE) {
-                return Err(InputError::HeaderPayloadLengthInvalid {
-                    actual: header_payload.len(),
-                });
-            }
-
-            let headers = cycle_track("input/parse/headers", || {
-                NewHeader::slice_from_bytes(header_payload).map_err(InputError::from)
-            })?;
-
-            if state.height == 0 && state.genesis_hash != BlockHash::default() {
-                return Err(InputError::GenesisHashMustBeZero);
-            }
+            let (recursive_proof, headers) =
+                parse_shared_input_parts(proof_bytes, header_payload, "input/parse/headers")?;
+            validate_genesis_placeholder(state)?;
 
             Ok(Self {
                 state,
@@ -259,7 +271,7 @@ impl<'a> InputRef<'a> {
 }
 
 fn ensure_min_len(bytes_len: usize, expected: usize) -> Result<usize, InputError> {
-    expected.checked_sub(bytes_len).ok_or_else(|| {
+    bytes_len.checked_sub(expected).ok_or_else(|| {
         InputError::from(ParseError::InvalidLength {
             expected,
             actual: bytes_len,
@@ -272,7 +284,7 @@ impl<'a> InputMut<'a> {
     pub fn parse(bytes: &'a mut [u8]) -> Result<Self, InputError> {
         cycle_track("input/parse_mut", || {
             let state_and_proof_size = STATE_SIZE + RECURSIVE_PROOF_SIZE;
-            let headers_size = ensure_min_len(bytes.len(), state_and_proof_size)?;
+            ensure_min_len(bytes.len(), state_and_proof_size)?;
 
             let (state_bytes, proof_and_headers) = bytes.split_at_mut(STATE_SIZE);
             let (proof_bytes, headers_bytes) = proof_and_headers.split_at_mut(RECURSIVE_PROOF_SIZE);
@@ -280,22 +292,11 @@ impl<'a> InputMut<'a> {
             let state = cycle_track("input/parse_mut/state", || {
                 mut_from_bytes::<State>(state_bytes).map_err(InputError::from)
             })?;
-
-            let recursive_proof = RecursiveProof::ref_from_bytes(proof_bytes)?;
-
-            if !headers_size.is_multiple_of(NEW_HEADER_SIZE) {
-                return Err(InputError::HeaderPayloadLengthInvalid {
-                    actual: headers_size,
-                });
-            }
-
-            let headers = cycle_track("input/parse_mut/headers", || {
-                NewHeader::slice_from_bytes(headers_bytes).map_err(InputError::from)
-            })?;
-
-            if state.height == 0 && state.genesis_hash != BlockHash::default() {
-                return Err(InputError::GenesisHashMustBeZero);
-            }
+            let proof_bytes: &[u8] = proof_bytes;
+            let headers_bytes: &[u8] = headers_bytes;
+            let (recursive_proof, headers) =
+                parse_shared_input_parts(proof_bytes, headers_bytes, "input/parse_mut/headers")?;
+            validate_genesis_placeholder(state)?;
 
             Ok(Self {
                 state,
@@ -505,6 +506,22 @@ mod tests {
                 required: core::mem::align_of::<State>(),
             })
         );
+    }
+
+    #[test]
+    fn test_input_mut_rejects_invalid_header_payload_length() {
+        let genesis_state = State {
+            height: 0,
+            genesis_hash: BlockHash::default(),
+            ..Default::default()
+        };
+        let mut input = Input::new(genesis_state, RecursiveProof::default(), Vec::new())
+            .unwrap()
+            .to_bytes();
+        input.push(0);
+
+        let err = InputMut::parse(&mut input).unwrap_err();
+        assert_eq!(err, InputError::HeaderPayloadLengthInvalid { actual: 1 });
     }
 
     #[test]
