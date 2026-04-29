@@ -1,4 +1,4 @@
-//! Utilities for the Bitcoin header chain prover script.
+//! Utilities for the zkpow prover script.
 //!
 //! Host-side mirror of the zkVM program with header-construction architecture.
 //! The prover supplies 44-byte NewHeader structs (version, merkle_root, timestamp, nonce).

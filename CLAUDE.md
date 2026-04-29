@@ -1,4 +1,4 @@
-# Bitcoin Header Chain Prover
+# zkpow26
 
 Zero-knowledge proof system for Bitcoin header chain validation using SP1 zkVM.
 Proves that a batch of block headers are valid (PoW, chain linkage, difficulty retargeting, BIP113 MTP) and can be recursively chained to extend a proof from any trusted starting point.
@@ -10,11 +10,11 @@ Proves that a batch of block headers are valid (PoW, chain linkage, difficulty r
 cargo build --release
 
 # Run prover (genesis → block 99)
-cd script && cargo run --release --bin zkpow-script
+cd script && cargo run --release --bin zkpow-host
 
 # Run prover extending a previous proof
 PREV_PROOF=proof_height_0_to_99.bin START_HEIGHT=100 NUM_HEADERS=100 \
-  cargo run --release --bin zkpow-script
+  cargo run --release --bin zkpow-host
 
 # Run test suite (fast, no proving)
 cargo run --release --bin test_errors
@@ -29,7 +29,7 @@ cargo clippy --all-targets -- -D warnings
 ## Project Structure
 
 ```
-zkpow/
+bitcoin-header-chain/
 ├── program/                    # zkVM program (constrained execution)
 │   ├── Cargo.toml              # Only sp1-zkvm (verify feature)
 │   └── src/
@@ -67,7 +67,7 @@ Host: verifies proof → verifies public values → saves proof
 | 72..152 | 80 | final_header (raw bytes) |
 | 152..184 | 32 | cumulative_chain_work (u256 LE) |
 | 184..188 | 4 | last_epoch_start_timestamp |
-| 188..232 | 44 | median_timestamp_buffer ([u32; 11]) |
+| 188..232 | 44 | median_timestamp_buffer (\[u32; 11]) |
 | 232..233 | 1 | success_code (0=success, 1-7=error) |
 | 233..237 | 4 | error_detail (header index on error) |
 

@@ -1,4 +1,4 @@
-//! Bitcoin Header Chain Prover — Header-Construction Architecture
+//! zkpow — Header-Construction Architecture
 //!
 //! Validates a batch of Bitcoin block headers incrementally.
 //! The prover supplies only non-deterministic fields (version, merkle_root,

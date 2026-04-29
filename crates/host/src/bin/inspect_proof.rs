@@ -1,4 +1,4 @@
-//! Inspect a saved Bitcoin header chain proof and display its public inputs.
+//! Inspect a saved zkpow proof and display its public inputs.
 
 use sp1_sdk::SP1ProofWithPublicValues;
 
@@ -17,13 +17,13 @@ fn reverse_hash_display(hash: util::BlockHash) -> String {
 fn main() {
     let proof_path = std::env::args()
         .nth(1)
-        .unwrap_or_else(|| "bitcoin-header-chain-proof.bin".to_string());
+        .unwrap_or_else(|| "zkpow-proof.bin".to_string());
 
     println!("Loading proof from: {}", proof_path);
     let proof = SP1ProofWithPublicValues::load(&proof_path).expect("failed to load proof file");
 
     let pv = proof.public_values.as_ref();
-    println!("\n=== Bitcoin Header Chain Proof ===\n");
+    println!("\n=== zkpow Proof ===\n");
 
     match HeaderChainPublicValues::parse(pv) {
         Ok(HeaderChainPublicValues::Success(state)) => {

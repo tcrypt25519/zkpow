@@ -1,4 +1,4 @@
-# Bitcoin Header Chain Prover
+# zkpow26
 
 Zero-knowledge proof system for Bitcoin header chain validation using SP1 zkVM.
 Proves that a batch of block headers are valid (PoW, chain linkage, difficulty
@@ -12,11 +12,11 @@ from any trusted starting point.
 cargo build --release
 
 # Run prover (genesis → block 99)
-cd script && cargo run --release --bin bitcoin-header-chain-script
+cd script && cargo run --release --bin zkpow-host
 
 # Run prover extending a previous proof
 PREV_PROOF=proof_height_0_to_99.bin START_HEIGHT=100 NUM_HEADERS=100 \
-  cargo run --release --bin bitcoin-header-chain-script
+  cargo run --release --bin zkpow-host
 
 # Run test suite (fast, no proving)
 cargo run --release --bin test_errors

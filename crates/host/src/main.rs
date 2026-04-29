@@ -1,4 +1,4 @@
-//! Bitcoin Header Chain Prover — Host Script
+//! zkpow — Host Script
 //!
 //! Usage:
 //!   # Run 1: start from a host-selected genesis state

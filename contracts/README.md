@@ -1,6 +1,6 @@
 # Bitcoin Header Relay Contracts
 
-This directory contains the initial Solidity relay scaffold for the Bitcoin header chain prover.
+This directory contains the initial Solidity relay scaffold for the zkpow prover.
 
 ## What It Is
 

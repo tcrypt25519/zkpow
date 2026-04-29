@@ -1,4 +1,4 @@
-//! Automated tests for error handling in the Bitcoin header chain prover.
+//! Automated tests for error handling in the zkpow prover.
 //!
 //! Each test crafts specific inputs that should trigger a particular error code,
 //! then runs the zkVM program via `client.execute()` and checks the public values.

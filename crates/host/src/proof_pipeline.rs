@@ -1045,7 +1045,7 @@ mod tests {
                 .expect("clock should be after unix epoch")
                 .as_nanos();
             std::env::temp_dir().join(format!(
-                "bitcoin-header-chain-proof-pipeline-{}-{}",
+                "zkpow-proof-pipeline-{}-{}",
                 std::process::id(),
                 nanos,
             ))

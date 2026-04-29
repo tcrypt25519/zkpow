@@ -1,4 +1,4 @@
-//! Shared consensus types and pure helper logic for the Bitcoin header chain prover.
+//! Shared consensus types and pure helper logic for the zkpow prover.
 
 #![no_std]
 
@@ -16,7 +16,7 @@ pub use input::{
 };
 
 #[cfg(not(target_endian = "little"))]
-compile_error!("bitcoin-header-chain wire types require a little-endian target");
+compile_error!("zkpow wire types require a little-endian target");
 
 /// Execute a closure while emitting stable, report-backed cycle-tracker markers in the guest.
 #[cfg(all(target_os = "zkvm", feature = "profiling"))]
