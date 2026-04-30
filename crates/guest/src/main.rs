@@ -57,6 +57,11 @@ fn serialize_state(state: &State) -> [u8; STATE_SIZE] {
     state.to_bytes()
 }
 
+fn state_bytes(state: &State) -> &[u8; STATE_SIZE] {
+    // State is the fixed-width repr(C) wire type committed as public values.
+    unsafe { &*(state as *const State as *const [u8; STATE_SIZE]) }
+}
+
 fn parse_input<'a>(input_bytes: &'a mut [u8]) -> InputMut<'a> {
     InputMut::parse(input_bytes).expect("input should parse")
 }
@@ -79,7 +84,7 @@ fn verify_recursive_proof(state: &State, recursive_proof: &RecursiveProof) {
         recursive_proof.public_values_digest.as_raw(),
     );
 
-    let actual_public_values_digest = sha256_264bytes(&state.to_bytes());
+    let actual_public_values_digest = sha256_264bytes(state_bytes(state));
     if actual_public_values_digest != recursive_proof.public_values_digest.into_raw() {
         panic!("recursive proof public values digest mismatch");
     }

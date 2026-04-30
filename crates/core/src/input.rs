@@ -86,8 +86,6 @@ pub enum InputError {
 /// Parse and validation errors for the new-header private witness batch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum NewHeaderHintError {
-    #[error("new-header hint payload missing count: got {actual} bytes")]
-    TruncatedCount { actual: usize },
     #[error("new-header hint payload length mismatch: expected {expected} bytes, got {actual}")]
     PayloadLengthInvalid { expected: usize, actual: usize },
     #[error("new-header hint parse error: {0}")]
@@ -97,10 +95,6 @@ pub enum NewHeaderHintError {
 /// Parse and validation errors for median-time-past private witness hints.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum MedianTimePastHintError {
-    #[error("median hint payload missing count: got {actual} bytes")]
-    TruncatedCount { actual: usize },
-    #[error("median hint count mismatch: expected {expected}, got {actual}")]
-    CountMismatch { expected: usize, actual: usize },
     #[error("median hint payload length mismatch: expected {expected} bytes, got {actual}")]
     PayloadLengthInvalid { expected: usize, actual: usize },
     #[error("median hint parse error: {0}")]
@@ -146,26 +140,19 @@ impl<'a> NewHeaderHintsRef<'a> {
     /// Parse private witness headers. The format is:
     ///
     /// ```text
-    /// count: u32 little-endian
-    /// headers: [NewHeader; count]
+    /// headers: [NewHeader]
     /// ```
     pub fn parse(bytes: &'a [u8]) -> Result<Self, NewHeaderHintError> {
         cycle_track("input/parse/new_header_hints", || {
-            let count_bytes = bytes.get(..4).ok_or(NewHeaderHintError::TruncatedCount {
-                actual: bytes.len(),
-            })?;
-            let count =
-                u32::from_le_bytes(count_bytes.try_into().expect("slice length checked")) as usize;
-            let expected_len = 4 + (count * NEW_HEADER_SIZE);
-            if bytes.len() != expected_len {
+            if !bytes.len().is_multiple_of(NEW_HEADER_SIZE) {
                 return Err(NewHeaderHintError::PayloadLengthInvalid {
-                    expected: expected_len,
+                    expected: bytes.len().div_ceil(NEW_HEADER_SIZE) * NEW_HEADER_SIZE,
                     actual: bytes.len(),
                 });
             }
 
             let headers =
-                slice_from_bytes::<NewHeader>(&bytes[4..]).map_err(NewHeaderHintError::Parse)?;
+                slice_from_bytes::<NewHeader>(bytes).map_err(NewHeaderHintError::Parse)?;
             Ok(Self { headers })
         })
     }
@@ -179,8 +166,7 @@ impl<'a> NewHeaderHintsRef<'a> {
 
     #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut bytes = Vec::with_capacity(4 + self.headers.len() * NEW_HEADER_SIZE);
-        bytes.extend_from_slice(&(self.headers.len() as u32).to_le_bytes());
+        let mut bytes = Vec::with_capacity(self.headers.len() * NEW_HEADER_SIZE);
         for header in self.headers {
             bytes.extend_from_slice(&header.to_bytes());
         }
@@ -211,27 +197,11 @@ impl<'a> MedianTimePastHintsRef<'a> {
     /// Parse private witness MTP hints. The format is:
     ///
     /// ```text
-    /// count: u32 little-endian
-    /// medians: [BlockTimestamp; count]
+    /// medians: [BlockTimestamp]
     /// ```
     pub fn parse(bytes: &'a [u8], expected_count: usize) -> Result<Self, MedianTimePastHintError> {
         cycle_track("input/parse/median_time_past_hints", || {
-            let count_bytes = bytes
-                .get(..4)
-                .ok_or(MedianTimePastHintError::TruncatedCount {
-                    actual: bytes.len(),
-                })?;
-            let actual_count =
-                u32::from_le_bytes(count_bytes.try_into().expect("slice length checked above"))
-                    as usize;
-            if actual_count != expected_count {
-                return Err(MedianTimePastHintError::CountMismatch {
-                    expected: expected_count,
-                    actual: actual_count,
-                });
-            }
-
-            let expected_len = 4 + (expected_count * core::mem::size_of::<BlockTimestamp>());
+            let expected_len = expected_count * core::mem::size_of::<BlockTimestamp>();
             if bytes.len() != expected_len {
                 return Err(MedianTimePastHintError::PayloadLengthInvalid {
                     expected: expected_len,
@@ -239,7 +209,7 @@ impl<'a> MedianTimePastHintsRef<'a> {
                 });
             }
 
-            let medians = slice_from_bytes::<BlockTimestamp>(&bytes[4..])
+            let medians = slice_from_bytes::<BlockTimestamp>(bytes)
                 .map_err(MedianTimePastHintError::Parse)?;
             Ok(Self { medians })
         })
@@ -254,8 +224,7 @@ impl<'a> MedianTimePastHintsRef<'a> {
 
     #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut bytes = Vec::with_capacity(4 + self.medians.len() * 4);
-        bytes.extend_from_slice(&(self.medians.len() as u32).to_le_bytes());
+        let mut bytes = Vec::with_capacity(self.medians.len() * 4);
         for median in self.medians {
             bytes.extend_from_slice(&median.to_consensus().to_le_bytes());
         }
@@ -282,20 +251,26 @@ impl MedianTimePastHints {
     }
 }
 
+/// Split and validate the wire layout, returning `(state_bytes, proof_bytes)`.
+///
+/// Shared by [`InputRef::parse`] and [`InputMut::parse`].  The caller is
+/// responsible for borrowing the state and proof from the returned regions in
+/// the appropriate validation order.
+fn split_input_wire(bytes: &[u8]) -> Result<(&[u8], &[u8]), InputError> {
+    check_exact_len(bytes, STATE_SIZE + RECURSIVE_PROOF_SIZE)?;
+    Ok((&bytes[..STATE_SIZE], &bytes[STATE_SIZE..]))
+}
+
 impl<'a> InputRef<'a> {
     /// Parse and validate input from the aligned host/guest wire format.
     pub fn parse(bytes: &'a [u8]) -> Result<Self, InputError> {
         cycle_track("input/parse", || {
-            check_exact_len(bytes, STATE_SIZE + RECURSIVE_PROOF_SIZE)?;
-            let state_bytes = &bytes[..STATE_SIZE];
+            let (state_bytes, proof_bytes) = split_input_wire(bytes)?;
             let state = cycle_track("input/parse/state", || {
                 State::ref_from_bytes(state_bytes).map_err(InputError::from)
             })?;
-
-            let proof_bytes = &bytes[STATE_SIZE..];
             let recursive_proof = RecursiveProof::ref_from_bytes(proof_bytes)?;
             validate_genesis_placeholder(state)?;
-
             Ok(Self {
                 state,
                 recursive_proof,
@@ -319,15 +294,12 @@ impl<'a> InputMut<'a> {
     pub fn parse(bytes: &'a mut [u8]) -> Result<Self, InputError> {
         cycle_track("input/parse_mut", || {
             check_exact_len(bytes, STATE_SIZE + RECURSIVE_PROOF_SIZE)?;
-
             let (state_bytes, proof_bytes) = bytes.split_at_mut(STATE_SIZE);
-
             let state = cycle_track("input/parse_mut/state", || {
                 mut_from_bytes::<State>(state_bytes).map_err(InputError::from)
             })?;
             let recursive_proof = RecursiveProof::ref_from_bytes(proof_bytes)?;
             validate_genesis_placeholder(state)?;
-
             Ok(Self {
                 state,
                 recursive_proof,
@@ -519,8 +491,8 @@ mod tests {
         assert_eq!(
             err,
             NewHeaderHintError::PayloadLengthInvalid {
-                expected: 48,
-                actual: 47,
+                expected: 44,
+                actual: 43,
             }
         );
     }
@@ -540,16 +512,16 @@ mod tests {
     }
 
     #[test]
-    fn median_time_past_hints_reject_count_mismatch() {
+    fn median_time_past_hints_reject_wrong_count_length() {
         let bytes = MedianTimePastHints::new(vec![BlockTimestamp::from_consensus(123)]).to_bytes();
 
         let err = MedianTimePastHintsRef::parse(&bytes, 2).unwrap_err();
 
         assert_eq!(
             err,
-            MedianTimePastHintError::CountMismatch {
-                expected: 2,
-                actual: 1,
+            MedianTimePastHintError::PayloadLengthInvalid {
+                expected: 8,
+                actual: 4,
             }
         );
     }
@@ -565,8 +537,8 @@ mod tests {
         assert_eq!(
             err,
             MedianTimePastHintError::PayloadLengthInvalid {
-                expected: 8,
-                actual: 7,
+                expected: 4,
+                actual: 3,
             }
         );
     }

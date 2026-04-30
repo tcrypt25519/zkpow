@@ -229,6 +229,7 @@ pub fn genesis_state(genesis_header: Header, genesis_hash: BlockHash) -> State {
         block_hash, genesis_hash,
         "configured genesis hash must match the supplied genesis header",
     );
+    let genesis_work = Target::from(genesis_header.nbits).work();
 
     State {
         header: genesis_header,
@@ -236,8 +237,8 @@ pub fn genesis_state(genesis_header: Header, genesis_hash: BlockHash) -> State {
         genesis_hash,
         next_nbits: genesis_header.nbits,
         height: 0,
-        chain_work: Target::from(genesis_header.nbits).work(),
-        next_work: Target::from(genesis_header.nbits).work(),
+        chain_work: genesis_work,
+        next_work: genesis_work,
         epoch_start_timestamp: genesis_header.timestamp,
         timestamps: [BlockTimestamp::default(); zkpow_core::WINDOW_SIZE],
     }

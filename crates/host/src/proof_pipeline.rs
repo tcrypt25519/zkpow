@@ -870,11 +870,12 @@ fn verify_public_values(pv: &[u8], expected_pv: &[u8], label: &str) -> Result<()
     let parsed = HeaderChainPublicValues::parse(pv).map_err(|err| err.to_string())?;
     match parsed {
         HeaderChainPublicValues::Success(state) => {
-            if state.to_bytes() != expected_pv {
+            let actual_pv = state.to_bytes();
+            if actual_pv != expected_pv {
                 return Err(format!(
                     "{label} public values mismatch: expected {}, got {}",
                     hex::encode(expected_pv),
-                    hex::encode(state.to_bytes()),
+                    hex::encode(actual_pv),
                 )
                 .into());
             }
