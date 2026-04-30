@@ -487,12 +487,14 @@ fn build_recursive_proof(
 
 fn build_stdin(
     input: &Input,
+    headers: &[util::NewHeader],
     median_hints: &util::MedianTimePastHints,
     previous_proof: Option<&SP1ProofWithPublicValues>,
     vk: &sp1_prover::SP1VerifyingKey,
 ) -> Result<SP1Stdin, BoxError> {
     let mut stdin = SP1Stdin::new();
     stdin.write_vec(input.to_bytes());
+    stdin.write_vec(util::NewHeaderHintsRef { headers }.to_bytes());
     stdin.write_vec(median_hints.to_bytes());
 
     if let Some(prev_proof) = previous_proof {
@@ -523,11 +525,16 @@ where
         build_recursive_proof(pk.verifying_key(), previous_proof)
     })?;
     let input = timed_sync("build_input", || -> Result<_, BoxError> {
-        Input::new(current_state.clone(), recursive_proof, headers.to_vec())
-            .map_err(|err| err.to_string().into())
+        Ok(Input::new(current_state.clone(), recursive_proof))
     })?;
     let stdin = timed_sync("serialize_input", || {
-        build_stdin(&input, median_hints, previous_proof, pk.verifying_key())
+        build_stdin(
+            &input,
+            headers,
+            median_hints,
+            previous_proof,
+            pk.verifying_key(),
+        )
     })?;
 
     let (public_values, report) = timed_async("execute_program", || async {

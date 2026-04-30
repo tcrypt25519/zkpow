@@ -12,7 +12,7 @@ use core::{
 pub mod input;
 pub use input::{
     Input, InputError, InputMut, InputRef, MedianTimePastHintError, MedianTimePastHints,
-    MedianTimePastHintsRef, RecursiveProof,
+    MedianTimePastHintsRef, NewHeaderHintError, NewHeaderHints, NewHeaderHintsRef, RecursiveProof,
 };
 
 #[cfg(not(target_endian = "little"))]

@@ -4,7 +4,7 @@
 //! then runs the zkVM program via `client.execute()` and checks the public values.
 //!
 //! Input protocol:
-//!   stdin: encoded_input(Vec<u8>) where trailing bytes are fixed-width `NewHeader`s
+//!   stdin: encoded_input(Vec<u8>) + header witness(Vec<u8>) + median-time-past witness(Vec<u8>)
 //!          → [recursive proof witness when state.height > 0]
 //!   output: state on success, or state + error_code(1) + header_index(4) on error
 
@@ -119,9 +119,14 @@ fn mainnet_genesis_state() -> util::State {
     util::genesis_state_from_record(genesis, mainnet_genesis_hash())
 }
 
-fn stdin_for_input(input: &Input, hints: &util::MedianTimePastHints) -> SP1Stdin {
+fn stdin_for_input(
+    input: &Input,
+    headers: &[util::NewHeader],
+    hints: &util::MedianTimePastHints,
+) -> SP1Stdin {
     let mut stdin = SP1Stdin::new();
     stdin.write_vec(input.to_bytes());
+    stdin.write_vec(util::NewHeaderHintsRef { headers }.to_bytes());
     stdin.write_vec(hints.to_bytes());
     stdin
 }
@@ -140,12 +145,6 @@ async fn main() {
     check(
         "recursive_chain_success",
         test_recursive_chain_success().await,
-    );
-
-    // === Input validation errors ===
-    check(
-        "error_header_payload_length",
-        test_error_header_payload_length().await,
     );
 
     // === Timestamp validation errors ===
@@ -172,9 +171,8 @@ async fn test_success_100_headers() -> Result<(), String> {
     let records = util::load_header_records_from_db(DEFAULT_DB_PATH, 1, 100);
     let headers = util::records_to_new_headers(&records);
     let hints = util::median_time_past_hints_for_headers(&genesis_state, &headers);
-    let input = Input::new(genesis_state, RecursiveProof::default(), headers)
-        .map_err(|err| err.to_string())?;
-    let stdin = stdin_for_input(&input, &hints);
+    let input = Input::new(genesis_state, RecursiveProof::default());
+    let stdin = stdin_for_input(&input, &headers, &hints);
 
     let pv = run_and_get_pv(stdin).await?;
     expect_success(&pv).map(|_| ())
@@ -278,22 +276,6 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
     Ok(())
 }
 
-async fn test_error_header_payload_length() -> Result<(), String> {
-    let genesis_state = mainnet_genesis_state();
-    let records = util::load_header_records_from_db(DEFAULT_DB_PATH, 1, 10);
-    let headers = util::records_to_new_headers(&records);
-    let input = Input::new(genesis_state, RecursiveProof::default(), headers)
-        .map_err(|err| err.to_string())?;
-    let mut encoded = input.to_bytes();
-    encoded.pop();
-
-    let mut stdin = SP1Stdin::new();
-    stdin.write_vec(encoded);
-
-    let pv = run_and_get_pv(stdin).await?;
-    expect_failure(&pv, ValidationErrorCode::HeaderPayloadLengthInvalid, 0)
-}
-
 async fn test_error_timestamp_too_old() -> Result<(), String> {
     // Load blocks 0-12 so the median buffer is full (11 blocks after genesis).
     // Block 12's median check uses blocks 1-11 timestamps.
@@ -303,9 +285,8 @@ async fn test_error_timestamp_too_old() -> Result<(), String> {
     let mut headers = util::records_to_new_headers(&records);
     let hints = util::median_time_past_hints_for_headers(&genesis_state, &headers);
     headers[11].timestamp = util::BlockTimestamp::from_consensus(1231006505);
-    let input = Input::new(genesis_state, RecursiveProof::default(), headers)
-        .map_err(|err| err.to_string())?;
-    let stdin = stdin_for_input(&input, &hints);
+    let input = Input::new(genesis_state, RecursiveProof::default());
+    let stdin = stdin_for_input(&input, &headers, &hints);
 
     let pv = run_and_get_pv(stdin).await?;
     expect_failure(&pv, ValidationErrorCode::TimestampTooOld, 11)
@@ -317,9 +298,8 @@ async fn test_error_pow_insufficient() -> Result<(), String> {
     let mut headers = util::records_to_new_headers(&records);
     let hints = util::median_time_past_hints_for_headers(&genesis_state, &headers);
     headers[0].nonce ^= 0xFF;
-    let input = Input::new(genesis_state, RecursiveProof::default(), headers)
-        .map_err(|err| err.to_string())?;
-    let stdin = stdin_for_input(&input, &hints);
+    let input = Input::new(genesis_state, RecursiveProof::default());
+    let stdin = stdin_for_input(&input, &headers, &hints);
 
     let pv = run_and_get_pv(stdin).await?;
     expect_failure(&pv, ValidationErrorCode::PowInsufficient, 0)
@@ -338,9 +318,8 @@ async fn test_recursive_chain_success() -> Result<(), String> {
     let records1 = util::load_header_records_from_db(DEFAULT_DB_PATH, 1, 10);
     let headers1 = util::records_to_new_headers(&records1);
     let hints1 = util::median_time_past_hints_for_headers(&genesis_state, &headers1);
-    let input1 = Input::new(genesis_state, RecursiveProof::default(), headers1)
-        .map_err(|err| err.to_string())?;
-    let stdin1 = stdin_for_input(&input1, &hints1);
+    let input1 = Input::new(genesis_state, RecursiveProof::default());
+    let stdin1 = stdin_for_input(&input1, &headers1, &hints1);
 
     let proof1 = client
         .prove(&pk, stdin1)
@@ -365,10 +344,8 @@ async fn test_recursive_chain_success() -> Result<(), String> {
             verifier_key: VerifierKeyDigest::from_raw(vk.hash_u32()),
             public_values_digest: PublicValuesDigest::from_raw(util::compute_pv_digest(&pv1_bytes)),
         },
-        headers2,
-    )
-    .map_err(|err| err.to_string())?;
-    let mut stdin2 = stdin_for_input(&input2, &hints2);
+    );
+    let mut stdin2 = stdin_for_input(&input2, &headers2, &hints2);
     let sp1_sdk::SP1Proof::Compressed(inner_proof) = &proof1.proof else {
         return Err("Run 1 proof is not compressed".to_string());
     };

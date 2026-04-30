@@ -7,8 +7,9 @@
 //!
 //! Input protocol:
 //!   1. encoded_input: Vec<u8>
-//!   2. median_time_past_hints: Vec<u8>
-//!   3. If `state.height > 0`: a recursive proof witness written via `write_proof`
+//!   2. header_hints: Vec<u8>
+//!   3. median_time_past_hints: Vec<u8>
+//!   4. If `state.height > 0`: a recursive proof witness written via `write_proof`
 //!
 //! Output: serialized State on success, or state + error_code + header_index on error.
 
@@ -17,7 +18,7 @@ sp1_zkvm::entrypoint!(main);
 
 use zkpow_core::{
     encode_failure_metadata, BlockHash, Header, InputMut, MedianTimePastHintsRef, NewHeader,
-    RecursiveProof, State, ValidationErrorCode, STATE_SIZE,
+    NewHeaderHintsRef, RecursiveProof, State, ValidationErrorCode, STATE_SIZE,
 };
 
 mod sha256;
@@ -31,14 +32,6 @@ use sha256::{sha256_264bytes, sha256d_80bytes};
 fn commit_error(state: &State, error_code: ValidationErrorCode, header_index: u32) -> ! {
     commit_error_output(state, error_code, header_index);
     sp1_zkvm::syscalls::syscall_halt(0)
-}
-
-/// Commit a header-payload parse failure using the authenticated input state.
-fn commit_header_payload_length_error(input_bytes: &[u8]) -> ! {
-    let state = State::ref_from_bytes(&input_bytes[..STATE_SIZE])
-        .expect("input should contain an initial state")
-        .with_genesis_hash(hash_header);
-    commit_error(&state, ValidationErrorCode::HeaderPayloadLengthInvalid, 0)
 }
 
 /// Hash a full 80-byte Bitcoin header with SHA256d.
@@ -65,17 +58,12 @@ fn serialize_state(state: &State) -> [u8; STATE_SIZE] {
 }
 
 fn parse_input<'a>(input_bytes: &'a mut [u8]) -> InputMut<'a> {
-    let input_ptr = input_bytes.as_ptr();
-    let input_len = input_bytes.len();
+    InputMut::parse(input_bytes).expect("input should parse")
+}
 
-    match InputMut::parse(input_bytes) {
-        Ok(input) => return input,
-        Err(zkpow_core::InputError::HeaderPayloadLengthInvalid { .. }) => {
-            let input_bytes = unsafe { core::slice::from_raw_parts(input_ptr, input_len) };
-            commit_header_payload_length_error(input_bytes);
-        }
-        Err(_) => panic!("input should parse"),
-    }
+#[sp1_derive::cycle_tracker]
+fn parse_header_hints<'a>(hint_bytes: &'a [u8]) -> NewHeaderHintsRef<'a> {
+    NewHeaderHintsRef::parse(hint_bytes).expect("new header hints should parse")
 }
 
 #[sp1_derive::cycle_tracker]
@@ -133,8 +121,10 @@ pub fn main() {
     let mut input_bytes = sp1_zkvm::io::read_vec();
     {
         let input = parse_input(&mut input_bytes);
+        let header_hint_bytes = sp1_zkvm::io::read_vec();
+        let header_hints = parse_header_hints(&header_hint_bytes);
         let median_hint_bytes = sp1_zkvm::io::read_vec();
-        let median_hints = parse_median_hints(&median_hint_bytes, input.headers.len());
+        let median_hints = parse_median_hints(&median_hint_bytes, header_hints.headers.len());
 
         input.state.update_genesis_hash(hash_header);
 
@@ -142,7 +132,7 @@ pub fn main() {
             verify_recursive_proof(input.state, input.recursive_proof);
         }
 
-        apply_headers_or_commit(input.state, input.headers, &median_hints);
+        apply_headers_or_commit(input.state, header_hints.headers, &median_hints);
     }
 
     commit_success(&input_bytes[..STATE_SIZE]);

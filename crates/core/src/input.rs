@@ -17,7 +17,6 @@ use crate::{
 pub struct Input {
     pub state: State,
     pub recursive_proof: RecursiveProof,
-    pub headers: Vec<NewHeader>,
 }
 
 /// Borrowed view of the prover input wire format.
@@ -25,7 +24,6 @@ pub struct Input {
 pub struct InputRef<'a> {
     pub state: &'a State,
     pub recursive_proof: &'a RecursiveProof,
-    pub headers: &'a [NewHeader],
 }
 
 /// Mutable borrowed view of the prover input wire format.
@@ -33,6 +31,17 @@ pub struct InputRef<'a> {
 pub struct InputMut<'a> {
     pub state: &'a mut State,
     pub recursive_proof: &'a RecursiveProof,
+}
+
+/// Owned private witness payload containing the batch of new headers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewHeaderHints {
+    pub headers: Vec<NewHeader>,
+}
+
+/// Borrowed private witness payload containing the batch of new headers.
+#[derive(Debug, Clone, Copy)]
+pub struct NewHeaderHintsRef<'a> {
     pub headers: &'a [NewHeader],
 }
 
@@ -72,10 +81,17 @@ pub enum InputError {
     Parse(ParseError),
     #[error("genesis state input must carry an all-zero genesis hash placeholder")]
     GenesisHashMustBeZero,
-    #[error("header payload length {actual} is not a multiple of {NEW_HEADER_SIZE} bytes")]
-    HeaderPayloadLengthInvalid { actual: usize },
-    #[error("invalid recursive proof length: expected {expected} bytes, got {actual}")]
-    InvalidRecursiveProofLength { actual: usize, expected: usize },
+}
+
+/// Parse and validation errors for the new-header private witness batch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum NewHeaderHintError {
+    #[error("new-header hint payload missing count: got {actual} bytes")]
+    TruncatedCount { actual: usize },
+    #[error("new-header hint payload length mismatch: expected {expected} bytes, got {actual}")]
+    PayloadLengthInvalid { expected: usize, actual: usize },
+    #[error("new-header hint parse error: {0}")]
+    Parse(ParseError),
 }
 
 /// Parse and validation errors for median-time-past private witness hints.
@@ -105,36 +121,11 @@ fn validate_genesis_placeholder(state: &State) -> Result<(), InputError> {
     Ok(())
 }
 
-fn parse_shared_input_parts<'a>(
-    proof_bytes: &'a [u8],
-    header_bytes: &'a [u8],
-    header_label: &'static str,
-) -> Result<(&'a RecursiveProof, &'a [NewHeader]), InputError> {
-    let recursive_proof = RecursiveProof::ref_from_bytes(proof_bytes)?;
-
-    if !header_bytes.len().is_multiple_of(NEW_HEADER_SIZE) {
-        return Err(InputError::HeaderPayloadLengthInvalid {
-            actual: header_bytes.len(),
-        });
-    }
-
-    let headers = cycle_track(header_label, || {
-        NewHeader::slice_from_bytes(header_bytes).map_err(InputError::from)
-    })?;
-
-    Ok((recursive_proof, headers))
-}
-
 impl RecursiveProof {
     /// Parse and validate a RecursiveProof from exactly [`RECURSIVE_PROOF_SIZE`] bytes.
     pub fn parse(bytes: &[u8]) -> Result<Self, InputError> {
         cycle_track("input/recursive_proof", || {
-            check_exact_len(bytes, RECURSIVE_PROOF_SIZE).map_err(|_| {
-                InputError::InvalidRecursiveProofLength {
-                    actual: bytes.len(),
-                    expected: RECURSIVE_PROOF_SIZE,
-                }
-            })?;
+            check_exact_len(bytes, RECURSIVE_PROOF_SIZE).map_err(InputError::from)?;
             copy_from_bytes(bytes).map_err(InputError::from)
         })
     }
@@ -148,6 +139,71 @@ impl RecursiveProof {
     /// Borrow a [`RecursiveProof`] directly from aligned protocol bytes.
     pub fn ref_from_bytes(bytes: &[u8]) -> Result<&Self, InputError> {
         crate::ref_from_bytes(bytes).map_err(InputError::from)
+    }
+}
+
+impl<'a> NewHeaderHintsRef<'a> {
+    /// Parse private witness headers. The format is:
+    ///
+    /// ```text
+    /// count: u32 little-endian
+    /// headers: [NewHeader; count]
+    /// ```
+    pub fn parse(bytes: &'a [u8]) -> Result<Self, NewHeaderHintError> {
+        cycle_track("input/parse/new_header_hints", || {
+            let count_bytes = bytes.get(..4).ok_or(NewHeaderHintError::TruncatedCount {
+                actual: bytes.len(),
+            })?;
+            let count =
+                u32::from_le_bytes(count_bytes.try_into().expect("slice length checked")) as usize;
+            let expected_len = 4 + (count * NEW_HEADER_SIZE);
+            if bytes.len() != expected_len {
+                return Err(NewHeaderHintError::PayloadLengthInvalid {
+                    expected: expected_len,
+                    actual: bytes.len(),
+                });
+            }
+
+            let headers =
+                slice_from_bytes::<NewHeader>(&bytes[4..]).map_err(NewHeaderHintError::Parse)?;
+            Ok(Self { headers })
+        })
+    }
+
+    #[must_use]
+    pub fn to_owned(&self) -> NewHeaderHints {
+        NewHeaderHints {
+            headers: self.headers.to_vec(),
+        }
+    }
+
+    #[must_use]
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(4 + self.headers.len() * NEW_HEADER_SIZE);
+        bytes.extend_from_slice(&(self.headers.len() as u32).to_le_bytes());
+        for header in self.headers {
+            bytes.extend_from_slice(&header.to_bytes());
+        }
+        bytes
+    }
+}
+
+impl NewHeaderHints {
+    #[must_use]
+    pub fn new(headers: Vec<NewHeader>) -> Self {
+        Self { headers }
+    }
+
+    pub fn parse(bytes: &[u8]) -> Result<Self, NewHeaderHintError> {
+        NewHeaderHintsRef::parse(bytes).map(|hints| hints.to_owned())
+    }
+
+    #[must_use]
+    pub fn to_bytes(&self) -> Vec<u8> {
+        NewHeaderHintsRef {
+            headers: &self.headers,
+        }
+        .to_bytes()
     }
 }
 
@@ -195,6 +251,16 @@ impl<'a> MedianTimePastHintsRef<'a> {
             medians: self.medians.to_vec(),
         }
     }
+
+    #[must_use]
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(4 + self.medians.len() * 4);
+        bytes.extend_from_slice(&(self.medians.len() as u32).to_le_bytes());
+        for median in self.medians {
+            bytes.extend_from_slice(&median.to_consensus().to_le_bytes());
+        }
+        bytes
+    }
 }
 
 impl MedianTimePastHints {
@@ -209,12 +275,10 @@ impl MedianTimePastHints {
 
     #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut bytes = Vec::with_capacity(4 + self.medians.len() * 4);
-        bytes.extend_from_slice(&(self.medians.len() as u32).to_le_bytes());
-        for median in &self.medians {
-            bytes.extend_from_slice(&median.to_consensus().to_le_bytes());
+        MedianTimePastHintsRef {
+            medians: &self.medians,
         }
-        bytes
+        .to_bytes()
     }
 }
 
@@ -222,38 +286,19 @@ impl<'a> InputRef<'a> {
     /// Parse and validate input from the aligned host/guest wire format.
     pub fn parse(bytes: &'a [u8]) -> Result<Self, InputError> {
         cycle_track("input/parse", || {
-            let state_end = STATE_SIZE;
-            let state_bytes = bytes.get(..state_end).ok_or(ParseError::Truncated {
-                offset: 0,
-                needed: STATE_SIZE,
-                actual: bytes.len(),
-            })?;
+            check_exact_len(bytes, STATE_SIZE + RECURSIVE_PROOF_SIZE)?;
+            let state_bytes = &bytes[..STATE_SIZE];
             let state = cycle_track("input/parse/state", || {
                 State::ref_from_bytes(state_bytes).map_err(InputError::from)
             })?;
 
-            let proof_start = state_end;
-            let proof_end = proof_start.checked_add(RECURSIVE_PROOF_SIZE).ok_or(
-                InputError::InvalidRecursiveProofLength {
-                    actual: bytes.len().saturating_sub(proof_start),
-                    expected: RECURSIVE_PROOF_SIZE,
-                },
-            )?;
-            let proof_bytes = bytes.get(proof_start..proof_end).ok_or(
-                InputError::InvalidRecursiveProofLength {
-                    actual: bytes.len().saturating_sub(proof_start),
-                    expected: RECURSIVE_PROOF_SIZE,
-                },
-            )?;
-            let header_payload = &bytes[proof_end..];
-            let (recursive_proof, headers) =
-                parse_shared_input_parts(proof_bytes, header_payload, "input/parse/headers")?;
+            let proof_bytes = &bytes[STATE_SIZE..];
+            let recursive_proof = RecursiveProof::ref_from_bytes(proof_bytes)?;
             validate_genesis_placeholder(state)?;
 
             Ok(Self {
                 state,
                 recursive_proof,
-                headers,
             })
         })
     }
@@ -265,43 +310,27 @@ impl<'a> InputRef<'a> {
         Input {
             state: self.state.with_genesis_hash(hash_header),
             recursive_proof: *self.recursive_proof,
-            headers: self.headers.to_vec(),
         }
     }
-}
-
-fn ensure_min_len(bytes_len: usize, expected: usize) -> Result<usize, InputError> {
-    bytes_len.checked_sub(expected).ok_or_else(|| {
-        InputError::from(ParseError::InvalidLength {
-            expected,
-            actual: bytes_len,
-        })
-    })
 }
 
 impl<'a> InputMut<'a> {
     /// Parse and validate input from the aligned host/guest wire format.
     pub fn parse(bytes: &'a mut [u8]) -> Result<Self, InputError> {
         cycle_track("input/parse_mut", || {
-            let state_and_proof_size = STATE_SIZE + RECURSIVE_PROOF_SIZE;
-            ensure_min_len(bytes.len(), state_and_proof_size)?;
+            check_exact_len(bytes, STATE_SIZE + RECURSIVE_PROOF_SIZE)?;
 
-            let (state_bytes, proof_and_headers) = bytes.split_at_mut(STATE_SIZE);
-            let (proof_bytes, headers_bytes) = proof_and_headers.split_at_mut(RECURSIVE_PROOF_SIZE);
+            let (state_bytes, proof_bytes) = bytes.split_at_mut(STATE_SIZE);
 
             let state = cycle_track("input/parse_mut/state", || {
                 mut_from_bytes::<State>(state_bytes).map_err(InputError::from)
             })?;
-            let proof_bytes: &[u8] = proof_bytes;
-            let headers_bytes: &[u8] = headers_bytes;
-            let (recursive_proof, headers) =
-                parse_shared_input_parts(proof_bytes, headers_bytes, "input/parse_mut/headers")?;
+            let recursive_proof = RecursiveProof::ref_from_bytes(proof_bytes)?;
             validate_genesis_placeholder(state)?;
 
             Ok(Self {
                 state,
                 recursive_proof,
-                headers,
             })
         })
     }
@@ -333,17 +362,12 @@ impl State {
 }
 
 impl Input {
-    /// Constructs a new Input, enforcing invariants.
-    pub fn new(
-        state: State,
-        recursive_proof: RecursiveProof,
-        headers: Vec<NewHeader>,
-    ) -> Result<Self, InputError> {
-        Ok(Self {
+    /// Constructs a new Input.
+    pub fn new(state: State, recursive_proof: RecursiveProof) -> Self {
+        Self {
             state,
             recursive_proof,
-            headers,
-        })
+        }
     }
 
     /// Parse and validate input from the host/guest wire format.
@@ -357,9 +381,7 @@ impl Input {
     /// Serialize to the host/guest wire format.
     #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut bytes = Vec::with_capacity(
-            STATE_SIZE + RECURSIVE_PROOF_SIZE + (self.headers.len() * NEW_HEADER_SIZE),
-        );
+        let mut bytes = Vec::with_capacity(STATE_SIZE + RECURSIVE_PROOF_SIZE);
         let mut state = self.state.clone();
         // TODO: This genesis_hash setting logic should be somewhere; but not here.
         if state.height == 0 {
@@ -367,9 +389,6 @@ impl Input {
         }
         bytes.extend_from_slice(&state.to_bytes());
         bytes.extend_from_slice(&self.recursive_proof.to_bytes());
-        for header in &self.headers {
-            bytes.extend_from_slice(&header.to_bytes());
-        }
         bytes
     }
 }
@@ -404,14 +423,11 @@ mod tests {
             genesis_hash: BlockHash::default(), // Should be default for initial parse
             ..Default::default()
         };
-        let input = Input::new(genesis_state, RecursiveProof::default(), Vec::new())
-            .unwrap()
-            .to_bytes();
+        let input = Input::new(genesis_state, RecursiveProof::default()).to_bytes();
         let input = Input::parse(&input, dummy_hash_header).unwrap();
 
         assert_eq!(input.state.height, 0);
         assert_eq!(input.recursive_proof, RecursiveProof::default());
-        assert!(input.headers.is_empty());
     }
 
     #[test]
@@ -425,22 +441,13 @@ mod tests {
         non_genesis_state.block_hash = BlockHash::from_raw([2; 32]);
         non_genesis_state.header.prev_blockhash = BlockHash::from_raw([3; 32]);
 
-        let headers: Vec<NewHeader> = vec![NewHeader {
-            version: 1,
-            merkle_root: [4; 32],
-            timestamp: BlockTimestamp::from_consensus(100),
-            nonce: 0,
-        }];
-
         let expected_verifier_key = VerifierKeyDigest::from_raw([1; 8]);
         let expected_public_values_digest = PublicValuesDigest::from_raw([2; 32]);
         let recursive_proof_data = RecursiveProof {
             verifier_key: expected_verifier_key,
             public_values_digest: expected_public_values_digest,
         };
-        let input = Input::new(non_genesis_state, recursive_proof_data, headers.clone())
-            .unwrap()
-            .to_bytes();
+        let input = Input::new(non_genesis_state, recursive_proof_data).to_bytes();
         let input = Input::parse(&input, dummy_hash_header).unwrap();
 
         assert_eq!(input.state.height, 100);
@@ -449,16 +456,10 @@ mod tests {
             input.recursive_proof.public_values_digest,
             expected_public_values_digest
         );
-        assert_eq!(input.headers, headers);
     }
 
     #[test]
-    fn test_parse_from_bytes_genesis_with_headers() {
-        let genesis_state = State {
-            height: 0,
-            genesis_hash: BlockHash::default(), // Should be default for initial parse
-            ..Default::default()
-        };
+    fn test_new_header_hints_round_trip() {
         let headers: Vec<NewHeader> = vec![
             NewHeader {
                 version: 1,
@@ -474,14 +475,11 @@ mod tests {
             },
         ];
 
-        let input = Input::new(genesis_state, RecursiveProof::default(), headers.clone())
-            .unwrap()
-            .to_bytes();
-        let input = Input::parse(&input, dummy_hash_header).unwrap();
+        let hints = NewHeaderHints::new(headers.clone());
+        let bytes = hints.to_bytes();
+        let parsed = NewHeaderHints::parse(&bytes).unwrap();
 
-        assert_eq!(input.state.height, 0);
-        assert_eq!(input.recursive_proof, RecursiveProof::default());
-        assert_eq!(input.headers, headers);
+        assert_eq!(parsed, hints);
     }
 
     #[test]
@@ -491,9 +489,7 @@ mod tests {
             genesis_hash: BlockHash::default(),
             ..Default::default()
         };
-        let input = Input::new(genesis_state, RecursiveProof::default(), Vec::new())
-            .unwrap()
-            .to_bytes();
+        let input = Input::new(genesis_state, RecursiveProof::default()).to_bytes();
 
         let mut misaligned = Vec::with_capacity(input.len() + 1);
         misaligned.push(0);
@@ -509,19 +505,24 @@ mod tests {
     }
 
     #[test]
-    fn test_input_mut_rejects_invalid_header_payload_length() {
-        let genesis_state = State {
-            height: 0,
-            genesis_hash: BlockHash::default(),
-            ..Default::default()
-        };
-        let mut input = Input::new(genesis_state, RecursiveProof::default(), Vec::new())
-            .unwrap()
-            .to_bytes();
-        input.push(0);
+    fn test_new_header_hints_reject_truncated_payload() {
+        let headers = NewHeaderHints::new(vec![NewHeader {
+            version: 1,
+            merkle_root: [4; 32],
+            timestamp: BlockTimestamp::from_consensus(100),
+            nonce: 0,
+        }]);
+        let mut bytes = headers.to_bytes();
+        bytes.pop();
 
-        let err = InputMut::parse(&mut input).unwrap_err();
-        assert_eq!(err, InputError::HeaderPayloadLengthInvalid { actual: 1 });
+        let err = NewHeaderHintsRef::parse(&bytes).unwrap_err();
+        assert_eq!(
+            err,
+            NewHeaderHintError::PayloadLengthInvalid {
+                expected: 48,
+                actual: 47,
+            }
+        );
     }
 
     #[test]

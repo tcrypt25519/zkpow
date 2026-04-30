@@ -9,9 +9,10 @@ use sp1_sdk::SP1PublicValues;
 
 pub use zkpow_core::{
     BlockHash, BlockTimestamp, ChainWork, CompactTarget, Header, HeaderChainPublicValues, Input,
-    InputError, MedianTimePastHints, NewHeader, ParseError, ProofFailure, PublicValuesDigest,
-    PublicValuesParseError, RecursiveProof, State, Target, ValidationErrorCode, VerifierKeyDigest,
-    NEW_HEADER_SIZE, STATE_SIZE,
+    InputError, MedianTimePastHints, NewHeader, NewHeaderHintError, NewHeaderHints,
+    NewHeaderHintsRef, ParseError, ProofFailure, PublicValuesDigest, PublicValuesParseError,
+    RecursiveProof, State, Target, ValidationErrorCode, VerifierKeyDigest, NEW_HEADER_SIZE,
+    STATE_SIZE,
 };
 
 #[derive(Debug, Clone)]
