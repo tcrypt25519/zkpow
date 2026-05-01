@@ -8,11 +8,12 @@ use sha2::{Digest, Sha256};
 use sp1_sdk::SP1PublicValues;
 
 pub use zkpow_core::{
-    BlockHash, BlockTimestamp, ChainWork, CompactTarget, Header, HeaderChainPublicValues, Input,
-    InputError, MedianTimePastHints, NewHeader, NewHeaderHintError, NewHeaderHints,
-    NewHeaderHintsRef, ParseError, ProofFailure, PublicValuesDigest, PublicValuesParseError,
-    RecursiveProof, State, Target, ValidationErrorCode, VerifierKeyDigest, NEW_HEADER_SIZE,
-    STATE_SIZE,
+    BlockHash, BlockTimestamp, ChainWork, CompactTarget, DifficultyConsistencyError,
+    DifficultyState, Header, HeaderChainPublicValues, Input, InputError, MedianTimePastHints,
+    NewHeader, NewHeaderHintError, NewHeaderHints, NewHeaderHintsRef, ParseError, PrivateContinuationState,
+    ProofFailure, PublicChainClaim, PublicValuesDigest, PublicValuesParseError, RecursiveProof,
+    State, Target, ValidationErrorCode, ValidationState, VerifierKeyDigest, NEW_HEADER_SIZE,
+    PRIVATE_CONTINUATION_STATE_SIZE, PUBLIC_CHAIN_CLAIM_SIZE, STATE_SIZE,
 };
 
 #[derive(Debug, Clone)]
@@ -218,6 +219,11 @@ pub fn compute_pv_digest(committed_bytes: &[u8]) -> [u8; 32] {
         .expect("SP1 public values hash must be 32 bytes")
 }
 
+/// Compute the continuation digest: SHA-256 of the serialized private continuation state.
+pub fn continuation_digest(private: &PrivateContinuationState) -> [u8; 32] {
+    Sha256::digest(private.to_bytes()).into()
+}
+
 // ============================================================================
 // State Computation (host-side simulation of zkVM logic)
 // ============================================================================
@@ -283,4 +289,44 @@ pub fn median_time_past_hints_for_headers(
     }
 
     MedianTimePastHints::new(medians)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use zkpow_core::{BlockTimestamp, CompactTarget, GENESIS_NBITS, WINDOW_SIZE};
+
+    fn make_pcs() -> PrivateContinuationState {
+        PrivateContinuationState {
+            next_nbits: CompactTarget::from_consensus(GENESIS_NBITS),
+            next_work: zkpow_core::ChainWork::from_limbs([1, 2, 3, 4]),
+            epoch_start_timestamp: BlockTimestamp::from_consensus(500),
+            timestamps: [BlockTimestamp::from_consensus(10); WINDOW_SIZE],
+        }
+    }
+
+    #[test]
+    fn continuation_digest_changes_on_any_byte_mutation() {
+        let pcs = make_pcs();
+        let base_digest = continuation_digest(&pcs);
+
+        let bytes = pcs.to_bytes();
+        for i in 0..bytes.len() {
+            let mut mutated = bytes;
+            mutated[i] ^= 0xFF;
+            if let Ok(pcs2) = PrivateContinuationState::parse(&mutated) {
+                let digest2 = continuation_digest(&pcs2);
+                assert_ne!(
+                    base_digest, digest2,
+                    "digest unchanged after mutating byte {i}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn continuation_digest_is_deterministic() {
+        let pcs = make_pcs();
+        assert_eq!(continuation_digest(&pcs), continuation_digest(&pcs));
+    }
 }

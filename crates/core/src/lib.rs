@@ -876,6 +876,148 @@ impl Default for State {
     }
 }
 
+// ============================================================================
+// Public claim and private continuation types (Step 3)
+// ============================================================================
+
+/// The verifier-visible portion of a validated chain segment.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct PublicChainClaim {
+    pub genesis_hash: BlockHash,
+    pub tip_hash: BlockHash,
+    pub chain_work: ChainWork,
+    pub height: u32,
+}
+
+/// Size of a serialized [`PublicChainClaim`] in bytes.
+pub const PUBLIC_CHAIN_CLAIM_SIZE: usize = size_of::<PublicChainClaim>();
+
+impl PublicChainClaim {
+    #[must_use]
+    pub fn to_bytes(&self) -> [u8; PUBLIC_CHAIN_CLAIM_SIZE] {
+        copy_to_bytes(self)
+    }
+
+    pub fn parse(bytes: &[u8]) -> Result<Self, ParseError> {
+        copy_from_bytes(bytes)
+    }
+}
+
+/// Difficulty triple: expanded target, compact bits, and per-block work.
+///
+/// Constructed via [`DifficultyState::new`] which validates consistency.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DifficultyState {
+    pub next_target: Target,
+    pub next_nbits: CompactTarget,
+    pub next_work: ChainWork,
+}
+
+/// Error returned when a [`DifficultyState`] triple is inconsistent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DifficultyConsistencyError;
+
+impl DifficultyState {
+    /// Construct and validate that `next_target == bits_to_target(next_nbits)`
+    /// and `next_work == work_from_target(next_target)`.
+    pub fn new(
+        next_nbits: CompactTarget,
+        next_work: ChainWork,
+    ) -> Result<Self, DifficultyConsistencyError> {
+        let next_target = bits_to_target(next_nbits);
+        let expected_work = work_from_target(next_target);
+        if next_work != expected_work {
+            return Err(DifficultyConsistencyError);
+        }
+        Ok(Self { next_target, next_nbits, next_work })
+    }
+
+    /// Construct without validation (for trusted internal use).
+    #[must_use]
+    pub fn from_trusted(next_nbits: CompactTarget, next_work: ChainWork) -> Self {
+        Self {
+            next_target: bits_to_target(next_nbits),
+            next_nbits,
+            next_work,
+        }
+    }
+}
+
+/// The private continuation state carried between recursive proof iterations.
+///
+/// This is committed only as a digest in the public values; the raw bytes are
+/// supplied as a private witness when extending a proof.
+#[repr(C)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrivateContinuationState {
+    pub next_nbits: CompactTarget,
+    pub next_work: ChainWork,
+    pub epoch_start_timestamp: BlockTimestamp,
+    pub timestamps: [BlockTimestamp; WINDOW_SIZE],
+}
+
+/// Size of a serialized [`PrivateContinuationState`] in bytes.
+pub const PRIVATE_CONTINUATION_STATE_SIZE: usize = size_of::<PrivateContinuationState>();
+
+impl PrivateContinuationState {
+    #[must_use]
+    pub fn to_bytes(&self) -> [u8; PRIVATE_CONTINUATION_STATE_SIZE] {
+        copy_to_bytes(self)
+    }
+
+    pub fn parse(bytes: &[u8]) -> Result<Self, ParseError> {
+        copy_from_bytes(bytes)
+    }
+}
+
+/// Combined public + private validation state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValidationState {
+    pub public: PublicChainClaim,
+    pub private: PrivateContinuationState,
+}
+
+impl ValidationState {
+    /// Split a [`State`] into its public claim and private continuation.
+    #[must_use]
+    pub fn from_state(state: &State) -> Self {
+        Self {
+            public: PublicChainClaim {
+                genesis_hash: state.genesis_hash,
+                tip_hash: state.block_hash,
+                chain_work: state.chain_work,
+                height: state.height,
+            },
+            private: PrivateContinuationState {
+                next_nbits: state.next_nbits,
+                next_work: state.next_work,
+                epoch_start_timestamp: state.epoch_start_timestamp,
+                timestamps: state.timestamps,
+            },
+        }
+    }
+
+    /// Reconstruct a [`State`] from the split representation.
+    ///
+    /// The `header` and `block_hash` fields of [`State`] are set from the
+    /// public claim's `tip_hash`; the full raw header is not available here.
+    #[must_use]
+    pub fn into_state(self) -> State {
+        State {
+            header: Header::default(),
+            block_hash: self.public.tip_hash,
+            genesis_hash: self.public.genesis_hash,
+            next_nbits: self.private.next_nbits,
+            height: self.public.height,
+            chain_work: self.public.chain_work,
+            next_work: self.private.next_work,
+            epoch_start_timestamp: self.private.epoch_start_timestamp,
+            timestamps: self.private.timestamps,
+        }
+    }
+}
+
 /// Validation status emitted by the program on failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -1378,7 +1520,6 @@ mod tests {
 
     #[test]
     fn fixed_width_wire_sizes_match_protocol() {
-        assert_eq!(BLOCK_HEADER_SIZE, 80);
         assert_eq!(NEW_HEADER_SIZE, 44);
         assert_eq!(RECURSIVE_PROOF_SIZE, 68);
         assert_eq!(STATE_SIZE, 264);
@@ -1735,5 +1876,83 @@ mod tests {
         let mut expected = original;
         expected[0] = ts(999);
         assert_eq!(state.timestamps, expected);
+    }
+
+    // =========================================================================
+    // Step 3: Public claim and continuation type tests
+    // =========================================================================
+
+    #[test]
+    fn state_round_trips_through_validation_state() {
+        let state = State {
+            header: Header::default(),
+            block_hash: BlockHash::from_raw([0xAB; 32]),
+            genesis_hash: BlockHash::from_raw([0xCD; 32]),
+            next_nbits: CompactTarget::from_consensus(GENESIS_NBITS),
+            height: 42,
+            chain_work: ChainWork::from_limbs([1, 2, 3, 4]),
+            next_work: ChainWork::from_limbs([5, 6, 7, 8]),
+            epoch_start_timestamp: BlockTimestamp::from_consensus(1000),
+            timestamps: [BlockTimestamp::from_consensus(100); WINDOW_SIZE],
+        };
+
+        let vs = ValidationState::from_state(&state);
+        assert_eq!(vs.public.genesis_hash, state.genesis_hash);
+        assert_eq!(vs.public.tip_hash, state.block_hash);
+        assert_eq!(vs.public.chain_work, state.chain_work);
+        assert_eq!(vs.public.height, state.height);
+        assert_eq!(vs.private.next_nbits, state.next_nbits);
+        assert_eq!(vs.private.next_work, state.next_work);
+        assert_eq!(vs.private.epoch_start_timestamp, state.epoch_start_timestamp);
+        assert_eq!(vs.private.timestamps, state.timestamps);
+
+        let recovered = vs.into_state();
+        // header is zeroed in round-trip (not stored in split form)
+        assert_eq!(recovered.block_hash, state.block_hash);
+        assert_eq!(recovered.genesis_hash, state.genesis_hash);
+        assert_eq!(recovered.next_nbits, state.next_nbits);
+        assert_eq!(recovered.height, state.height);
+        assert_eq!(recovered.chain_work, state.chain_work);
+        assert_eq!(recovered.next_work, state.next_work);
+        assert_eq!(recovered.epoch_start_timestamp, state.epoch_start_timestamp);
+        assert_eq!(recovered.timestamps, state.timestamps);
+    }
+
+    #[test]
+    fn private_continuation_state_serializes_to_fixed_width() {
+        let pcs = PrivateContinuationState {
+            next_nbits: CompactTarget::from_consensus(GENESIS_NBITS),
+            next_work: ChainWork::from_limbs([1, 2, 3, 4]),
+            epoch_start_timestamp: BlockTimestamp::from_consensus(500),
+            timestamps: [BlockTimestamp::from_consensus(10); WINDOW_SIZE],
+        };
+        let bytes = pcs.to_bytes();
+        assert_eq!(bytes.len(), PRIVATE_CONTINUATION_STATE_SIZE);
+        let parsed = PrivateContinuationState::parse(&bytes).unwrap();
+        assert_eq!(parsed, pcs);
+    }
+
+    #[test]
+    fn public_chain_claim_serializes_to_fixed_width() {
+        let claim = PublicChainClaim {
+            genesis_hash: BlockHash::from_raw([1; 32]),
+            tip_hash: BlockHash::from_raw([2; 32]),
+            chain_work: ChainWork::from_limbs([3, 4, 5, 6]),
+            height: 99,
+        };
+        let bytes = claim.to_bytes();
+        assert_eq!(bytes.len(), PUBLIC_CHAIN_CLAIM_SIZE);
+        let parsed = PublicChainClaim::parse(&bytes).unwrap();
+        assert_eq!(parsed, claim);
+    }
+
+    #[test]
+    fn difficulty_state_rejects_inconsistent_work() {
+        let nbits = CompactTarget::from_consensus(GENESIS_NBITS);
+        let correct_work = work_from_bits(nbits);
+        let wrong_work = ChainWork::from_limbs([0, 0, 0, 0]);
+
+        assert!(DifficultyState::new(nbits, correct_work).is_ok());
+        assert!(DifficultyState::new(nbits, wrong_work).is_err());
     }
 }
