@@ -51,6 +51,12 @@ fn main() {
         }
     }
 
+    // Display continuation digest if present.
+    if let Some(digest) = HeaderChainPublicValues::extract_continuation_digest(pv) {
+        println!("\n--- Continuation ---");
+        println!("Continuation Digest: {}", hex::encode(digest));
+    }
+
     // Proof metadata
     println!("\n--- Proof Details ---");
     println!("SP1 Version:       {}", proof.sp1_version);

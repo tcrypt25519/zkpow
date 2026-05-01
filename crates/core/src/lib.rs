@@ -1089,6 +1089,9 @@ struct FailureMetadataWire([u8; 5]);
 
 const FAILURE_METADATA_SIZE: usize = size_of::<FailureMetadataWire>();
 
+/// Size of the continuation digest appended to all public values.
+pub const CONTINUATION_DIGEST_SIZE: usize = 32;
+
 impl FailureMetadataWire {
     fn new(error_code: ValidationErrorCode, failure_height: u32) -> Self {
         let mut bytes = [0u8; 5];
@@ -1121,15 +1124,29 @@ pub fn encode_failure_metadata(
 
 impl HeaderChainPublicValues {
     /// Parse committed public values into the typed representation.
+    ///
+    /// Accepts both the legacy format (State only / State + failure metadata)
+    /// and the Step-4 extended format with a trailing 32-byte continuation digest.
     pub fn parse(bytes: &[u8]) -> Result<Self, PublicValuesParseError> {
-        match bytes.len() {
+        // Strip trailing continuation digest if present.
+        let core = if bytes.len() >= CONTINUATION_DIGEST_SIZE
+            && (bytes.len() == STATE_SIZE + CONTINUATION_DIGEST_SIZE
+                || bytes.len() == STATE_SIZE + FAILURE_METADATA_SIZE + CONTINUATION_DIGEST_SIZE)
+        {
+            &bytes[..bytes.len() - CONTINUATION_DIGEST_SIZE]
+        } else {
+            bytes
+        };
+
+        match core.len() {
             STATE_SIZE => Ok(Self::Success(
-                State::parse(bytes).map_err(PublicValuesParseError::StateParse)?,
+                State::parse(core).map_err(PublicValuesParseError::StateParse)?,
             )),
             len if len == STATE_SIZE + FAILURE_METADATA_SIZE => {
-                let state = State::parse(&bytes[..STATE_SIZE])
+                let state = State::parse(&core[..STATE_SIZE])
                     .map_err(PublicValuesParseError::StateParse)?;
-                let (error_code, failure_height) = FailureMetadataWire::parse(&bytes[STATE_SIZE..])?;
+                let (error_code, failure_height) =
+                    FailureMetadataWire::parse(&core[STATE_SIZE..])?;
                 Ok(Self::Failure(ProofFailure {
                     last_valid_state: state,
                     error_code,
@@ -1137,6 +1154,20 @@ impl HeaderChainPublicValues {
                 }))
             }
             actual => Err(PublicValuesParseError::InvalidLength { actual }),
+        }
+    }
+
+    /// Extract the trailing continuation digest from raw public values bytes.
+    /// Returns `None` if the bytes don't include a digest.
+    pub fn extract_continuation_digest(bytes: &[u8]) -> Option<[u8; CONTINUATION_DIGEST_SIZE]> {
+        if bytes.len() == STATE_SIZE + CONTINUATION_DIGEST_SIZE
+            || bytes.len() == STATE_SIZE + FAILURE_METADATA_SIZE + CONTINUATION_DIGEST_SIZE
+        {
+            let mut digest = [0u8; CONTINUATION_DIGEST_SIZE];
+            digest.copy_from_slice(&bytes[bytes.len() - CONTINUATION_DIGEST_SIZE..]);
+            Some(digest)
+        } else {
+            None
         }
     }
 
@@ -1165,9 +1196,11 @@ impl core::fmt::Display for PublicValuesParseError {
             Self::InvalidLength { actual } => {
                 write!(
                     f,
-                    "invalid public values length: expected {} or {}, got {}",
+                    "invalid public values length: expected {}, {}, {}, or {}, got {}",
                     STATE_SIZE,
                     STATE_SIZE + FAILURE_METADATA_SIZE,
+                    STATE_SIZE + CONTINUATION_DIGEST_SIZE,
+                    STATE_SIZE + FAILURE_METADATA_SIZE + CONTINUATION_DIGEST_SIZE,
                     actual
                 )
             }

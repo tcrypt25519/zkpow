@@ -18,11 +18,12 @@ sp1_zkvm::entrypoint!(main);
 
 use zkpow_core::{
     encode_failure_metadata, BlockHash, Header, InputMut, MedianTimePastHintsRef, NewHeader,
-    NewHeaderHintsRef, RecursiveProof, State, ValidationErrorCode, STATE_SIZE,
+    NewHeaderHintsRef, RecursiveProof, State, ValidationErrorCode,
+    ValidationState, PRIVATE_CONTINUATION_STATE_SIZE, STATE_SIZE,
 };
 
 mod sha256;
-use sha256::{sha256_264bytes, sha256d_80bytes};
+use sha256::{sha256_296bytes, sha256_88bytes, sha256d_80bytes};
 
 // ============================================================================
 // Error Handling
@@ -62,6 +63,21 @@ fn state_bytes(state: &State) -> &[u8; STATE_SIZE] {
     unsafe { &*(state as *const State as *const [u8; STATE_SIZE]) }
 }
 
+/// Compute the continuation digest for a state.
+fn compute_continuation_digest(state: &State) -> [u8; 32] {
+    let vs = ValidationState::from_state(state);
+    let pcs_bytes: [u8; PRIVATE_CONTINUATION_STATE_SIZE] = vs.private.to_bytes();
+    sha256_88bytes(&pcs_bytes)
+}
+
+/// Build the 296-byte success public values: State || continuation_digest.
+fn build_success_pv(state_bytes: &[u8; STATE_SIZE], digest: &[u8; 32]) -> [u8; 296] {
+    let mut pv = [0u8; 296];
+    pv[..STATE_SIZE].copy_from_slice(state_bytes);
+    pv[STATE_SIZE..].copy_from_slice(digest);
+    pv
+}
+
 fn parse_input<'a>(input_bytes: &'a mut [u8]) -> InputMut<'a> {
     InputMut::parse(input_bytes).expect("input should parse")
 }
@@ -92,7 +108,11 @@ fn verify_recursive_proof(state: &State, recursive_proof: &RecursiveProof) {
         recursive_proof.public_values_digest.as_raw(),
     );
 
-    let actual_public_values_digest = sha256_264bytes(state_bytes(state));
+    // Reconstruct the prior proof's public values (State || continuation_digest)
+    // and verify the digest matches.
+    let prior_digest = compute_continuation_digest(state);
+    let prior_pv = build_success_pv(state_bytes(state), &prior_digest);
+    let actual_public_values_digest = sha256_296bytes(&prior_pv);
     if actual_public_values_digest != recursive_proof.public_values_digest.into_raw() {
         panic!("recursive proof public values digest mismatch");
     }
@@ -118,11 +138,15 @@ fn commit_error_output(state: &State, error_code: ValidationErrorCode, failure_h
     let state_bytes = serialize_state(state);
     commit_state(&state_bytes);
     commit_failure_metadata(error_code, failure_height);
+    // Append continuation digest so verifiers can validate the private state.
+    let digest = compute_continuation_digest(state);
+    sp1_zkvm::io::commit_slice(&digest);
 }
 
 #[sp1_derive::cycle_tracker]
-fn commit_success(state_bytes: &[u8]) {
+fn commit_success(state_bytes: &[u8; STATE_SIZE], digest: &[u8; 32]) {
     sp1_zkvm::io::commit_slice(state_bytes);
+    sp1_zkvm::io::commit_slice(digest);
 }
 
 // ============================================================================
@@ -148,6 +172,11 @@ pub fn main() {
         apply_headers_or_commit(input.state, header_hints.headers, &median_hints);
     }
 
-    commit_success(&input_bytes[..STATE_SIZE]);
+    // After apply_headers_or_commit, input_bytes[..STATE_SIZE] holds the final state.
+    let final_state_bytes: &[u8; STATE_SIZE] =
+        unsafe { &*(input_bytes.as_ptr() as *const [u8; STATE_SIZE]) };
+    let final_state = State::parse(final_state_bytes).expect("state should parse");
+    let digest = compute_continuation_digest(&final_state);
+    commit_success(final_state_bytes, &digest);
     sp1_zkvm::syscalls::syscall_halt(0);
 }

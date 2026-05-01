@@ -165,6 +165,12 @@ async fn main() {
         test_error_recursive_on_failed_proof().await,
     );
 
+    // === Step 4: continuation digest ===
+    check(
+        "pv_parser_accepts_extended_format",
+        test_pv_parser_accepts_extended_format().await,
+    );
+
     println!("\nDone.");
 }
 
@@ -413,4 +419,53 @@ async fn test_error_recursive_on_failed_proof() -> Result<(), String> {
             }
         }
     }
+}
+
+/// Verify the public-value parser handles the extended format (with continuation digest)
+/// and that the digest can be extracted from a real execution.
+async fn test_pv_parser_accepts_extended_format() -> Result<(), String> {
+    use zkpow_core::{CONTINUATION_DIGEST_SIZE, STATE_SIZE};
+
+    let genesis_state = mainnet_genesis_state();
+    let records = util::load_header_records_from_db(DEFAULT_DB_PATH, 1, 10);
+    let headers = util::records_to_new_headers(&records);
+    let hints = util::median_time_past_hints_for_headers(&genesis_state, &headers);
+    let input = Input::new(genesis_state, RecursiveProof::default());
+    let stdin = stdin_for_input(&input, &headers, &hints);
+
+    let pv = run_and_get_pv(stdin).await?;
+
+    // Extended format: STATE_SIZE + CONTINUATION_DIGEST_SIZE bytes.
+    let expected_len = STATE_SIZE + CONTINUATION_DIGEST_SIZE;
+    if pv.len() != expected_len {
+        return Err(format!(
+            "expected {} bytes, got {}",
+            expected_len,
+            pv.len()
+        ));
+    }
+
+    // Parser must accept the extended format.
+    expect_success(&pv)?;
+
+    // Digest must be extractable and non-zero.
+    let digest = HeaderChainPublicValues::extract_continuation_digest(&pv)
+        .ok_or("no continuation digest in extended PV")?;
+    if digest == [0u8; CONTINUATION_DIGEST_SIZE] {
+        return Err("continuation digest is all zeros".to_string());
+    }
+
+    // Host-computed digest must match the committed digest.
+    let state = expect_success(&pv)?;
+    let vs = zkpow_core::ValidationState::from_state(&state);
+    let host_digest = util::continuation_digest(&vs.private);
+    if host_digest != digest {
+        return Err(format!(
+            "host digest {:?} != committed digest {:?}",
+            &host_digest[..4],
+            &digest[..4]
+        ));
+    }
+
+    Ok(())
 }
