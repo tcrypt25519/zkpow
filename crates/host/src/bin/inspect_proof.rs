@@ -43,7 +43,7 @@ fn main() {
                 "Error Code:        {} ({})",
                 failure.error_code as u8, error_name,
             );
-            println!("Header Index:      {}", failure.header_index);
+            println!("Failure Height:    {}", failure.failure_height);
         }
         Err(parse_error) => {
             display_parse_error(parse_error, pv);

@@ -11,7 +11,7 @@
 //!   3. median_time_past_hints: Vec<u8>
 //!   4. If `state.height > 0`: a recursive proof witness written via `write_proof`
 //!
-//! Output: serialized State on success, or state + error_code + header_index on error.
+//! Output: serialized State on success, or state + error_code + failure_height on error.
 
 #![no_main]
 sp1_zkvm::entrypoint!(main);
@@ -29,8 +29,8 @@ use sha256::{sha256_264bytes, sha256d_80bytes};
 // ============================================================================
 
 /// Commit the last valid state plus error information, then halt.
-fn commit_error(state: &State, error_code: ValidationErrorCode, header_index: u32) -> ! {
-    commit_error_output(state, error_code, header_index);
+fn commit_error(state: &State, error_code: ValidationErrorCode, failure_height: u32) -> ! {
+    commit_error_output(state, error_code, failure_height);
     sp1_zkvm::syscalls::syscall_halt(0)
 }
 
@@ -47,8 +47,8 @@ fn commit_state(state_bytes: &[u8; STATE_SIZE]) {
 }
 
 #[sp1_derive::cycle_tracker]
-fn commit_failure_metadata(error_code: ValidationErrorCode, header_index: u32) {
-    let metadata = encode_failure_metadata(error_code, header_index);
+fn commit_failure_metadata(error_code: ValidationErrorCode, failure_height: u32) {
+    let metadata = encode_failure_metadata(error_code, failure_height);
     sp1_zkvm::io::commit_slice(&metadata);
 }
 
@@ -108,16 +108,16 @@ fn apply_headers_or_commit(
         commit_error(
             &failure.last_valid_state,
             failure.error_code,
-            failure.header_index,
+            failure.failure_height,
         );
     }
 }
 
 #[sp1_derive::cycle_tracker]
-fn commit_error_output(state: &State, error_code: ValidationErrorCode, header_index: u32) {
+fn commit_error_output(state: &State, error_code: ValidationErrorCode, failure_height: u32) {
     let state_bytes = serialize_state(state);
     commit_state(&state_bytes);
-    commit_failure_metadata(error_code, header_index);
+    commit_failure_metadata(error_code, failure_height);
 }
 
 #[sp1_derive::cycle_tracker]

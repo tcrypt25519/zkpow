@@ -73,7 +73,7 @@ Host: verifies proof → verifies public values → saves proof
 | 184..188 | 4 | last_epoch_start_timestamp |
 | 188..232 | 44 | median_timestamp_buffer (\[u32; 11]) |
 | 232..233 | 1 | success_code (0=success, 1-7=error) |
-| 233..237 | 4 | error_detail (header index on error) |
+| 233..237 | 4 | failure_height (0 on success, absolute chain height on failure) |
 
 ### Median Count is Derivable
 

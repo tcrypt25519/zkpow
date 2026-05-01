@@ -566,8 +566,8 @@ where
         }
         Ok(HeaderChainPublicValues::Failure(failure)) => {
             return Err(format!(
-                "execution failed with {} at header {}",
-                failure.error_code, failure.header_index
+                "execution failed with {} at height {}",
+                failure.error_code, failure.failure_height
             )
             .into());
         }
@@ -628,8 +628,8 @@ pub async fn generate_and_save_proofs(
                 HeaderChainPublicValues::Success(state) => state,
                 HeaderChainPublicValues::Failure(failure) => {
                     return Err(format!(
-                        "previous proof ended in error: {} at header {}",
-                        failure.error_code, failure.header_index,
+                        "previous proof ended in error: {} at height {}",
+                        failure.error_code, failure.failure_height,
                     )
                     .into());
                 }
@@ -893,8 +893,8 @@ fn verify_public_values(pv: &[u8], expected_pv: &[u8], label: &str) -> Result<()
             Ok(())
         }
         HeaderChainPublicValues::Failure(failure) => Err(format!(
-            "{label} ended in error {} at header {}",
-            failure.error_code, failure.header_index,
+            "{label} ended in error {} at height {}",
+            failure.error_code, failure.failure_height,
         )
         .into()),
     }

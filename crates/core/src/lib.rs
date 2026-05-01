@@ -826,7 +826,7 @@ impl State {
                     return Err(ProofFailure {
                         last_valid_state: self.clone(),
                         error_code,
-                        header_index: header_index as u32,
+                        failure_height: self.height + 1,
                     });
                 }
 
@@ -930,7 +930,8 @@ impl TryFrom<u8> for ValidationErrorCode {
 pub struct ProofFailure {
     pub last_valid_state: State,
     pub error_code: ValidationErrorCode,
-    pub header_index: u32,
+    /// Absolute chain height of the failed header (last_valid_height + 1).
+    pub failure_height: u32,
 }
 
 /// Typed public values committed by the prover.
@@ -947,10 +948,10 @@ struct FailureMetadataWire([u8; 5]);
 const FAILURE_METADATA_SIZE: usize = size_of::<FailureMetadataWire>();
 
 impl FailureMetadataWire {
-    fn new(error_code: ValidationErrorCode, header_index: u32) -> Self {
+    fn new(error_code: ValidationErrorCode, failure_height: u32) -> Self {
         let mut bytes = [0u8; 5];
         bytes[0] = error_code.as_byte();
-        bytes[1..].copy_from_slice(&header_index.to_le_bytes());
+        bytes[1..].copy_from_slice(&failure_height.to_le_bytes());
         Self(bytes)
     }
 
@@ -958,8 +959,8 @@ impl FailureMetadataWire {
         let wire =
             copy_from_bytes::<Self>(bytes).map_err(PublicValuesParseError::FailureMetadataParse)?;
         let error_code = ValidationErrorCode::try_from(wire.0[0])?;
-        let header_index = u32::from_le_bytes(wire.0[1..].try_into().unwrap());
-        Ok((error_code, header_index))
+        let failure_height = u32::from_le_bytes(wire.0[1..].try_into().unwrap());
+        Ok((error_code, failure_height))
     }
 
     #[must_use]
@@ -971,9 +972,9 @@ impl FailureMetadataWire {
 #[must_use]
 pub fn encode_failure_metadata(
     error_code: ValidationErrorCode,
-    header_index: u32,
+    failure_height: u32,
 ) -> [u8; FAILURE_METADATA_SIZE] {
-    FailureMetadataWire::new(error_code, header_index).to_bytes()
+    FailureMetadataWire::new(error_code, failure_height).to_bytes()
 }
 
 impl HeaderChainPublicValues {
@@ -986,11 +987,11 @@ impl HeaderChainPublicValues {
             len if len == STATE_SIZE + FAILURE_METADATA_SIZE => {
                 let state = State::parse(&bytes[..STATE_SIZE])
                     .map_err(PublicValuesParseError::StateParse)?;
-                let (error_code, header_index) = FailureMetadataWire::parse(&bytes[STATE_SIZE..])?;
+                let (error_code, failure_height) = FailureMetadataWire::parse(&bytes[STATE_SIZE..])?;
                 Ok(Self::Failure(ProofFailure {
                     last_valid_state: state,
                     error_code,
-                    header_index,
+                    failure_height,
                 }))
             }
             actual => Err(PublicValuesParseError::InvalidLength { actual }),
@@ -1391,11 +1392,11 @@ mod tests {
     #[test]
     fn failure_metadata_encoding_round_trips() {
         let bytes = encode_failure_metadata(ValidationErrorCode::TimestampTooOld, 42);
-        let (error_code, header_index) = FailureMetadataWire::parse(&bytes).unwrap();
+        let (error_code, failure_height) = FailureMetadataWire::parse(&bytes).unwrap();
 
         assert_eq!(bytes.len(), FAILURE_METADATA_SIZE);
         assert_eq!(error_code, ValidationErrorCode::TimestampTooOld);
-        assert_eq!(header_index, 42);
+        assert_eq!(failure_height, 42);
     }
 
     #[test]
@@ -1499,6 +1500,33 @@ mod tests {
     }
 
     #[test]
+    fn failure_height_is_absolute_chain_height() {
+        // Start at height 5 and fail on the first new header → failure_height = 6.
+        let state = State {
+            height: 5,
+            next_nbits: CompactTarget::from_consensus(GENESIS_NBITS),
+            next_work: work_from_bits(CompactTarget::from_consensus(GENESIS_NBITS)),
+            ..State::default()
+        };
+        let headers = [NewHeader {
+            version: 1,
+            merkle_root: [0x22; 32],
+            timestamp: ts(1000),
+            nonce: 7,
+        }];
+        // Use a hash that exceeds the target to trigger PowInsufficient.
+        let failure = state
+            .apply_headers(&headers, &[ts(0)], |_| {
+                BlockHash::from_raw([0xFF; 32])
+            })
+            .expect_err("should fail PoW");
+
+        assert_eq!(failure.error_code, ValidationErrorCode::PowInsufficient);
+        assert_eq!(failure.failure_height, 6); // last_valid_state.height(5) + 1
+        assert_eq!(failure.last_valid_state.height, 5);
+    }
+
+    #[test]
     fn apply_headers_flushes_deferred_chain_work_before_failure() {
         let state = test_state();
         let headers = [
@@ -1527,7 +1555,7 @@ mod tests {
             failure.last_valid_state.chain_work,
             u256_add(ChainWork::default(), work)
         );
-        assert_eq!(failure.header_index, 1);
+        assert_eq!(failure.failure_height, 2);
     }
 
     #[test]

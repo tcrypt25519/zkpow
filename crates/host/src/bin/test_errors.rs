@@ -6,7 +6,7 @@
 //! Input protocol:
 //!   stdin: encoded_input(Vec<u8>) + header witness(Vec<u8>) + median-time-past witness(Vec<u8>)
 //!          → [recursive proof witness when state.height > 0]
-//!   output: state on success, or state + error_code(1) + header_index(4) on error
+//!   output: state on success, or state + error_code(1) + failure_height(4) on error
 
 use sp1_sdk::prelude::*;
 use sp1_sdk::{Elf, HashableKey, Prover, ProverClient, SP1Stdin};
@@ -40,8 +40,8 @@ fn expect_success(pv: &[u8]) -> Result<util::State, String> {
     match parsed {
         HeaderChainPublicValues::Success(state) => Ok(state),
         HeaderChainPublicValues::Failure(failure) => Err(format!(
-            "expected success, got error {} at header {}",
-            failure.error_code, failure.header_index,
+            "expected success, got error {} at height {}",
+            failure.error_code, failure.failure_height,
         )),
     }
 }
@@ -49,7 +49,7 @@ fn expect_success(pv: &[u8]) -> Result<util::State, String> {
 fn expect_failure(
     pv: &[u8],
     expected_code: ValidationErrorCode,
-    expected_header_index: u32,
+    expected_failure_height: u32,
 ) -> Result<(), String> {
     let parsed =
         HeaderChainPublicValues::parse(pv).map_err(|err| format!("failed to parse PV: {err}"))?;
@@ -66,10 +66,10 @@ fn expect_failure(
                     expected_code, failure.error_code,
                 ));
             }
-            if failure.header_index != expected_header_index {
+            if failure.failure_height != expected_failure_height {
                 return Err(format!(
-                    "expected header index {}, got {}",
-                    expected_header_index, failure.header_index,
+                    "expected failure height {}, got {}",
+                    expected_failure_height, failure.failure_height,
                 ));
             }
             Ok(())
@@ -295,7 +295,7 @@ async fn test_error_timestamp_too_old() -> Result<(), String> {
     let stdin = stdin_for_input(&input, &headers, &hints);
 
     let pv = run_and_get_pv(stdin).await?;
-    expect_failure(&pv, ValidationErrorCode::TimestampTooOld, 11)
+    expect_failure(&pv, ValidationErrorCode::TimestampTooOld, 12)
 }
 
 async fn test_error_pow_insufficient() -> Result<(), String> {
@@ -308,7 +308,7 @@ async fn test_error_pow_insufficient() -> Result<(), String> {
     let stdin = stdin_for_input(&input, &headers, &hints);
 
     let pv = run_and_get_pv(stdin).await?;
-    expect_failure(&pv, ValidationErrorCode::PowInsufficient, 0)
+    expect_failure(&pv, ValidationErrorCode::PowInsufficient, 1)
 }
 
 async fn test_recursive_chain_success() -> Result<(), String> {
