@@ -1,0 +1,85 @@
+version: '3.8'
+
+services:
+  bitcoin-header-chain:
+    image: bitcoin-header-chain:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bitcoin-header-chain
+    # GPU support for CUDA proving (requires NVIDIA Container Toolkit)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    environment:
+      - RUST_LOG=${RUST_LOG:-info}
+      - RUST_BACKTRACE=1
+      - CUDA=${CUDA:-1}
+      # Optional: specify CUDA device ID for multi-GPU servers
+      # - CUDA_DEVICE_ID=${CUDA_DEVICE_ID:-0}
+    volumes:
+      # Named volume for input SQLite database
+      - header-input:/input
+      # Named volume for output proofs (ready for S3 upload)
+      - header-output:/output
+      # Optional: mount AWS credentials for S3 upload
+      # - ${HOME}/.aws:/input/.aws:ro
+    networks:
+      - app-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "test", "-x", "/app/zkpow-host"]
+      interval: 30s
+      timeout: 10s
+      start_period: 10s
+      retries: 3
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Optional: Sidecar for automatic S3 upload of completed proofs
+  # Uncomment to enable automatic uploads
+  # s3-uploader:
+  #   image: amazon/aws-cli:latest
+  #   container_name: header-s3-uploader
+  #   volumes:
+  #     - header-output:/source:ro
+  #     - ${HOME}/.aws:/root/.aws:ro
+  #   environment:
+  #     - AWS_REGION=${AWS_REGION:-us-east-1}
+  #     - S3_BUCKET=${S3_BUCKET:-my-bucket}
+  #   entrypoint: |
+  #     /bin/sh -c '
+  #     while true; do
+  #       for f in /source/*.bin; do
+  #         [ -f "$$f" ] || continue
+  #         aws s3 cp "$$f" "s3://$$S3_BUCKET/$$(basename $$f)" && rm "$$f"
+  #       done
+  #       sleep 60
+  #     done
+  #     '
+  #   depends_on:
+  #     bitcoin-header-chain:
+  #       condition: service_healthy
+  #   networks:
+  #     - app-network
+
+volumes:
+  header-input:
+    driver: local
+    name: bitcoin-header-input
+  header-output:
+    driver: local
+    name: bitcoin-header-output
+
+networks:
+  app-network:
+    driver: bridge
+    name: bitcoin-header-network

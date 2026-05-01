@@ -159,6 +159,12 @@ async fn main() {
         test_error_pow_insufficient().await,
     );
 
+    // === Recursive hardening ===
+    check(
+        "error_recursive_on_failed_proof",
+        test_error_recursive_on_failed_proof().await,
+    );
+
     println!("\nDone.");
 }
 
@@ -343,6 +349,8 @@ async fn test_recursive_chain_success() -> Result<(), String> {
         RecursiveProof {
             verifier_key: VerifierKeyDigest::from_raw(vk.hash_u32()),
             public_values_digest: PublicValuesDigest::from_raw(util::compute_pv_digest(&pv1_bytes)),
+            previous_return_code: 0,
+            ..Default::default()
         },
     );
     let mut stdin2 = stdin_for_input(&input2, &headers2, &hints2);
@@ -357,4 +365,52 @@ async fn test_recursive_chain_success() -> Result<(), String> {
         .map_err(|e| format!("Run 2 execution failed: {}", e))?;
     let pv2 = pv2.to_vec();
     expect_success(&pv2).map(|_| ())
+}
+
+/// Verify that the guest panics when asked to extend a failed prior proof.
+///
+/// We craft a `RecursiveProof` with `previous_return_code = 2` (PoW failure)
+/// and confirm the zkVM execution fails before applying any new headers.
+async fn test_error_recursive_on_failed_proof() -> Result<(), String> {
+    let genesis_state = mainnet_genesis_state();
+    let records = util::load_header_records_from_db(DEFAULT_DB_PATH, 1, 5);
+    let headers = util::records_to_new_headers(&records);
+    let hints = util::median_time_past_hints_for_headers(&genesis_state, &headers);
+
+    // Build a state at height > 0 so the guest enters the recursive path.
+    let state_at_5 = util::compute_final_state(&genesis_state, &headers);
+
+    // Craft a RecursiveProof that claims the prior proof had a failure (return code 2).
+    let bad_recursive_proof = RecursiveProof {
+        verifier_key: VerifierKeyDigest::from_raw([0u32; 8]),
+        public_values_digest: PublicValuesDigest::from_raw([0u8; 32]),
+        previous_return_code: 2, // nonzero → prior proof was a failure
+        ..Default::default()
+    };
+
+    let input = Input::new(state_at_5, bad_recursive_proof);
+    let stdin = stdin_for_input(&input, &headers, &hints);
+
+    let client = ProverClient::builder().mock().build().await;
+    let result = client.execute(ELF, stdin).await;
+
+    match result {
+        // Execution failed (guest panicked) — expected.
+        Err(_) => Ok(()),
+        // Execution returned Ok — check that the public values are not a valid
+        // success state.  When the guest panics before committing, the public
+        // values will be empty or unparseable.
+        Ok((pv, _)) => {
+            let pv_bytes = pv.to_vec();
+            match HeaderChainPublicValues::parse(&pv_bytes) {
+                Ok(HeaderChainPublicValues::Success(_)) => Err(
+                    "expected guest to reject failed prior proof, but got a success state"
+                        .to_string(),
+                ),
+                // Any other outcome (failure PV or parse error) is acceptable —
+                // the guest did not produce a valid success continuation.
+                _ => Ok(()),
+            }
+        }
+    }
 }

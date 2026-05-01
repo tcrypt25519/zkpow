@@ -58,11 +58,19 @@ pub struct MedianTimePastHintsRef<'a> {
 }
 
 /// Recursive proof metadata that authenticates the current [`State`].
+///
+/// `previous_return_code` must be 0 (success) for the guest to accept the
+/// recursive continuation.  A nonzero value means the prior proof committed a
+/// validation failure, and extending from it is rejected.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RecursiveProof {
     pub verifier_key: VerifierKeyDigest,
     pub public_values_digest: PublicValuesDigest,
+    /// Return code from the previous proof (0 = success, nonzero = failure).
+    pub previous_return_code: u8,
+    /// Padding to maintain 4-byte alignment.
+    pub _pad: [u8; 3],
 }
 
 impl Default for RecursiveProof {
@@ -70,6 +78,8 @@ impl Default for RecursiveProof {
         Self {
             verifier_key: VerifierKeyDigest::from_raw([0u32; 8]),
             public_values_digest: PublicValuesDigest::from_raw([0u8; 32]),
+            previous_return_code: 0,
+            _pad: [0u8; 3],
         }
     }
 }
@@ -386,6 +396,18 @@ mod tests {
         let proof = RecursiveProof::default();
         assert_eq!(proof.verifier_key.as_raw(), &[0u32; 8]);
         assert_eq!(proof.public_values_digest.as_raw(), &[0u8; 32]);
+        assert_eq!(proof.previous_return_code, 0);
+    }
+
+    #[test]
+    fn test_recursive_proof_previous_return_code_round_trips() {
+        let proof = RecursiveProof {
+            previous_return_code: 3,
+            ..Default::default()
+        };
+        let bytes = proof.to_bytes();
+        let parsed = RecursiveProof::parse(&bytes).unwrap();
+        assert_eq!(parsed.previous_return_code, 3);
     }
 
     #[test]
@@ -418,6 +440,7 @@ mod tests {
         let recursive_proof_data = RecursiveProof {
             verifier_key: expected_verifier_key,
             public_values_digest: expected_public_values_digest,
+            ..Default::default()
         };
         let input = Input::new(non_genesis_state, recursive_proof_data).to_bytes();
         let input = Input::parse(&input, dummy_hash_header).unwrap();

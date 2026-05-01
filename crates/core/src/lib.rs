@@ -1379,7 +1379,7 @@ mod tests {
     fn fixed_width_wire_sizes_match_protocol() {
         assert_eq!(BLOCK_HEADER_SIZE, 80);
         assert_eq!(NEW_HEADER_SIZE, 44);
-        assert_eq!(RECURSIVE_PROOF_SIZE, 64);
+        assert_eq!(RECURSIVE_PROOF_SIZE, 68);
         assert_eq!(STATE_SIZE, 264);
         assert_eq!(FAILURE_METADATA_SIZE, 5);
         assert_eq!(core::mem::align_of::<Header>(), 4);

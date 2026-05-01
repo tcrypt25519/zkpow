@@ -1,0 +1,56 @@
+# Build artifacts
+target/
+**/target/
+
+# Git
+.git/
+.gitignore
+
+# Documentation
+*.md
+docs/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Rust toolchain files (use Docker's Rust version)
+rust-toolchain
+rust-toolchain.toml
+
+# Editor and IDE
+.claude/
+.kiro/
+.crush/
+.windsurf/
+.ai/
+.factory/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# Runtime data (mounted as volumes)
+headers.db
+trace.json
+*.db
+*.sqlite
+
+# Profiling and debugging
+profiling/
+scratch/
+trace.json
+
+# Docker files (not needed in context)
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Test artifacts
+test_data/
+**/tests/fixtures/

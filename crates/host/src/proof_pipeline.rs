@@ -474,11 +474,22 @@ fn build_recursive_proof(
     previous_proof: Option<&SP1ProofWithPublicValues>,
 ) -> Result<RecursiveProof, BoxError> {
     Ok(if let Some(prev_proof_val) = previous_proof {
+        let pv_bytes = prev_proof_val.public_values.to_vec();
+        // Determine the return code from the previous proof's public values.
+        let previous_return_code = match zkpow_core::HeaderChainPublicValues::parse(&pv_bytes) {
+            Ok(zkpow_core::HeaderChainPublicValues::Success(_)) => 0u8,
+            Ok(zkpow_core::HeaderChainPublicValues::Failure(f)) => f.error_code.as_byte(),
+            Err(e) => {
+                return Err(
+                    format!("failed to parse previous proof public values: {}", e).into(),
+                )
+            }
+        };
         RecursiveProof {
             verifier_key: VerifierKeyDigest::from_raw(vk.hash_u32()),
-            public_values_digest: PublicValuesDigest::from_raw(util::compute_pv_digest(
-                &prev_proof_val.public_values.to_vec(),
-            )),
+            public_values_digest: PublicValuesDigest::from_raw(util::compute_pv_digest(&pv_bytes)),
+            previous_return_code,
+            ..Default::default()
         }
     } else {
         RecursiveProof::default()

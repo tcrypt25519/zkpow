@@ -79,6 +79,14 @@ fn parse_median_hints<'a>(hint_bytes: &'a [u8], header_count: usize) -> MedianTi
 
 #[sp1_derive::cycle_tracker]
 fn verify_recursive_proof(state: &State, recursive_proof: &RecursiveProof) {
+    // Reject continuation from a failed prior proof.
+    if recursive_proof.previous_return_code != 0 {
+        panic!(
+            "recursive continuation rejected: prior proof has return code {}",
+            recursive_proof.previous_return_code
+        );
+    }
+
     sp1_zkvm::lib::verify::verify_sp1_proof(
         recursive_proof.verifier_key.as_raw(),
         recursive_proof.public_values_digest.as_raw(),
