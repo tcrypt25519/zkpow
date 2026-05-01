@@ -107,17 +107,16 @@ without validation. They should construct the tuple through a type that either
 derives the related values together at retarget time or verifies that a supplied
 triple is internally consistent.
 
-The continuation digest should bind both the visible claim and the hidden
-continuation state:
+The continuation digest should commit to the hidden continuation state:
 
 ```text
-continuation_digest =
-    H(domain || genesis_hash || tip_hash || chain_work || height || private_continuation_state)
+continuation_digest = H(private_continuation_state)
 ```
 
-Binding the visible fields into the digest prevents a hidden continuation state
-from being transplanted onto a different public tip with the same private
-continuation bytes.
+The proof public-values hash already binds `continuation_digest` to
+`genesis_hash`, `tip_hash`, `chain_work`, `height`, `return_code`, and
+`failure_height`. Repeating those fields inside the continuation digest is not
+necessary.
 
 ### Auxiliary Witness Hints
 
