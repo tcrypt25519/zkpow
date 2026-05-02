@@ -8,6 +8,16 @@ static INIT: Once = Once::new();
 /// Holds the non-blocking file writer guard. Must be kept alive for the duration of the process.
 static mut LOG_GUARD: Option<WorkerGuard> = None;
 
+fn env_truthy(name: &str) -> bool {
+    matches!(
+        std::env::var(name)
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str(),
+        "1" | "true" | "yes" | "on"
+    )
+}
+
 /// Initialise tracing.
 ///
 /// Two layers are registered:
@@ -41,7 +51,13 @@ pub fn init() {
         // SAFETY: written once inside Once::call_once, never read until process exit.
         unsafe { LOG_GUARD = Some(guard) };
 
-        let json_filter = EnvFilter::new("info")
+        let json_level = if env_truthy("PROVE_COMPRESSED_SPANS") {
+            "debug"
+        } else {
+            "info"
+        };
+
+        let json_filter = EnvFilter::new(json_level)
             .add_directive("hyper=off".parse().unwrap())
             .add_directive("slop_keccak_air=off".parse().unwrap())
             .add_directive("p3_fri=off".parse().unwrap())
@@ -54,15 +70,18 @@ pub fn init() {
             .with_span_events(FmtSpan::CLOSE)
             .with_filter(json_filter);
 
+        let enable_console = env_truthy("SP1_ENABLE_TOKIO_CONSOLE");
         tracing_subscriber::registry()
-            .with(console_subscriber::spawn())
+            .with(enable_console.then(console_subscriber::spawn))
             .with(stderr_layer)
             .with(json_layer)
             .init();
 
-        let console_bind =
-            std::env::var("TOKIO_CONSOLE_BIND").unwrap_or_else(|_| "127.0.0.1:6669".to_string());
-        println!("Tokio Console subscriber initialized on {console_bind}");
+        if enable_console {
+            let console_bind = std::env::var("TOKIO_CONSOLE_BIND")
+                .unwrap_or_else(|_| "127.0.0.1:6669".to_string());
+            println!("Tokio Console subscriber initialized on {console_bind}");
+        }
         println!("Structured JSON logs → logs/run.jsonl");
     });
 }

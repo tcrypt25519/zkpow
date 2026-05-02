@@ -5,8 +5,9 @@
 //!
 //! Input protocol:
 //!   stdin: encoded_input(Vec<u8>) + header witness(Vec<u8>) + median-time-past witness(Vec<u8>)
-//!          → [recursive proof witness when state.height > 0]
-//!   output: state on success, or state + error_code(1) + failure_height(4) on error
+//!          → [prior_claim(Vec<u8>) + prior_continuation(Vec<u8>) + recursive proof witness
+//!             when state.height > 0]
+//!   output: MinimalPublicValues (137 bytes)
 
 use sp1_sdk::prelude::*;
 use sp1_sdk::{Elf, HashableKey, Prover, ProverClient, SP1Stdin};
@@ -15,8 +16,8 @@ use zkpow_host::observability;
 use zkpow_host::proof_pipeline::DEFAULT_DB_PATH;
 use zkpow_host::util;
 use zkpow_host::util::{
-    HeaderChainPublicValues, Input, PublicValuesDigest, RecursiveProof, ValidationErrorCode,
-    VerifierKeyDigest,
+    HeaderChainPublicValues, Input, MinimalPublicValues, PublicValuesDigest, RecursiveProof,
+    ValidationErrorCode, VerifierKeyDigest,
 };
 
 const ELF: Elf = include_elf!("zkpow-guest");
@@ -34,12 +35,12 @@ async fn run_and_get_pv(stdin: SP1Stdin) -> Result<Vec<u8>, String> {
     Ok(public_values.to_vec())
 }
 
-fn expect_success(pv: &[u8]) -> Result<util::State, String> {
+fn expect_success(pv: &[u8]) -> Result<util::PublicChainClaim, String> {
     let parsed =
         HeaderChainPublicValues::parse(pv).map_err(|err| format!("failed to parse PV: {err}"))?;
     match parsed {
-        HeaderChainPublicValues::Success(state) => Ok(state),
-        HeaderChainPublicValues::Failure(failure) => Err(format!(
+        HeaderChainPublicValues::Success { claim, .. } => Ok(claim),
+        HeaderChainPublicValues::Failure { failure, .. } => Err(format!(
             "expected success, got error {} at height {}",
             failure.error_code, failure.failure_height,
         )),
@@ -55,11 +56,11 @@ fn expect_failure(
         HeaderChainPublicValues::parse(pv).map_err(|err| format!("failed to parse PV: {err}"))?;
 
     match parsed {
-        HeaderChainPublicValues::Success(state) => Err(format!(
+        HeaderChainPublicValues::Success { claim, .. } => Err(format!(
             "expected error {}, got success at height {}",
-            expected_code, state.height,
+            expected_code, claim.height,
         )),
-        HeaderChainPublicValues::Failure(failure) => {
+        HeaderChainPublicValues::Failure { failure, .. } => {
             if failure.error_code != expected_code {
                 return Err(format!(
                     "expected error {}, got {}",
@@ -128,6 +129,23 @@ fn stdin_for_input(
     stdin.write_vec(input.to_bytes());
     stdin.write_vec(util::NewHeaderHintsRef { headers }.to_bytes());
     stdin.write_vec(hints.to_bytes());
+    // No recursive witnesses for genesis-start inputs (height == 0).
+    stdin
+}
+
+fn stdin_for_recursive_input(
+    input: &Input,
+    headers: &[util::NewHeader],
+    hints: &util::MedianTimePastHints,
+) -> SP1Stdin {
+    let mut stdin = SP1Stdin::new();
+    stdin.write_vec(input.to_bytes());
+    stdin.write_vec(util::NewHeaderHintsRef { headers }.to_bytes());
+    stdin.write_vec(hints.to_bytes());
+    // Write prior claim and continuation state.
+    let vs = zkpow_core::ValidationState::from_state(&input.state);
+    stdin.write_vec(vs.public.to_bytes().to_vec());
+    stdin.write_vec(vs.private.to_bytes().to_vec());
     stdin
 }
 
@@ -165,11 +183,8 @@ async fn main() {
         test_error_recursive_on_failed_proof().await,
     );
 
-    // === Step 4: continuation digest ===
-    check(
-        "pv_parser_accepts_extended_format",
-        test_pv_parser_accepts_extended_format().await,
-    );
+    // === Step 6: minimal PV format ===
+    check("pv_minimal_format", test_pv_minimal_format().await);
 
     println!("\nDone.");
 }
@@ -192,9 +207,6 @@ async fn test_success_100_headers() -> Result<(), String> {
 
 async fn test_retarget_boundary_schedule() -> Result<(), String> {
     const FIRST_BOUNDARY_TIP_HEIGHT: usize = 2015;
-    // Mainnet first changes difficulty at height 32256. We simulate through the
-    // end of the previous epoch and assert the state carries the exact bits that
-    // appear in the next raw header.
     const RETARGET_HEIGHT: usize = 32256;
     const RETARGET_TIP_HEIGHT: usize = RETARGET_HEIGHT - 1;
     const EPOCH_LENGTH: usize = 2016;
@@ -289,9 +301,6 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
 }
 
 async fn test_error_timestamp_too_old() -> Result<(), String> {
-    // Load blocks 0-12 so the median buffer is full (11 blocks after genesis).
-    // Block 12's median check uses blocks 1-11 timestamps.
-    // We corrupt block 12's timestamp to be older than the median.
     let genesis_state = mainnet_genesis_state();
     let records = util::load_header_records_from_db(DEFAULT_DB_PATH, 1, 13);
     let mut headers = util::records_to_new_headers(&records);
@@ -341,12 +350,18 @@ async fn test_recursive_chain_success() -> Result<(), String> {
     let pv1_bytes = proof1.public_values.to_vec();
 
     // Verify Run 1 state
-    let state1 = expect_success(&pv1_bytes)?;
-    if state1.height != 10 {
-        return Err(format!("Run 1: expected height 10, got {}", state1.height));
+    let claim1 = expect_success(&pv1_bytes)?;
+    if claim1.height != 10 {
+        return Err(format!("Run 1: expected height 10, got {}", claim1.height));
     }
 
     // === Run 2: Extend from Run 1 (blocks 11-20) ===
+    // Reconstruct the full state at height 10 from DB (needed for continuation witness).
+    let genesis_state2 = mainnet_genesis_state();
+    let records_to_10 = util::load_header_records_from_db(DEFAULT_DB_PATH, 1, 10);
+    let headers_to_10 = util::records_to_new_headers(&records_to_10);
+    let state1 = util::compute_final_state(&genesis_state2, &headers_to_10);
+
     let records2 = util::load_header_records_from_db(DEFAULT_DB_PATH, 11, 10);
     let headers2 = util::records_to_new_headers(&records2);
     let hints2 = util::median_time_past_hints_for_headers(&state1, &headers2);
@@ -359,7 +374,7 @@ async fn test_recursive_chain_success() -> Result<(), String> {
             ..Default::default()
         },
     );
-    let mut stdin2 = stdin_for_input(&input2, &headers2, &hints2);
+    let mut stdin2 = stdin_for_recursive_input(&input2, &headers2, &hints2);
     let sp1_sdk::SP1Proof::Compressed(inner_proof) = &proof1.proof else {
         return Err("Run 1 proof is not compressed".to_string());
     };
@@ -374,57 +389,46 @@ async fn test_recursive_chain_success() -> Result<(), String> {
 }
 
 /// Verify that the guest panics when asked to extend a failed prior proof.
-///
-/// We craft a `RecursiveProof` with `previous_return_code = 2` (PoW failure)
-/// and confirm the zkVM execution fails before applying any new headers.
 async fn test_error_recursive_on_failed_proof() -> Result<(), String> {
     let genesis_state = mainnet_genesis_state();
     let records = util::load_header_records_from_db(DEFAULT_DB_PATH, 1, 5);
     let headers = util::records_to_new_headers(&records);
     let hints = util::median_time_past_hints_for_headers(&genesis_state, &headers);
 
-    // Build a state at height > 0 so the guest enters the recursive path.
     let state_at_5 = util::compute_final_state(&genesis_state, &headers);
 
     // Craft a RecursiveProof that claims the prior proof had a failure (return code 2).
     let bad_recursive_proof = RecursiveProof {
         verifier_key: VerifierKeyDigest::from_raw([0u32; 8]),
         public_values_digest: PublicValuesDigest::from_raw([0u8; 32]),
-        previous_return_code: 2, // nonzero → prior proof was a failure
+        previous_return_code: 2,
         ..Default::default()
     };
 
     let input = Input::new(state_at_5, bad_recursive_proof);
-    let stdin = stdin_for_input(&input, &headers, &hints);
+    let stdin = stdin_for_recursive_input(&input, &headers, &hints);
 
     let client = ProverClient::builder().mock().build().await;
     let result = client.execute(ELF, stdin).await;
 
     match result {
-        // Execution failed (guest panicked) — expected.
         Err(_) => Ok(()),
-        // Execution returned Ok — check that the public values are not a valid
-        // success state.  When the guest panics before committing, the public
-        // values will be empty or unparseable.
         Ok((pv, _)) => {
             let pv_bytes = pv.to_vec();
             match HeaderChainPublicValues::parse(&pv_bytes) {
-                Ok(HeaderChainPublicValues::Success(_)) => Err(
+                Ok(HeaderChainPublicValues::Success { .. }) => Err(
                     "expected guest to reject failed prior proof, but got a success state"
                         .to_string(),
                 ),
-                // Any other outcome (failure PV or parse error) is acceptable —
-                // the guest did not produce a valid success continuation.
                 _ => Ok(()),
             }
         }
     }
 }
 
-/// Verify the public-value parser handles the extended format (with continuation digest)
-/// and that the digest can be extracted from a real execution.
-async fn test_pv_parser_accepts_extended_format() -> Result<(), String> {
-    use zkpow_core::{CONTINUATION_DIGEST_SIZE, STATE_SIZE};
+/// Verify the public-value format is the minimal 137-byte layout.
+async fn test_pv_minimal_format() -> Result<(), String> {
+    use zkpow_core::MINIMAL_PV_SIZE;
 
     let genesis_state = mainnet_genesis_state();
     let records = util::load_header_records_from_db(DEFAULT_DB_PATH, 1, 10);
@@ -435,35 +439,41 @@ async fn test_pv_parser_accepts_extended_format() -> Result<(), String> {
 
     let pv = run_and_get_pv(stdin).await?;
 
-    // Extended format: STATE_SIZE + CONTINUATION_DIGEST_SIZE bytes.
-    let expected_len = STATE_SIZE + CONTINUATION_DIGEST_SIZE;
-    if pv.len() != expected_len {
+    if pv.len() != MINIMAL_PV_SIZE {
         return Err(format!(
-            "expected {} bytes, got {}",
-            expected_len,
+            "expected {} bytes (MINIMAL_PV_SIZE), got {}",
+            MINIMAL_PV_SIZE,
             pv.len()
         ));
     }
 
-    // Parser must accept the extended format.
-    expect_success(&pv)?;
-
-    // Digest must be extractable and non-zero.
-    let digest = HeaderChainPublicValues::extract_continuation_digest(&pv)
-        .ok_or("no continuation digest in extended PV")?;
-    if digest == [0u8; CONTINUATION_DIGEST_SIZE] {
-        return Err("continuation digest is all zeros".to_string());
+    let claim = expect_success(&pv)?;
+    if claim.height != 10 {
+        return Err(format!("expected height 10, got {}", claim.height));
     }
 
-    // Host-computed digest must match the committed digest.
-    let state = expect_success(&pv)?;
-    let vs = zkpow_core::ValidationState::from_state(&state);
+    // Parse as MinimalPublicValues and verify continuation digest is non-zero.
+    let mpv =
+        MinimalPublicValues::parse(&pv).map_err(|e| format!("MinimalPublicValues::parse: {e}"))?;
+    if mpv.continuation_digest == [0u8; 32] {
+        return Err("continuation digest is all zeros".to_string());
+    }
+    if mpv.return_code != 0 {
+        return Err(format!("expected return_code 0, got {}", mpv.return_code));
+    }
+
+    // Host-computed continuation digest must match.
+    let genesis_state2 = mainnet_genesis_state();
+    let records2 = util::load_header_records_from_db(DEFAULT_DB_PATH, 1, 10);
+    let headers2 = util::records_to_new_headers(&records2);
+    let final_state = util::compute_final_state(&genesis_state2, &headers2);
+    let vs = zkpow_core::ValidationState::from_state(&final_state);
     let host_digest = util::continuation_digest(&vs.private);
-    if host_digest != digest {
+    if host_digest != mpv.continuation_digest {
         return Err(format!(
             "host digest {:?} != committed digest {:?}",
             &host_digest[..4],
-            &digest[..4]
+            &mpv.continuation_digest[..4]
         ));
     }
 

@@ -20,6 +20,7 @@ use sp1_sdk::ExecutionReport;
 use sp1_sdk::{
     HashableKey, ProveRequest, Prover, ProverClient, ProvingKey, SP1ProofWithPublicValues,
 };
+use tracing::Instrument;
 
 pub type BoxError = Box<dyn Error + Send + Sync + 'static>;
 
@@ -477,12 +478,12 @@ fn build_recursive_proof(
         let pv_bytes = prev_proof_val.public_values.to_vec();
         // Determine the return code from the previous proof's public values.
         let previous_return_code = match zkpow_core::HeaderChainPublicValues::parse(&pv_bytes) {
-            Ok(zkpow_core::HeaderChainPublicValues::Success(_)) => 0u8,
-            Ok(zkpow_core::HeaderChainPublicValues::Failure(f)) => f.error_code.as_byte(),
+            Ok(zkpow_core::HeaderChainPublicValues::Success { .. }) => 0u8,
+            Ok(zkpow_core::HeaderChainPublicValues::Failure { failure, .. }) => {
+                failure.error_code.as_byte()
+            }
             Err(e) => {
-                return Err(
-                    format!("failed to parse previous proof public values: {}", e).into(),
-                )
+                return Err(format!("failed to parse previous proof public values: {}", e).into())
             }
         };
         RecursiveProof {
@@ -507,6 +508,13 @@ fn build_stdin(
     stdin.write_vec(input.to_bytes());
     stdin.write_vec(util::NewHeaderHintsRef { headers }.to_bytes());
     stdin.write_vec(median_hints.to_bytes());
+
+    if input.state.height > 0 {
+        // Write the prior public claim and continuation state as private witnesses.
+        let vs = zkpow_core::ValidationState::from_state(&input.state);
+        stdin.write_vec(vs.public.to_bytes().to_vec());
+        stdin.write_vec(vs.private.to_bytes().to_vec());
+    }
 
     if let Some(prev_proof) = previous_proof {
         let SP1Proof::Compressed(inner_proof) = &prev_proof.proof else {
@@ -556,7 +564,7 @@ where
 
     let execution_public_values = public_values.to_vec();
     match HeaderChainPublicValues::parse(&execution_public_values) {
-        Ok(HeaderChainPublicValues::Success(_)) => {
+        Ok(HeaderChainPublicValues::Success { .. }) => {
             timed_sync(
                 "verify_execution_public_values",
                 || -> Result<(), BoxError> {
@@ -564,7 +572,7 @@ where
                 },
             )?;
         }
-        Ok(HeaderChainPublicValues::Failure(failure)) => {
+        Ok(HeaderChainPublicValues::Failure { failure, .. }) => {
             return Err(format!(
                 "execution failed with {} at height {}",
                 failure.error_code, failure.failure_height
@@ -577,7 +585,9 @@ where
     }
 
     let compressed_proof = timed_async("prove_compressed", || async {
-        prover.prove(&pk, stdin.clone()).compressed().await
+        async { prover.prove(&pk, stdin.clone()).compressed().await }
+            .instrument(tracing::info_span!("prove_compressed_detail"))
+            .await
     })
     .await?;
     timed_sync(
@@ -624,9 +634,9 @@ pub async fn generate_and_save_proofs(
             let prev_public_values =
                 HeaderChainPublicValues::parse(prev_proof.public_values.as_ref())
                     .map_err(|err| err.to_string())?;
-            let state = match prev_public_values {
-                HeaderChainPublicValues::Success(state) => state,
-                HeaderChainPublicValues::Failure(failure) => {
+            let claim = match prev_public_values {
+                HeaderChainPublicValues::Success { claim, .. } => claim,
+                HeaderChainPublicValues::Failure { failure, .. } => {
                     return Err(format!(
                         "previous proof ended in error: {} at height {}",
                         failure.error_code, failure.failure_height,
@@ -634,10 +644,23 @@ pub async fn generate_and_save_proofs(
                     .into());
                 }
             };
-            if state.genesis_hash != genesis_hash {
+            if claim.genesis_hash != genesis_hash {
                 return Err("previous proof genesis mismatch".into());
             }
-            Ok(state)
+            // Reconstruct a minimal State from the public claim.
+            // The private continuation state is not available from the PV alone;
+            // the host uses the claim to seed the next batch's starting height.
+            // Full state reconstruction requires loading from DB.
+            let start_height = claim.height;
+            let genesis_record = util::load_header_record_from_db(path_to_str(&config.db_path)?, 0);
+            let genesis_state = util::genesis_state_from_record(genesis_record, genesis_hash);
+            let records = util::load_header_records_from_db(
+                path_to_str(&config.db_path)?,
+                1,
+                start_height as u64,
+            );
+            let headers = util::records_to_new_headers(&records);
+            Ok(util::compute_final_state(&genesis_state, &headers))
         } else {
             let genesis = util::load_header_record_from_db(path_to_str(&config.db_path)?, 0);
             Ok(util::genesis_state_from_record(genesis, genesis_hash))
@@ -666,7 +689,14 @@ pub async fn generate_and_save_proofs(
     let expected_state = timed_sync("simulate_expected_state", || -> Result<_, BoxError> {
         Ok(util::compute_final_state(&current_state, &headers))
     })?;
-    let expected_pv = expected_state.to_bytes();
+    let expected_continuation_digest = {
+        let vs = zkpow_core::ValidationState::from_state(&expected_state);
+        util::continuation_digest(&vs.private)
+    };
+    let expected_pv =
+        util::MinimalPublicValues::success(&expected_state, expected_continuation_digest)
+            .to_bytes()
+            .to_vec();
     let compressed_artifacts = match config.prover_backend {
         ProverBackend::Cpu => {
             let prover = timed_async("build_cpu_prover", || async {
@@ -880,19 +910,18 @@ where
 fn verify_public_values(pv: &[u8], expected_pv: &[u8], label: &str) -> Result<(), BoxError> {
     let parsed = HeaderChainPublicValues::parse(pv).map_err(|err| err.to_string())?;
     match parsed {
-        HeaderChainPublicValues::Success(state) => {
-            let actual_pv = state.to_bytes();
-            if actual_pv != expected_pv {
+        HeaderChainPublicValues::Success { .. } => {
+            if pv != expected_pv {
                 return Err(format!(
                     "{label} public values mismatch: expected {}, got {}",
                     hex::encode(expected_pv),
-                    hex::encode(actual_pv),
+                    hex::encode(pv),
                 )
                 .into());
             }
             Ok(())
         }
-        HeaderChainPublicValues::Failure(failure) => Err(format!(
+        HeaderChainPublicValues::Failure { failure, .. } => Err(format!(
             "{label} ended in error {} at height {}",
             failure.error_code, failure.failure_height,
         )

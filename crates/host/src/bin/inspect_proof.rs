@@ -3,7 +3,7 @@
 use sp1_sdk::SP1ProofWithPublicValues;
 
 use zkpow_host::util;
-use zkpow_host::util::{HeaderChainPublicValues, PublicValuesParseError, ValidationErrorCode};
+use zkpow_host::util::{HeaderChainPublicValues, ValidationErrorCode};
 
 const MAINNET_GENESIS_HEX: &str =
     "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f";
@@ -26,12 +26,22 @@ fn main() {
     println!("\n=== zkpow Proof ===\n");
 
     match HeaderChainPublicValues::parse(pv) {
-        Ok(HeaderChainPublicValues::Success(state)) => {
-            display_state(&state);
+        Ok(HeaderChainPublicValues::Success {
+            claim,
+            continuation_digest,
+        }) => {
+            display_claim(&claim);
+            println!("\n--- Continuation ---");
+            println!("Continuation Digest: {}", hex::encode(continuation_digest));
+            println!("\nStatus:              ✓ All headers validated");
         }
-        Ok(HeaderChainPublicValues::Failure(failure)) => {
-            println!("--- Error Output ---");
-            display_state(&failure.last_valid_state);
+        Ok(HeaderChainPublicValues::Failure {
+            failure,
+            last_valid_claim,
+            continuation_digest,
+        }) => {
+            println!("--- Last Valid State ---");
+            display_claim(&last_valid_claim);
             println!("\n--- Error ---");
             let error_name = match failure.error_code {
                 ValidationErrorCode::HeaderPayloadLengthInvalid => "Header payload length invalid",
@@ -44,17 +54,14 @@ fn main() {
                 failure.error_code as u8, error_name,
             );
             println!("Failure Height:    {}", failure.failure_height);
+            println!("\n--- Continuation ---");
+            println!("Continuation Digest: {}", hex::encode(continuation_digest));
         }
         Err(parse_error) => {
-            display_parse_error(parse_error, pv);
+            eprintln!("ERROR: {}", parse_error);
+            eprintln!("Raw hex: {}", hex::encode(pv));
             std::process::exit(1);
         }
-    }
-
-    // Display continuation digest if present.
-    if let Some(digest) = HeaderChainPublicValues::extract_continuation_digest(pv) {
-        println!("\n--- Continuation ---");
-        println!("Continuation Digest: {}", hex::encode(digest));
     }
 
     // Proof metadata
@@ -64,14 +71,7 @@ fn main() {
     println!("Public Values Size: {} bytes", pv.len());
 }
 
-fn display_state(state: &util::State) {
-    use std::time::UNIX_EPOCH;
-
-    // Genesis hash
-    println!(
-        "Genesis Hash:      {}",
-        reverse_hash_display(state.genesis_hash)
-    );
+fn display_claim(claim: &util::PublicChainClaim) {
     let mainnet_genesis_raw: [u8; 32] = {
         let mut g: [u8; 32] = hex::decode(MAINNET_GENESIS_HEX)
             .unwrap()
@@ -80,27 +80,25 @@ fn display_state(state: &util::State) {
         g.reverse();
         g
     };
-    if state.genesis_hash == util::BlockHash::from_raw(mainnet_genesis_raw) {
+
+    println!(
+        "Genesis Hash:      {}",
+        reverse_hash_display(claim.genesis_hash)
+    );
+    if claim.genesis_hash == util::BlockHash::from_raw(mainnet_genesis_raw) {
         println!("                     ↳ mainnet ✓");
     } else {
         println!("                     ↳ NOT mainnet (different chain)");
     }
 
-    // Chain tip
     println!(
         "\nChain Tip:         {}",
-        reverse_hash_display(state.block_hash)
-    );
-    println!(
-        "Tip Prev Hash:     {}",
-        reverse_hash_display(state.header.prev_blockhash)
+        reverse_hash_display(claim.tip_hash)
     );
 
-    // Height
-    println!("\nHeight:            {}", state.height);
+    println!("\nHeight:            {}", claim.height);
 
-    // Cumulative chain work
-    let work_hex: String = state
+    let work_hex: String = claim
         .chain_work
         .as_limbs()
         .iter()
@@ -108,46 +106,4 @@ fn display_state(state: &util::State) {
         .map(|w| format!("{:016x}", w))
         .collect();
     println!("Cumulative Work:   0x{}", work_hex);
-
-    // Difficulty
-    println!(
-        "Header Nbits:      0x{:08x}",
-        state.header.nbits.to_consensus()
-    );
-    println!(
-        "Next Nbits:        0x{:08x}",
-        state.next_nbits.to_consensus()
-    );
-
-    // Epoch start timestamp
-    let epoch_start_timestamp = state.epoch_start_timestamp.to_consensus();
-    let epoch_dt = UNIX_EPOCH + std::time::Duration::from_secs(epoch_start_timestamp as u64);
-    println!(
-        "Epoch Start:       {} (timestamp: {})",
-        humantime::format_rfc3339_seconds(epoch_dt),
-        epoch_start_timestamp
-    );
-
-    // Timestamp window
-    let timestamp_count = state.timestamp_count();
-    if timestamp_count > 0 {
-        println!("\nTimestamp Window ({} entries):", timestamp_count);
-        for i in 0..timestamp_count {
-            let ts = state.timestamps[i].to_consensus();
-            let dt = UNIX_EPOCH + std::time::Duration::from_secs(ts as u64);
-            println!(
-                "  [{}] {} ({})",
-                i,
-                humantime::format_rfc3339_seconds(dt),
-                ts
-            );
-        }
-    }
-
-    println!("\nStatus:              ✓ All headers validated");
-}
-
-fn display_parse_error(parse_error: PublicValuesParseError, pv: &[u8]) {
-    eprintln!("ERROR: {}", parse_error);
-    eprintln!("Raw hex: {}", hex::encode(pv));
 }

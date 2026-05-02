@@ -37,8 +37,9 @@ where
     output
 }
 
-/// Execute a closure while preserving the call shape on host builds.
-#[cfg(any(target_os = "zkvm", not(feature = "profiling")))]
+/// Execute a closure while preserving the call shape when report-backed
+/// profiling is not enabled.
+#[cfg(not(all(target_os = "zkvm", feature = "profiling")))]
 #[inline(always)]
 pub fn cycle_track_report<T, F>(_label: &'static str, f: F) -> T
 where
@@ -269,6 +270,8 @@ impl From<BlockTimestamp> for u32 {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Header {
+    /// TODO: Make a newtype for Version.
+    /// The maximally correct underlying type is a NonZero<i32>
     pub version: u32,
     pub prev_blockhash: BlockHash,
     pub merkle_root: [u8; 32],
@@ -464,6 +467,17 @@ pub struct NewHeader {
 }
 
 impl NewHeader {
+    /// Extract the prover-supplied subset of fields from a full [`Header`].
+    #[must_use]
+    pub fn from_header(header: &Header) -> Self {
+        Self {
+            version: header.version,
+            merkle_root: header.merkle_root,
+            timestamp: header.timestamp,
+            nonce: header.nonce,
+        }
+    }
+
     /// Parse a [`NewHeader`] from the flat input buffer at `offset`.
     pub fn parse_at(data: &[u8], offset: usize) -> Result<Self, ParseError> {
         let end = offset
@@ -508,24 +522,6 @@ impl NewHeader {
             nbits,
             nonce: self.nonce,
         }
-    }
-
-    /// Construct a [`NewHeader`] from a full [`Header`].
-    #[must_use]
-    pub fn from_header(header: &Header) -> Self {
-        Self {
-            version: header.version,
-            merkle_root: header.merkle_root,
-            timestamp: header.timestamp,
-            nonce: header.nonce,
-        }
-    }
-
-    /// Construct a [`NewHeader`] from a full raw 80-byte Bitcoin header.
-    #[must_use]
-    pub fn from_raw_header(raw: &[u8; 80]) -> Self {
-        let header = Header::parse(raw).expect("raw Bitcoin header should parse");
-        Self::from_header(&header)
     }
 }
 
@@ -579,6 +575,7 @@ impl State {
         bits_to_target(self.next_nbits)
     }
 
+    /// TODO: Delete this. We never sort the window.:q
     /// Return the upper median time past for the currently tracked timestamps.
     #[must_use]
     pub fn median_time_past(&self) -> Option<BlockTimestamp> {
@@ -605,30 +602,36 @@ impl State {
 
     #[must_use]
     fn median_hint_is_valid(&self, claimed_median: BlockTimestamp) -> bool {
-        cycle_track("state/validate/median_time_past_hint/rank", || {
+        cycle_track("state/validate/median_time_past_hint", || {
             let window_len = self.timestamp_count();
             if window_len == 0 {
                 return true;
             }
 
             let median_index = window_len / 2;
-            let mut less_count = 0usize;
-            let mut equal_count = 0usize;
-            let mut greater_count = 0usize;
 
-            for timestamp in self.timestamps.iter().take(window_len) {
-                if *timestamp < claimed_median {
-                    less_count += 1;
-                } else if *timestamp > claimed_median {
-                    greater_count += 1;
-                } else {
-                    equal_count += 1;
-                }
-            }
+            let (less_count, equal_count, greater_count) =
+                cycle_track("state/validate/median_time_past_hint/loop", || {
+                    let mut less_count = 0usize;
+                    let mut equal_count = 0usize;
+                    let mut greater_count = 0usize;
+                    for timestamp in self.timestamps.iter().take(window_len) {
+                        if *timestamp < claimed_median {
+                            less_count += 1;
+                        } else if *timestamp > claimed_median {
+                            greater_count += 1;
+                        } else {
+                            equal_count += 1;
+                        }
+                    }
+                    (less_count, equal_count, greater_count)
+                });
 
-            less_count + equal_count + greater_count == window_len
-                && less_count <= median_index
-                && less_count + equal_count > median_index
+            cycle_track("state/validate/median_time_past_hint/check_counts", || {
+                less_count + equal_count + greater_count == window_len
+                    && less_count <= median_index
+                    && less_count + equal_count > median_index
+            })
         })
     }
 
@@ -643,7 +646,7 @@ impl State {
     ) -> Result<(), ValidationErrorCode> {
         cycle_track("state/next_inner", || {
             let (required_target, required_work, timestamp_slot) =
-                cycle_track("state/next/setup", || {
+                cycle_track("state/next_inner/setup", || {
                     (
                         self.next_target(),
                         self.next_work,
@@ -663,7 +666,7 @@ impl State {
 
             // Validate pow
             cycle_track("state/next_inner/validate/pow", || {
-                if !hash_meets_expanded_target(block_hash, required_target) {
+                if !hash_meets_target(block_hash, required_target) {
                     return Err(ValidationErrorCode::PowInsufficient);
                 }
                 Ok(())
@@ -694,10 +697,11 @@ impl State {
                     let clamped = actual_timespan
                         .max(expected_timespan / 4)
                         .min(expected_timespan * 4);
+                    // TODO: we could save some cycles by directly using the maximum target
                     let pow_limit = bits_to_target(CompactTarget::from_consensus(GENESIS_NBITS));
                     let mut new_target =
                         retarget_target(required_target, clamped, expected_timespan);
-                    if target_exceeds(new_target, pow_limit) {
+                    if target_gt(new_target, pow_limit) {
                         new_target = pow_limit;
                     }
                     self.next_nbits = target_to_bits(new_target);
@@ -740,7 +744,7 @@ impl State {
         headers: &[NewHeader],
         median_hints: &[BlockTimestamp],
         mut hash_header: F,
-    ) -> Result<(), ProofFailure>
+    ) -> Result<(), ApplyFailure>
     where
         F: FnMut(&Header) -> BlockHash,
     {
@@ -823,7 +827,7 @@ impl State {
                     self.next_inner(header, block_hash, median_time_past, false)
                 {
                     flush_pending_chain_work(self, &mut pending_run_work, &mut pending_run_count);
-                    return Err(ProofFailure {
+                    return Err(ApplyFailure {
                         last_valid_state: self.clone(),
                         error_code,
                         failure_height: self.height + 1,
@@ -848,7 +852,7 @@ impl State {
         headers: &[NewHeader],
         median_hints: &[BlockTimestamp],
         hash_header: F,
-    ) -> Result<Self, ProofFailure>
+    ) -> Result<Self, ApplyFailure>
     where
         F: FnMut(&Header) -> BlockHash,
     {
@@ -930,7 +934,11 @@ impl DifficultyState {
         if next_work != expected_work {
             return Err(DifficultyConsistencyError);
         }
-        Ok(Self { next_target, next_nbits, next_work })
+        Ok(Self {
+            next_target,
+            next_nbits,
+            next_work,
+        })
     }
 
     /// Construct without validation (for trusted internal use).
@@ -948,6 +956,14 @@ impl DifficultyState {
 ///
 /// This is committed only as a digest in the public values; the raw bytes are
 /// supplied as a private witness when extending a proof.
+///
+/// Serialized without struct padding (84 bytes):
+/// ```text
+///  0..  4  next_nbits              u32 LE
+///  4.. 36  next_work               [u64; 4] LE
+/// 36.. 40  epoch_start_timestamp   u32 LE
+/// 40.. 84  timestamps              [u32; 11] LE
+/// ```
 #[repr(C)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PrivateContinuationState {
@@ -957,17 +973,47 @@ pub struct PrivateContinuationState {
     pub timestamps: [BlockTimestamp; WINDOW_SIZE],
 }
 
-/// Size of a serialized [`PrivateContinuationState`] in bytes.
-pub const PRIVATE_CONTINUATION_STATE_SIZE: usize = size_of::<PrivateContinuationState>();
+/// Size of the serialized [`PrivateContinuationState`] in bytes (no padding).
+pub const PRIVATE_CONTINUATION_STATE_SIZE: usize = 4 + 32 + 4 + 4 * WINDOW_SIZE;
 
 impl PrivateContinuationState {
     #[must_use]
     pub fn to_bytes(&self) -> [u8; PRIVATE_CONTINUATION_STATE_SIZE] {
-        copy_to_bytes(self)
+        let mut out = [0u8; PRIVATE_CONTINUATION_STATE_SIZE];
+        out[0..4].copy_from_slice(&self.next_nbits.to_consensus().to_le_bytes());
+        for (i, limb) in self.next_work.as_limbs().iter().enumerate() {
+            out[4 + i * 8..4 + (i + 1) * 8].copy_from_slice(&limb.to_le_bytes());
+        }
+        out[36..40].copy_from_slice(&self.epoch_start_timestamp.to_consensus().to_le_bytes());
+        for (i, ts) in self.timestamps.iter().enumerate() {
+            out[40 + i * 4..40 + (i + 1) * 4].copy_from_slice(&ts.to_consensus().to_le_bytes());
+        }
+        out
     }
 
     pub fn parse(bytes: &[u8]) -> Result<Self, ParseError> {
-        copy_from_bytes(bytes)
+        check_exact_len(bytes, PRIVATE_CONTINUATION_STATE_SIZE)?;
+        let next_nbits =
+            CompactTarget::from_consensus(u32::from_le_bytes(bytes[0..4].try_into().unwrap()));
+        let mut limbs = [0u64; 4];
+        for (i, limb) in limbs.iter_mut().enumerate() {
+            *limb = u64::from_le_bytes(bytes[4 + i * 8..4 + (i + 1) * 8].try_into().unwrap());
+        }
+        let next_work = ChainWork::from_limbs(limbs);
+        let epoch_start_timestamp =
+            BlockTimestamp::from_consensus(u32::from_le_bytes(bytes[36..40].try_into().unwrap()));
+        let mut timestamps = [BlockTimestamp::default(); WINDOW_SIZE];
+        for (i, ts) in timestamps.iter_mut().enumerate() {
+            *ts = BlockTimestamp::from_consensus(u32::from_le_bytes(
+                bytes[40 + i * 4..40 + (i + 1) * 4].try_into().unwrap(),
+            ));
+        }
+        Ok(Self {
+            next_nbits,
+            next_work,
+            epoch_start_timestamp,
+            timestamps,
+        })
     }
 }
 
@@ -1067,116 +1113,222 @@ impl TryFrom<u8> for ValidationErrorCode {
     }
 }
 
-/// Failure payload committed by the program when validation stops early.
+/// Failure payload returned by [`State::apply_headers_in_place`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProofFailure {
+pub struct ApplyFailure {
     pub last_valid_state: State,
     pub error_code: ValidationErrorCode,
     /// Absolute chain height of the failed header (last_valid_height + 1).
     pub failure_height: u32,
 }
 
+/// Failure payload in committed public values.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProofFailure {
+    pub error_code: ValidationErrorCode,
+    /// Absolute chain height of the failed header (last_valid_height + 1).
+    pub failure_height: u32,
+}
+
+// ============================================================================
+// Minimal public values (Step 6)
+// ============================================================================
+
+/// Wire layout of the minimal public values committed by the prover.
+///
+/// Layout (137 bytes, little-endian):
+/// ```text
+///  0.. 32  genesis_hash        [u8; 32]
+/// 32.. 64  tip_hash            [u8; 32]
+/// 64.. 96  chain_work          [u8; 32]  (u256 LE)
+/// 96..100  height              u32 LE
+/// 100      return_code         u8  (0 = success, nonzero = failure)
+/// 101..105 failure_height      u32 LE  (0 on success)
+/// 105..137 continuation_digest [u8; 32]
+/// ```
+///
+/// Serialized manually to avoid struct padding; use [`MinimalPublicValues::to_bytes`]
+/// and [`MinimalPublicValues::parse`] rather than transmuting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MinimalPublicValues {
+    pub genesis_hash: BlockHash,
+    pub tip_hash: BlockHash,
+    pub chain_work: [u8; 32],
+    pub height: u32,
+    pub return_code: u8,
+    pub failure_height: u32,
+    pub continuation_digest: [u8; 32],
+}
+
+/// Size of the serialized [`MinimalPublicValues`] in bytes.
+pub const MINIMAL_PV_SIZE: usize = 32 + 32 + 32 + 4 + 1 + 4 + 32; // = 137
+
+impl MinimalPublicValues {
+    /// Build success public values from a final state and continuation digest.
+    #[must_use]
+    pub fn success(state: &State, continuation_digest: [u8; 32]) -> Self {
+        let mut chain_work = [0u8; 32];
+        for (i, limb) in state.chain_work.as_limbs().iter().enumerate() {
+            chain_work[i * 8..(i + 1) * 8].copy_from_slice(&limb.to_le_bytes());
+        }
+        Self {
+            genesis_hash: state.genesis_hash,
+            tip_hash: state.block_hash,
+            chain_work,
+            height: state.height,
+            return_code: 0,
+            failure_height: 0,
+            continuation_digest,
+        }
+    }
+
+    /// Build failure public values from the last valid state, error, and continuation digest.
+    #[must_use]
+    pub fn failure(
+        state: &State,
+        error_code: ValidationErrorCode,
+        failure_height: u32,
+        continuation_digest: [u8; 32],
+    ) -> Self {
+        let mut chain_work = [0u8; 32];
+        for (i, limb) in state.chain_work.as_limbs().iter().enumerate() {
+            chain_work[i * 8..(i + 1) * 8].copy_from_slice(&limb.to_le_bytes());
+        }
+        Self {
+            genesis_hash: state.genesis_hash,
+            tip_hash: state.block_hash,
+            chain_work,
+            height: state.height,
+            return_code: error_code.as_byte(),
+            failure_height,
+            continuation_digest,
+        }
+    }
+
+    /// Serialize to exactly [`MINIMAL_PV_SIZE`] bytes (no padding).
+    #[must_use]
+    pub fn to_bytes(&self) -> [u8; MINIMAL_PV_SIZE] {
+        let mut out = [0u8; MINIMAL_PV_SIZE];
+        out[0..32].copy_from_slice(self.genesis_hash.as_raw());
+        out[32..64].copy_from_slice(self.tip_hash.as_raw());
+        out[64..96].copy_from_slice(&self.chain_work);
+        out[96..100].copy_from_slice(&self.height.to_le_bytes());
+        out[100] = self.return_code;
+        out[101..105].copy_from_slice(&self.failure_height.to_le_bytes());
+        out[105..137].copy_from_slice(&self.continuation_digest);
+        out
+    }
+
+    /// Deserialize from exactly [`MINIMAL_PV_SIZE`] bytes.
+    pub fn parse(bytes: &[u8]) -> Result<Self, PublicValuesParseError> {
+        if bytes.len() != MINIMAL_PV_SIZE {
+            return Err(PublicValuesParseError::InvalidLength {
+                actual: bytes.len(),
+            });
+        }
+        let genesis_hash = BlockHash::from_raw(bytes[0..32].try_into().unwrap());
+        let tip_hash = BlockHash::from_raw(bytes[32..64].try_into().unwrap());
+        let chain_work: [u8; 32] = bytes[64..96].try_into().unwrap();
+        let height = u32::from_le_bytes(bytes[96..100].try_into().unwrap());
+        let return_code = bytes[100];
+        let failure_height = u32::from_le_bytes(bytes[101..105].try_into().unwrap());
+        let continuation_digest: [u8; 32] = bytes[105..137].try_into().unwrap();
+        Ok(Self {
+            genesis_hash,
+            tip_hash,
+            chain_work,
+            height,
+            return_code,
+            failure_height,
+            continuation_digest,
+        })
+    }
+
+    /// Extract the chain work as a [`ChainWork`].
+    #[must_use]
+    pub fn chain_work(&self) -> ChainWork {
+        let mut limbs = [0u64; 4];
+        for (i, limb) in limbs.iter_mut().enumerate() {
+            *limb = u64::from_le_bytes(self.chain_work[i * 8..(i + 1) * 8].try_into().unwrap());
+        }
+        ChainWork::from_limbs(limbs)
+    }
+
+    /// Return the error code if this is a failure, or `None` on success.
+    pub fn error_code(&self) -> Option<Result<ValidationErrorCode, PublicValuesParseError>> {
+        if self.return_code == 0 {
+            None
+        } else {
+            Some(ValidationErrorCode::try_from(self.return_code))
+        }
+    }
+}
+
 /// Typed public values committed by the prover.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HeaderChainPublicValues {
-    Success(State),
-    Failure(ProofFailure),
-}
-
-#[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct FailureMetadataWire([u8; 5]);
-
-const FAILURE_METADATA_SIZE: usize = size_of::<FailureMetadataWire>();
-
-/// Size of the continuation digest appended to all public values.
-pub const CONTINUATION_DIGEST_SIZE: usize = 32;
-
-impl FailureMetadataWire {
-    fn new(error_code: ValidationErrorCode, failure_height: u32) -> Self {
-        let mut bytes = [0u8; 5];
-        bytes[0] = error_code.as_byte();
-        bytes[1..].copy_from_slice(&failure_height.to_le_bytes());
-        Self(bytes)
-    }
-
-    fn parse(bytes: &[u8]) -> Result<(ValidationErrorCode, u32), PublicValuesParseError> {
-        let wire =
-            copy_from_bytes::<Self>(bytes).map_err(PublicValuesParseError::FailureMetadataParse)?;
-        let error_code = ValidationErrorCode::try_from(wire.0[0])?;
-        let failure_height = u32::from_le_bytes(wire.0[1..].try_into().unwrap());
-        Ok((error_code, failure_height))
-    }
-
-    #[must_use]
-    fn to_bytes(self) -> [u8; FAILURE_METADATA_SIZE] {
-        copy_to_bytes(&self)
-    }
-}
-
-#[must_use]
-pub fn encode_failure_metadata(
-    error_code: ValidationErrorCode,
-    failure_height: u32,
-) -> [u8; FAILURE_METADATA_SIZE] {
-    FailureMetadataWire::new(error_code, failure_height).to_bytes()
+    Success {
+        claim: PublicChainClaim,
+        continuation_digest: [u8; 32],
+    },
+    Failure {
+        failure: ProofFailure,
+        last_valid_claim: PublicChainClaim,
+        continuation_digest: [u8; 32],
+    },
 }
 
 impl HeaderChainPublicValues {
-    /// Parse committed public values into the typed representation.
-    ///
-    /// Accepts both the legacy format (State only / State + failure metadata)
-    /// and the Step-4 extended format with a trailing 32-byte continuation digest.
+    /// Parse committed public values from the minimal 137-byte format.
     pub fn parse(bytes: &[u8]) -> Result<Self, PublicValuesParseError> {
-        // Strip trailing continuation digest if present.
-        let core = if bytes.len() >= CONTINUATION_DIGEST_SIZE
-            && (bytes.len() == STATE_SIZE + CONTINUATION_DIGEST_SIZE
-                || bytes.len() == STATE_SIZE + FAILURE_METADATA_SIZE + CONTINUATION_DIGEST_SIZE)
-        {
-            &bytes[..bytes.len() - CONTINUATION_DIGEST_SIZE]
-        } else {
-            bytes
+        let pv = MinimalPublicValues::parse(bytes)?;
+        let claim = PublicChainClaim {
+            genesis_hash: pv.genesis_hash,
+            tip_hash: pv.tip_hash,
+            chain_work: pv.chain_work(),
+            height: pv.height,
         };
-
-        match core.len() {
-            STATE_SIZE => Ok(Self::Success(
-                State::parse(core).map_err(PublicValuesParseError::StateParse)?,
-            )),
-            len if len == STATE_SIZE + FAILURE_METADATA_SIZE => {
-                let state = State::parse(&core[..STATE_SIZE])
-                    .map_err(PublicValuesParseError::StateParse)?;
-                let (error_code, failure_height) =
-                    FailureMetadataWire::parse(&core[STATE_SIZE..])?;
-                Ok(Self::Failure(ProofFailure {
-                    last_valid_state: state,
-                    error_code,
-                    failure_height,
-                }))
-            }
-            actual => Err(PublicValuesParseError::InvalidLength { actual }),
-        }
-    }
-
-    /// Extract the trailing continuation digest from raw public values bytes.
-    /// Returns `None` if the bytes don't include a digest.
-    pub fn extract_continuation_digest(bytes: &[u8]) -> Option<[u8; CONTINUATION_DIGEST_SIZE]> {
-        if bytes.len() == STATE_SIZE + CONTINUATION_DIGEST_SIZE
-            || bytes.len() == STATE_SIZE + FAILURE_METADATA_SIZE + CONTINUATION_DIGEST_SIZE
-        {
-            let mut digest = [0u8; CONTINUATION_DIGEST_SIZE];
-            digest.copy_from_slice(&bytes[bytes.len() - CONTINUATION_DIGEST_SIZE..]);
-            Some(digest)
+        if pv.return_code == 0 {
+            Ok(Self::Success {
+                claim,
+                continuation_digest: pv.continuation_digest,
+            })
         } else {
-            None
+            let error_code = ValidationErrorCode::try_from(pv.return_code)?;
+            Ok(Self::Failure {
+                failure: ProofFailure {
+                    error_code,
+                    failure_height: pv.failure_height,
+                },
+                last_valid_claim: claim,
+                continuation_digest: pv.continuation_digest,
+            })
         }
     }
 
-    /// Borrow the last authenticated state regardless of success or failure.
+    /// Borrow the public claim regardless of success or failure.
     #[must_use]
-    pub fn state(&self) -> &State {
+    pub fn claim(&self) -> &PublicChainClaim {
         match self {
-            Self::Success(state) => state,
-            Self::Failure(failure) => &failure.last_valid_state,
+            Self::Success { claim, .. } => claim,
+            Self::Failure {
+                last_valid_claim, ..
+            } => last_valid_claim,
+        }
+    }
+
+    /// Return the continuation digest.
+    #[must_use]
+    pub fn continuation_digest(&self) -> &[u8; 32] {
+        match self {
+            Self::Success {
+                continuation_digest,
+                ..
+            } => continuation_digest,
+            Self::Failure {
+                continuation_digest,
+                ..
+            } => continuation_digest,
         }
     }
 }
@@ -1186,8 +1338,6 @@ impl HeaderChainPublicValues {
 pub enum PublicValuesParseError {
     InvalidLength { actual: usize },
     UnknownErrorCode { code: u8 },
-    StateParse(ParseError),
-    FailureMetadataParse(ParseError),
 }
 
 impl core::fmt::Display for PublicValuesParseError {
@@ -1196,20 +1346,12 @@ impl core::fmt::Display for PublicValuesParseError {
             Self::InvalidLength { actual } => {
                 write!(
                     f,
-                    "invalid public values length: expected {}, {}, {}, or {}, got {}",
-                    STATE_SIZE,
-                    STATE_SIZE + FAILURE_METADATA_SIZE,
-                    STATE_SIZE + CONTINUATION_DIGEST_SIZE,
-                    STATE_SIZE + FAILURE_METADATA_SIZE + CONTINUATION_DIGEST_SIZE,
-                    actual
+                    "invalid public values length: expected {}, got {}",
+                    MINIMAL_PV_SIZE, actual
                 )
             }
             Self::UnknownErrorCode { code } => {
                 write!(f, "unknown validation error code: {}", code)
-            }
-            Self::StateParse(err) => write!(f, "invalid state payload: {}", err),
-            Self::FailureMetadataParse(err) => {
-                write!(f, "invalid failure metadata payload: {}", err)
             }
         }
     }
@@ -1218,7 +1360,7 @@ impl core::fmt::Display for PublicValuesParseError {
 /// Convert compact `bits` encoding into a 256-bit target.
 #[must_use]
 pub fn bits_to_target(bits: CompactTarget) -> Target {
-    cycle_track("pow/bits_to_target", || {
+    cycle_track("difficulty/bits_to_target", || {
         let bits = bits.to_consensus();
         let exponent = bits >> 24;
         let mantissa = bits & 0x00ff_ffff;
@@ -1243,7 +1385,7 @@ pub fn bits_to_target(bits: CompactTarget) -> Target {
 /// Convert a full 256-bit target into compact `bits` encoding.
 #[must_use]
 pub fn target_to_bits(target: Target) -> CompactTarget {
-    cycle_track("pow/target_to_bits", || {
+    cycle_track("difficulty/target_to_bits", || {
         let target = target.as_raw();
         let mut high_byte = 31usize;
         while high_byte > 0 && target[high_byte] == 0 {
@@ -1286,8 +1428,8 @@ impl From<Target> for CompactTarget {
 
 /// Compare two 256-bit little-endian byte arrays.
 #[must_use]
-fn u256_le(lhs: &[u8; 32], rhs: &[u8; 32]) -> core::cmp::Ordering {
-    cycle_track("pow/u256_le", || {
+fn u256_cmp(lhs: &[u8; 32], rhs: &[u8; 32]) -> core::cmp::Ordering {
+    cycle_track("difficulty/u256_le", || {
         for i in (0..32).rev() {
             match lhs[i].cmp(&rhs[i]) {
                 core::cmp::Ordering::Equal => continue,
@@ -1300,28 +1442,17 @@ fn u256_le(lhs: &[u8; 32], rhs: &[u8; 32]) -> core::cmp::Ordering {
 
 /// Return `true` when `lhs` is strictly greater than `rhs` as unsigned 256-bit integers.
 #[must_use]
-pub fn target_exceeds(lhs: Target, rhs: Target) -> bool {
-    cycle_track("pow/target_exceeds", || {
-        u256_le(lhs.as_raw(), rhs.as_raw()) == core::cmp::Ordering::Greater
+pub fn target_gt(lhs: Target, rhs: Target) -> bool {
+    cycle_track("difficulty/target_gt", || {
+        u256_cmp(lhs.as_raw(), rhs.as_raw()) == core::cmp::Ordering::Greater
     })
 }
 
-/// Check whether a header hash satisfies the compact target in `nbits`.
+/// Check whether a header hash satisfies a target.
 #[must_use]
-pub fn hash_meets_target(hash: BlockHash, nbits: CompactTarget) -> bool {
+pub fn hash_meets_target(hash: BlockHash, target: Target) -> bool    {
     cycle_track("pow/hash_meets_target", || {
-        hash_meets_expanded_target(hash, bits_to_target(nbits))
-    })
-}
-
-/// Check whether a header hash satisfies an expanded target.
-#[must_use]
-pub fn hash_meets_expanded_target(hash: BlockHash, target: Target) -> bool {
-    cycle_track("pow/hash_meets_expanded_target", || {
-        matches!(
-            u256_le(hash.as_raw(), target.as_raw()),
-            core::cmp::Ordering::Less | core::cmp::Ordering::Equal
-        )
+        u256_cmp(hash.as_raw(), target.as_raw()) != core::cmp::Ordering::Greater
     })
 }
 
@@ -1361,6 +1492,11 @@ pub fn u256_mul_u32(value: ChainWork, multiplier: u32) -> ChainWork {
     })
 }
 
+/// TODO: Consider, maximum allowed target is < (#2^256)-1.
+/// So adding 1 can't carry into a fifth limb.
+/// Also, we could simply do a wrapping add 1.
+///   Carry if/only if it wraps to 0.
+///   First limb to not wrap stops the carry.
 fn target_plus_one(target: Target) -> [u64; 5] {
     cycle_track("pow/work/target_plus_one", || {
         let target = target.as_raw();
@@ -1378,8 +1514,8 @@ fn target_plus_one(target: Target) -> [u64; 5] {
     })
 }
 
-fn u320_ge(lhs: &[u64; 5], rhs: &[u64; 5]) -> bool {
-    cycle_track("pow/work/u320_ge", || {
+fn u320_gte(lhs: &[u64; 5], rhs: &[u64; 5]) -> bool {
+    cycle_track("pow/work/u320_gte", || {
         for i in (0..5).rev() {
             if lhs[i] > rhs[i] {
                 return true;
@@ -1436,7 +1572,7 @@ pub fn work_from_target(target: Target) -> ChainWork {
             if bit == 256 {
                 remainder[0] |= 1;
             }
-            if u320_ge(&remainder, &divisor) {
+            if u320_gte(&remainder, &divisor) {
                 u320_sub_assign(&mut remainder, &divisor);
                 if bit < 256 {
                     quotient[(bit / 64) as usize] |= 1u64 << (bit % 64);
@@ -1556,7 +1692,7 @@ mod tests {
         assert_eq!(NEW_HEADER_SIZE, 44);
         assert_eq!(RECURSIVE_PROOF_SIZE, 68);
         assert_eq!(STATE_SIZE, 264);
-        assert_eq!(FAILURE_METADATA_SIZE, 5);
+        assert_eq!(MINIMAL_PV_SIZE, 137);
         assert_eq!(core::mem::align_of::<Header>(), 4);
         assert_eq!(core::mem::align_of::<NewHeader>(), 4);
         assert_eq!(core::mem::align_of::<RecursiveProof>(), 4);
@@ -1564,13 +1700,46 @@ mod tests {
     }
 
     #[test]
-    fn failure_metadata_encoding_round_trips() {
-        let bytes = encode_failure_metadata(ValidationErrorCode::TimestampTooOld, 42);
-        let (error_code, failure_height) = FailureMetadataWire::parse(&bytes).unwrap();
+    fn new_header_from_header_round_trips_with_into_header() {
+        let header = Header {
+            version: 7,
+            prev_blockhash: BlockHash::from_raw([0x11; 32]),
+            merkle_root: [0x22; 32],
+            timestamp: BlockTimestamp::from_consensus(123_456),
+            nbits: CompactTarget::from_consensus(0x1d00ffff),
+            nonce: 99,
+        };
 
-        assert_eq!(bytes.len(), FAILURE_METADATA_SIZE);
-        assert_eq!(error_code, ValidationErrorCode::TimestampTooOld);
-        assert_eq!(failure_height, 42);
+        let new_header = NewHeader::from_header(&header);
+        assert_eq!(new_header.version, header.version);
+        assert_eq!(new_header.merkle_root, header.merkle_root);
+        assert_eq!(new_header.timestamp, header.timestamp);
+        assert_eq!(new_header.nonce, header.nonce);
+
+        let recovered = new_header.into_header(header.prev_blockhash, header.nbits);
+        assert_eq!(recovered, header);
+    }
+
+    #[test]
+    fn minimal_public_values_round_trips() {
+        let state = State {
+            block_hash: BlockHash::from_raw([0xAB; 32]),
+            genesis_hash: BlockHash::from_raw([0xCD; 32]),
+            chain_work: ChainWork::from_limbs([1, 2, 3, 4]),
+            height: 42,
+            ..State::default()
+        };
+        let digest = [0x11u8; 32];
+        let pv = MinimalPublicValues::success(&state, digest);
+        let bytes = pv.to_bytes();
+        assert_eq!(bytes.len(), MINIMAL_PV_SIZE);
+        let parsed = MinimalPublicValues::parse(&bytes).unwrap();
+        assert_eq!(parsed.genesis_hash, state.genesis_hash);
+        assert_eq!(parsed.tip_hash, state.block_hash);
+        assert_eq!(parsed.height, state.height);
+        assert_eq!(parsed.return_code, 0);
+        assert_eq!(parsed.failure_height, 0);
+        assert_eq!(parsed.continuation_digest, digest);
     }
 
     #[test]
@@ -1641,8 +1810,7 @@ mod tests {
         let target = bits_to_target(bits);
         let hash = BlockHash::from_raw(target.into_raw());
 
-        assert!(hash_meets_expanded_target(hash, target));
-        assert!(hash_meets_target(hash, bits));
+        assert!(hash_meets_target(hash, target));
     }
 
     #[test]
@@ -1690,9 +1858,7 @@ mod tests {
         }];
         // Use a hash that exceeds the target to trigger PowInsufficient.
         let failure = state
-            .apply_headers(&headers, &[ts(0)], |_| {
-                BlockHash::from_raw([0xFF; 32])
-            })
+            .apply_headers(&headers, &[ts(0)], |_| BlockHash::from_raw([0xFF; 32]))
             .expect_err("should fail PoW");
 
         assert_eq!(failure.error_code, ValidationErrorCode::PowInsufficient);
@@ -1936,7 +2102,10 @@ mod tests {
         assert_eq!(vs.public.height, state.height);
         assert_eq!(vs.private.next_nbits, state.next_nbits);
         assert_eq!(vs.private.next_work, state.next_work);
-        assert_eq!(vs.private.epoch_start_timestamp, state.epoch_start_timestamp);
+        assert_eq!(
+            vs.private.epoch_start_timestamp,
+            state.epoch_start_timestamp
+        );
         assert_eq!(vs.private.timestamps, state.timestamps);
 
         let recovered = vs.into_state();

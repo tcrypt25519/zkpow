@@ -8,12 +8,13 @@ use sha2::{Digest, Sha256};
 use sp1_sdk::SP1PublicValues;
 
 pub use zkpow_core::{
-    BlockHash, BlockTimestamp, ChainWork, CompactTarget, DifficultyConsistencyError,
+    ApplyFailure, BlockHash, BlockTimestamp, ChainWork, CompactTarget, DifficultyConsistencyError,
     DifficultyState, Header, HeaderChainPublicValues, Input, InputError, MedianTimePastHints,
-    NewHeader, NewHeaderHintError, NewHeaderHints, NewHeaderHintsRef, ParseError, PrivateContinuationState,
-    ProofFailure, PublicChainClaim, PublicValuesDigest, PublicValuesParseError, RecursiveProof,
-    State, Target, ValidationErrorCode, ValidationState, VerifierKeyDigest, NEW_HEADER_SIZE,
-    PRIVATE_CONTINUATION_STATE_SIZE, PUBLIC_CHAIN_CLAIM_SIZE, STATE_SIZE,
+    MinimalPublicValues, NewHeader, NewHeaderHintError, NewHeaderHints, NewHeaderHintsRef,
+    ParseError, PrivateContinuationState, ProofFailure, PublicChainClaim, PublicValuesDigest,
+    PublicValuesParseError, RecursiveProof, State, Target, ValidationErrorCode, ValidationState,
+    VerifierKeyDigest, MINIMAL_PV_SIZE, NEW_HEADER_SIZE, PRIVATE_CONTINUATION_STATE_SIZE,
+    PUBLIC_CHAIN_CLAIM_SIZE, STATE_SIZE,
 };
 
 #[derive(Debug, Clone)]
@@ -174,7 +175,8 @@ pub fn raw_headers_to_new_headers(raw_headers: &[u8]) -> Vec<NewHeader> {
     for i in 0..count {
         let offset = i * 80;
         let raw: [u8; 80] = raw_headers[offset..offset + 80].try_into().unwrap();
-        out.push(NewHeader::from_raw_header(&raw));
+        let header = Header::parse(&raw).expect("raw Bitcoin header should parse");
+        out.push(NewHeader::from_header(&header));
     }
     out
 }

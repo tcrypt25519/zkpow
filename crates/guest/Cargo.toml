@@ -15,6 +15,7 @@ sp1-derive = { workspace = true }
 
 [features]
 default = []
+profiling = ["zkpow-core/profiling"]
 # Use a dummy PoW verifier (always returns true) for testing post-PoW validation
 # without grinding real block headers. WARNING: this does NOT validate proof-of-work.
 dummy-pow = []
