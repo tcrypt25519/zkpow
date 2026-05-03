@@ -99,8 +99,16 @@ list-proofs)
     ;;
 
 shell)
-    docker exec -it "$CONTAINER_NAME" /bin/bash ||
-        docker run -it --rm -v "$INPUT_VOLUME:/input" -v "$OUTPUT_VOLUME:/output" "$IMAGE_NAME" /bin/bash
+    if docker inspect -f '{{.State.Running}}' "$CONTAINER_NAME" 2>/dev/null | grep -q true; then
+        echo "Container is running, attaching to it..."
+        docker exec -it "$CONTAINER_NAME" /bin/bash
+    else
+        echo "Container is not running, starting a new one..."
+        docker run -it --rm \
+            -v "$INPUT_VOLUME:/input" \
+            -v "$OUTPUT_VOLUME:/output" \
+            "$IMAGE_NAME" /bin/bash
+    fi
     ;;
 
 *)
