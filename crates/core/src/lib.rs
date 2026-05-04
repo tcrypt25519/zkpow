@@ -228,12 +228,13 @@ impl From<Target> for [u8; 32] {
     }
 }
 
-/// Cumulative proof-of-work as a 256-bit little-endian limb array.
+/// A 256-bit unsigned integer stored as four little-endian u64 limbs.
+#[allow(non_camel_case_types)]
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct ChainWork([u64; 4]);
+pub struct u256([u64; 4]);
 
-impl ChainWork {
+impl u256 {
     /// Construct from little-endian limbs.
     #[must_use]
     pub const fn from_limbs(limbs: [u64; 4]) -> Self {
@@ -251,15 +252,75 @@ impl ChainWork {
     pub const fn into_limbs(self) -> [u64; 4] {
         self.0
     }
+
+    /// Construct from a 32-byte little-endian byte array.
+    #[must_use]
+    pub fn from_le_bytes(bytes: [u8; 32]) -> Self {
+        let mut limbs = [0u64; 4];
+        for (idx, limb) in limbs.iter_mut().enumerate() {
+            let start = idx * 8;
+            *limb = u64::from_le_bytes(bytes[start..start + 8].try_into().unwrap());
+        }
+        Self(limbs)
+    }
 }
 
-impl From<[u64; 4]> for ChainWork {
+impl From<[u64; 4]> for u256 {
     fn from(value: [u64; 4]) -> Self {
         Self(value)
     }
 }
 
+impl From<u256> for [u64; 4] {
+    fn from(value: u256) -> Self {
+        value.0
+    }
+}
+
+/// Cumulative proof-of-work as a 256-bit little-endian limb array.
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ChainWork(u256);
+
+impl ChainWork {
+    /// Construct from little-endian limbs.
+    #[must_use]
+    pub const fn from_limbs(limbs: [u64; 4]) -> Self {
+        Self(u256::from_limbs(limbs))
+    }
+
+    /// Borrow the little-endian limbs.
+    #[must_use]
+    pub const fn as_limbs(&self) -> &[u64; 4] {
+        self.0.as_limbs()
+    }
+
+    /// Consume into little-endian limbs.
+    #[must_use]
+    pub const fn into_limbs(self) -> [u64; 4] {
+        self.0.into_limbs()
+    }
+}
+
+impl From<[u64; 4]> for ChainWork {
+    fn from(value: [u64; 4]) -> Self {
+        Self(u256::from(value))
+    }
+}
+
 impl From<ChainWork> for [u64; 4] {
+    fn from(value: ChainWork) -> Self {
+        value.0.into()
+    }
+}
+
+impl From<u256> for ChainWork {
+    fn from(value: u256) -> Self {
+        Self(value)
+    }
+}
+
+impl From<ChainWork> for u256 {
     fn from(value: ChainWork) -> Self {
         value.0
     }
@@ -564,7 +625,7 @@ impl NewHeader {
 /// Complete authenticated validation state, serialized between recursive iterations.
 #[repr(C)]
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct State<Environment: Env = GuestEnv> {
+pub struct State<E: Env = GuestEnv> {
     pub header: Header,
     pub block_hash: BlockHash,
     pub genesis_hash: BlockHash,
@@ -574,10 +635,10 @@ pub struct State<Environment: Env = GuestEnv> {
     pub next_work: ChainWork,
     pub epoch_start_timestamp: BlockTimestamp,
     pub timestamps: [BlockTimestamp; WINDOW_SIZE],
-    pub _environment: PhantomData<Environment>,
+    pub _environment: PhantomData<E>,
 }
 
-impl<Environment: Env> State<Environment> {
+impl<E: Env> State<E> {
     /// The number of timestamps currently tracked for median-time-past.
     #[must_use]
     pub fn timestamp_count(&self) -> usize {
@@ -740,7 +801,7 @@ impl State<HostEnvironment> {
     }
 }
 
-impl<Environment: Env> State<Environment> {
+impl<E: Env> State<E> {
     #[must_use]
     fn median_time_past_hinted(&self, claimed_median: BlockTimestamp) -> bool {
         cycle_track("state/median_time_past_hinted", || {
@@ -777,12 +838,12 @@ impl<Environment: Env> State<Environment> {
     }
 
     #[allow(clippy::result_large_err)]
-    pub fn apply_headers_in_place<F>(
+    pub fn apply_headers<F>(
         &mut self,
         headers: &[NewHeader],
         median_hints: &[BlockTimestamp],
         mut hash_header: F,
-    ) -> Result<(), ApplyFailure<Environment>>
+    ) -> Result<(), ApplyFailure<E>>
     where
         F: FnMut(&Header) -> BlockHash,
     {
@@ -797,9 +858,7 @@ impl<Environment: Env> State<Environment> {
             let mut pending_run_count: u32 = 0;
 
             let flush_pending_chain_work =
-                |state: &mut State<Environment>,
-                 run_work: &mut Option<ChainWork>,
-                 run_count: &mut u32| {
+                |state: &mut State<E>, run_work: &mut Option<ChainWork>, run_count: &mut u32| {
                     if let (Some(run_work), count) = (run_work.take(), *run_count) {
                         if count > 0 {
                             cycle_track("state/apply_headers/chain_work_flush", || {
@@ -859,26 +918,9 @@ impl<Environment: Env> State<Environment> {
             Ok(())
         })
     }
-
-    #[allow(clippy::result_large_err)]
-    pub fn apply_headers<F>(
-        &self,
-        headers: &[NewHeader],
-        median_hints: &[BlockTimestamp],
-        hash_header: F,
-    ) -> Result<Self, ApplyFailure<Environment>>
-    where
-        F: FnMut(&Header) -> BlockHash,
-    {
-        cycle_track("state/apply_headers/clone_wrapper", || {
-            let mut state = self.clone();
-            state.apply_headers_in_place(headers, median_hints, hash_header)?;
-            Ok(state)
-        })
-    }
 }
 
-impl<Environment: Env> Default for State<Environment> {
+impl<E: Env> Default for State<E> {
     fn default() -> Self {
         Self {
             header: Header::default(),
@@ -1042,7 +1084,7 @@ pub struct ValidationState {
 impl ValidationState {
     /// Split a [`State`] into its public claim and private continuation.
     #[must_use]
-    pub fn from_state<Environment: Env>(state: &State<Environment>) -> Self {
+    pub fn from_state<E: Env>(state: &State<E>) -> Self {
         Self {
             public: PublicChainClaim {
                 genesis_hash: state.genesis_hash,
@@ -1064,7 +1106,7 @@ impl ValidationState {
     /// The `header` and `block_hash` fields of [`State`] are set from the
     /// public claim's `tip_hash`; the full raw header is not available here.
     #[must_use]
-    pub fn into_state<Environment: Env>(self) -> State<Environment> {
+    pub fn into_state<E: Env>(self) -> State<E> {
         State {
             header: Header::default(),
             block_hash: self.public.tip_hash,
@@ -1129,10 +1171,10 @@ impl TryFrom<u8> for ValidationErrorCode {
     }
 }
 
-/// Failure payload returned by [`State::apply_headers_in_place`].
+/// Failure payload returned by [`State::apply_headers`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ApplyFailure<Environment: Env = GuestEnv> {
-    pub last_valid_state: State<Environment>,
+pub struct ApplyFailure<E: Env = GuestEnv> {
+    pub last_valid_state: State<E>,
     pub error_code: ValidationErrorCode,
     /// Absolute chain height of the failed header (last_valid_height + 1).
     pub failure_height: u32,
@@ -1182,10 +1224,7 @@ pub const MINIMAL_PV_SIZE: usize = 32 + 32 + 32 + 4 + 1 + 4 + 32; // = 137
 impl MinimalPublicValues {
     /// Build success public values from a final state and continuation digest.
     #[must_use]
-    pub fn success<Environment: Env>(
-        state: &State<Environment>,
-        continuation_digest: [u8; 32],
-    ) -> Self {
+    pub fn success<E: Env>(state: &State<E>, continuation_digest: [u8; 32]) -> Self {
         let mut chain_work = [0u8; 32];
         for (i, limb) in state.chain_work.as_limbs().iter().enumerate() {
             chain_work[i * 8..(i + 1) * 8].copy_from_slice(&limb.to_le_bytes());
@@ -1204,8 +1243,8 @@ impl MinimalPublicValues {
     /// Build failure public values from the last valid state, error, and continuation digest.
     // TODO: Use a ProofFailure instead of its components.
     #[must_use]
-    pub fn failure<Environment: Env>(
-        state: &State<Environment>,
+    pub fn failure<E: Env>(
+        state: &State<E>,
         error_code: ValidationErrorCode,
         failure_height: u32,
         continuation_digest: [u8; 32],
@@ -1609,11 +1648,7 @@ pub fn work_from_target(target: Target) -> ChainWork {
 pub fn retarget_target(old_target: Target, actual_timespan: u32, expected_timespan: u32) -> Target {
     cycle_track("pow/retarget_target", || {
         let old_target = old_target.as_raw();
-        let mut old_u64 = [0u64; 4];
-        for (i, limb) in old_u64.iter_mut().enumerate() {
-            let base = i * 8;
-            *limb = u64::from_le_bytes(old_target[base..base + 8].try_into().unwrap());
-        }
+        let old_u64 = u256::from_le_bytes(*old_target).into_limbs();
 
         let mut product = [0u64; 4];
         let mut carry = 0u128;
@@ -1687,7 +1722,7 @@ mod tests {
     fn apply_header(state: &mut State, timestamp: u32) {
         let median_hint = test_median_time_past(state);
         state
-            .apply_headers_in_place(
+            .apply_headers(
                 &[NewHeader {
                     version: 1,
                     merkle_root: [0x22; 32],
@@ -1713,6 +1748,16 @@ mod tests {
             state.height += 1;
         }
         medians
+    }
+
+    fn failure_public_value_bytes(failure: &ApplyFailure) -> [u8; MINIMAL_PV_SIZE] {
+        MinimalPublicValues::failure(
+            &failure.last_valid_state,
+            failure.error_code,
+            failure.failure_height,
+            [0xA5; 32],
+        )
+        .to_bytes()
     }
 
     fn expected_upper_median(height: u32) -> BlockTimestamp {
@@ -1853,7 +1898,7 @@ mod tests {
 
     #[test]
     fn apply_headers_flushes_deferred_chain_work_on_success() {
-        let state = test_state();
+        let mut state = test_state();
         let headers = [
             NewHeader {
                 version: 1,
@@ -1870,19 +1915,52 @@ mod tests {
         ];
 
         let hints = median_hints_for_headers(&state, &headers);
-        let result = state
+        state
             .apply_headers(&headers, &hints, |_| zero_hash())
             .expect("headers should validate");
 
         let work = work_from_bits(CompactTarget::from_consensus(GENESIS_NBITS));
         let expected = u256_add(u256_mul_u32(work, 2), ChainWork::default());
-        assert_eq!(result.chain_work, expected);
+        assert_eq!(state.chain_work, expected);
+    }
+
+    #[test]
+    fn apply_headers_flushes_deferred_chain_work_for_longer_run() {
+        let mut state = test_state();
+        let headers = [
+            NewHeader {
+                version: 1,
+                merkle_root: [0x22; 32],
+                timestamp: ts(10),
+                nonce: 7,
+            },
+            NewHeader {
+                version: 1,
+                merkle_root: [0x33; 32],
+                timestamp: ts(20),
+                nonce: 8,
+            },
+            NewHeader {
+                version: 1,
+                merkle_root: [0x44; 32],
+                timestamp: ts(30),
+                nonce: 9,
+            },
+        ];
+
+        let hints = median_hints_for_headers(&state, &headers);
+        state
+            .apply_headers(&headers, &hints, |_| zero_hash())
+            .expect("validation should succeed");
+
+        let work = work_from_bits(CompactTarget::from_consensus(GENESIS_NBITS));
+        assert_eq!(state.chain_work, u256_mul_u32(work, 3));
     }
 
     #[test]
     fn failure_height_is_absolute_chain_height() {
         // Start at height 5 and fail on the first new header → failure_height = 6.
-        let state: State = State {
+        let mut state: State = State {
             height: 5,
             next_nbits: CompactTarget::from_consensus(GENESIS_NBITS),
             next_work: work_from_bits(CompactTarget::from_consensus(GENESIS_NBITS)),
@@ -1906,7 +1984,7 @@ mod tests {
 
     #[test]
     fn apply_headers_flushes_deferred_chain_work_before_failure() {
-        let state = test_state();
+        let mut state = test_state();
         let headers = [
             NewHeader {
                 version: 1,
@@ -1937,6 +2015,39 @@ mod tests {
     }
 
     #[test]
+    fn apply_headers_failure_output_includes_flushed_chain_work() {
+        let mut state = test_state();
+        let headers = [
+            NewHeader {
+                version: 1,
+                merkle_root: [0x22; 32],
+                timestamp: ts(10),
+                nonce: 7,
+            },
+            NewHeader {
+                version: 1,
+                merkle_root: [0x33; 32],
+                timestamp: ts(0),
+                nonce: 8,
+            },
+        ];
+
+        let hints = median_hints_for_headers(&state, &headers);
+        let failure = state
+            .apply_headers(&headers, &hints, |_| zero_hash())
+            .expect_err("validation should fail on the second header");
+
+        let public_values = failure_public_value_bytes(&failure);
+        let parsed = MinimalPublicValues::parse(&public_values).unwrap();
+        assert_eq!(
+            parsed.return_code,
+            ValidationErrorCode::TimestampTooOld.as_byte()
+        );
+        assert_eq!(parsed.failure_height, 2);
+        assert_eq!(parsed.chain_work(), failure.last_valid_state.chain_work);
+    }
+
+    #[test]
     fn apply_headers_matches_sequential_next_across_median_window_wrap() {
         let headers: Vec<NewHeader> = (1..=23)
             .map(|timestamp| NewHeader {
@@ -1951,12 +2062,13 @@ mod tests {
         for header in headers.iter().copied() {
             let median_hint = test_median_time_past(&sequential);
             sequential
-                .apply_headers_in_place(&[header], &[median_hint], |_| zero_hash())
+                .apply_headers(&[header], &[median_hint], |_| zero_hash())
                 .expect("sequential validation should succeed");
         }
 
         let hints = median_hints_for_headers(&test_state(), &headers);
-        let batched = test_state()
+        let mut batched = test_state();
+        batched
             .apply_headers(&headers, &hints, |_| zero_hash())
             .expect("batched validation should succeed");
 
@@ -1976,7 +2088,8 @@ mod tests {
         let state = test_state();
         let hints = median_hints_for_headers(&state, &headers);
 
-        let hinted = state
+        let mut hinted = state;
+        hinted
             .apply_headers(&headers, &hints, |_| zero_hash())
             .expect("hinted validation should succeed");
         assert_eq!(hinted.height, 23);
@@ -1984,7 +2097,7 @@ mod tests {
 
     #[test]
     fn hinted_median_validation_accepts_duplicate_median_values() {
-        let state: State = State {
+        let mut state: State = State {
             height: WINDOW_SIZE as u32,
             next_nbits: CompactTarget::from_consensus(GENESIS_NBITS),
             next_work: work_from_bits(CompactTarget::from_consensus(GENESIS_NBITS)),
@@ -2044,6 +2157,7 @@ mod tests {
         }];
 
         let result = std::panic::catch_unwind(|| {
+            let mut state = state;
             state
                 .apply_headers(&headers, &[ts(4)], |_| zero_hash())
                 .unwrap();
@@ -2101,7 +2215,7 @@ mod tests {
         };
         let median_hint = test_median_time_past(&state);
         state
-            .apply_headers_in_place(
+            .apply_headers(
                 &[NewHeader {
                     version: 1,
                     merkle_root: [0x22; 32],

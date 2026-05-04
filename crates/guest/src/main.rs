@@ -160,7 +160,7 @@ pub fn main() {
 
         // Apply headers; on failure commit minimal PV and halt.
         if let Err(failure) =
-            state.apply_headers_in_place(header_hints.headers, median_hints.medians, hash_header)
+            state.apply_headers(header_hints.headers, median_hints.medians, hash_header)
         {
             let digest = compute_continuation_digest(&failure.last_valid_state);
             let pv = MinimalPublicValues::failure(

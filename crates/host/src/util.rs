@@ -8,13 +8,14 @@ use sha2::{Digest, Sha256};
 use sp1_sdk::SP1PublicValues;
 
 pub use zkpow_core::{
-    ApplyFailure, BlockHash, BlockTimestamp, ChainWork, CompactTarget, DifficultyConsistencyError,
-    DifficultyState, Header, HeaderChainPublicValues, HostInput as Input, HostState as State,
-    InputError, MedianTimePastHints, MinimalPublicValues, NewHeader, NewHeaderHintError,
-    NewHeaderHints, NewHeaderHintsRef, ParseError, PrivateContinuationState, ProofFailure,
-    PublicChainClaim, PublicValuesDigest, PublicValuesParseError, RecursiveProof, Target,
-    ValidationErrorCode, ValidationState, VerifierKeyDigest, MINIMAL_PV_SIZE, NEW_HEADER_SIZE,
-    PRIVATE_CONTINUATION_STATE_SIZE, PUBLIC_CHAIN_CLAIM_SIZE, STATE_SIZE,
+    u256, ApplyFailure, BlockHash, BlockTimestamp, ChainWork, CompactTarget,
+    DifficultyConsistencyError, DifficultyState, Header, HeaderChainPublicValues,
+    HostInput as Input, HostState as State, InputError, MedianTimePastHints, MinimalPublicValues,
+    NewHeader, NewHeaderHintError, NewHeaderHints, NewHeaderHintsRef, ParseError,
+    PrivateContinuationState, ProofFailure, PublicChainClaim, PublicValuesDigest,
+    PublicValuesParseError, RecursiveProof, Target, ValidationErrorCode, ValidationState,
+    VerifierKeyDigest, MINIMAL_PV_SIZE, NEW_HEADER_SIZE, PRIVATE_CONTINUATION_STATE_SIZE,
+    PUBLIC_CHAIN_CLAIM_SIZE, STATE_SIZE,
 };
 
 #[derive(Debug, Clone)]
@@ -155,12 +156,7 @@ pub fn chain_work_from_db_bytes(bytes: &[u8]) -> ChainWork {
     let raw: [u8; 32] = bytes.try_into().expect("chainwork must be 32 bytes");
     let mut little_endian = raw;
     little_endian.reverse();
-    let mut limbs = [0u64; 4];
-    for (idx, limb) in limbs.iter_mut().enumerate() {
-        let start = idx * 8;
-        *limb = u64::from_le_bytes(little_endian[start..start + 8].try_into().unwrap());
-    }
-    ChainWork::from_limbs(limbs)
+    ChainWork::from(u256::from_le_bytes(little_endian))
 }
 
 /// Convert raw 80-byte headers (from DB) to typed [`NewHeader`] values.
@@ -273,9 +269,11 @@ pub fn compute_final_state_with_hints(
     headers: &[NewHeader],
     hints: &MedianTimePastHints,
 ) -> State {
-    initial_state
+    let mut state = initial_state.clone();
+    state
         .apply_headers(headers, &hints.medians, hash_header)
-        .expect("host state transition should succeed")
+        .expect("host state transition should succeed");
+    state
 }
 
 pub fn records_to_new_headers(records: &[HeaderRecord]) -> Vec<NewHeader> {
