@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 use crate::{
     check_exact_len, copy_from_bytes, copy_to_bytes, cycle_track, mut_from_bytes, slice_from_bytes,
     BlockHash, BlockTimestamp, Header, NewHeader, ParseError, PublicValuesDigest, State,
-    VerifierKeyDigest, NEW_HEADER_SIZE, RECURSIVE_PROOF_SIZE, STATE_SIZE,
+    StateEnvironment, VerifierKeyDigest, NEW_HEADER_SIZE, RECURSIVE_PROOF_SIZE, STATE_SIZE,
 };
 
 // ============================================================================
@@ -14,8 +14,8 @@ use crate::{
 
 /// Complete typed prover input.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Input {
-    pub state: State,
+pub struct Input<Environment: StateEnvironment = crate::GuestEnvironment> {
+    pub state: State<Environment>,
     pub recursive_proof: RecursiveProof,
 }
 
@@ -117,7 +117,9 @@ impl From<ParseError> for InputError {
     }
 }
 
-fn validate_genesis_placeholder(state: &State) -> Result<(), InputError> {
+fn validate_genesis_placeholder<Environment: StateEnvironment>(
+    state: &State<Environment>,
+) -> Result<(), InputError> {
     if state.height == 0 && state.genesis_hash != BlockHash::default() {
         return Err(InputError::GenesisHashMustBeZero);
     }
@@ -318,7 +320,7 @@ impl<'a> InputMut<'a> {
     }
 }
 
-impl State {
+impl<Environment: StateEnvironment> State<Environment> {
     /// Fill in the genesis hash when the wire input leaves it unset.
     pub fn update_genesis_hash<F>(&mut self, hash_header: F)
     where
@@ -343,15 +345,17 @@ impl State {
     }
 }
 
-impl Input {
+impl<Environment: StateEnvironment> Input<Environment> {
     /// Constructs a new Input.
-    pub fn new(state: State, recursive_proof: RecursiveProof) -> Self {
+    pub fn new(state: State<Environment>, recursive_proof: RecursiveProof) -> Self {
         Self {
             state,
             recursive_proof,
         }
     }
+}
 
+impl Input {
     /// Parse and validate input from the host/guest wire format.
     pub fn parse<F>(bytes: &[u8], hash_header: F) -> Result<Self, InputError>
     where
@@ -359,7 +363,9 @@ impl Input {
     {
         InputRef::parse(bytes).map(|input| input.to_owned(hash_header))
     }
+}
 
+impl<Environment: StateEnvironment> Input<Environment> {
     /// Serialize to the host/guest wire format.
     #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
@@ -412,7 +418,7 @@ mod tests {
 
     #[test]
     fn test_parse_from_bytes_genesis_no_proof() {
-        let genesis_state = State {
+        let genesis_state: State = State {
             height: 0,
             genesis_hash: BlockHash::default(), // Should be default for initial parse
             ..Default::default()
@@ -426,7 +432,7 @@ mod tests {
 
     #[test]
     fn test_parse_from_bytes_non_genesis_with_proof() {
-        let mut non_genesis_state = State {
+        let mut non_genesis_state: State = State {
             height: 100,
             ..Default::default()
         };
@@ -479,7 +485,7 @@ mod tests {
 
     #[test]
     fn test_input_ref_rejects_misaligned_state() {
-        let genesis_state = State {
+        let genesis_state: State = State {
             height: 0,
             genesis_hash: BlockHash::default(),
             ..Default::default()

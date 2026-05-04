@@ -100,7 +100,7 @@ fn verify_recursive_proof(
 
         // 2. Reconstruct the prior proof's minimal public values and hash them.
         //    Build a temporary State to use MinimalPublicValues::success.
-        let prior_state = ValidationState {
+        let prior_state: State = ValidationState {
             public: *prior_claim,
             private: prior_continuation.clone(),
         }

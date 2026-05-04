@@ -8,6 +8,7 @@ publish = false
 path = "src/lib.rs"
 
 [features]
+host = []
 profiling = []
 
 [dependencies]

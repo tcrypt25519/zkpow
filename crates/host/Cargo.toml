@@ -12,7 +12,7 @@ path = "src/main.rs"
 path = "src/lib.rs"
 
 [dependencies]
-zkpow-core = { workspace = true }
+zkpow-core = { workspace = true, features = ["host"] }
 console-subscriber = "0.4.1"
 sp1-sdk = { workspace = true }
 sp1-prover = { workspace = true }

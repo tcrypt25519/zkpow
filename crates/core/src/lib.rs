@@ -5,6 +5,7 @@
 extern crate alloc;
 
 use core::{
+    marker::PhantomData,
     mem::{align_of, size_of, MaybeUninit},
     ptr, slice,
 };
@@ -71,6 +72,44 @@ pub const BLOCK_HEADER_SIZE: usize = size_of::<Header>();
 
 /// Sliding window size used for median-time-past checks.
 pub const WINDOW_SIZE: usize = 11;
+
+mod sealed {
+    pub trait Sealed {}
+}
+
+/// Marker trait for environment-specific state APIs.
+pub trait StateEnvironment:
+    sealed::Sealed + core::fmt::Debug + Clone + Copy + Default + PartialEq + Eq
+{
+}
+
+/// Guest/circuit environment marker.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct GuestEnvironment;
+
+impl sealed::Sealed for GuestEnvironment {}
+impl StateEnvironment for GuestEnvironment {}
+
+/// Host environment marker.
+#[cfg(feature = "host")]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct HostEnvironment;
+
+#[cfg(feature = "host")]
+impl sealed::Sealed for HostEnvironment {}
+#[cfg(feature = "host")]
+impl StateEnvironment for HostEnvironment {}
+
+/// State typed for the guest/circuit environment.
+pub type GuestState = State<GuestEnvironment>;
+
+/// State typed for the host environment.
+#[cfg(feature = "host")]
+pub type HostState = State<HostEnvironment>;
+
+/// Prover input typed for the host environment.
+#[cfg(feature = "host")]
+pub type HostInput = Input<HostEnvironment>;
 
 /// Mainnet PoW limit in compact form.
 pub const GENESIS_NBITS: u32 = 0x1d00ffff;
@@ -528,7 +567,7 @@ impl NewHeader {
 /// Complete authenticated validation state, serialized between recursive iterations.
 #[repr(C)]
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct State {
+pub struct State<Environment: StateEnvironment = GuestEnvironment> {
     pub header: Header,
     pub block_hash: BlockHash,
     pub genesis_hash: BlockHash,
@@ -538,9 +577,10 @@ pub struct State {
     pub next_work: ChainWork,
     pub epoch_start_timestamp: BlockTimestamp,
     pub timestamps: [BlockTimestamp; WINDOW_SIZE],
+    pub _environment: PhantomData<Environment>,
 }
 
-impl State {
+impl<Environment: StateEnvironment> State<Environment> {
     /// The number of timestamps currently tracked for median-time-past.
     #[must_use]
     pub fn timestamp_count(&self) -> usize {
@@ -575,73 +615,13 @@ impl State {
         bits_to_target(self.next_nbits)
     }
 
-    /// TODO: Delete this. We never sort the window.:q
-    /// Return the upper median time past for the currently tracked timestamps.
-    #[must_use]
-    pub fn median_time_past(&self) -> Option<BlockTimestamp> {
-        cycle_track("state/median_time_past", || {
-            let height = self.height as usize;
-            if height == 0 {
-                return None;
-            }
-
-            let mut sorted = self.timestamps;
-            if height >= WINDOW_SIZE {
-                cycle_track("state/median_time_past/sort", || {
-                    sorted.sort_unstable();
-                });
-                return Some(sorted[WINDOW_SIZE / 2]);
-            }
-
-            cycle_track("state/median_time_past/sort", || {
-                sorted[..height].sort_unstable();
-            });
-            Some(sorted[height / 2])
-        })
-    }
-
-    #[must_use]
-    fn median_hint_is_valid(&self, claimed_median: BlockTimestamp) -> bool {
-        cycle_track("state/validate/median_time_past_hint", || {
-            let window_len = self.timestamp_count();
-            if window_len == 0 {
-                return true;
-            }
-
-            let median_index = window_len / 2;
-
-            let (less_count, equal_count, greater_count) =
-                cycle_track("state/validate/median_time_past_hint/loop", || {
-                    let mut less_count = 0usize;
-                    let mut equal_count = 0usize;
-                    let mut greater_count = 0usize;
-                    for timestamp in self.timestamps.iter().take(window_len) {
-                        if *timestamp < claimed_median {
-                            less_count += 1;
-                        } else if *timestamp > claimed_median {
-                            greater_count += 1;
-                        } else {
-                            equal_count += 1;
-                        }
-                    }
-                    (less_count, equal_count, greater_count)
-                });
-
-            cycle_track("state/validate/median_time_past_hint/check_counts", || {
-                less_count + equal_count + greater_count == window_len
-                    && less_count <= median_index
-                    && less_count + equal_count > median_index
-            })
-        })
-    }
-
     /// Build the next authenticated state from the current state, a prover-supplied header,
     /// and a pre-computed block hash.
     fn next_inner(
         &mut self,
         header: Header,
         block_hash: BlockHash,
-        median_time_past: Option<BlockTimestamp>,
+        median_time_past: BlockTimestamp,
         update_chain_work: bool,
     ) -> Result<(), ValidationErrorCode> {
         cycle_track("state/next_inner", || {
@@ -655,11 +635,8 @@ impl State {
                 });
             // Validate timestamp
             cycle_track("state/next_inner/validate/median_time_past", || {
-                if let Some(median_time_past) = median_time_past.or_else(|| self.median_time_past())
-                {
-                    if header.timestamp <= median_time_past {
-                        return Err(ValidationErrorCode::TimestampTooOld);
-                    }
+                if header.timestamp <= median_time_past {
+                    return Err(ValidationErrorCode::TimestampTooOld);
                 }
                 Ok(())
             })?;
@@ -721,8 +698,34 @@ impl State {
             Ok(())
         })
     }
+}
 
-    #[cfg(test)]
+#[cfg(feature = "host")]
+impl State<HostEnvironment> {
+    /// Return the upper median time past for the currently tracked timestamps.
+    #[must_use]
+    pub fn median_time_past(&self) -> BlockTimestamp {
+        cycle_track("state/host/median_time_past", || {
+            let height = self.height as usize;
+            if height == 0 {
+                return BlockTimestamp::default();
+            }
+
+            let mut sorted = self.timestamps;
+            if height >= WINDOW_SIZE {
+                cycle_track("state/host/median_time_past/sort", || {
+                    sorted.sort_unstable();
+                });
+                return sorted[WINDOW_SIZE / 2];
+            }
+
+            cycle_track("state/host/median_time_past/sort", || {
+                sorted[..height].sort_unstable();
+            });
+            sorted[height / 2]
+        })
+    }
+
     pub fn next<F>(
         &mut self,
         new_header: NewHeader,
@@ -731,10 +734,48 @@ impl State {
     where
         F: FnOnce(&Header) -> BlockHash,
     {
-        cycle_track("state/next", || {
+        cycle_track("state/host/next", || {
+            let median_time_past = self.median_time_past();
             let header = new_header.into_header(self.block_hash, self.next_nbits);
             let block_hash = hash_header(&header);
-            self.next_inner(header, block_hash, None, true)
+            self.next_inner(header, block_hash, median_time_past, true)
+        })
+    }
+}
+
+impl<Environment: StateEnvironment> State<Environment> {
+    #[must_use]
+    fn median_time_past_hinted(&self, claimed_median: BlockTimestamp) -> bool {
+        cycle_track("state/median_time_past_hinted", || {
+            let window_len = self.timestamp_count();
+            if window_len == 0 {
+                return true;
+            }
+
+            let median_index = window_len / 2;
+
+            let (less_count, equal_count, greater_count) =
+                cycle_track("state/median_time_past_hinted/loop", || {
+                    let mut less_count = 0usize;
+                    let mut equal_count = 0usize;
+                    let mut greater_count = 0usize;
+                    for timestamp in self.timestamps.iter().take(window_len) {
+                        if *timestamp < claimed_median {
+                            less_count += 1;
+                        } else if *timestamp > claimed_median {
+                            greater_count += 1;
+                        } else {
+                            equal_count += 1;
+                        }
+                    }
+                    (less_count, equal_count, greater_count)
+                });
+
+            cycle_track("state/median_time_past_hinted/check_counts", || {
+                less_count + equal_count + greater_count == window_len
+                    && less_count <= median_index
+                    && less_count + equal_count > median_index
+            })
         })
     }
 
@@ -744,7 +785,7 @@ impl State {
         headers: &[NewHeader],
         median_hints: &[BlockTimestamp],
         mut hash_header: F,
-    ) -> Result<(), ApplyFailure>
+    ) -> Result<(), ApplyFailure<Environment>>
     where
         F: FnMut(&Header) -> BlockHash,
     {
@@ -759,7 +800,9 @@ impl State {
             let mut pending_run_count: u32 = 0;
 
             let flush_pending_chain_work =
-                |state: &mut State, run_work: &mut Option<ChainWork>, run_count: &mut u32| {
+                |state: &mut State<Environment>,
+                 run_work: &mut Option<ChainWork>,
+                 run_count: &mut u32| {
                     if let (Some(run_work), count) = (run_work.take(), *run_count) {
                         if count > 0 {
                             cycle_track("state/apply_headers/chain_work_flush", || {
@@ -784,40 +827,14 @@ impl State {
                 });
                 let block_hash =
                     cycle_track("state/apply_headers/hash_header", || hash_header(&header));
-                let median_time_past = if self.timestamp_count() == 0 {
-                    None
-                } else {
-                    // #[cfg(target_os = "zkvm")]
-                    // {
-                    //     let window_len = self.timestamp_count();
-                    //     let tracked_window: alloc::vec::Vec<u32> = self
-                    //         .timestamps
-                    //         .iter()
-                    //         .take(window_len)
-                    //         .map(|timestamp| timestamp.to_consensus())
-                    //         .collect();
-                    //     sp1_zkvm::io::write(
-                    //         1,
-                    //         alloc::format!(
-                    //             "median-hint-debug: header_index={} height={} claimed_median={} computed_median={:?} tracked_window={:?}\n",
-                    //             header_index,
-                    //             self.height,
-                    //             claimed_median.to_consensus(),
-                    //             self.median_time_past().map(|timestamp| timestamp.to_consensus()),
-                    //             tracked_window,
-                    //         )
-                    //         .as_bytes(),
-                    //     );
-                    // }
-                    cycle_track("state/apply_headers/median_hint_check", || {
-                        assert!(
-                            self.median_hint_is_valid(claimed_median),
-                            "invalid median time past hint at header index {}",
-                            header_index
-                        );
-                    });
-                    Some(claimed_median)
-                };
+                cycle_track("state/apply_headers/median_hint_check", || {
+                    assert!(
+                        self.median_time_past_hinted(claimed_median),
+                        "invalid median time past hint at header index {}",
+                        header_index
+                    );
+                });
+                let median_time_past = claimed_median;
                 if pending_run_work != Some(required_work) {
                     flush_pending_chain_work(self, &mut pending_run_work, &mut pending_run_count);
                     pending_run_work = Some(required_work);
@@ -852,7 +869,7 @@ impl State {
         headers: &[NewHeader],
         median_hints: &[BlockTimestamp],
         hash_header: F,
-    ) -> Result<Self, ApplyFailure>
+    ) -> Result<Self, ApplyFailure<Environment>>
     where
         F: FnMut(&Header) -> BlockHash,
     {
@@ -864,7 +881,7 @@ impl State {
     }
 }
 
-impl Default for State {
+impl<Environment: StateEnvironment> Default for State<Environment> {
     fn default() -> Self {
         Self {
             header: Header::default(),
@@ -876,6 +893,7 @@ impl Default for State {
             next_work: ChainWork::default(),
             epoch_start_timestamp: BlockTimestamp::default(),
             timestamps: [BlockTimestamp::default(); WINDOW_SIZE],
+            _environment: PhantomData,
         }
     }
 }
@@ -1027,7 +1045,7 @@ pub struct ValidationState {
 impl ValidationState {
     /// Split a [`State`] into its public claim and private continuation.
     #[must_use]
-    pub fn from_state(state: &State) -> Self {
+    pub fn from_state<Environment: StateEnvironment>(state: &State<Environment>) -> Self {
         Self {
             public: PublicChainClaim {
                 genesis_hash: state.genesis_hash,
@@ -1049,7 +1067,7 @@ impl ValidationState {
     /// The `header` and `block_hash` fields of [`State`] are set from the
     /// public claim's `tip_hash`; the full raw header is not available here.
     #[must_use]
-    pub fn into_state(self) -> State {
+    pub fn into_state<Environment: StateEnvironment>(self) -> State<Environment> {
         State {
             header: Header::default(),
             block_hash: self.public.tip_hash,
@@ -1060,6 +1078,7 @@ impl ValidationState {
             next_work: self.private.next_work,
             epoch_start_timestamp: self.private.epoch_start_timestamp,
             timestamps: self.private.timestamps,
+            _environment: PhantomData,
         }
     }
 }
@@ -1115,8 +1134,8 @@ impl TryFrom<u8> for ValidationErrorCode {
 
 /// Failure payload returned by [`State::apply_headers_in_place`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ApplyFailure {
-    pub last_valid_state: State,
+pub struct ApplyFailure<Environment: StateEnvironment = GuestEnvironment> {
+    pub last_valid_state: State<Environment>,
     pub error_code: ValidationErrorCode,
     /// Absolute chain height of the failed header (last_valid_height + 1).
     pub failure_height: u32,
@@ -1166,7 +1185,10 @@ pub const MINIMAL_PV_SIZE: usize = 32 + 32 + 32 + 4 + 1 + 4 + 32; // = 137
 impl MinimalPublicValues {
     /// Build success public values from a final state and continuation digest.
     #[must_use]
-    pub fn success(state: &State, continuation_digest: [u8; 32]) -> Self {
+    pub fn success<Environment: StateEnvironment>(
+        state: &State<Environment>,
+        continuation_digest: [u8; 32],
+    ) -> Self {
         let mut chain_work = [0u8; 32];
         for (i, limb) in state.chain_work.as_limbs().iter().enumerate() {
             chain_work[i * 8..(i + 1) * 8].copy_from_slice(&limb.to_le_bytes());
@@ -1183,9 +1205,10 @@ impl MinimalPublicValues {
     }
 
     /// Build failure public values from the last valid state, error, and continuation digest.
+    // TODO: Use a ProofFailure instead of its components.
     #[must_use]
-    pub fn failure(
-        state: &State,
+    pub fn failure<Environment: StateEnvironment>(
+        state: &State<Environment>,
         error_code: ValidationErrorCode,
         failure_height: u32,
         continuation_digest: [u8; 32],
@@ -1450,7 +1473,7 @@ pub fn target_gt(lhs: Target, rhs: Target) -> bool {
 
 /// Check whether a header hash satisfies a target.
 #[must_use]
-pub fn hash_meets_target(hash: BlockHash, target: Target) -> bool    {
+pub fn hash_meets_target(hash: BlockHash, target: Target) -> bool {
     cycle_track("pow/hash_meets_target", || {
         u256_cmp(hash.as_raw(), target.as_raw()) != core::cmp::Ordering::Greater
     })
@@ -1648,15 +1671,33 @@ mod tests {
         }
     }
 
+    fn test_median_time_past(state: &State) -> BlockTimestamp {
+        let height = state.height as usize;
+        if height == 0 {
+            return BlockTimestamp::default();
+        }
+
+        let mut sorted = state.timestamps;
+        if height >= WINDOW_SIZE {
+            sorted.sort_unstable();
+            sorted[WINDOW_SIZE / 2]
+        } else {
+            sorted[..height].sort_unstable();
+            sorted[height / 2]
+        }
+    }
+
     fn apply_header(state: &mut State, timestamp: u32) {
+        let median_hint = test_median_time_past(state);
         state
-            .next(
-                NewHeader {
+            .apply_headers_in_place(
+                &[NewHeader {
                     version: 1,
                     merkle_root: [0x22; 32],
                     timestamp: ts(timestamp),
                     nonce: 7,
-                },
+                }],
+                &[median_hint],
                 |_| zero_hash(),
             )
             .unwrap();
@@ -1669,7 +1710,7 @@ mod tests {
         let mut state = initial_state.clone();
         let mut medians = Vec::with_capacity(headers.len());
         for header in headers {
-            medians.push(state.median_time_past().unwrap_or_default());
+            medians.push(test_median_time_past(&state));
             let timestamp_slot = state.next_timestamp_slot();
             state.timestamps[timestamp_slot] = header.timestamp;
             state.height += 1;
@@ -1677,13 +1718,13 @@ mod tests {
         medians
     }
 
-    fn expected_upper_median(height: u32) -> Option<BlockTimestamp> {
+    fn expected_upper_median(height: u32) -> BlockTimestamp {
         if height == 0 {
-            None
+            BlockTimestamp::default()
         } else if height < WINDOW_SIZE as u32 {
-            Some(ts(height / 2 + 1))
+            ts(height / 2 + 1)
         } else {
-            Some(ts(height - (WINDOW_SIZE as u32 / 2)))
+            ts(height - (WINDOW_SIZE as u32 / 2))
         }
     }
 
@@ -1722,7 +1763,7 @@ mod tests {
 
     #[test]
     fn minimal_public_values_round_trips() {
-        let state = State {
+        let state: State = State {
             block_hash: BlockHash::from_raw([0xAB; 32]),
             genesis_hash: BlockHash::from_raw([0xCD; 32]),
             chain_work: ChainWork::from_limbs([1, 2, 3, 4]),
@@ -1844,7 +1885,7 @@ mod tests {
     #[test]
     fn failure_height_is_absolute_chain_height() {
         // Start at height 5 and fail on the first new header → failure_height = 6.
-        let state = State {
+        let state: State = State {
             height: 5,
             next_nbits: CompactTarget::from_consensus(GENESIS_NBITS),
             next_work: work_from_bits(CompactTarget::from_consensus(GENESIS_NBITS)),
@@ -1911,8 +1952,9 @@ mod tests {
 
         let mut sequential = test_state();
         for header in headers.iter().copied() {
+            let median_hint = test_median_time_past(&sequential);
             sequential
-                .next(header, |_| zero_hash())
+                .apply_headers_in_place(&[header], &[median_hint], |_| zero_hash())
                 .expect("sequential validation should succeed");
         }
 
@@ -1945,7 +1987,7 @@ mod tests {
 
     #[test]
     fn hinted_median_validation_accepts_duplicate_median_values() {
-        let state = State {
+        let state: State = State {
             height: WINDOW_SIZE as u32,
             next_nbits: CompactTarget::from_consensus(GENESIS_NBITS),
             next_work: work_from_bits(CompactTarget::from_consensus(GENESIS_NBITS)),
@@ -1978,7 +2020,7 @@ mod tests {
 
     #[test]
     fn hinted_median_validation_rejects_wrong_rank_hint() {
-        let state = State {
+        let state: State = State {
             height: WINDOW_SIZE as u32,
             next_nbits: CompactTarget::from_consensus(GENESIS_NBITS),
             next_work: work_from_bits(CompactTarget::from_consensus(GENESIS_NBITS)),
@@ -2017,12 +2059,12 @@ mod tests {
     fn median_time_past_uses_upper_median_for_heights_zero_through_twelve() {
         let mut state = test_state();
 
-        assert_eq!(state.median_time_past(), expected_upper_median(0));
+        assert_eq!(test_median_time_past(&state), expected_upper_median(0));
 
         for height in 1..=12 {
             apply_header(&mut state, height);
             assert_eq!(state.height, height);
-            assert_eq!(state.median_time_past(), expected_upper_median(height));
+            assert_eq!(test_median_time_past(&state), expected_upper_median(height));
         }
     }
 
@@ -2033,7 +2075,7 @@ mod tests {
         for height in 1..=23 {
             apply_header(&mut state, height);
             assert_eq!(state.height, height);
-            assert_eq!(state.median_time_past(), expected_upper_median(height));
+            assert_eq!(test_median_time_past(&state), expected_upper_median(height));
         }
     }
 
@@ -2052,7 +2094,7 @@ mod tests {
             ts(100),
             ts(110),
         ];
-        let mut state = State {
+        let mut state: State = State {
             block_hash: BlockHash::from_raw([0x11; 32]),
             next_nbits: CompactTarget::from_consensus(GENESIS_NBITS),
             next_work: work_from_bits(CompactTarget::from_consensus(GENESIS_NBITS)),
@@ -2060,14 +2102,16 @@ mod tests {
             timestamps: original,
             ..State::default()
         };
+        let median_hint = test_median_time_past(&state);
         state
-            .next(
-                NewHeader {
+            .apply_headers_in_place(
+                &[NewHeader {
                     version: 1,
                     merkle_root: [0x22; 32],
                     timestamp: ts(999),
                     nonce: 7,
-                },
+                }],
+                &[median_hint],
                 |_| BlockHash::from_raw([0; 32]), // Use zero hash which meets any target
             )
             .unwrap();
@@ -2083,7 +2127,7 @@ mod tests {
 
     #[test]
     fn state_round_trips_through_validation_state() {
-        let state = State {
+        let state: State = State {
             header: Header::default(),
             block_hash: BlockHash::from_raw([0xAB; 32]),
             genesis_hash: BlockHash::from_raw([0xCD; 32]),
@@ -2093,6 +2137,7 @@ mod tests {
             next_work: ChainWork::from_limbs([5, 6, 7, 8]),
             epoch_start_timestamp: BlockTimestamp::from_consensus(1000),
             timestamps: [BlockTimestamp::from_consensus(100); WINDOW_SIZE],
+            _environment: PhantomData,
         };
 
         let vs = ValidationState::from_state(&state);
@@ -2108,7 +2153,7 @@ mod tests {
         );
         assert_eq!(vs.private.timestamps, state.timestamps);
 
-        let recovered = vs.into_state();
+        let recovered: State = vs.into_state();
         // header is zeroed in round-trip (not stored in split form)
         assert_eq!(recovered.block_hash, state.block_hash);
         assert_eq!(recovered.genesis_hash, state.genesis_hash);

@@ -9,12 +9,12 @@ use sp1_sdk::SP1PublicValues;
 
 pub use zkpow_core::{
     ApplyFailure, BlockHash, BlockTimestamp, ChainWork, CompactTarget, DifficultyConsistencyError,
-    DifficultyState, Header, HeaderChainPublicValues, Input, InputError, MedianTimePastHints,
-    MinimalPublicValues, NewHeader, NewHeaderHintError, NewHeaderHints, NewHeaderHintsRef,
-    ParseError, PrivateContinuationState, ProofFailure, PublicChainClaim, PublicValuesDigest,
-    PublicValuesParseError, RecursiveProof, State, Target, ValidationErrorCode, ValidationState,
-    VerifierKeyDigest, MINIMAL_PV_SIZE, NEW_HEADER_SIZE, PRIVATE_CONTINUATION_STATE_SIZE,
-    PUBLIC_CHAIN_CLAIM_SIZE, STATE_SIZE,
+    DifficultyState, Header, HeaderChainPublicValues, HostInput as Input, HostState as State,
+    InputError, MedianTimePastHints, MinimalPublicValues, NewHeader, NewHeaderHintError,
+    NewHeaderHints, NewHeaderHintsRef, ParseError, PrivateContinuationState, ProofFailure,
+    PublicChainClaim, PublicValuesDigest, PublicValuesParseError, RecursiveProof, Target,
+    ValidationErrorCode, ValidationState, VerifierKeyDigest, MINIMAL_PV_SIZE, NEW_HEADER_SIZE,
+    PRIVATE_CONTINUATION_STATE_SIZE, PUBLIC_CHAIN_CLAIM_SIZE, STATE_SIZE,
 };
 
 #[derive(Debug, Clone)]
@@ -249,6 +249,7 @@ pub fn genesis_state(genesis_header: Header, genesis_hash: BlockHash) -> State {
         next_work: genesis_work,
         epoch_start_timestamp: genesis_header.timestamp,
         timestamps: [BlockTimestamp::default(); zkpow_core::WINDOW_SIZE],
+        _environment: core::marker::PhantomData,
     }
 }
 
@@ -263,6 +264,15 @@ pub fn genesis_state_from_record(genesis: HeaderRecord, genesis_hash: BlockHash)
 /// validating a batch of headers.
 pub fn compute_final_state(initial_state: &State, headers: &[NewHeader]) -> State {
     let hints = median_time_past_hints_for_headers(initial_state, headers);
+    compute_final_state_with_hints(initial_state, headers, &hints)
+}
+
+/// Simulate the zkVM program locally using the supplied median-time-past hints.
+pub fn compute_final_state_with_hints(
+    initial_state: &State,
+    headers: &[NewHeader],
+    hints: &MedianTimePastHints,
+) -> State {
     initial_state
         .apply_headers(headers, &hints.medians, hash_header)
         .expect("host state transition should succeed")
@@ -275,7 +285,21 @@ pub fn records_to_new_headers(records: &[HeaderRecord]) -> Vec<NewHeader> {
         .collect()
 }
 
-/// Build the median-time-past witness hints by mirroring the validator state.
+/// Build the median-time-past witness hints from database header records.
+pub fn median_time_past_hints_from_records(records: &[HeaderRecord]) -> MedianTimePastHints {
+    MedianTimePastHints::new(
+        records
+            .iter()
+            .map(|record| record.median_time_past)
+            .collect(),
+    )
+}
+
+/// Build the median-time-past witness hints by sorting on the host.
+///
+/// This is a host-only fallback for tests/local simulation. Production proof
+/// generation should prefer [`median_time_past_hints_from_records`] so the host
+/// uses the database-provided MTP column.
 pub fn median_time_past_hints_for_headers(
     initial_state: &State,
     headers: &[NewHeader],
@@ -284,7 +308,7 @@ pub fn median_time_past_hints_for_headers(
     let mut medians = Vec::with_capacity(headers.len());
 
     for header in headers {
-        medians.push(state.median_time_past().unwrap_or_default());
+        medians.push(state.median_time_past());
         let timestamp_slot = (state.height as usize) % zkpow_core::WINDOW_SIZE;
         state.timestamps[timestamp_slot] = header.timestamp;
         state.height += 1;

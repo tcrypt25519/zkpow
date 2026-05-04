@@ -680,14 +680,15 @@ pub async fn generate_and_save_proofs(
         Ok(util::records_to_new_headers(&header_records))
     })?;
     let median_hints = timed_sync("load_median_time_past_hints", || -> Result<_, BoxError> {
-        Ok(util::median_time_past_hints_for_headers(
-            &current_state,
-            &headers,
-        ))
+        Ok(util::median_time_past_hints_from_records(&header_records))
     })?;
     let loaded_count = headers.len() as u32;
     let expected_state = timed_sync("simulate_expected_state", || -> Result<_, BoxError> {
-        Ok(util::compute_final_state(&current_state, &headers))
+        Ok(util::compute_final_state_with_hints(
+            &current_state,
+            &headers,
+            &median_hints,
+        ))
     })?;
     let expected_continuation_digest = {
         let vs = zkpow_core::ValidationState::from_state(&expected_state);
