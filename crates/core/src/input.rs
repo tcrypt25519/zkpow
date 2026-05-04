@@ -4,8 +4,8 @@ use alloc::vec::Vec;
 
 use crate::{
     check_exact_len, copy_from_bytes, copy_to_bytes, cycle_track, mut_from_bytes, slice_from_bytes,
-    BlockHash, BlockTimestamp, Header, NewHeader, ParseError, PublicValuesDigest, State,
-    StateEnvironment, VerifierKeyDigest, NEW_HEADER_SIZE, RECURSIVE_PROOF_SIZE, STATE_SIZE,
+    BlockHash, BlockTimestamp, Env, Header, NewHeader, ParseError, PublicValuesDigest, State,
+    VerifierKeyDigest, NEW_HEADER_SIZE, RECURSIVE_PROOF_SIZE, STATE_SIZE,
 };
 
 // ============================================================================
@@ -14,7 +14,7 @@ use crate::{
 
 /// Complete typed prover input.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Input<Environment: StateEnvironment = crate::GuestEnvironment> {
+pub struct Input<Environment: Env = crate::GuestEnv> {
     pub state: State<Environment>,
     pub recursive_proof: RecursiveProof,
 }
@@ -117,7 +117,7 @@ impl From<ParseError> for InputError {
     }
 }
 
-fn validate_genesis_placeholder<Environment: StateEnvironment>(
+fn validate_genesis_placeholder<Environment: Env>(
     state: &State<Environment>,
 ) -> Result<(), InputError> {
     if state.height == 0 && state.genesis_hash != BlockHash::default() {
@@ -320,7 +320,7 @@ impl<'a> InputMut<'a> {
     }
 }
 
-impl<Environment: StateEnvironment> State<Environment> {
+impl<Environment: Env> State<Environment> {
     /// Fill in the genesis hash when the wire input leaves it unset.
     pub fn update_genesis_hash<F>(&mut self, hash_header: F)
     where
@@ -345,7 +345,7 @@ impl<Environment: StateEnvironment> State<Environment> {
     }
 }
 
-impl<Environment: StateEnvironment> Input<Environment> {
+impl<Environment: Env> Input<Environment> {
     /// Constructs a new Input.
     pub fn new(state: State<Environment>, recursive_proof: RecursiveProof) -> Self {
         Self {
@@ -365,7 +365,7 @@ impl Input {
     }
 }
 
-impl<Environment: StateEnvironment> Input<Environment> {
+impl<Environment: Env> Input<Environment> {
     /// Serialize to the host/guest wire format.
     #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {

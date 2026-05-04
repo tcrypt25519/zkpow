@@ -78,17 +78,14 @@ mod sealed {
 }
 
 /// Marker trait for environment-specific state APIs.
-pub trait StateEnvironment:
-    sealed::Sealed + core::fmt::Debug + Clone + Copy + Default + PartialEq + Eq
-{
-}
+pub trait Env: sealed::Sealed + core::fmt::Debug + Clone + Copy + Default + PartialEq + Eq {}
 
 /// Guest/circuit environment marker.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct GuestEnvironment;
+pub struct GuestEnv;
 
-impl sealed::Sealed for GuestEnvironment {}
-impl StateEnvironment for GuestEnvironment {}
+impl sealed::Sealed for GuestEnv {}
+impl Env for GuestEnv {}
 
 /// Host environment marker.
 #[cfg(feature = "host")]
@@ -98,10 +95,10 @@ pub struct HostEnvironment;
 #[cfg(feature = "host")]
 impl sealed::Sealed for HostEnvironment {}
 #[cfg(feature = "host")]
-impl StateEnvironment for HostEnvironment {}
+impl Env for HostEnvironment {}
 
 /// State typed for the guest/circuit environment.
-pub type GuestState = State<GuestEnvironment>;
+pub type GuestState = State<GuestEnv>;
 
 /// State typed for the host environment.
 #[cfg(feature = "host")]
@@ -567,7 +564,7 @@ impl NewHeader {
 /// Complete authenticated validation state, serialized between recursive iterations.
 #[repr(C)]
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct State<Environment: StateEnvironment = GuestEnvironment> {
+pub struct State<Environment: Env = GuestEnv> {
     pub header: Header,
     pub block_hash: BlockHash,
     pub genesis_hash: BlockHash,
@@ -580,7 +577,7 @@ pub struct State<Environment: StateEnvironment = GuestEnvironment> {
     pub _environment: PhantomData<Environment>,
 }
 
-impl<Environment: StateEnvironment> State<Environment> {
+impl<Environment: Env> State<Environment> {
     /// The number of timestamps currently tracked for median-time-past.
     #[must_use]
     pub fn timestamp_count(&self) -> usize {
@@ -743,7 +740,7 @@ impl State<HostEnvironment> {
     }
 }
 
-impl<Environment: StateEnvironment> State<Environment> {
+impl<Environment: Env> State<Environment> {
     #[must_use]
     fn median_time_past_hinted(&self, claimed_median: BlockTimestamp) -> bool {
         cycle_track("state/median_time_past_hinted", || {
@@ -881,7 +878,7 @@ impl<Environment: StateEnvironment> State<Environment> {
     }
 }
 
-impl<Environment: StateEnvironment> Default for State<Environment> {
+impl<Environment: Env> Default for State<Environment> {
     fn default() -> Self {
         Self {
             header: Header::default(),
@@ -1045,7 +1042,7 @@ pub struct ValidationState {
 impl ValidationState {
     /// Split a [`State`] into its public claim and private continuation.
     #[must_use]
-    pub fn from_state<Environment: StateEnvironment>(state: &State<Environment>) -> Self {
+    pub fn from_state<Environment: Env>(state: &State<Environment>) -> Self {
         Self {
             public: PublicChainClaim {
                 genesis_hash: state.genesis_hash,
@@ -1067,7 +1064,7 @@ impl ValidationState {
     /// The `header` and `block_hash` fields of [`State`] are set from the
     /// public claim's `tip_hash`; the full raw header is not available here.
     #[must_use]
-    pub fn into_state<Environment: StateEnvironment>(self) -> State<Environment> {
+    pub fn into_state<Environment: Env>(self) -> State<Environment> {
         State {
             header: Header::default(),
             block_hash: self.public.tip_hash,
@@ -1134,7 +1131,7 @@ impl TryFrom<u8> for ValidationErrorCode {
 
 /// Failure payload returned by [`State::apply_headers_in_place`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ApplyFailure<Environment: StateEnvironment = GuestEnvironment> {
+pub struct ApplyFailure<Environment: Env = GuestEnv> {
     pub last_valid_state: State<Environment>,
     pub error_code: ValidationErrorCode,
     /// Absolute chain height of the failed header (last_valid_height + 1).
@@ -1185,7 +1182,7 @@ pub const MINIMAL_PV_SIZE: usize = 32 + 32 + 32 + 4 + 1 + 4 + 32; // = 137
 impl MinimalPublicValues {
     /// Build success public values from a final state and continuation digest.
     #[must_use]
-    pub fn success<Environment: StateEnvironment>(
+    pub fn success<Environment: Env>(
         state: &State<Environment>,
         continuation_digest: [u8; 32],
     ) -> Self {
@@ -1207,7 +1204,7 @@ impl MinimalPublicValues {
     /// Build failure public values from the last valid state, error, and continuation digest.
     // TODO: Use a ProofFailure instead of its components.
     #[must_use]
-    pub fn failure<Environment: StateEnvironment>(
+    pub fn failure<Environment: Env>(
         state: &State<Environment>,
         error_code: ValidationErrorCode,
         failure_height: u32,
