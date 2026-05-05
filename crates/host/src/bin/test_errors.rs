@@ -15,6 +15,7 @@ use sp1_sdk::{Elf, HashableKey, Prover, ProverClient, SP1Stdin};
 use zkpow_host::observability;
 use zkpow_host::proof_pipeline::DEFAULT_DB_PATH;
 use zkpow_host::util;
+
 use zkpow_host::util::{
     HeaderChainPublicValues, Input, MinimalPublicValues, PublicValuesDigest, RecursiveProof,
     ValidationErrorCode, VerifierKeyDigest,

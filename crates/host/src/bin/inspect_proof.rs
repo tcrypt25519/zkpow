@@ -1,17 +1,17 @@
 //! Inspect a saved zkpow proof and display its public inputs.
 
+use crate::util::{HeaderChainPublicValues, ValidationErrorCode};
+use hex::encode;
 use sp1_sdk::SP1ProofWithPublicValues;
-
 use zkpow_host::util;
-use zkpow_host::util::{HeaderChainPublicValues, ValidationErrorCode};
 
 const MAINNET_GENESIS_HEX: &str =
     "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f";
 
 fn reverse_hash_display(hash: util::BlockHash) -> String {
-    let mut reversed = hash.into_raw();
-    reversed.reverse();
-    hex::encode(reversed)
+    let mut hash_be = hash.into_raw();
+    hash_be.reverse();
+    encode(hash_be)
 }
 
 fn main() {
