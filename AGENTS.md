@@ -101,15 +101,15 @@ verify it built the same public values the program committed.
 | Code | Name | Trigger |
 | ------ | ------ | --------- |
 | 0 | Success | All headers valid |
-| 1 | Genesis hash mismatch | Height 0 hash ≠ expected |
-| 2 | Prev blockhash mismatch | `header.prev ≠ prev_hash` |
-| 3 | PoW insufficient | `SHA256d(header) > target` |
-| 4 | Timestamp too old | `timestamp ≤ median_of_last_11` |
-| 5 | Height mismatch | `start_height ≠ prev_num_headers` (or ≠ 0 at genesis) |
-| 6 | Bits mismatch | `header.bits ≠ expected` |
-| 7 | Header count mismatch | `len ≠ num_headers * 80` |
+| 1 | Header payload length invalid | Input/header-hint payload length is malformed |
+| 2 | PoW insufficient | `SHA256d(header) > target` |
+| 3 | Timestamp too old | `timestamp ≤ median_time_past` |
+| 4 | Genesis hash mismatch | At height 0, first validated header hash ≠ expected genesis hash |
 
-Not used (reserved): 8, 9, 10.
+Notes:
+- Prev-blockhash and bits-mismatch checks are not separate error codes in this design.
+  They are derived from authenticated state when materializing `Header` from `NewHeader`.
+- Not used (reserved): 5, 6, 7, 8, 9, 10.
 
 ## Proof Files
 

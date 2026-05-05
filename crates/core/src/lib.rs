@@ -883,6 +883,18 @@ impl<E: Env> State<E> {
                 });
                 let block_hash =
                     cycle_track("state/apply_headers/hash_header", || hash_header(&header));
+                if self.height == 0 && header_index == 0 {
+                    if self.genesis_hash == BlockHash::default() {
+                        self.genesis_hash = block_hash;
+                        self.block_hash = block_hash;
+                    } else if self.genesis_hash != block_hash {
+                        return Err(ApplyFailure {
+                            last_valid_state: self.clone(),
+                            error_code: ValidationErrorCode::GenesisHashMismatch,
+                            failure_height: 1,
+                        });
+                    }
+                }
                 cycle_track("state/apply_headers/median_hint_check", || {
                     assert!(
                         self.median_time_past_hinted(claimed_median),
@@ -1421,13 +1433,23 @@ impl core::fmt::Display for PublicValuesParseError {
 pub fn bits_to_target(bits: CompactTarget) -> Target {
     cycle_track("difficulty/bits_to_target", || {
         let bits = bits.to_consensus();
-        let exponent = bits >> 24;
-        let mantissa = bits & 0x00ff_ffff;
+        let exponent = (bits >> 24) as usize;
+        let negative = (bits & 0x0080_0000) != 0;
+        let mantissa = bits & 0x007f_ffff;
         let mut target = [0u8; 32];
-        if mantissa == 0 {
+        if mantissa == 0 || negative {
             return Target::from_raw(target);
         }
-        let byte_offset = (exponent - 3) as usize;
+
+        if exponent <= 3 {
+            let shifted = mantissa >> (8 * (3 - exponent));
+            target[0] = (shifted & 0xff) as u8;
+            target[1] = ((shifted >> 8) & 0xff) as u8;
+            target[2] = ((shifted >> 16) & 0xff) as u8;
+            return Target::from_raw(target);
+        }
+
+        let byte_offset = exponent - 3;
         if byte_offset < 32 {
             target[byte_offset] = (mantissa & 0xff) as u8;
         }
@@ -1446,30 +1468,32 @@ pub fn bits_to_target(bits: CompactTarget) -> Target {
 pub fn target_to_bits(target: Target) -> CompactTarget {
     cycle_track("difficulty/target_to_bits", || {
         let target = target.as_raw();
-        let mut high_byte = 31usize;
-        while high_byte > 0 && target[high_byte] == 0 {
-            high_byte -= 1;
+        let mut nbytes = 32usize;
+        while nbytes > 0 && target[nbytes - 1] == 0 {
+            nbytes -= 1;
         }
-        if target[high_byte] == 0 {
+        if nbytes == 0 {
             return CompactTarget::from_consensus(0);
         }
-        let bit_length = high_byte * 8 + (8 - target[high_byte].leading_zeros() as usize);
-        let nbytes = bit_length.div_ceil(8);
-        let mantissa = if high_byte >= 2 {
-            (target[high_byte] as u32) << 16
-                | (target[high_byte - 1] as u32) << 8
-                | target[high_byte - 2] as u32
-        } else if high_byte == 1 {
-            (target[1] as u32) << 8 | target[0] as u32
+
+        let mut compact = if nbytes <= 3 {
+            let mut value = 0u32;
+            for i in (0..nbytes).rev() {
+                value = (value << 8) | target[i] as u32;
+            }
+            value << (8 * (3 - nbytes))
         } else {
-            target[0] as u32
+            ((target[nbytes - 1] as u32) << 16)
+                | ((target[nbytes - 2] as u32) << 8)
+                | (target[nbytes - 3] as u32)
         };
-        let (mantissa, nbytes) = if mantissa & 0x800000 != 0 {
-            (mantissa >> 8, nbytes + 1)
-        } else {
-            (mantissa, nbytes)
-        };
-        CompactTarget::from_consensus(((nbytes as u32) << 24) | (mantissa & 0x00ff_ffff))
+
+        if (compact & 0x0080_0000) != 0 {
+            compact >>= 8;
+            nbytes += 1;
+        }
+
+        CompactTarget::from_consensus(((nbytes as u32) << 24) | (compact & 0x007f_ffff))
     })
 }
 
@@ -1897,6 +1921,26 @@ mod tests {
     }
 
     #[test]
+    fn bits_to_target_and_target_to_bits_round_trip_genesis_nbits() {
+        let bits = CompactTarget::from_consensus(GENESIS_NBITS);
+        let round_trip = target_to_bits(bits_to_target(bits));
+        assert_eq!(round_trip.to_consensus(), GENESIS_NBITS);
+    }
+
+    #[test]
+    fn bits_to_target_handles_small_exponent_without_underflow() {
+        let bits = CompactTarget::from_consensus(0x02008000);
+        let target = bits_to_target(bits);
+        assert_eq!(target_to_bits(target).to_consensus(), 0x02008000);
+    }
+
+    #[test]
+    fn bits_to_target_rejects_negative_compact_mantissa() {
+        let bits = CompactTarget::from_consensus(0x1d80ffff);
+        assert_eq!(bits_to_target(bits), Target::default());
+    }
+
+    #[test]
     fn apply_headers_flushes_deferred_chain_work_on_success() {
         let mut state = test_state();
         let headers = [
@@ -2164,6 +2208,26 @@ mod tests {
         });
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn apply_headers_rejects_genesis_hash_mismatch_when_called_directly() {
+        let mut state = test_state();
+        state.genesis_hash = BlockHash::from_raw([0x11; 32]);
+        let headers = [NewHeader {
+            version: 1,
+            merkle_root: [0x22; 32],
+            timestamp: ts(10),
+            nonce: 7,
+        }];
+        let hints = median_hints_for_headers(&state, &headers);
+        let failure = state
+            .apply_headers(&headers, &hints, |_| zero_hash())
+            .expect_err("genesis mismatch should fail");
+
+        assert_eq!(failure.error_code, ValidationErrorCode::GenesisHashMismatch);
+        assert_eq!(failure.failure_height, 1);
+        assert_eq!(failure.last_valid_state.height, 0);
     }
 
     #[test]
