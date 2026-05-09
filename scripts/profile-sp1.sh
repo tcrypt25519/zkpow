@@ -5,7 +5,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 
-if [[ -v SP1_ENABLE_TOKIO_CONSOLE ]]; then
+if [[ -v "$SP1_ENABLE_TOKIO_CONSOLE" ]]; then
   CALLER_SP1_ENABLE_TOKIO_CONSOLE_SET=1
   CALLER_SP1_ENABLE_TOKIO_CONSOLE="$SP1_ENABLE_TOKIO_CONSOLE"
 else

@@ -26,7 +26,7 @@ use zkpow_core::{
 };
 
 mod sha256;
-use sha256::{sha256_137bytes, sha256_84bytes, sha256d_80bytes};
+use sha256::{sha256_116bytes, sha256_137bytes, sha256d_80bytes};
 
 // ============================================================================
 // Helpers
@@ -45,7 +45,7 @@ fn compute_continuation_digest(state: &State) -> [u8; 32] {
     cycle_track("crypto/continuation_digest", || {
         let vs = ValidationState::from_state(state);
         let pcs_bytes: [u8; PRIVATE_CONTINUATION_STATE_SIZE] = vs.private.to_bytes();
-        sha256_84bytes(&pcs_bytes)
+        sha256_116bytes(&pcs_bytes)
     })
 }
 
@@ -95,7 +95,7 @@ fn verify_recursive_proof(
         let continuation_bytes: [u8; PRIVATE_CONTINUATION_STATE_SIZE] =
             prior_continuation.to_bytes();
         let continuation_digest = cycle_track("recursive/continuation_digest", || {
-            sha256_84bytes(&continuation_bytes)
+            sha256_116bytes(&continuation_bytes)
         });
 
         // 2. Reconstruct the prior proof's minimal public values and hash them.

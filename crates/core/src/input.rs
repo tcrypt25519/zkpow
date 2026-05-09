@@ -238,7 +238,7 @@ impl<'a> MedianTimePastHintsRef<'a> {
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::with_capacity(self.medians.len() * 4);
         for median in self.medians {
-            bytes.extend_from_slice(&median.to_consensus().to_le_bytes());
+            bytes.extend_from_slice(&median.to_le_bytes());
         }
         bytes
     }

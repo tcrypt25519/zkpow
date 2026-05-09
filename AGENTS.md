@@ -88,13 +88,23 @@ count = 0                              for total_validated == 0
 
 Uses direct SP1 precompile syscalls — no `sha2` crate in the program.
 
-- `sha256_80(&[u8; 80])` → `[u8; 32]`: Bitcoin block header. Hardcoded for exactly 2 blocks. No loops, no branching.
-- `sha256_32(&[u8; 32])` → `[u8; 32]`: Intermediate hash. Hardcoded for exactly 1 block.
-- `double_sha256_80(&[u8; 80])` → `[u8; 32]`: Composition of the above.
+- `sha256_80bytes(&[u8; 80])` → `[u8; 32]`: Bitcoin block header. Hardcoded for exactly 2 blocks. No loops, no branching.
+- `sha256_32bytes(&[u8; 32])` → `[u8; 32]`: Intermediate hash. Hardcoded for exactly 1 block.
+- `sha256_116bytes(&[u8; 116])` → `[u8; 32]`: Serialized `PrivateContinuationState` (116 bytes = 2 SHA-256 blocks). Used for the continuation digest.
+- `sha256_137bytes(&[u8; 137])` → `[u8; 32]`: Serialized `MinimalPublicValues` (137 bytes = 3 SHA-256 blocks).
+- `sha256d_80bytes(&[u8; 80])` → `[u8; 32]`: Double-SHA-256 of a Bitcoin block header (SHA256(SHA256(header))).
 
 The host script still uses the `sha2` crate (via workspace) for
 `compute_pv_digest()` — this is appropriate since the host needs SHA-256 to
 verify it built the same public values the program committed.
+
+### State Wire Sizes
+
+| Constant | Bytes | Description |
+| -------- | ----- | ----------- |
+| `STATE_SIZE` | 296 | Full `State` (public + private, serialized for recursive chaining) |
+| `PRIVATE_CONTINUATION_STATE_SIZE` | 116 | `PrivateContinuationState` (next_nbits=4, next_work=32, next_target=32, epoch_ts=4, timestamps=44) |
+| `PUBLIC_CHAIN_CLAIM_SIZE` | 72 | `PublicChainClaim` (genesis_hash=32, tip_hash=32, chain_work=32, height=4) |
 
 ## Error Codes
 

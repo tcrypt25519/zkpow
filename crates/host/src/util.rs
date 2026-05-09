@@ -8,14 +8,13 @@ use sha2::{Digest, Sha256};
 use sp1_sdk::SP1PublicValues;
 
 pub use zkpow_core::{
-    u256, ApplyFailure, BlockHash, BlockTimestamp, ChainWork, CompactTarget,
-    DifficultyConsistencyError, DifficultyState, Header, HeaderChainPublicValues,
-    HostInput as Input, HostState as State, InputError, MedianTimePastHints, MinimalPublicValues,
-    NewHeader, NewHeaderHintError, NewHeaderHints, NewHeaderHintsRef, ParseError,
-    PrivateContinuationState, ProofFailure, PublicChainClaim, PublicValuesDigest,
-    PublicValuesParseError, RecursiveProof, Target, ValidationErrorCode, ValidationState,
-    VerifierKeyDigest, MINIMAL_PV_SIZE, NEW_HEADER_SIZE, PRIVATE_CONTINUATION_STATE_SIZE,
-    PUBLIC_CHAIN_CLAIM_SIZE, STATE_SIZE,
+    u256, work_from_target, ApplyFailure, BlockHash, BlockTimestamp, ChainWork, CompactTarget,
+    Header, HeaderChainPublicValues, HostInput as Input, HostState as State, InputError,
+    MedianTimePastHints, MinimalPublicValues, NewHeader, NewHeaderHintError, NewHeaderHints,
+    NewHeaderHintsRef, ParseError, PrivateContinuationState, ProofFailure, PublicChainClaim,
+    PublicValuesDigest, PublicValuesParseError, RecursiveProof, Target, ValidationErrorCode,
+    ValidationState, VerifierKeyDigest, GENESIS_TARGET, MINIMAL_PV_SIZE, NEW_HEADER_SIZE,
+    PRIVATE_CONTINUATION_STATE_SIZE, PUBLIC_CHAIN_CLAIM_SIZE, STATE_SIZE,
 };
 
 #[derive(Debug, Clone)]
@@ -60,8 +59,8 @@ pub fn load_headers_from_db(db_path: &str, start_height: u64, count: u64) -> Vec
                 merkle_root: merkle_root
                     .try_into()
                     .expect("merkle_root must be 32 bytes"),
-                timestamp: BlockTimestamp::from_consensus(timestamp as u32),
-                nbits: zkpow_core::CompactTarget::from_consensus(nbits as u32),
+                timestamp: BlockTimestamp::new(timestamp as u32),
+                compact_target: zkpow_core::CompactTarget::from_consensus(nbits as u32),
                 nonce: nonce as u32,
             };
             Ok(header.to_bytes())
@@ -122,8 +121,8 @@ pub fn load_header_records_from_db(
                 merkle_root: merkle_root
                     .try_into()
                     .expect("merkle_root must be 32 bytes"),
-                timestamp: BlockTimestamp::from_consensus(timestamp as u32),
-                nbits: CompactTarget::from_consensus(nbits as u32),
+                timestamp: BlockTimestamp::new(timestamp as u32),
+                compact_target: CompactTarget::from_consensus(nbits as u32),
                 nonce: nonce as u32,
             };
 
@@ -131,7 +130,7 @@ pub fn load_header_records_from_db(
                 height: height as u64,
                 header,
                 chain_work: chain_work_from_db_bytes(&chainwork),
-                median_time_past: BlockTimestamp::from_consensus(median_time_past as u32),
+                median_time_past: BlockTimestamp::new(median_time_past as u32),
             })
         })
         .expect("failed to execute query");
@@ -156,7 +155,7 @@ pub fn chain_work_from_db_bytes(bytes: &[u8]) -> ChainWork {
     let raw: [u8; 32] = bytes.try_into().expect("chainwork must be 32 bytes");
     let mut little_endian = raw;
     little_endian.reverse();
-    ChainWork::from(u256::from_le_bytes(little_endian))
+    ChainWork::from_le_bytes(little_endian)
 }
 
 /// Convert raw 80-byte headers (from DB) to typed [`NewHeader`] values.
@@ -233,16 +232,17 @@ pub fn genesis_state(genesis_header: Header, genesis_hash: BlockHash) -> State {
         block_hash, genesis_hash,
         "configured genesis hash must match the supplied genesis header",
     );
-    let genesis_work = Target::from(genesis_header.nbits).work();
+    let genesis_work = work_from_target(GENESIS_TARGET);
 
     State {
         header: genesis_header,
         block_hash,
         genesis_hash,
-        next_nbits: genesis_header.nbits,
+        next_nbits: genesis_header.compact_target,
         height: 0,
         chain_work: genesis_work,
         next_work: genesis_work,
+        next_target: GENESIS_TARGET,
         epoch_start_timestamp: genesis_header.timestamp,
         timestamps: [BlockTimestamp::default(); zkpow_core::WINDOW_SIZE],
         _environment: core::marker::PhantomData,
@@ -324,6 +324,7 @@ mod tests {
         PrivateContinuationState {
             next_nbits: CompactTarget::from_consensus(GENESIS_NBITS),
             next_work: zkpow_core::ChainWork::from_limbs([1, 2, 3, 4]),
+            next_target: zkpow_core::GENESIS_TARGET,
             epoch_start_timestamp: BlockTimestamp::from_consensus(500),
             timestamps: [BlockTimestamp::from_consensus(10); WINDOW_SIZE],
         }
