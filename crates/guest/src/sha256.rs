@@ -296,12 +296,12 @@ pub fn sha256d_80bytes(data: &[u8; 80]) -> [u8; 32] {
     sha256_32bytes(&inner)
 }
 
-/// Compute SHA-256 of exactly 84 bytes.
+/// Compute SHA-256 of exactly 116 bytes.
 ///
 /// Produces two blocks:
 /// - Block 1: bytes 0–63
-/// - Block 2: bytes 64–83 (20 data bytes) + 0x80 + zeros + 8-byte length (672 bits = 0x2A0)
-pub fn sha256_84bytes(data: &[u8; 84]) -> [u8; 32] {
+/// - Block 2: bytes 64–115 (52 data bytes) + 0x80 + zeros + 8-byte length (928 bits = 0x3A0)
+pub fn sha256_116bytes(data: &[u8; 116]) -> [u8; 32] {
     let mut state = SHA256_IV;
 
     // ── Block 1: bytes 0–63 ──
@@ -325,17 +325,25 @@ pub fn sha256_84bytes(data: &[u8; 84]) -> [u8; 32] {
     syscall_sha256_extend(&mut w);
     syscall_sha256_compress(&mut w, &mut state);
 
-    // ── Block 2: bytes 64–83 (20 bytes) + padding + length ──
+    // ── Block 2: bytes 64–115 (52 bytes) + padding + length ──
     let mut w = [0u64; 64];
     w[0] = be_u64(data[64], data[65], data[66], data[67]);
     w[1] = be_u64(data[68], data[69], data[70], data[71]);
     w[2] = be_u64(data[72], data[73], data[74], data[75]);
     w[3] = be_u64(data[76], data[77], data[78], data[79]);
     w[4] = be_u64(data[80], data[81], data[82], data[83]);
-    // 0x80 at word index 5, byte 0 → 0x80000000
-    w[5] = 0x80000000;
-    // w[15] = length in bits = 84 * 8 = 672 = 0x2A0
-    w[15] = 0x2A0;
+    w[5] = be_u64(data[84], data[85], data[86], data[87]);
+    w[6] = be_u64(data[88], data[89], data[90], data[91]);
+    w[7] = be_u64(data[92], data[93], data[94], data[95]);
+    w[8] = be_u64(data[96], data[97], data[98], data[99]);
+    w[9] = be_u64(data[100], data[101], data[102], data[103]);
+    w[10] = be_u64(data[104], data[105], data[106], data[107]);
+    w[11] = be_u64(data[108], data[109], data[110], data[111]);
+    w[12] = be_u64(data[112], data[113], data[114], data[115]);
+    // 0x80 at word index 13, byte 0 → 0x80000000
+    w[13] = 0x80000000;
+    // w[15] = length in bits = 116 * 8 = 928 = 0x3A0
+    w[15] = 0x3A0;
     syscall_sha256_extend(&mut w);
     syscall_sha256_compress(&mut w, &mut state);
 
