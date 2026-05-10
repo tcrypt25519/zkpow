@@ -16,10 +16,7 @@ pub mod types;
 pub use types::{u256, BlockHash, BlockTimestamp, ChainWork, CompactTarget, Target};
 
 pub mod env;
-pub use env::{cycle_track, cycle_track_report, Env, GuestEnv, GuestState, State};
-
-#[cfg(feature = "host")]
-pub use env::{HostEnvironment, HostInput, HostState};
+pub use env::{cycle_track, cycle_track_report, State};
 
 pub mod input;
 pub use input::{
@@ -28,7 +25,7 @@ pub use input::{
 };
 
 /// Size of the serialized [`State`] in bytes.
-pub const STATE_SIZE: usize = size_of::<State<GuestEnv>>();
+pub const STATE_SIZE: usize = size_of::<State>();
 
 /// Size of a serialized [`RecursiveProof`] in bytes.
 pub const RECURSIVE_PROOF_SIZE: usize = size_of::<RecursiveProof>();
@@ -346,8 +343,6 @@ impl PublicChainClaim {
     }
 }
 
-
-
 /// The private continuation state carried between recursive proof iterations.
 ///
 /// This is committed only as a digest in the public values; the raw bytes are
@@ -434,7 +429,7 @@ pub struct ValidationState {
 impl ValidationState {
     /// Split a [`State`] into its public claim and private continuation.
     #[must_use]
-    pub fn from_state<E: Env>(state: &State<E>) -> Self {
+    pub fn from_state(state: &State) -> Self {
         Self {
             public: PublicChainClaim {
                 genesis_hash: state.genesis_hash,
@@ -457,7 +452,7 @@ impl ValidationState {
     /// The `header` and `block_hash` fields of [`State`] are set from the
     /// public claim's `tip_hash`; the full raw header is not available here.
     #[must_use]
-    pub fn into_state<E: Env>(self) -> State<E> {
+    pub fn into_state(self) -> State {
         State {
             header: Header::default(),
             block_hash: self.public.tip_hash,
@@ -525,8 +520,8 @@ impl TryFrom<u8> for ValidationErrorCode {
 
 /// Failure payload returned by [`State::apply_headers`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ApplyFailure<E: Env = GuestEnv> {
-    pub last_valid_state: State<E>,
+pub struct ApplyFailure {
+    pub last_valid_state: State,
     pub error_code: ValidationErrorCode,
     /// Absolute chain height of the failed header (last_valid_height + 1).
     pub failure_height: u32,
@@ -576,7 +571,7 @@ pub const MINIMAL_PV_SIZE: usize = 32 + 32 + 32 + 4 + 1 + 4 + 32; // = 137
 impl MinimalPublicValues {
     /// Build success public values from a final state and continuation digest.
     #[must_use]
-    pub fn success<E: Env>(state: &State<E>, continuation_digest: [u8; 32]) -> Self {
+    pub fn success(state: &State, continuation_digest: [u8; 32]) -> Self {
         let mut chain_work = [0u8; 32];
         for (i, limb) in state.chain_work.as_limbs().iter().enumerate() {
             chain_work[i * 8..(i + 1) * 8].copy_from_slice(&limb.to_le_bytes());
@@ -595,8 +590,8 @@ impl MinimalPublicValues {
     /// Build failure public values from the last valid state, error, and continuation digest.
     // TODO: Use a ProofFailure instead of its components.
     #[must_use]
-    pub fn failure<E: Env>(
-        state: &State<E>,
+    pub fn failure(
+        state: &State,
         error_code: ValidationErrorCode,
         failure_height: u32,
         continuation_digest: [u8; 32],

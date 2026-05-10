@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 
 use crate::{
     check_exact_len, copy_from_bytes, copy_to_bytes, cycle_track, mut_from_bytes, slice_from_bytes,
-    BlockHash, BlockTimestamp, Env, Header, NewHeader, ParseError, PublicValuesDigest, State,
+    BlockHash, BlockTimestamp, Header, NewHeader, ParseError, PublicValuesDigest, State,
     VerifierKeyDigest, NEW_HEADER_SIZE, RECURSIVE_PROOF_SIZE, STATE_SIZE,
 };
 
@@ -14,8 +14,8 @@ use crate::{
 
 /// Complete typed prover input.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Input<Environment: Env = crate::GuestEnv> {
-    pub state: State<Environment>,
+pub struct Input {
+    pub state: State,
     pub recursive_proof: RecursiveProof,
 }
 
@@ -117,9 +117,7 @@ impl From<ParseError> for InputError {
     }
 }
 
-fn validate_genesis_placeholder<Environment: Env>(
-    state: &State<Environment>,
-) -> Result<(), InputError> {
+fn validate_genesis_placeholder(state: &State) -> Result<(), InputError> {
     if state.height == 0 && state.genesis_hash != BlockHash::default() {
         return Err(InputError::GenesisHashMustBeZero);
     }
@@ -320,7 +318,7 @@ impl<'a> InputMut<'a> {
     }
 }
 
-impl<Environment: Env> State<Environment> {
+impl<Environment: crate::env::Env> crate::env::StateInner<Environment> {
     /// Fill in the genesis hash when the wire input leaves it unset.
     pub fn update_genesis_hash<F>(&mut self, hash_header: F)
     where
@@ -345,9 +343,9 @@ impl<Environment: Env> State<Environment> {
     }
 }
 
-impl<Environment: Env> Input<Environment> {
+impl Input {
     /// Constructs a new Input.
-    pub fn new(state: State<Environment>, recursive_proof: RecursiveProof) -> Self {
+    pub fn new(state: State, recursive_proof: RecursiveProof) -> Self {
         Self {
             state,
             recursive_proof,
@@ -365,7 +363,7 @@ impl Input {
     }
 }
 
-impl<Environment: Env> Input<Environment> {
+impl Input {
     /// Serialize to the host/guest wire format.
     #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {

@@ -2,10 +2,10 @@
 compile_error!("zkpow wire types require a little-endian target");
 
 use crate::{
-    calculate_next_work_required, check_proof_of_work, copy_from_bytes,
-    copy_to_bytes, ref_from_bytes, target_gt, target_to_bits, work_from_target, ApplyFailure,
-    BlockHash, BlockTimestamp, ChainWork, CompactTarget, Header, Input, NewHeader, ParseError,
-    Target, ValidationErrorCode, GENESIS_TARGET, STATE_SIZE, WINDOW_SIZE,
+    calculate_next_work_required, check_proof_of_work, copy_from_bytes, copy_to_bytes,
+    ref_from_bytes, target_gt, target_to_bits, work_from_target, ApplyFailure, BlockHash,
+    BlockTimestamp, ChainWork, CompactTarget, Header, NewHeader, ParseError, Target,
+    ValidationErrorCode, GENESIS_TARGET, STATE_SIZE, WINDOW_SIZE,
 };
 use core::marker::PhantomData;
 
@@ -53,40 +53,32 @@ mod sealed {
 }
 
 /// Marker trait for environment-specific state APIs.
+#[doc(hidden)]
 pub trait Env: sealed::Sealed + core::fmt::Debug + Clone + Copy + Default + PartialEq + Eq {}
 
-/// Guest/circuit environment marker.
+#[doc(hidden)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct GuestEnv;
+pub struct GuestEnvironment;
 
-impl sealed::Sealed for GuestEnv {}
-impl Env for GuestEnv {}
-
-/// Host environment marker.
-#[cfg(feature = "host")]
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct HostEnvironment;
+impl sealed::Sealed for GuestEnvironment {}
+impl Env for GuestEnvironment {}
 
 #[cfg(feature = "host")]
-impl sealed::Sealed for HostEnvironment {}
-#[cfg(feature = "host")]
-impl Env for HostEnvironment {}
+mod host;
 
-/// State typed for the guest/circuit environment.
-pub type GuestState = State<GuestEnv>;
-
-/// State typed for the host environment.
 #[cfg(feature = "host")]
-pub type HostState = State<HostEnvironment>;
+pub(crate) use host::HostEnvironment;
 
-/// Prover input typed for the host environment.
+#[cfg(not(feature = "host"))]
+type SelectedEnvironment = GuestEnvironment;
 #[cfg(feature = "host")]
-pub type HostInput = Input<HostEnvironment>;
+type SelectedEnvironment = HostEnvironment;
 
 /// Complete authenticated validation state, serialized between recursive iterations.
 #[repr(C)]
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct State<E: Env = GuestEnv> {
+#[doc(hidden)]
+pub struct StateInner<E: Env> {
     pub header: Header,
     pub block_hash: BlockHash,
     pub genesis_hash: BlockHash,
@@ -103,7 +95,10 @@ pub struct State<E: Env = GuestEnv> {
     pub _environment: PhantomData<E>,
 }
 
-impl<E: Env> State<E> {
+/// Public state type selected by the `host` feature.
+pub type State = StateInner<SelectedEnvironment>;
+
+impl<E: Env> StateInner<E> {
     /// The number of timestamps currently tracked for median-time-past.
     #[must_use]
     pub fn timestamp_count(&self) -> usize {
@@ -112,7 +107,7 @@ impl<E: Env> State<E> {
 
     /// The circular-buffer slot where the next timestamp should be written.
     #[must_use]
-    fn next_timestamp_slot(&self) -> usize {
+    pub(crate) fn next_timestamp_slot(&self) -> usize {
         (self.height as usize) % WINDOW_SIZE
     }
 
@@ -138,6 +133,22 @@ impl<E: Env> State<E> {
         self.next_target
     }
 
+    #[must_use]
+    pub(crate) fn to_selected_state(&self) -> State {
+        let mut state = StateInner::<SelectedEnvironment>::default();
+        state.header = self.header;
+        state.block_hash = self.block_hash;
+        state.genesis_hash = self.genesis_hash;
+        state.next_nbits = self.next_nbits;
+        state.height = self.height;
+        state.chain_work = self.chain_work;
+        state.next_work = self.next_work;
+        state.next_target = self.next_target;
+        state.epoch_start_timestamp = self.epoch_start_timestamp;
+        state.timestamps = self.timestamps;
+        state
+    }
+
     /// Build the next authenticated state from the current state, a prover-supplied header,
     /// and a pre-computed block hash.
     fn next_inner(
@@ -150,13 +161,8 @@ impl<E: Env> State<E> {
         cycle_track("state/next_inner", || {
             let (required_target, required_work, timestamp_slot) =
                 cycle_track("state/next_inner/setup", || {
-                    (
-                        self.next_target,
-                        self.next_work,
-                        self.next_timestamp_slot(),
-                    )
+                    (self.next_target, self.next_work, self.next_timestamp_slot())
                 });
-            // Validate timestamp
             cycle_track("state/next_inner/validate/median_time_past", || {
                 if header.timestamp <= median_time_past {
                     return Err(ValidationErrorCode::TimestampTooOld);
@@ -164,7 +170,6 @@ impl<E: Env> State<E> {
                 Ok(())
             })?;
 
-            // Validate pow
             cycle_track("state/next_inner/validate/pow", || {
                 if !check_proof_of_work(block_hash, required_target) {
                     return Err(ValidationErrorCode::PowInsufficient);
@@ -172,7 +177,6 @@ impl<E: Env> State<E> {
                 Ok(())
             })?;
 
-            // Now update self
             cycle_track("state/next_inner/update_height", || {
                 self.height += 1;
             });
@@ -180,7 +184,7 @@ impl<E: Env> State<E> {
                 self.timestamps[timestamp_slot] = header.timestamp;
             });
 
-            if cycle_track("state/next_innernext_inner/check_epoch_timestamp", || {
+            if cycle_track("state/next_inner/check_epoch_timestamp", || {
                 self.height.is_multiple_of(2016)
             }) {
                 cycle_track("state/next_inner/epoch_timestamp", || {
@@ -222,50 +226,7 @@ impl<E: Env> State<E> {
     }
 }
 
-#[cfg(feature = "host")]
-impl State<HostEnvironment> {
-    /// Return the upper median time past for the currently tracked timestamps.
-    #[must_use]
-    pub fn median_time_past(&self) -> BlockTimestamp {
-        cycle_track("state/host/median_time_past", || {
-            let height = self.height as usize;
-            if height == 0 {
-                return BlockTimestamp::default();
-            }
-
-            let mut sorted = self.timestamps;
-            if height >= WINDOW_SIZE {
-                cycle_track("state/host/median_time_past/sort", || {
-                    sorted.sort_unstable();
-                });
-                return sorted[WINDOW_SIZE / 2];
-            }
-
-            cycle_track("state/host/median_time_past/sort", || {
-                sorted[..height].sort_unstable();
-            });
-            sorted[height / 2]
-        })
-    }
-
-    pub fn next<F>(
-        &mut self,
-        new_header: NewHeader,
-        hash_header: F,
-    ) -> Result<(), ValidationErrorCode>
-    where
-        F: FnOnce(&Header) -> BlockHash,
-    {
-        cycle_track("state/host/next", || {
-            let median_time_past = self.median_time_past();
-            let header = new_header.into_header(self.block_hash, self.next_nbits);
-            let block_hash = hash_header(&header);
-            self.next_inner(header, block_hash, median_time_past, true)
-        })
-    }
-}
-
-impl<E: Env> State<E> {
+impl<E: Env> StateInner<E> {
     #[must_use]
     fn median_time_past_hinted(&self, claimed_median: BlockTimestamp) -> bool {
         cycle_track("state/median_time_past_hinted", || {
@@ -307,7 +268,7 @@ impl<E: Env> State<E> {
         headers: &[NewHeader],
         median_hints: &[BlockTimestamp],
         mut hash_header: F,
-    ) -> Result<(), ApplyFailure<E>>
+    ) -> Result<(), ApplyFailure>
     where
         F: FnMut(&Header) -> BlockHash,
     {
@@ -322,7 +283,9 @@ impl<E: Env> State<E> {
             let mut pending_run_count: u32 = 0;
 
             let flush_pending_chain_work =
-                |state: &mut State<E>, run_work: &mut Option<ChainWork>, run_count: &mut u32| {
+                |state: &mut StateInner<E>,
+                 run_work: &mut Option<ChainWork>,
+                 run_count: &mut u32| {
                     if let (Some(run_work), count) = (run_work.take(), *run_count) {
                         if count > 0 {
                             cycle_track("state/apply_headers/chain_work_flush", || {
@@ -353,7 +316,7 @@ impl<E: Env> State<E> {
                         self.block_hash = block_hash;
                     } else if self.genesis_hash != block_hash {
                         return Err(ApplyFailure {
-                            last_valid_state: self.clone(),
+                            last_valid_state: self.to_selected_state(),
                             error_code: ValidationErrorCode::GenesisHashMismatch,
                             failure_height: 1,
                         });
@@ -377,7 +340,7 @@ impl<E: Env> State<E> {
                 {
                     flush_pending_chain_work(self, &mut pending_run_work, &mut pending_run_count);
                     return Err(ApplyFailure {
-                        last_valid_state: self.clone(),
+                        last_valid_state: self.to_selected_state(),
                         error_code,
                         failure_height: self.height + 1,
                     });
@@ -396,7 +359,7 @@ impl<E: Env> State<E> {
     }
 }
 
-impl<E: Env> Default for State<E> {
+impl<E: Env> Default for StateInner<E> {
     fn default() -> Self {
         Self {
             header: Header::default(),

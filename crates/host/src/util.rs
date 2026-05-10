@@ -9,11 +9,11 @@ use sp1_sdk::SP1PublicValues;
 
 pub use zkpow_core::{
     u256, work_from_target, ApplyFailure, BlockHash, BlockTimestamp, ChainWork, CompactTarget,
-    Header, HeaderChainPublicValues, HostInput as Input, HostState as State, InputError,
-    MedianTimePastHints, MinimalPublicValues, NewHeader, NewHeaderHintError, NewHeaderHints,
-    NewHeaderHintsRef, ParseError, PrivateContinuationState, ProofFailure, PublicChainClaim,
-    PublicValuesDigest, PublicValuesParseError, RecursiveProof, Target, ValidationErrorCode,
-    ValidationState, VerifierKeyDigest, GENESIS_TARGET, MINIMAL_PV_SIZE, NEW_HEADER_SIZE,
+    Header, HeaderChainPublicValues, Input, InputError, MedianTimePastHints, MinimalPublicValues,
+    NewHeader, NewHeaderHintError, NewHeaderHints, NewHeaderHintsRef, ParseError,
+    PrivateContinuationState, ProofFailure, PublicChainClaim, PublicValuesDigest,
+    PublicValuesParseError, RecursiveProof, State, Target, ValidationErrorCode, ValidationState,
+    VerifierKeyDigest, GENESIS_TARGET, MINIMAL_PV_SIZE, NEW_HEADER_SIZE,
     PRIVATE_CONTINUATION_STATE_SIZE, PUBLIC_CHAIN_CLAIM_SIZE, STATE_SIZE,
 };
 
