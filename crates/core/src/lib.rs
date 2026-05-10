@@ -18,6 +18,11 @@ pub use types::{u256, BlockHash, BlockTimestamp, ChainWork, CompactTarget, Targe
 pub mod env;
 pub use env::{cycle_track, cycle_track_report, State};
 
+#[cfg(feature = "host")]
+type DefaultEnvironment = env::HostEnvironment;
+#[cfg(not(feature = "host"))]
+type DefaultEnvironment = env::GuestEnvironment;
+
 pub mod input;
 pub use input::{
     Input, InputError, InputMut, InputRef, MedianTimePastHintError, MedianTimePastHints,
@@ -520,8 +525,8 @@ impl TryFrom<u8> for ValidationErrorCode {
 
 /// Failure payload returned by [`State::apply_headers`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ApplyFailure {
-    pub last_valid_state: State,
+pub struct ApplyFailure<E: env::Env = DefaultEnvironment> {
+    pub last_valid_state: env::StateInner<E>,
     pub error_code: ValidationErrorCode,
     /// Absolute chain height of the failed header (last_valid_height + 1).
     pub failure_height: u32,

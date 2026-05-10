@@ -134,21 +134,6 @@ impl<E: Env> StateInner<E> {
     }
 
     #[must_use]
-    pub(crate) fn to_selected_state(&self) -> State {
-        let mut state = StateInner::<SelectedEnvironment>::default();
-        state.header = self.header;
-        state.block_hash = self.block_hash;
-        state.genesis_hash = self.genesis_hash;
-        state.next_nbits = self.next_nbits;
-        state.height = self.height;
-        state.chain_work = self.chain_work;
-        state.next_work = self.next_work;
-        state.next_target = self.next_target;
-        state.epoch_start_timestamp = self.epoch_start_timestamp;
-        state.timestamps = self.timestamps;
-        state
-    }
-
     /// Build the next authenticated state from the current state, a prover-supplied header,
     /// and a pre-computed block hash.
     fn next_inner(
@@ -268,7 +253,7 @@ impl<E: Env> StateInner<E> {
         headers: &[NewHeader],
         median_hints: &[BlockTimestamp],
         mut hash_header: F,
-    ) -> Result<(), ApplyFailure>
+    ) -> Result<(), ApplyFailure<E>>
     where
         F: FnMut(&Header) -> BlockHash,
     {
@@ -316,7 +301,7 @@ impl<E: Env> StateInner<E> {
                         self.block_hash = block_hash;
                     } else if self.genesis_hash != block_hash {
                         return Err(ApplyFailure {
-                            last_valid_state: self.to_selected_state(),
+                            last_valid_state: self.clone(),
                             error_code: ValidationErrorCode::GenesisHashMismatch,
                             failure_height: 1,
                         });
@@ -340,7 +325,7 @@ impl<E: Env> StateInner<E> {
                 {
                     flush_pending_chain_work(self, &mut pending_run_work, &mut pending_run_count);
                     return Err(ApplyFailure {
-                        last_valid_state: self.to_selected_state(),
+                        last_valid_state: self.clone(),
                         error_code,
                         failure_height: self.height + 1,
                     });
