@@ -327,16 +327,37 @@ pub struct PublicChainClaim {
 }
 
 /// Size of a serialized [`PublicChainClaim`] in bytes.
-pub const PUBLIC_CHAIN_CLAIM_SIZE: usize = size_of::<PublicChainClaim>();
+pub const PUBLIC_CHAIN_CLAIM_SIZE: usize = 32 + 32 + 32 + 4;
 
 impl PublicChainClaim {
     #[must_use]
     pub fn to_bytes(&self) -> [u8; PUBLIC_CHAIN_CLAIM_SIZE] {
-        copy_to_bytes(self)
+        let mut out = [0u8; PUBLIC_CHAIN_CLAIM_SIZE];
+        out[0..32].copy_from_slice(self.genesis_hash.as_raw());
+        out[32..64].copy_from_slice(self.tip_hash.as_raw());
+        for (i, limb) in self.chain_work.as_limbs().iter().enumerate() {
+            out[64 + i * 8..64 + (i + 1) * 8].copy_from_slice(&limb.to_le_bytes());
+        }
+        out[96..100].copy_from_slice(&self.height.to_le_bytes());
+        out
     }
 
     pub fn parse(bytes: &[u8]) -> Result<Self, ParseError> {
-        copy_from_bytes(bytes)
+        check_exact_len(bytes, PUBLIC_CHAIN_CLAIM_SIZE)?;
+        let genesis_hash = BlockHash::from_raw(bytes[0..32].try_into().unwrap());
+        let tip_hash = BlockHash::from_raw(bytes[32..64].try_into().unwrap());
+        let mut work_limbs = [0u64; 4];
+        for (i, limb) in work_limbs.iter_mut().enumerate() {
+            *limb = u64::from_le_bytes(bytes[64 + i * 8..64 + (i + 1) * 8].try_into().unwrap());
+        }
+        let chain_work = ChainWork::from_limbs(work_limbs);
+        let height = u32::from_le_bytes(bytes[96..100].try_into().unwrap());
+        Ok(Self {
+            genesis_hash,
+            tip_hash,
+            chain_work,
+            height,
+        })
     }
 }
 
@@ -1089,6 +1110,8 @@ mod tests {
         assert_eq!(NEW_HEADER_SIZE, 44);
         assert_eq!(RECURSIVE_PROOF_SIZE, 68);
         assert_eq!(STATE_SIZE, 296);
+        assert_eq!(PUBLIC_CHAIN_CLAIM_SIZE, 100);
+        assert_eq!(PROOF_CARRYING_STATE_SIZE, 168);
         assert_eq!(PRIVATE_CONTINUATION_STATE_SIZE, 116);
         assert_eq!(MINIMAL_PV_SIZE, 137);
         assert_eq!(core::mem::align_of::<Header>(), 4);
@@ -1651,6 +1674,11 @@ mod tests {
         };
         let bytes = claim.to_bytes();
         assert_eq!(bytes.len(), PUBLIC_CHAIN_CLAIM_SIZE);
+        assert_eq!(bytes[64..72], 3u64.to_le_bytes());
+        assert_eq!(bytes[72..80], 4u64.to_le_bytes());
+        assert_eq!(bytes[80..88], 5u64.to_le_bytes());
+        assert_eq!(bytes[88..96], 6u64.to_le_bytes());
+        assert_eq!(bytes[96..100], 99u32.to_le_bytes());
         let parsed = PublicChainClaim::parse(&bytes).unwrap();
         assert_eq!(parsed, claim);
     }

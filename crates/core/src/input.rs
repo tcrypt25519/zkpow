@@ -26,7 +26,7 @@ pub struct Input {
 /// Borrowed view of the public prover input wire format.
 #[derive(Debug, Clone, Copy)]
 pub struct InputRef<'a> {
-    pub claim: &'a PublicChainClaim,
+    pub claim: PublicChainClaim,
     pub recursive_proof: &'a RecursiveProof,
 }
 
@@ -267,7 +267,7 @@ impl<'a> InputRef<'a> {
         cycle_track("input/parse", || {
             let (claim_bytes, proof_bytes) = split_input_wire(bytes)?;
             let claim = cycle_track("input/parse/claim", || {
-                crate::ref_from_bytes::<PublicChainClaim>(claim_bytes).map_err(InputError::from)
+                PublicChainClaim::parse(claim_bytes).map_err(InputError::from)
             })?;
             let recursive_proof = RecursiveProof::ref_from_bytes(proof_bytes)?;
             Ok(Self {
@@ -279,7 +279,7 @@ impl<'a> InputRef<'a> {
 
     pub fn to_owned(&self) -> Input {
         Input {
-            claim: *self.claim,
+            claim: self.claim,
             recursive_proof: *self.recursive_proof,
         }
     }
@@ -416,7 +416,7 @@ mod tests {
     }
 
     #[test]
-    fn test_input_ref_rejects_misaligned_claim() {
+    fn test_input_ref_rejects_misaligned_recursive_proof() {
         let genesis_state: State = State {
             height: 0,
             genesis_hash: BlockHash::default(),
@@ -433,7 +433,7 @@ mod tests {
         assert_eq!(
             err,
             InputError::Parse(ParseError::Misaligned {
-                required: core::mem::align_of::<PublicChainClaim>(),
+                required: core::mem::align_of::<RecursiveProof>(),
             })
         );
     }
