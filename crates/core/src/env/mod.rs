@@ -133,7 +133,6 @@ impl<E: Env> StateInner<E> {
         self.next_target
     }
 
-    #[must_use]
     /// Build the next authenticated state from the current state, a prover-supplied header,
     /// and a pre-computed block hash.
     fn next_inner(
@@ -295,18 +294,6 @@ impl<E: Env> StateInner<E> {
                 });
                 let block_hash =
                     cycle_track("state/apply_headers/hash_header", || hash_header(&header));
-                if self.height == 0 && header_index == 0 {
-                    if self.genesis_hash == BlockHash::default() {
-                        self.genesis_hash = block_hash;
-                        self.block_hash = block_hash;
-                    } else if self.genesis_hash != block_hash {
-                        return Err(ApplyFailure {
-                            last_valid_state: self.clone(),
-                            error_code: ValidationErrorCode::GenesisHashMismatch,
-                            failure_height: 1,
-                        });
-                    }
-                }
                 cycle_track("state/apply_headers/median_hint_check", || {
                     assert!(
                         self.median_time_past_hinted(claimed_median),

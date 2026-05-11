@@ -4,8 +4,8 @@ use alloc::vec::Vec;
 
 use crate::{
     check_exact_len, copy_from_bytes, copy_to_bytes, cycle_track, mut_from_bytes, slice_from_bytes,
-    BlockHash, BlockTimestamp, Header, NewHeader, ParseError, PublicValuesDigest, State,
-    VerifierKeyDigest, NEW_HEADER_SIZE, RECURSIVE_PROOF_SIZE, STATE_SIZE,
+    BlockTimestamp, NewHeader, ParseError, PublicValuesDigest, State, VerifierKeyDigest,
+    NEW_HEADER_SIZE, RECURSIVE_PROOF_SIZE, STATE_SIZE,
 };
 
 // ============================================================================
@@ -89,8 +89,6 @@ impl Default for RecursiveProof {
 pub enum InputError {
     #[error("input parse error: {0}")]
     Parse(ParseError),
-    #[error("genesis state input must carry an all-zero genesis hash placeholder")]
-    GenesisHashMustBeZero,
 }
 
 /// Parse and validation errors for the new-header private witness batch.
@@ -115,14 +113,6 @@ impl From<ParseError> for InputError {
     fn from(value: ParseError) -> Self {
         Self::Parse(value)
     }
-}
-
-fn validate_genesis_placeholder(state: &State) -> Result<(), InputError> {
-    if state.height == 0 && state.genesis_hash != BlockHash::default() {
-        return Err(InputError::GenesisHashMustBeZero);
-    }
-
-    Ok(())
 }
 
 impl RecursiveProof {
@@ -280,7 +270,6 @@ impl<'a> InputRef<'a> {
                 State::ref_from_bytes(state_bytes).map_err(InputError::from)
             })?;
             let recursive_proof = RecursiveProof::ref_from_bytes(proof_bytes)?;
-            validate_genesis_placeholder(state)?;
             Ok(Self {
                 state,
                 recursive_proof,
@@ -288,12 +277,9 @@ impl<'a> InputRef<'a> {
         })
     }
 
-    pub fn to_owned<F>(&self, hash_header: F) -> Input
-    where
-        F: FnOnce(&Header) -> BlockHash + Copy,
-    {
+    pub fn to_owned(&self) -> Input {
         Input {
-            state: self.state.with_genesis_hash(hash_header),
+            state: self.state.clone(),
             recursive_proof: *self.recursive_proof,
         }
     }
@@ -309,37 +295,11 @@ impl<'a> InputMut<'a> {
                 mut_from_bytes::<State>(state_bytes).map_err(InputError::from)
             })?;
             let recursive_proof = RecursiveProof::ref_from_bytes(proof_bytes)?;
-            validate_genesis_placeholder(state)?;
             Ok(Self {
                 state,
                 recursive_proof,
             })
         })
-    }
-}
-
-impl<Environment: crate::env::Env> crate::env::StateInner<Environment> {
-    /// Fill in the genesis hash when the wire input leaves it unset.
-    pub fn update_genesis_hash<F>(&mut self, hash_header: F)
-    where
-        F: FnOnce(&Header) -> BlockHash + Copy,
-    {
-        if self.height == 0 && self.genesis_hash == BlockHash::default() {
-            let block_hash = hash_header(&self.header);
-            self.block_hash = block_hash;
-            self.genesis_hash = block_hash;
-        }
-    }
-
-    /// Clone this state and fill in the genesis hash when the wire input leaves it unset.
-    #[must_use]
-    pub fn with_genesis_hash<F>(&self, hash_header: F) -> Self
-    where
-        F: FnOnce(&Header) -> BlockHash + Copy,
-    {
-        let mut state = self.clone();
-        state.update_genesis_hash(hash_header);
-        state
     }
 }
 
@@ -355,11 +315,8 @@ impl Input {
 
 impl Input {
     /// Parse and validate input from the host/guest wire format.
-    pub fn parse<F>(bytes: &[u8], hash_header: F) -> Result<Self, InputError>
-    where
-        F: FnOnce(&Header) -> BlockHash + Copy,
-    {
-        InputRef::parse(bytes).map(|input| input.to_owned(hash_header))
+    pub fn parse(bytes: &[u8]) -> Result<Self, InputError> {
+        InputRef::parse(bytes).map(|input| input.to_owned())
     }
 }
 
@@ -368,12 +325,7 @@ impl Input {
     #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::with_capacity(STATE_SIZE + RECURSIVE_PROOF_SIZE);
-        let mut state = self.state.clone();
-        // TODO: This genesis_hash setting logic should be somewhere; but not here.
-        if state.height == 0 {
-            state.genesis_hash = BlockHash::default();
-        }
-        bytes.extend_from_slice(&state.to_bytes());
+        bytes.extend_from_slice(&self.state.to_bytes());
         bytes.extend_from_slice(&self.recursive_proof.to_bytes());
         bytes
     }
@@ -388,12 +340,7 @@ mod tests {
     use alloc::vec;
 
     use super::*;
-    use crate::{BlockHash, BlockTimestamp, Header};
-
-    // Dummy hash_header for testing
-    fn dummy_hash_header(_header: &Header) -> BlockHash {
-        BlockHash::default() // All zeros hash
-    }
+    use crate::{BlockHash, BlockTimestamp};
 
     #[test]
     fn test_recursive_proof_default_is_zeros() {
@@ -418,13 +365,16 @@ mod tests {
     fn test_parse_from_bytes_genesis_no_proof() {
         let genesis_state: State = State {
             height: 0,
-            genesis_hash: BlockHash::default(), // Should be default for initial parse
+            genesis_hash: BlockHash::from_raw([1; 32]),
+            block_hash: BlockHash::from_raw([2; 32]),
             ..Default::default()
         };
         let input = Input::new(genesis_state, RecursiveProof::default()).to_bytes();
-        let input = Input::parse(&input, dummy_hash_header).unwrap();
+        let input = Input::parse(&input).unwrap();
 
         assert_eq!(input.state.height, 0);
+        assert_eq!(input.state.genesis_hash, BlockHash::from_raw([1; 32]));
+        assert_eq!(input.state.block_hash, BlockHash::from_raw([2; 32]));
         assert_eq!(input.recursive_proof, RecursiveProof::default());
     }
 
@@ -447,7 +397,7 @@ mod tests {
             ..Default::default()
         };
         let input = Input::new(non_genesis_state, recursive_proof_data).to_bytes();
-        let input = Input::parse(&input, dummy_hash_header).unwrap();
+        let input = Input::parse(&input).unwrap();
 
         assert_eq!(input.state.height, 100);
         assert_eq!(input.recursive_proof.verifier_key, expected_verifier_key);

@@ -137,7 +137,6 @@ pub fn main() {
 
         let (state_ptr, recursive_proof) = {
             let input = parse_input(&mut input_bytes);
-            input.state.update_genesis_hash(hash_header);
             (input.state as *mut State, *input.recursive_proof)
         };
 

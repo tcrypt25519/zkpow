@@ -1499,23 +1499,25 @@ mod tests {
     }
 
     #[test]
-    fn apply_headers_rejects_genesis_hash_mismatch_when_called_directly() {
+    fn apply_headers_treats_height_zero_state_as_trusted_anchor() {
         let mut state = test_state();
         state.genesis_hash = BlockHash::from_raw([0x11; 32]);
+        state.block_hash = BlockHash::from_raw([0x22; 32]);
         let headers = [NewHeader {
             version: 1,
-            merkle_root: [0x22; 32],
+            merkle_root: [0x33; 32],
             timestamp: ts(10),
             nonce: 7,
         }];
         let hints = median_hints_for_headers(&state, &headers);
-        let failure = state
+        state
             .apply_headers(&headers, &hints, |_| zero_hash())
-            .expect_err("genesis mismatch should fail");
+            .expect("height-zero anchor should already be trusted");
 
-        assert_eq!(failure.error_code, ValidationErrorCode::GenesisHashMismatch);
-        assert_eq!(failure.failure_height, 1);
-        assert_eq!(failure.last_valid_state.height, 0);
+        assert_eq!(state.height, 1);
+        assert_eq!(state.genesis_hash, BlockHash::from_raw([0x11; 32]));
+        assert_eq!(state.header.prev_blockhash, BlockHash::from_raw([0x22; 32]));
+        assert_eq!(state.block_hash, zero_hash());
     }
 
     #[test]
