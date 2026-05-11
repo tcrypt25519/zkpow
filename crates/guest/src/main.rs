@@ -6,13 +6,11 @@
 //! authenticated state, then hashes and validates.
 //!
 //! Input protocol:
-//!   1. encoded_input: Vec<u8>  (State || RecursiveProof)
-//!   2. header_hints: Vec<u8>
-//!   3. median_time_past_hints: Vec<u8>
-//!   4. If `state.height > 0`:
-//!      a. previous_public_claim: Vec<u8>  (PublicChainClaim bytes)
-//!      b. previous_continuation_state: Vec<u8>  (PrivateContinuationState bytes)
-//!      c. recursive proof witness (via write_proof)
+//!   1. encoded_input: Vec<u8>  (PublicChainClaim || RecursiveProof)
+//!   2. state_witness: Vec<u8>  (State bytes)
+//!   3. header_hints: Vec<u8>
+//!   4. median_time_past_hints: Vec<u8>
+//!   5. If `claim.height > 0`, recursive proof witness (via write_proof)
 //!
 //! Output: MinimalPublicValues (137 bytes) on success or failure.
 
@@ -20,7 +18,7 @@
 sp1_zkvm::entrypoint!(main);
 
 use zkpow_core::{
-    cycle_track, BlockHash, Header, InputMut, MedianTimePastHintsRef, MinimalPublicValues,
+    cycle_track, BlockHash, Header, Input, MedianTimePastHintsRef, MinimalPublicValues,
     NewHeaderHintsRef, PrivateContinuationState, PublicChainClaim, RecursiveProof, State,
     ValidationState, MINIMAL_PV_SIZE, PRIVATE_CONTINUATION_STATE_SIZE,
 };
@@ -56,8 +54,24 @@ fn commit_minimal_pv(pv: &MinimalPublicValues) -> ! {
     sp1_zkvm::syscalls::syscall_halt(0)
 }
 
-fn parse_input(input_bytes: &mut [u8]) -> InputMut<'_> {
-    InputMut::parse(input_bytes).expect("input should parse")
+fn parse_input(input_bytes: &[u8]) -> Input {
+    Input::parse(input_bytes).expect("input should parse")
+}
+
+fn parse_state_witness(state_bytes: &[u8]) -> State {
+    cycle_track("input/parse_state_witness", || {
+        State::parse(state_bytes).expect("state witness should parse")
+    })
+}
+
+fn verify_state_claim(state: &State, claim: &PublicChainClaim) -> PrivateContinuationState {
+    cycle_track("input/verify_state_claim", || {
+        let validation_state = ValidationState::from_state(state);
+        if validation_state.public != *claim {
+            panic!("state witness public claim mismatch");
+        }
+        validation_state.private
+    })
 }
 
 fn parse_header_hints<'a>(hint_bytes: &'a [u8]) -> NewHeaderHintsRef<'a> {
@@ -131,30 +145,19 @@ fn verify_recursive_proof(
 
 pub fn main() {
     cycle_track("main", || {
-        let mut input_bytes = sp1_zkvm::io::read_vec();
+        let input_bytes = sp1_zkvm::io::read_vec();
+        let state_bytes = sp1_zkvm::io::read_vec();
         let header_hint_bytes = sp1_zkvm::io::read_vec();
         let median_hint_bytes = sp1_zkvm::io::read_vec();
 
-        let (state_ptr, recursive_proof) = {
-            let input = parse_input(&mut input_bytes);
-            (input.state as *mut State, *input.recursive_proof)
-        };
-
+        let input = parse_input(&input_bytes);
+        let mut state = parse_state_witness(&state_bytes);
+        let continuation = verify_state_claim(&state, &input.claim);
         let header_hints = parse_header_hints(&header_hint_bytes);
         let median_hints = parse_median_hints(&median_hint_bytes, header_hints.headers.len());
 
-        let state: &mut State = unsafe { &mut *state_ptr };
-
-        if state.height > 0 {
-            let claim_bytes = sp1_zkvm::io::read_vec();
-            let prior_claim =
-                PublicChainClaim::parse(&claim_bytes).expect("prior public claim should parse");
-
-            let cont_bytes = sp1_zkvm::io::read_vec();
-            let prior_continuation = PrivateContinuationState::parse(&cont_bytes)
-                .expect("prior continuation state should parse");
-
-            verify_recursive_proof(&recursive_proof, &prior_claim, &prior_continuation);
+        if input.claim.height > 0 {
+            verify_recursive_proof(&input.recursive_proof, &input.claim, &continuation);
         }
 
         // Apply headers; on failure commit minimal PV and halt.
@@ -171,8 +174,8 @@ pub fn main() {
             commit_minimal_pv(&pv);
         }
 
-        let digest = compute_continuation_digest(state);
-        let pv = MinimalPublicValues::success(state, digest);
+        let digest = compute_continuation_digest(&state);
+        let pv = MinimalPublicValues::success(&state, digest);
         commit_minimal_pv(&pv);
     });
 }

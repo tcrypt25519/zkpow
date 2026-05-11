@@ -25,7 +25,7 @@ type DefaultEnvironment = env::GuestEnvironment;
 
 pub mod input;
 pub use input::{
-    Input, InputError, InputMut, InputRef, MedianTimePastHintError, MedianTimePastHints,
+    Input, InputError, InputRef, MedianTimePastHintError, MedianTimePastHints,
     MedianTimePastHintsRef, NewHeaderHintError, NewHeaderHints, NewHeaderHintsRef, RecursiveProof,
 };
 
@@ -38,7 +38,7 @@ pub const RECURSIVE_PROOF_SIZE: usize = size_of::<RecursiveProof>();
 /// Size of each [`NewHeader`] input from the prover.
 pub const NEW_HEADER_SIZE: usize = size_of::<NewHeader>();
 
-pub const PROOF_CARRYING_STATE_SIZE: usize = RECURSIVE_PROOF_SIZE;
+pub const PROOF_CARRYING_STATE_SIZE: usize = PUBLIC_CHAIN_CLAIM_SIZE + RECURSIVE_PROOF_SIZE;
 
 /// Size of a serialized Bitcoin block header in bytes.
 pub const BLOCK_HEADER_SIZE: usize = size_of::<Header>();
@@ -225,14 +225,6 @@ pub(crate) fn ref_from_bytes<T>(bytes: &[u8]) -> Result<&T, ParseError> {
         check_exact_len(bytes, size_of::<T>())?;
         check_aligned::<T>(bytes)?;
         Ok(unsafe { &*(bytes.as_ptr() as *const T) })
-    })
-}
-
-pub(crate) fn mut_from_bytes<T>(bytes: &mut [u8]) -> Result<&mut T, ParseError> {
-    cycle_track("util/mut_from_bytes", || {
-        check_exact_len(bytes, size_of::<T>())?;
-        check_aligned::<T>(bytes)?;
-        Ok(unsafe { &mut *(bytes.as_mut_ptr() as *mut T) })
     })
 }
 

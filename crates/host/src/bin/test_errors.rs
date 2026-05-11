@@ -4,9 +4,9 @@
 //! then runs the zkVM program via `client.execute()` and checks the public values.
 //!
 //! Input protocol:
-//!   stdin: encoded_input(Vec<u8>) + header witness(Vec<u8>) + median-time-past witness(Vec<u8>)
-//!          → [prior_claim(Vec<u8>) + prior_continuation(Vec<u8>) + recursive proof witness
-//!             when state.height > 0]
+//!   stdin: encoded_input(Vec<u8>) + state witness(Vec<u8>) + header witness(Vec<u8>)
+//!          + median-time-past witness(Vec<u8>)
+//!          → [recursive proof witness when claim.height > 0]
 //!   output: MinimalPublicValues (137 bytes)
 
 use sp1_sdk::prelude::*;
@@ -123,11 +123,13 @@ fn mainnet_genesis_state() -> util::State {
 
 fn stdin_for_input(
     input: &Input,
+    state: &util::State,
     headers: &[util::NewHeader],
     hints: &util::MedianTimePastHints,
 ) -> SP1Stdin {
     let mut stdin = SP1Stdin::new();
     stdin.write_vec(input.to_bytes());
+    stdin.write_vec(state.to_bytes().to_vec());
     stdin.write_vec(util::NewHeaderHintsRef { headers }.to_bytes());
     stdin.write_vec(hints.to_bytes());
     // No recursive witnesses for genesis-start inputs (height == 0).
@@ -136,18 +138,21 @@ fn stdin_for_input(
 
 fn stdin_for_recursive_input(
     input: &Input,
+    state: &util::State,
     headers: &[util::NewHeader],
     hints: &util::MedianTimePastHints,
 ) -> SP1Stdin {
     let mut stdin = SP1Stdin::new();
     stdin.write_vec(input.to_bytes());
+    stdin.write_vec(state.to_bytes().to_vec());
     stdin.write_vec(util::NewHeaderHintsRef { headers }.to_bytes());
     stdin.write_vec(hints.to_bytes());
-    // Write prior claim and continuation state.
-    let vs = zkpow_core::ValidationState::from_state(&input.state);
-    stdin.write_vec(vs.public.to_bytes().to_vec());
-    stdin.write_vec(vs.private.to_bytes().to_vec());
     stdin
+}
+
+fn input_for_state(state: &util::State, recursive_proof: RecursiveProof) -> Input {
+    let validation_state = zkpow_core::ValidationState::from_state(state);
+    Input::new(validation_state.public, recursive_proof)
 }
 
 #[tokio::main]
@@ -183,6 +188,10 @@ async fn main() {
         "error_recursive_on_failed_proof",
         test_error_recursive_on_failed_proof().await,
     );
+    check(
+        "error_recursive_on_tampered_state_witness",
+        test_error_recursive_on_tampered_state_witness().await,
+    );
 
     // === Step 6: minimal PV format ===
     check("pv_minimal_format", test_pv_minimal_format().await);
@@ -199,8 +208,8 @@ async fn test_success_100_headers() -> Result<(), String> {
     let records = util::load_header_records_from_db(DEFAULT_DB_PATH, 1, 100);
     let headers = util::records_to_new_headers(&records);
     let hints = util::median_time_past_hints_for_headers(&genesis_state, &headers);
-    let input = Input::new(genesis_state, RecursiveProof::default());
-    let stdin = stdin_for_input(&input, &headers, &hints);
+    let input = input_for_state(&genesis_state, RecursiveProof::default());
+    let stdin = stdin_for_input(&input, &genesis_state, &headers, &hints);
 
     let pv = run_and_get_pv(stdin).await?;
     expect_success(&pv).map(|_| ())
@@ -307,8 +316,8 @@ async fn test_error_timestamp_too_old() -> Result<(), String> {
     let mut headers = util::records_to_new_headers(&records);
     let hints = util::median_time_past_hints_for_headers(&genesis_state, &headers);
     headers[11].timestamp = util::BlockTimestamp::from_consensus(1231006505);
-    let input = Input::new(genesis_state, RecursiveProof::default());
-    let stdin = stdin_for_input(&input, &headers, &hints);
+    let input = input_for_state(&genesis_state, RecursiveProof::default());
+    let stdin = stdin_for_input(&input, &genesis_state, &headers, &hints);
 
     let pv = run_and_get_pv(stdin).await?;
     expect_failure(&pv, ValidationErrorCode::TimestampTooOld, 12)
@@ -320,8 +329,8 @@ async fn test_error_pow_insufficient() -> Result<(), String> {
     let mut headers = util::records_to_new_headers(&records);
     let hints = util::median_time_past_hints_for_headers(&genesis_state, &headers);
     headers[0].nonce ^= 0xFF;
-    let input = Input::new(genesis_state, RecursiveProof::default());
-    let stdin = stdin_for_input(&input, &headers, &hints);
+    let input = input_for_state(&genesis_state, RecursiveProof::default());
+    let stdin = stdin_for_input(&input, &genesis_state, &headers, &hints);
 
     let pv = run_and_get_pv(stdin).await?;
     expect_failure(&pv, ValidationErrorCode::PowInsufficient, 1)
@@ -340,8 +349,8 @@ async fn test_recursive_chain_success() -> Result<(), String> {
     let records1 = util::load_header_records_from_db(DEFAULT_DB_PATH, 1, 10);
     let headers1 = util::records_to_new_headers(&records1);
     let hints1 = util::median_time_past_hints_for_headers(&genesis_state, &headers1);
-    let input1 = Input::new(genesis_state, RecursiveProof::default());
-    let stdin1 = stdin_for_input(&input1, &headers1, &hints1);
+    let input1 = input_for_state(&genesis_state, RecursiveProof::default());
+    let stdin1 = stdin_for_input(&input1, &genesis_state, &headers1, &hints1);
 
     let proof1 = client
         .prove(&pk, stdin1)
@@ -366,8 +375,8 @@ async fn test_recursive_chain_success() -> Result<(), String> {
     let records2 = util::load_header_records_from_db(DEFAULT_DB_PATH, 11, 10);
     let headers2 = util::records_to_new_headers(&records2);
     let hints2 = util::median_time_past_hints_for_headers(&state1, &headers2);
-    let input2 = Input::new(
-        state1,
+    let input2 = input_for_state(
+        &state1,
         RecursiveProof {
             verifier_key: VerifierKeyDigest::from_raw(vk.hash_u32()),
             public_values_digest: PublicValuesDigest::from_raw(util::compute_pv_digest(&pv1_bytes)),
@@ -375,7 +384,7 @@ async fn test_recursive_chain_success() -> Result<(), String> {
             ..Default::default()
         },
     );
-    let mut stdin2 = stdin_for_recursive_input(&input2, &headers2, &hints2);
+    let mut stdin2 = stdin_for_recursive_input(&input2, &state1, &headers2, &hints2);
     let sp1_sdk::SP1Proof::Compressed(inner_proof) = &proof1.proof else {
         return Err("Run 1 proof is not compressed".to_string());
     };
@@ -406,8 +415,8 @@ async fn test_error_recursive_on_failed_proof() -> Result<(), String> {
         ..Default::default()
     };
 
-    let input = Input::new(state_at_5, bad_recursive_proof);
-    let stdin = stdin_for_recursive_input(&input, &headers, &hints);
+    let input = input_for_state(&state_at_5, bad_recursive_proof);
+    let stdin = stdin_for_recursive_input(&input, &state_at_5, &headers, &hints);
 
     let client = ProverClient::builder().mock().build().await;
     let result = client.execute(ELF, stdin).await;
@@ -427,6 +436,53 @@ async fn test_error_recursive_on_failed_proof() -> Result<(), String> {
     }
 }
 
+/// Verify that private cached continuation fields are bound by the prior
+/// proof's public-values digest, even though they are not part of the public
+/// chain claim.
+async fn test_error_recursive_on_tampered_state_witness() -> Result<(), String> {
+    let genesis_state = mainnet_genesis_state();
+    let records = util::load_header_records_from_db(DEFAULT_DB_PATH, 1, 5);
+    let headers_to_5 = util::records_to_new_headers(&records);
+    let state_at_5 = util::compute_final_state(&genesis_state, &headers_to_5);
+
+    let original_vs = zkpow_core::ValidationState::from_state(&state_at_5);
+    let original_digest = util::continuation_digest(&original_vs.private);
+    let original_pv = MinimalPublicValues::success(&state_at_5, original_digest);
+    let recursive_proof = RecursiveProof {
+        verifier_key: VerifierKeyDigest::from_raw([0u32; 8]),
+        public_values_digest: PublicValuesDigest::from_raw(util::compute_pv_digest(
+            &original_pv.to_bytes(),
+        )),
+        previous_return_code: 0,
+        ..Default::default()
+    };
+
+    let mut tampered_state = state_at_5.clone();
+    tampered_state.next_work = util::ChainWork::default();
+
+    let input = input_for_state(&state_at_5, recursive_proof);
+    let empty_headers = [];
+    let empty_hints = util::MedianTimePastHints::new(Vec::new());
+    let stdin = stdin_for_recursive_input(&input, &tampered_state, &empty_headers, &empty_hints);
+
+    let client = ProverClient::builder().mock().build().await;
+    let result = client.execute(ELF, stdin).await;
+
+    match result {
+        Err(_) => Ok(()),
+        Ok((pv, _)) => {
+            let pv_bytes = pv.to_vec();
+            match HeaderChainPublicValues::parse(&pv_bytes) {
+                Ok(HeaderChainPublicValues::Success { .. }) => Err(
+                    "expected guest to reject tampered continuation state, but got success"
+                        .to_string(),
+                ),
+                _ => Ok(()),
+            }
+        }
+    }
+}
+
 /// Verify the public-value format is the minimal 137-byte layout.
 async fn test_pv_minimal_format() -> Result<(), String> {
     use zkpow_core::MINIMAL_PV_SIZE;
@@ -435,8 +491,8 @@ async fn test_pv_minimal_format() -> Result<(), String> {
     let records = util::load_header_records_from_db(DEFAULT_DB_PATH, 1, 10);
     let headers = util::records_to_new_headers(&records);
     let hints = util::median_time_past_hints_for_headers(&genesis_state, &headers);
-    let input = Input::new(genesis_state, RecursiveProof::default());
-    let stdin = stdin_for_input(&input, &headers, &hints);
+    let input = input_for_state(&genesis_state, RecursiveProof::default());
+    let stdin = stdin_for_input(&input, &genesis_state, &headers, &hints);
 
     let pv = run_and_get_pv(stdin).await?;
 

@@ -499,6 +499,7 @@ fn build_recursive_proof(
 
 fn build_stdin(
     input: &Input,
+    state: &util::State,
     headers: &[util::NewHeader],
     median_hints: &util::MedianTimePastHints,
     previous_proof: Option<&SP1ProofWithPublicValues>,
@@ -506,15 +507,9 @@ fn build_stdin(
 ) -> Result<SP1Stdin, BoxError> {
     let mut stdin = SP1Stdin::new();
     stdin.write_vec(input.to_bytes());
+    stdin.write_vec(state.to_bytes().to_vec());
     stdin.write_vec(util::NewHeaderHintsRef { headers }.to_bytes());
     stdin.write_vec(median_hints.to_bytes());
-
-    if input.state.height > 0 {
-        // Write the prior public claim and continuation state as private witnesses.
-        let vs = zkpow_core::ValidationState::from_state(&input.state);
-        stdin.write_vec(vs.public.to_bytes().to_vec());
-        stdin.write_vec(vs.private.to_bytes().to_vec());
-    }
 
     if let Some(prev_proof) = previous_proof {
         let SP1Proof::Compressed(inner_proof) = &prev_proof.proof else {
@@ -544,11 +539,13 @@ where
         build_recursive_proof(pk.verifying_key(), previous_proof)
     })?;
     let input = timed_sync("build_input", || -> Result<_, BoxError> {
-        Ok(Input::new(current_state.clone(), recursive_proof))
+        let validation_state = zkpow_core::ValidationState::from_state(current_state);
+        Ok(Input::new(validation_state.public, recursive_proof))
     })?;
     let stdin = timed_sync("serialize_input", || {
         build_stdin(
             &input,
+            current_state,
             headers,
             median_hints,
             previous_proof,

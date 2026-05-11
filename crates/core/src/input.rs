@@ -1,35 +1,32 @@
-//! Logic for parsing the prover input and constructing the `Input` struct.
+//! Logic for parsing the public prover input and constructing the `Input` struct.
 
 use alloc::vec::Vec;
 
 use crate::{
-    check_exact_len, copy_from_bytes, copy_to_bytes, cycle_track, mut_from_bytes, slice_from_bytes,
-    BlockTimestamp, NewHeader, ParseError, PublicValuesDigest, State, VerifierKeyDigest,
-    NEW_HEADER_SIZE, RECURSIVE_PROOF_SIZE, STATE_SIZE,
+    check_exact_len, copy_from_bytes, copy_to_bytes, cycle_track, slice_from_bytes, BlockTimestamp,
+    NewHeader, ParseError, PublicChainClaim, PublicValuesDigest, VerifierKeyDigest,
+    NEW_HEADER_SIZE, PUBLIC_CHAIN_CLAIM_SIZE, RECURSIVE_PROOF_SIZE,
 };
 
 // ============================================================================
 // Input & InputError
 // ============================================================================
 
-/// Complete typed prover input.
+/// Complete typed public prover input.
+///
+/// The full validation state is supplied separately as private witness data.
+/// Its public preimage fields must match [`claim`](Self::claim) before the
+/// guest uses it to validate headers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Input {
-    pub state: State,
+    pub claim: PublicChainClaim,
     pub recursive_proof: RecursiveProof,
 }
 
-/// Borrowed view of the prover input wire format.
+/// Borrowed view of the public prover input wire format.
 #[derive(Debug, Clone, Copy)]
 pub struct InputRef<'a> {
-    pub state: &'a State,
-    pub recursive_proof: &'a RecursiveProof,
-}
-
-/// Mutable borrowed view of the prover input wire format.
-#[derive(Debug)]
-pub struct InputMut<'a> {
-    pub state: &'a mut State,
+    pub claim: &'a PublicChainClaim,
     pub recursive_proof: &'a RecursiveProof,
 }
 
@@ -251,27 +248,30 @@ impl MedianTimePastHints {
     }
 }
 
-/// Split and validate the wire layout, returning `(state_bytes, proof_bytes)`.
+/// Split and validate the wire layout, returning `(claim_bytes, proof_bytes)`.
 ///
-/// Shared by [`InputRef::parse`] and [`InputMut::parse`].  The caller is
-/// responsible for borrowing the state and proof from the returned regions in
-/// the appropriate validation order.
+/// `Input` intentionally carries only the public claim and recursive proof
+/// metadata. The full [`State`](crate::State) is supplied separately as private
+/// witness data and checked against this claim before use.
 fn split_input_wire(bytes: &[u8]) -> Result<(&[u8], &[u8]), InputError> {
-    check_exact_len(bytes, STATE_SIZE + RECURSIVE_PROOF_SIZE)?;
-    Ok((&bytes[..STATE_SIZE], &bytes[STATE_SIZE..]))
+    check_exact_len(bytes, PUBLIC_CHAIN_CLAIM_SIZE + RECURSIVE_PROOF_SIZE)?;
+    Ok((
+        &bytes[..PUBLIC_CHAIN_CLAIM_SIZE],
+        &bytes[PUBLIC_CHAIN_CLAIM_SIZE..],
+    ))
 }
 
 impl<'a> InputRef<'a> {
     /// Parse and validate input from the aligned host/guest wire format.
     pub fn parse(bytes: &'a [u8]) -> Result<Self, InputError> {
         cycle_track("input/parse", || {
-            let (state_bytes, proof_bytes) = split_input_wire(bytes)?;
-            let state = cycle_track("input/parse/state", || {
-                State::ref_from_bytes(state_bytes).map_err(InputError::from)
+            let (claim_bytes, proof_bytes) = split_input_wire(bytes)?;
+            let claim = cycle_track("input/parse/claim", || {
+                crate::ref_from_bytes::<PublicChainClaim>(claim_bytes).map_err(InputError::from)
             })?;
             let recursive_proof = RecursiveProof::ref_from_bytes(proof_bytes)?;
             Ok(Self {
-                state,
+                claim,
                 recursive_proof,
             })
         })
@@ -279,35 +279,17 @@ impl<'a> InputRef<'a> {
 
     pub fn to_owned(&self) -> Input {
         Input {
-            state: self.state.clone(),
+            claim: *self.claim,
             recursive_proof: *self.recursive_proof,
         }
     }
 }
 
-impl<'a> InputMut<'a> {
-    /// Parse and validate input from the aligned host/guest wire format.
-    pub fn parse(bytes: &'a mut [u8]) -> Result<Self, InputError> {
-        cycle_track("input/parse_mut", || {
-            check_exact_len(bytes, STATE_SIZE + RECURSIVE_PROOF_SIZE)?;
-            let (state_bytes, proof_bytes) = bytes.split_at_mut(STATE_SIZE);
-            let state = cycle_track("input/parse_mut/state", || {
-                mut_from_bytes::<State>(state_bytes).map_err(InputError::from)
-            })?;
-            let recursive_proof = RecursiveProof::ref_from_bytes(proof_bytes)?;
-            Ok(Self {
-                state,
-                recursive_proof,
-            })
-        })
-    }
-}
-
 impl Input {
     /// Constructs a new Input.
-    pub fn new(state: State, recursive_proof: RecursiveProof) -> Self {
+    pub fn new(claim: PublicChainClaim, recursive_proof: RecursiveProof) -> Self {
         Self {
-            state,
+            claim,
             recursive_proof,
         }
     }
@@ -324,8 +306,8 @@ impl Input {
     /// Serialize to the host/guest wire format.
     #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut bytes = Vec::with_capacity(STATE_SIZE + RECURSIVE_PROOF_SIZE);
-        bytes.extend_from_slice(&self.state.to_bytes());
+        let mut bytes = Vec::with_capacity(PUBLIC_CHAIN_CLAIM_SIZE + RECURSIVE_PROOF_SIZE);
+        bytes.extend_from_slice(&self.claim.to_bytes());
         bytes.extend_from_slice(&self.recursive_proof.to_bytes());
         bytes
     }
@@ -340,7 +322,7 @@ mod tests {
     use alloc::vec;
 
     use super::*;
-    use crate::{BlockHash, BlockTimestamp};
+    use crate::{BlockHash, BlockTimestamp, State, ValidationState};
 
     #[test]
     fn test_recursive_proof_default_is_zeros() {
@@ -369,12 +351,13 @@ mod tests {
             block_hash: BlockHash::from_raw([2; 32]),
             ..Default::default()
         };
-        let input = Input::new(genesis_state, RecursiveProof::default()).to_bytes();
+        let claim = ValidationState::from_state(&genesis_state).public;
+        let input = Input::new(claim, RecursiveProof::default()).to_bytes();
         let input = Input::parse(&input).unwrap();
 
-        assert_eq!(input.state.height, 0);
-        assert_eq!(input.state.genesis_hash, BlockHash::from_raw([1; 32]));
-        assert_eq!(input.state.block_hash, BlockHash::from_raw([2; 32]));
+        assert_eq!(input.claim.height, 0);
+        assert_eq!(input.claim.genesis_hash, BlockHash::from_raw([1; 32]));
+        assert_eq!(input.claim.tip_hash, BlockHash::from_raw([2; 32]));
         assert_eq!(input.recursive_proof, RecursiveProof::default());
     }
 
@@ -396,10 +379,11 @@ mod tests {
             public_values_digest: expected_public_values_digest,
             ..Default::default()
         };
-        let input = Input::new(non_genesis_state, recursive_proof_data).to_bytes();
+        let claim = ValidationState::from_state(&non_genesis_state).public;
+        let input = Input::new(claim, recursive_proof_data).to_bytes();
         let input = Input::parse(&input).unwrap();
 
-        assert_eq!(input.state.height, 100);
+        assert_eq!(input.claim.height, 100);
         assert_eq!(input.recursive_proof.verifier_key, expected_verifier_key);
         assert_eq!(
             input.recursive_proof.public_values_digest,
@@ -432,13 +416,14 @@ mod tests {
     }
 
     #[test]
-    fn test_input_ref_rejects_misaligned_state() {
+    fn test_input_ref_rejects_misaligned_claim() {
         let genesis_state: State = State {
             height: 0,
             genesis_hash: BlockHash::default(),
             ..Default::default()
         };
-        let input = Input::new(genesis_state, RecursiveProof::default()).to_bytes();
+        let claim = ValidationState::from_state(&genesis_state).public;
+        let input = Input::new(claim, RecursiveProof::default()).to_bytes();
 
         let mut misaligned = Vec::with_capacity(input.len() + 1);
         misaligned.push(0);
@@ -448,7 +433,7 @@ mod tests {
         assert_eq!(
             err,
             InputError::Parse(ParseError::Misaligned {
-                required: core::mem::align_of::<State>(),
+                required: core::mem::align_of::<PublicChainClaim>(),
             })
         );
     }
