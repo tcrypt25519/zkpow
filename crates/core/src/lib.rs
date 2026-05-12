@@ -108,6 +108,24 @@ impl VerifierKeyDigest {
     pub const fn into_raw(self) -> [u32; 8] {
         self.0
     }
+
+    #[must_use]
+    pub fn to_bytes(self) -> [u8; 32] {
+        let mut out = [0u8; 32];
+        for (i, word) in self.0.iter().enumerate() {
+            out[i * 4..(i + 1) * 4].copy_from_slice(&word.to_le_bytes());
+        }
+        out
+    }
+
+    #[must_use]
+    pub fn from_bytes(bytes: [u8; 32]) -> Self {
+        let mut words = [0u32; 8];
+        for (i, word) in words.iter_mut().enumerate() {
+            *word = u32::from_le_bytes(bytes[i * 4..(i + 1) * 4].try_into().unwrap());
+        }
+        Self(words)
+    }
 }
 
 impl From<[u32; 8]> for VerifierKeyDigest {
@@ -559,7 +577,7 @@ pub struct ProofFailure {
 
 /// Wire layout of the minimal public values committed by the prover.
 ///
-/// Layout (137 bytes, little-endian):
+/// Layout (169 bytes, little-endian):
 /// ```text
 ///  0.. 32  genesis_hash        [u8; 32]
 /// 32.. 64  tip_hash            [u8; 32]
@@ -568,6 +586,7 @@ pub struct ProofFailure {
 /// 100      return_code         u8  (0 = success, nonzero = failure)
 /// 101..105 failure_height      u32 LE  (0 on success)
 /// 105..137 continuation_digest [u8; 32]
+/// 137..169 verifier_key         [u8; 32]  ([u32; 8] LE words)
 /// ```
 ///
 /// Serialized manually to avoid struct padding; use [`MinimalPublicValues::to_bytes`]
@@ -581,15 +600,20 @@ pub struct MinimalPublicValues {
     pub return_code: u8,
     pub failure_height: u32,
     pub continuation_digest: [u8; 32],
+    pub verifier_key: VerifierKeyDigest,
 }
 
 /// Size of the serialized [`MinimalPublicValues`] in bytes.
-pub const MINIMAL_PV_SIZE: usize = 32 + 32 + 32 + 4 + 1 + 4 + 32; // = 137
+pub const MINIMAL_PV_SIZE: usize = 32 + 32 + 32 + 4 + 1 + 4 + 32 + 32; // = 169
 
 impl MinimalPublicValues {
     /// Build success public values from a final state and continuation digest.
     #[must_use]
-    pub fn success(state: &State, continuation_digest: [u8; 32]) -> Self {
+    pub fn success(
+        state: &State,
+        continuation_digest: [u8; 32],
+        verifier_key: VerifierKeyDigest,
+    ) -> Self {
         let mut chain_work = [0u8; 32];
         for (i, limb) in state.chain_work.as_limbs().iter().enumerate() {
             chain_work[i * 8..(i + 1) * 8].copy_from_slice(&limb.to_le_bytes());
@@ -602,6 +626,7 @@ impl MinimalPublicValues {
             return_code: 0,
             failure_height: 0,
             continuation_digest,
+            verifier_key,
         }
     }
 
@@ -613,6 +638,7 @@ impl MinimalPublicValues {
         error_code: ValidationErrorCode,
         failure_height: u32,
         continuation_digest: [u8; 32],
+        verifier_key: VerifierKeyDigest,
     ) -> Self {
         let mut chain_work = [0u8; 32];
         for (i, limb) in state.chain_work.as_limbs().iter().enumerate() {
@@ -626,6 +652,7 @@ impl MinimalPublicValues {
             return_code: error_code.as_byte(),
             failure_height,
             continuation_digest,
+            verifier_key,
         }
     }
 
@@ -640,6 +667,7 @@ impl MinimalPublicValues {
         out[100] = self.return_code;
         out[101..105].copy_from_slice(&self.failure_height.to_le_bytes());
         out[105..137].copy_from_slice(&self.continuation_digest);
+        out[137..169].copy_from_slice(&self.verifier_key.to_bytes());
         out
     }
 
@@ -657,6 +685,7 @@ impl MinimalPublicValues {
         let return_code = bytes[100];
         let failure_height = u32::from_le_bytes(bytes[101..105].try_into().unwrap());
         let continuation_digest: [u8; 32] = bytes[105..137].try_into().unwrap();
+        let verifier_key = VerifierKeyDigest::from_bytes(bytes[137..169].try_into().unwrap());
         Ok(Self {
             genesis_hash,
             tip_hash,
@@ -665,6 +694,7 @@ impl MinimalPublicValues {
             return_code,
             failure_height,
             continuation_digest,
+            verifier_key,
         })
     }
 
@@ -694,16 +724,18 @@ pub enum HeaderChainPublicValues {
     Success {
         claim: PublicChainClaim,
         continuation_digest: [u8; 32],
+        verifier_key: VerifierKeyDigest,
     },
     Failure {
         failure: ProofFailure,
         last_valid_claim: PublicChainClaim,
         continuation_digest: [u8; 32],
+        verifier_key: VerifierKeyDigest,
     },
 }
 
 impl HeaderChainPublicValues {
-    /// Parse committed public values from the minimal 137-byte format.
+    /// Parse committed public values from the minimal 169-byte format.
     pub fn parse(bytes: &[u8]) -> Result<Self, PublicValuesParseError> {
         let pv = MinimalPublicValues::parse(bytes)?;
         let claim = PublicChainClaim {
@@ -716,6 +748,7 @@ impl HeaderChainPublicValues {
             Ok(Self::Success {
                 claim,
                 continuation_digest: pv.continuation_digest,
+                verifier_key: pv.verifier_key,
             })
         } else {
             let error_code = ValidationErrorCode::try_from(pv.return_code)?;
@@ -726,6 +759,7 @@ impl HeaderChainPublicValues {
                 },
                 last_valid_claim: claim,
                 continuation_digest: pv.continuation_digest,
+                verifier_key: pv.verifier_key,
             })
         }
     }
@@ -753,6 +787,14 @@ impl HeaderChainPublicValues {
                 continuation_digest,
                 ..
             } => continuation_digest,
+        }
+    }
+
+    /// Return the verifier-key digest committed by the proof.
+    #[must_use]
+    pub fn verifier_key(&self) -> &VerifierKeyDigest {
+        match self {
+            Self::Success { verifier_key, .. } | Self::Failure { verifier_key, .. } => verifier_key,
         }
     }
 }
@@ -1087,6 +1129,7 @@ mod tests {
             failure.error_code,
             failure.failure_height,
             [0xA5; 32],
+            VerifierKeyDigest::from_raw([0xA5A5_A5A5; 8]),
         )
         .to_bytes()
     }
@@ -1107,7 +1150,7 @@ mod tests {
         assert_eq!(PUBLIC_CHAIN_CLAIM_SIZE, 100);
         assert_eq!(PROOF_CARRYING_STATE_SIZE, 168);
         assert_eq!(PRIVATE_CONTINUATION_STATE_SIZE, 116);
-        assert_eq!(MINIMAL_PV_SIZE, 137);
+        assert_eq!(MINIMAL_PV_SIZE, 169);
         assert_eq!(core::mem::align_of::<Header>(), 4);
         assert_eq!(core::mem::align_of::<NewHeader>(), 4);
         assert_eq!(core::mem::align_of::<RecursiveProof>(), 4);
@@ -1145,9 +1188,11 @@ mod tests {
             ..State::default()
         };
         let digest = [0x11u8; 32];
-        let pv = MinimalPublicValues::success(&state, digest);
+        let verifier_key = VerifierKeyDigest::from_raw([9; 8]);
+        let pv = MinimalPublicValues::success(&state, digest, verifier_key);
         let bytes = pv.to_bytes();
         assert_eq!(bytes.len(), MINIMAL_PV_SIZE);
+        assert_eq!(bytes[137..169], verifier_key.to_bytes());
         let parsed = MinimalPublicValues::parse(&bytes).unwrap();
         assert_eq!(parsed.genesis_hash, state.genesis_hash);
         assert_eq!(parsed.tip_hash, state.block_hash);
@@ -1155,6 +1200,7 @@ mod tests {
         assert_eq!(parsed.return_code, 0);
         assert_eq!(parsed.failure_height, 0);
         assert_eq!(parsed.continuation_digest, digest);
+        assert_eq!(parsed.verifier_key, verifier_key);
     }
 
     #[test]

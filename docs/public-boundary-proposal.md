@@ -56,13 +56,18 @@ height:               u32
 return_code:          u8   // 0 = success, nonzero = validation failure
 failure_height:       u32  // 0 on success, absolute chain height on failure
 continuation_digest:  [u8; 32]
+verifier_key:         [u8; 32]
 ```
 
-This is 137 bytes with explicit packed serialization. If the serialization needs
+This is 169 bytes with explicit packed serialization. If the serialization needs
 alignment padding for host-side casting, put `height` next to `return_code` and
 `failure_height`; do not reorder the three primary 32-byte values unless it
 removes real padding. The normal field order should be genesis hash, tip hash,
 chain work, then height.
+
+`verifier_key` is the SP1 verifier-key digest used for recursive proof
+verification. Verifiers are responsible for checking that this digest is the
+program key they intend to trust.
 
 `return_code` should be one byte, like a Unix return value. `0` means success;
 nonzero values are validation errors. A separate status byte and error-code byte
