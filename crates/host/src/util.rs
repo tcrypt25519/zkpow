@@ -234,6 +234,9 @@ pub fn genesis_state(genesis_header: Header, genesis_hash: BlockHash) -> State {
     );
     let genesis_work = work_from_target(GENESIS_TARGET);
 
+    let mut timestamps = [BlockTimestamp::default(); zkpow_core::WINDOW_SIZE];
+    timestamps[0] = genesis_header.timestamp;
+
     State {
         header: genesis_header,
         block_hash,
@@ -244,7 +247,7 @@ pub fn genesis_state(genesis_header: Header, genesis_hash: BlockHash) -> State {
         next_work: genesis_work,
         next_target: GENESIS_TARGET,
         epoch_start_timestamp: genesis_header.timestamp,
-        timestamps: [BlockTimestamp::default(); zkpow_core::WINDOW_SIZE],
+        timestamps,
         _environment: core::marker::PhantomData,
     }
 }
@@ -307,7 +310,7 @@ pub fn median_time_past_hints_for_headers(
 
     for header in headers {
         medians.push(state.median_time_past());
-        let timestamp_slot = (state.height as usize) % zkpow_core::WINDOW_SIZE;
+        let timestamp_slot = (state.height as usize + 1) % zkpow_core::WINDOW_SIZE;
         state.timestamps[timestamp_slot] = header.timestamp;
         state.height += 1;
     }
@@ -319,6 +322,8 @@ pub fn median_time_past_hints_for_headers(
 mod tests {
     use super::*;
     use zkpow_core::{BlockTimestamp, CompactTarget, GENESIS_NBITS, WINDOW_SIZE};
+
+    const TEST_DB_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../headers.db");
 
     fn make_pcs() -> PrivateContinuationState {
         PrivateContinuationState {
@@ -353,5 +358,17 @@ mod tests {
     fn continuation_digest_is_deterministic() {
         let pcs = make_pcs();
         assert_eq!(continuation_digest(&pcs), continuation_digest(&pcs));
+    }
+
+    #[test]
+    fn db_median_time_hints_match_genesis_seeded_state() {
+        let genesis = load_header_record_from_db(TEST_DB_PATH, 0);
+        let genesis_hash = hash_header(&genesis.header);
+        let genesis_state = genesis_state_from_record(genesis, genesis_hash);
+        let records = load_header_records_from_db(TEST_DB_PATH, 1, 13);
+        let headers = records_to_new_headers(&records);
+        let hints = median_time_past_hints_from_records(&records);
+
+        compute_final_state_with_hints(&genesis_state, &headers, &hints);
     }
 }

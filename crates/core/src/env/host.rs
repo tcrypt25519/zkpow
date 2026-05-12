@@ -13,13 +13,9 @@ impl StateInner<HostEnvironment> {
     #[must_use]
     pub fn median_time_past(&self) -> BlockTimestamp {
         cycle_track("state/host/median_time_past", || {
-            let height = self.height as usize;
-            if height == 0 {
-                return BlockTimestamp::default();
-            }
-
+            let count = self.timestamp_count();
             let mut sorted = self.timestamps;
-            if height >= WINDOW_SIZE {
+            if count >= WINDOW_SIZE {
                 cycle_track("state/host/median_time_past/sort", || {
                     sorted.sort_unstable();
                 });
@@ -27,9 +23,9 @@ impl StateInner<HostEnvironment> {
             }
 
             cycle_track("state/host/median_time_past/sort", || {
-                sorted[..height].sort_unstable();
+                sorted[..count].sort_unstable();
             });
-            sorted[height / 2]
+            sorted[count / 2]
         })
     }
 }

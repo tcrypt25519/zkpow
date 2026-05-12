@@ -1039,18 +1039,14 @@ mod tests {
     }
 
     fn test_median_time_past(state: &State) -> BlockTimestamp {
-        let height = state.height as usize;
-        if height == 0 {
-            return BlockTimestamp::default();
-        }
-
+        let count = state.timestamp_count();
         let mut sorted = state.timestamps;
-        if height >= WINDOW_SIZE {
+        if count >= WINDOW_SIZE {
             sorted.sort_unstable();
             sorted[WINDOW_SIZE / 2]
         } else {
-            sorted[..height].sort_unstable();
-            sorted[height / 2]
+            sorted[..count].sort_unstable();
+            sorted[count / 2]
         }
     }
 
@@ -1096,10 +1092,8 @@ mod tests {
     }
 
     fn expected_upper_median(height: u32) -> BlockTimestamp {
-        if height == 0 {
-            BlockTimestamp::default()
-        } else if height < WINDOW_SIZE as u32 {
-            ts(height / 2 + 1)
+        if height < WINDOW_SIZE as u32 {
+            ts(height.div_ceil(2))
         } else {
             ts(height - (WINDOW_SIZE as u32 / 2))
         }
@@ -1598,7 +1592,7 @@ mod tests {
             .unwrap();
 
         let mut expected = original;
-        expected[0] = ts(999);
+        expected[1] = ts(999);
         assert_eq!(state.timestamps, expected);
     }
 

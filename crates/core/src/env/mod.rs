@@ -102,13 +102,13 @@ impl<E: Env> StateInner<E> {
     /// The number of timestamps currently tracked for median-time-past.
     #[must_use]
     pub fn timestamp_count(&self) -> usize {
-        (self.height as usize).min(WINDOW_SIZE)
+        (self.height as usize + 1).min(WINDOW_SIZE)
     }
 
     /// The circular-buffer slot where the next timestamp should be written.
     #[must_use]
     pub(crate) fn next_timestamp_slot(&self) -> usize {
-        (self.height as usize) % WINDOW_SIZE
+        (self.height as usize + 1) % WINDOW_SIZE
     }
 
     /// Serialize to exactly [`STATE_SIZE`] bytes.
