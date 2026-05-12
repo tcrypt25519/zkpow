@@ -7,7 +7,7 @@
 //!   stdin: encoded_input(Vec<u8>) + state witness(Vec<u8>) + header witness(Vec<u8>)
 //!          + median-time-past witness(Vec<u8>)
 //!          → [recursive proof witness when claim.height > 0]
-//!   output: MinimalPublicValues (137 bytes)
+//!   output: MinimalPublicValues (169 bytes)
 
 use sp1_sdk::prelude::*;
 use sp1_sdk::{Elf, HashableKey, Prover, ProverClient, SP1Stdin};
@@ -349,7 +349,14 @@ async fn test_recursive_chain_success() -> Result<(), String> {
     let records1 = util::load_header_records_from_db(DEFAULT_DB_PATH, 1, 10);
     let headers1 = util::records_to_new_headers(&records1);
     let hints1 = util::median_time_past_hints_for_headers(&genesis_state, &headers1);
-    let input1 = input_for_state(&genesis_state, RecursiveProof::default());
+    let verifier_key = VerifierKeyDigest::from_raw(vk.hash_u32());
+    let input1 = input_for_state(
+        &genesis_state,
+        RecursiveProof {
+            verifier_key,
+            ..Default::default()
+        },
+    );
     let stdin1 = stdin_for_input(&input1, &genesis_state, &headers1, &hints1);
 
     let proof1 = client
@@ -378,7 +385,7 @@ async fn test_recursive_chain_success() -> Result<(), String> {
     let input2 = input_for_state(
         &state1,
         RecursiveProof {
-            verifier_key: VerifierKeyDigest::from_raw(vk.hash_u32()),
+            verifier_key,
             public_values_digest: PublicValuesDigest::from_raw(util::compute_pv_digest(&pv1_bytes)),
             previous_return_code: 0,
             ..Default::default()
@@ -447,9 +454,10 @@ async fn test_error_recursive_on_tampered_state_witness() -> Result<(), String> 
 
     let original_vs = zkpow_core::ValidationState::from_state(&state_at_5);
     let original_digest = util::continuation_digest(&original_vs.private);
-    let original_pv = MinimalPublicValues::success(&state_at_5, original_digest);
+    let verifier_key = VerifierKeyDigest::from_raw([0u32; 8]);
+    let original_pv = MinimalPublicValues::success(&state_at_5, original_digest, verifier_key);
     let recursive_proof = RecursiveProof {
-        verifier_key: VerifierKeyDigest::from_raw([0u32; 8]),
+        verifier_key,
         public_values_digest: PublicValuesDigest::from_raw(util::compute_pv_digest(
             &original_pv.to_bytes(),
         )),
@@ -483,7 +491,7 @@ async fn test_error_recursive_on_tampered_state_witness() -> Result<(), String> 
     }
 }
 
-/// Verify the public-value format is the minimal 137-byte layout.
+/// Verify the public-value format is the minimal 169-byte layout.
 async fn test_pv_minimal_format() -> Result<(), String> {
     use zkpow_core::MINIMAL_PV_SIZE;
 

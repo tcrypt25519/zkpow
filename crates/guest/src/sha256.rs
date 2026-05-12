@@ -3,6 +3,7 @@
 //! Four specialized functions for the exact sizes we need:
 //! - `sha256_80bytes`: hashes exactly 80 bytes (Bitcoin block header)
 //! - `sha256_32bytes`: hashes exactly 32 bytes (intermediate hash output)
+//! - `sha256_169bytes`: hashes exactly 169 bytes (minimal public values)
 //! - `sha256_264bytes`: hashes exactly 264 bytes (serialized recursive state)
 //! - `sha256d_80bytes`: hashes exactly 80 bytes with SHA256d
 //!
@@ -223,13 +224,13 @@ pub fn sha256_264bytes(data: &[u8; 264]) -> [u8; 32] {
     state_to_hash(&state)
 }
 
-/// Compute SHA-256 of exactly 137 bytes.
+/// Compute SHA-256 of exactly 169 bytes.
 ///
 /// Produces three blocks:
 /// - Block 1: bytes 0–63
 /// - Block 2: bytes 64–127
-/// - Block 3: bytes 128–136 (9 data bytes) + 0x80 + zeros + 8-byte length (1096 bits = 0x448)
-pub fn sha256_137bytes(data: &[u8; 137]) -> [u8; 32] {
+/// - Block 3: bytes 128–168 (41 data bytes) + 0x80 + zeros + 8-byte length (1352 bits = 0x548)
+pub fn sha256_169bytes(data: &[u8; 169]) -> [u8; 32] {
     let mut state = SHA256_IV;
 
     // ── Block 1: bytes 0–63 ──
@@ -274,16 +275,23 @@ pub fn sha256_137bytes(data: &[u8; 137]) -> [u8; 32] {
     syscall_sha256_extend(&mut w);
     syscall_sha256_compress(&mut w, &mut state);
 
-    // ── Block 3: bytes 128–136 (9 bytes) + padding + length ──
-    // 9 data bytes, then 0x80, then zeros, then 8-byte length (1096 bits = 0x448)
-    // Word 0: data[128..131], Word 1: data[132..135], Word 2: data[136] | 0x80 | zeros
+    // ── Block 3: bytes 128–168 (41 bytes) + padding + length ──
+    // 41 data bytes, then 0x80, then zeros, then 8-byte length (1352 bits = 0x548)
     let mut w = [0u64; 64];
     w[0] = be_u64(data[128], data[129], data[130], data[131]);
     w[1] = be_u64(data[132], data[133], data[134], data[135]);
-    // data[136] in high byte, then 0x80 in next byte
-    w[2] = ((data[136] as u64) << 24) | 0x0080_0000;
-    // w[15] = length in bits = 137 * 8 = 1096 = 0x448
-    w[15] = 0x448;
+    w[2] = be_u64(data[136], data[137], data[138], data[139]);
+    w[3] = be_u64(data[140], data[141], data[142], data[143]);
+    w[4] = be_u64(data[144], data[145], data[146], data[147]);
+    w[5] = be_u64(data[148], data[149], data[150], data[151]);
+    w[6] = be_u64(data[152], data[153], data[154], data[155]);
+    w[7] = be_u64(data[156], data[157], data[158], data[159]);
+    w[8] = be_u64(data[160], data[161], data[162], data[163]);
+    w[9] = be_u64(data[164], data[165], data[166], data[167]);
+    // data[168] in high byte, then 0x80 in next byte
+    w[10] = ((data[168] as u64) << 24) | 0x0080_0000;
+    // w[15] = length in bits = 169 * 8 = 1352 = 0x548
+    w[15] = 0x548;
     syscall_sha256_extend(&mut w);
     syscall_sha256_compress(&mut w, &mut state);
 

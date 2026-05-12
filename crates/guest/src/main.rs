@@ -12,7 +12,7 @@
 //!   4. median_time_past_hints: Vec<u8>
 //!   5. If `claim.height > 0`, recursive proof witness (via write_proof)
 //!
-//! Output: MinimalPublicValues (137 bytes) on success or failure.
+//! Output: MinimalPublicValues (169 bytes) on success or failure.
 
 #![no_main]
 sp1_zkvm::entrypoint!(main);
@@ -24,7 +24,7 @@ use zkpow_core::{
 };
 
 mod sha256;
-use sha256::{sha256_116bytes, sha256_137bytes, sha256d_80bytes};
+use sha256::{sha256_116bytes, sha256_169bytes, sha256d_80bytes};
 
 // ============================================================================
 // Helpers
@@ -119,10 +119,14 @@ fn verify_recursive_proof(
             private: prior_continuation.clone(),
         }
         .into_state();
-        let prior_pv = MinimalPublicValues::success(&prior_state, continuation_digest);
+        let prior_pv = MinimalPublicValues::success(
+            &prior_state,
+            continuation_digest,
+            recursive_proof.verifier_key,
+        );
         let prior_pv_bytes: [u8; MINIMAL_PV_SIZE] = prior_pv.to_bytes();
         let actual_pv_hash = cycle_track("recursive/public_values_digest", || {
-            sha256_137bytes(&prior_pv_bytes)
+            sha256_169bytes(&prior_pv_bytes)
         });
 
         if actual_pv_hash != recursive_proof.public_values_digest.into_raw() {
@@ -170,12 +174,13 @@ pub fn main() {
                 failure.error_code,
                 failure.failure_height,
                 digest,
+                input.recursive_proof.verifier_key,
             );
             commit_minimal_pv(&pv);
         }
 
         let digest = compute_continuation_digest(&state);
-        let pv = MinimalPublicValues::success(&state, digest);
+        let pv = MinimalPublicValues::success(&state, digest, input.recursive_proof.verifier_key);
         commit_minimal_pv(&pv);
     });
 }

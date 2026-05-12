@@ -474,6 +474,7 @@ fn build_recursive_proof(
     vk: &sp1_prover::SP1VerifyingKey,
     previous_proof: Option<&SP1ProofWithPublicValues>,
 ) -> Result<RecursiveProof, BoxError> {
+    let verifier_key = VerifierKeyDigest::from_raw(vk.hash_u32());
     Ok(if let Some(prev_proof_val) = previous_proof {
         let pv_bytes = prev_proof_val.public_values.to_vec();
         // Determine the return code from the previous proof's public values.
@@ -487,13 +488,16 @@ fn build_recursive_proof(
             }
         };
         RecursiveProof {
-            verifier_key: VerifierKeyDigest::from_raw(vk.hash_u32()),
+            verifier_key,
             public_values_digest: PublicValuesDigest::from_raw(util::compute_pv_digest(&pv_bytes)),
             previous_return_code,
             ..Default::default()
         }
     } else {
-        RecursiveProof::default()
+        RecursiveProof {
+            verifier_key,
+            ..Default::default()
+        }
     })
 }
 
@@ -528,13 +532,21 @@ async fn generate_compressed_proof_with_prover<P>(
     previous_proof: Option<&SP1ProofWithPublicValues>,
     headers: &[util::NewHeader],
     median_hints: &util::MedianTimePastHints,
-    expected_pv: &[u8],
+    expected_pv_parts: (&util::State, [u8; 32]),
 ) -> Result<CompressedProofArtifacts, BoxError>
 where
     P: Prover,
     P::Error: Error + Send + Sync + 'static,
 {
     let pk = timed_async("setup_vkey", || async { prover.setup(ELF).await }).await?;
+    let (expected_state, expected_continuation_digest) = expected_pv_parts;
+    let expected_pv = util::MinimalPublicValues::success(
+        expected_state,
+        expected_continuation_digest,
+        VerifierKeyDigest::from_raw(pk.verifying_key().hash_u32()),
+    )
+    .to_bytes()
+    .to_vec();
     let recursive_proof = timed_sync("build_recursive_proof", || {
         build_recursive_proof(pk.verifying_key(), previous_proof)
     })?;
@@ -565,7 +577,7 @@ where
             timed_sync(
                 "verify_execution_public_values",
                 || -> Result<(), BoxError> {
-                    verify_public_values(&execution_public_values, expected_pv, "execution")
+                    verify_public_values(&execution_public_values, &expected_pv, "execution")
                 },
             )?;
         }
@@ -592,7 +604,7 @@ where
         || -> Result<(), BoxError> {
             verify_public_values(
                 &compressed_proof.public_values.to_vec(),
-                expected_pv,
+                &expected_pv,
                 "compressed proof",
             )
         },
@@ -691,10 +703,6 @@ pub async fn generate_and_save_proofs(
         let vs = zkpow_core::ValidationState::from_state(&expected_state);
         util::continuation_digest(&vs.private)
     };
-    let expected_pv =
-        util::MinimalPublicValues::success(&expected_state, expected_continuation_digest)
-            .to_bytes()
-            .to_vec();
     let compressed_artifacts = match config.prover_backend {
         ProverBackend::Cpu => {
             let prover = timed_async("build_cpu_prover", || async {
@@ -708,7 +716,7 @@ pub async fn generate_and_save_proofs(
                 previous_proof.as_ref(),
                 &headers,
                 &median_hints,
-                &expected_pv,
+                (&expected_state, expected_continuation_digest),
             )
             .await?
         }
@@ -741,7 +749,7 @@ pub async fn generate_and_save_proofs(
                     previous_proof.as_ref(),
                     &headers,
                     &median_hints,
-                    &expected_pv,
+                    (&expected_state, expected_continuation_digest),
                 )
                 .await?
             }

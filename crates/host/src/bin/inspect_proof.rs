@@ -29,8 +29,10 @@ fn main() {
         Ok(HeaderChainPublicValues::Success {
             claim,
             continuation_digest,
+            verifier_key,
         }) => {
             display_claim(&claim);
+            display_verifier_key(verifier_key);
             println!("\n--- Continuation ---");
             println!("Continuation Digest: {}", hex::encode(continuation_digest));
             println!("\nStatus:              ✓ All headers validated");
@@ -39,9 +41,11 @@ fn main() {
             failure,
             last_valid_claim,
             continuation_digest,
+            verifier_key,
         }) => {
             println!("--- Last Valid State ---");
             display_claim(&last_valid_claim);
+            display_verifier_key(verifier_key);
             println!("\n--- Error ---");
             let error_name = match failure.error_code {
                 ValidationErrorCode::HeaderPayloadLengthInvalid => "Header payload length invalid",
@@ -69,6 +73,10 @@ fn main() {
     println!("SP1 Version:       {}", proof.sp1_version);
     println!("Proof Type:        {:?}", proof.proof);
     println!("Public Values Size: {} bytes", pv.len());
+}
+
+fn display_verifier_key(verifier_key: util::VerifierKeyDigest) {
+    println!("Verifier Key:     {}", hex::encode(verifier_key.to_bytes()));
 }
 
 fn display_claim(claim: &util::PublicChainClaim) {
