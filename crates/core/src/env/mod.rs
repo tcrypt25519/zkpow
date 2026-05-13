@@ -5,7 +5,8 @@ use crate::{
     calculate_next_work_required, check_proof_of_work, copy_from_bytes, copy_to_bytes,
     ref_from_bytes, target_gt, target_to_bits, work_from_target, ApplyFailure, BlockHash,
     BlockTimestamp, ChainWork, CompactTarget, Header, NewHeader, ParseError, Target,
-    ValidationErrorCode, GENESIS_TARGET, STATE_SIZE, WINDOW_SIZE,
+    ValidationErrorCode, EXPECTED_EPOCH_TIMESPAN, GENESIS_TARGET, MAX_EPOCH_TIMESPAN,
+    MIN_EPOCH_TIMESPAN, STATE_SIZE, WINDOW_SIZE,
 };
 use core::marker::PhantomData;
 
@@ -180,13 +181,15 @@ impl<E: Env> StateInner<E> {
                 (self.height + 1).is_multiple_of(2016)
             }) {
                 cycle_track("state/next_inner/retarget", || {
-                    let actual_timespan = header.timestamp.wrapping_sub(self.epoch_start_timestamp);
-                    let expected_timespan: u32 = 2016 * 600;
-                    let clamped = actual_timespan
-                        .max(expected_timespan / 4)
-                        .min(expected_timespan * 4);
-                    let mut new_target =
-                        calculate_next_work_required(required_target, clamped, expected_timespan);
+                    let actual_timespan =
+                        header.timestamp.as_i64() - self.epoch_start_timestamp.as_i64();
+                    let clamped =
+                        actual_timespan.clamp(MIN_EPOCH_TIMESPAN, MAX_EPOCH_TIMESPAN) as u32;
+                    let mut new_target = calculate_next_work_required(
+                        required_target,
+                        clamped,
+                        EXPECTED_EPOCH_TIMESPAN,
+                    );
                     if target_gt(new_target, GENESIS_TARGET) {
                         new_target = GENESIS_TARGET;
                     }

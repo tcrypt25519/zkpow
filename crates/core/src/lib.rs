@@ -46,6 +46,21 @@ pub const BLOCK_HEADER_SIZE: usize = size_of::<Header>();
 /// Sliding window size used for median-time-past checks.
 pub const WINDOW_SIZE: usize = 11;
 
+/// Number of blocks per difficulty retarget epoch.
+pub const EPOCH_LENGTH: u32 = 2016;
+
+/// Expected seconds between consecutive blocks.
+pub const TARGET_BLOCK_TIME: u32 = 600;
+
+/// Expected timespan of a single difficulty epoch in seconds.
+pub const EXPECTED_EPOCH_TIMESPAN: u32 = EPOCH_LENGTH * TARGET_BLOCK_TIME;
+
+/// Minimum clamped epoch timespan used for difficulty retargeting.
+pub const MIN_EPOCH_TIMESPAN: i64 = (EXPECTED_EPOCH_TIMESPAN / 4) as i64;
+
+/// Maximum clamped epoch timespan used for difficulty retargeting.
+pub const MAX_EPOCH_TIMESPAN: i64 = (EXPECTED_EPOCH_TIMESPAN * 4) as i64;
+
 /// Mainnet PoW limit in compact form.
 pub const GENESIS_NBITS: u32 = 0x1d00ffff;
 

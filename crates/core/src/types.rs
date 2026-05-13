@@ -60,6 +60,12 @@ pub type Target = Branded<TargetTag, u256>;
 pub type ChainWork = Branded<ChainWorkTag, u256>;
 pub type BlockTimestamp = Branded<BlockTimestampTag, u32>;
 
+impl BlockTimestamp {
+    pub fn as_i64(self) -> i64 {
+        self.into_inner() as i64
+    }
+}
+
 /// Bitcoin compact difficulty encoding (`nBits`).
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
