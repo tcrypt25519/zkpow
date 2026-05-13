@@ -45,6 +45,7 @@ pub enum ProverBackend {
 #[derive(Debug, Clone)]
 pub struct ProofGenerationConfig {
     pub prev_proof_path: Option<PathBuf>,
+    pub start_height: Option<u32>,
     pub num_headers: u32,
     pub db_path: PathBuf,
     pub output_dir: PathBuf,
@@ -153,6 +154,14 @@ struct CompressedProofArtifacts {
     vk: sp1_prover::SP1VerifyingKey,
     compressed_proof: SP1ProofWithPublicValues,
     execution_report: ExecutionReport,
+}
+
+struct BatchWitnesses {
+    anchor_state: util::State,
+    headers: Vec<util::NewHeader>,
+    median_hints: util::MedianTimePastHints,
+    expected_state: util::State,
+    expected_continuation_digest: [u8; 32],
 }
 
 fn parse_genesis_hash() -> Result<util::BlockHash, BoxError> {
@@ -404,6 +413,7 @@ pub fn config_from_env() -> Result<ProofGenerationConfig, BoxError> {
 
     Ok(ProofGenerationConfig {
         prev_proof_path: std::env::var("PREV_PROOF").ok().map(PathBuf::from),
+        start_height: parse_u32_env("START_HEIGHT")?,
         num_headers: std::env::var("NUM_HEADERS")
             .ok()
             .and_then(|s| s.parse().ok())
@@ -477,7 +487,6 @@ fn build_recursive_proof(
     let verifier_key = VerifierKeyDigest::from_raw(vk.hash_u32());
     Ok(if let Some(prev_proof_val) = previous_proof {
         let pv_bytes = prev_proof_val.public_values.to_vec();
-        // Determine the return code from the previous proof's public values.
         let previous_return_code = match zkpow_core::HeaderChainPublicValues::parse(&pv_bytes) {
             Ok(zkpow_core::HeaderChainPublicValues::Success { .. }) => 0u8,
             Ok(zkpow_core::HeaderChainPublicValues::Failure { failure, .. }) => {
@@ -491,14 +500,149 @@ fn build_recursive_proof(
             verifier_key,
             public_values_digest: PublicValuesDigest::from_raw(util::compute_pv_digest(&pv_bytes)),
             previous_return_code,
-            ..Default::default()
+            _pad: [0u8; 3],
         }
     } else {
+        // Genesis: no previous proof. Digest and return code are zeroed to
+        // signal "no prior proof" to the guest.
         RecursiveProof {
             verifier_key,
-            ..Default::default()
+            public_values_digest: PublicValuesDigest::from_raw([0u8; 32]),
+            previous_return_code: 0u8,
+            _pad: [0u8; 3],
         }
     })
+}
+
+fn success_public_values(
+    proof: &SP1ProofWithPublicValues,
+) -> Result<(util::PublicChainClaim, [u8; 32], VerifierKeyDigest), BoxError> {
+    match HeaderChainPublicValues::parse(proof.public_values.as_ref())
+        .map_err(|err| err.to_string())?
+    {
+        HeaderChainPublicValues::Success {
+            claim,
+            continuation_digest,
+            verifier_key,
+        } => Ok((claim, continuation_digest, verifier_key)),
+        HeaderChainPublicValues::Failure { failure, .. } => Err(format!(
+            "previous proof ended in error: {} at height {}",
+            failure.error_code, failure.failure_height,
+        )
+        .into()),
+    }
+}
+
+fn validate_previous_proof_matches_anchor(
+    previous_proof: Option<&SP1ProofWithPublicValues>,
+    anchor_state: &util::State,
+    expected_verifier_key: VerifierKeyDigest,
+) -> Result<(), BoxError> {
+    let anchor = zkpow_core::ValidationState::from_state(anchor_state);
+    if anchor.public.height == 0 {
+        if previous_proof.is_some() {
+            return Err("genesis-anchored batch must not include a previous proof".into());
+        }
+        return Ok(());
+    }
+
+    let previous_proof =
+        previous_proof.ok_or("non-genesis batch requires a proof for the anchor height")?;
+    let (claim, continuation_digest, verifier_key) = success_public_values(previous_proof)?;
+    if verifier_key != expected_verifier_key {
+        return Err("previous proof verifier-key digest does not match this program".into());
+    }
+    if claim != anchor.public {
+        return Err(format!(
+            "previous proof claim does not match DB anchor state: proof height {}, DB height {}",
+            claim.height, anchor.public.height,
+        )
+        .into());
+    }
+
+    let expected_continuation_digest = util::continuation_digest(&anchor.private);
+    if continuation_digest != expected_continuation_digest {
+        return Err("previous proof continuation digest does not match DB anchor state".into());
+    }
+
+    Ok(())
+}
+
+fn first_new_height_for_request(
+    requested_start_height: Option<u32>,
+    previous_proof: Option<&SP1ProofWithPublicValues>,
+) -> Result<u32, BoxError> {
+    if let Some(start_height) = requested_start_height {
+        return Ok(start_height);
+    }
+
+    if let Some(previous_proof) = previous_proof {
+        let (claim, _, _) = success_public_values(previous_proof)?;
+        claim
+            .height
+            .checked_add(1)
+            .ok_or_else(|| "previous proof height overflows u32".into())
+    } else {
+        Ok(1)
+    }
+}
+
+fn build_input_from_db_anchor(
+    db_path: &str,
+    first_new_height: u32,
+    num_headers: u32,
+    previous_proof: Option<&SP1ProofWithPublicValues>,
+    vk: &sp1_prover::SP1VerifyingKey,
+    genesis_hash: util::BlockHash,
+) -> Result<(Input, BatchWitnesses), BoxError> {
+    if first_new_height == 0 {
+        return Err(
+            "START_HEIGHT must be at least 1; height 0 is the trusted genesis anchor".into(),
+        );
+    }
+    if num_headers == 0 {
+        return Err("NUM_HEADERS must be greater than zero".into());
+    }
+
+    let anchor_height = first_new_height - 1;
+    let anchor_record = util::load_header_record_from_db(db_path, anchor_height as u64);
+    let header_records =
+        util::load_header_records_from_db(db_path, first_new_height as u64, num_headers as u64);
+    let headers = util::records_to_new_headers(&header_records);
+    let median_hints = util::median_time_past_hints_from_records(&header_records);
+
+    let anchor_state = util::state_from_db(
+        db_path,
+        &anchor_record,
+        header_records
+            .first()
+            .expect("non-empty header records are guaranteed by NUM_HEADERS > 0"),
+        genesis_hash,
+    )?;
+    let verifier_key = VerifierKeyDigest::from_raw(vk.hash_u32());
+    validate_previous_proof_matches_anchor(previous_proof, &anchor_state, verifier_key)?;
+
+    let recursive_proof = build_recursive_proof(vk, previous_proof)?;
+    let input = Input::new(
+        zkpow_core::ValidationState::from_state(&anchor_state).public,
+        recursive_proof,
+    );
+    let expected_state =
+        util::compute_final_state_with_hints(&anchor_state, &headers, &median_hints);
+    let expected_continuation_digest = {
+        let vs = zkpow_core::ValidationState::from_state(&expected_state);
+        util::continuation_digest(&vs.private)
+    };
+    Ok((
+        input,
+        BatchWitnesses {
+            anchor_state,
+            headers,
+            median_hints,
+            expected_state,
+            expected_continuation_digest,
+        },
+    ))
 }
 
 fn build_stdin(
@@ -528,38 +672,33 @@ fn build_stdin(
 async fn generate_compressed_proof_with_prover<P>(
     prover_name: &str,
     prover: &P,
-    current_state: &util::State,
+    pk: &P::ProvingKey,
+    input: &Input,
+    witnesses: &BatchWitnesses,
     previous_proof: Option<&SP1ProofWithPublicValues>,
-    headers: &[util::NewHeader],
-    median_hints: &util::MedianTimePastHints,
-    expected_pv_parts: (&util::State, [u8; 32]),
 ) -> Result<CompressedProofArtifacts, BoxError>
 where
     P: Prover,
     P::Error: Error + Send + Sync + 'static,
 {
-    let pk = timed_async("setup_vkey", || async { prover.setup(ELF).await }).await?;
-    let (expected_state, expected_continuation_digest) = expected_pv_parts;
     let expected_pv = util::MinimalPublicValues::success(
-        expected_state,
-        expected_continuation_digest,
+        &witnesses.expected_state,
+        witnesses.expected_continuation_digest,
         VerifierKeyDigest::from_raw(pk.verifying_key().hash_u32()),
     )
     .to_bytes()
     .to_vec();
-    let recursive_proof = timed_sync("build_recursive_proof", || {
-        build_recursive_proof(pk.verifying_key(), previous_proof)
-    })?;
-    let input = timed_sync("build_input", || -> Result<_, BoxError> {
-        let validation_state = zkpow_core::ValidationState::from_state(current_state);
-        Ok(Input::new(validation_state.public, recursive_proof))
-    })?;
+    if let Some(previous_proof) = previous_proof {
+        timed_sync("verify_previous_proof", || -> Result<(), BoxError> {
+            Ok(prover.verify(previous_proof, pk.verifying_key(), None)?)
+        })?;
+    }
     let stdin = timed_sync("serialize_input", || {
         build_stdin(
-            &input,
-            current_state,
-            headers,
-            median_hints,
+            input,
+            &witnesses.anchor_state,
+            &witnesses.headers,
+            &witnesses.median_hints,
             previous_proof,
             pk.verifying_key(),
         )
@@ -594,7 +733,7 @@ where
     }
 
     let compressed_proof = timed_async("prove_compressed", || async {
-        async { prover.prove(&pk, stdin.clone()).compressed().await }
+        async { prover.prove(pk, stdin.clone()).compressed().await }
             .instrument(tracing::info_span!("prove_compressed_detail"))
             .await
     })
@@ -638,85 +777,34 @@ pub async fn generate_and_save_proofs(
 
     let genesis_hash = timed_sync("parse_genesis_hash", parse_genesis_hash)?;
 
-    let current_state = timed_sync("resolve_current_state", || -> Result<_, BoxError> {
-        if let Some(prev_proof) = previous_proof.as_ref() {
-            let prev_public_values =
-                HeaderChainPublicValues::parse(prev_proof.public_values.as_ref())
-                    .map_err(|err| err.to_string())?;
-            let claim = match prev_public_values {
-                HeaderChainPublicValues::Success { claim, .. } => claim,
-                HeaderChainPublicValues::Failure { failure, .. } => {
-                    return Err(format!(
-                        "previous proof ended in error: {} at height {}",
-                        failure.error_code, failure.failure_height,
-                    )
-                    .into());
-                }
-            };
-            if claim.genesis_hash != genesis_hash {
-                return Err("previous proof genesis mismatch".into());
-            }
-            // Reconstruct a minimal State from the public claim.
-            // The private continuation state is not available from the PV alone;
-            // the host uses the claim to seed the next batch's starting height.
-            // Full state reconstruction requires loading from DB.
-            let start_height = claim.height;
-            let genesis_record = util::load_header_record_from_db(path_to_str(&config.db_path)?, 0);
-            let genesis_state = util::genesis_state_from_record(genesis_record, genesis_hash);
-            let records = util::load_header_records_from_db(
-                path_to_str(&config.db_path)?,
-                1,
-                start_height as u64,
-            );
-            let headers = util::records_to_new_headers(&records);
-            Ok(util::compute_final_state(&genesis_state, &headers))
-        } else {
-            let genesis = util::load_header_record_from_db(path_to_str(&config.db_path)?, 0);
-            Ok(util::genesis_state_from_record(genesis, genesis_hash))
-        }
+    let db_path = path_to_str(&config.db_path)?;
+    let first_new_height = timed_sync("resolve_start_height", || {
+        first_new_height_for_request(config.start_height, previous_proof.as_ref())
     })?;
-
-    let start_height = current_state.height;
-    let first_new_height = start_height + 1;
-    let header_records = timed_sync("load_header_records", || -> Result<_, BoxError> {
-        Ok(util::load_header_records_from_db(
-            path_to_str(&config.db_path)?,
-            first_new_height as u64,
-            config.num_headers as u64,
-        ))
-    })?;
-    let headers = timed_sync("decode_headers", || -> Result<_, BoxError> {
-        Ok(util::records_to_new_headers(&header_records))
-    })?;
-    let median_hints = timed_sync("load_median_time_past_hints", || -> Result<_, BoxError> {
-        Ok(util::median_time_past_hints_from_records(&header_records))
-    })?;
-    let loaded_count = headers.len() as u32;
-    let expected_state = timed_sync("simulate_expected_state", || -> Result<_, BoxError> {
-        Ok(util::compute_final_state_with_hints(
-            &current_state,
-            &headers,
-            &median_hints,
-        ))
-    })?;
-    let expected_continuation_digest = {
-        let vs = zkpow_core::ValidationState::from_state(&expected_state);
-        util::continuation_digest(&vs.private)
-    };
     let compressed_artifacts = match config.prover_backend {
         ProverBackend::Cpu => {
             let prover = timed_async("build_cpu_prover", || async {
                 Ok::<_, BoxError>(ProverClient::builder().cpu().build().await)
             })
             .await?;
+            let pk = timed_async("setup_vkey", || async { prover.setup(ELF).await }).await?;
+            let (input, witnesses) = timed_sync("build_input", || {
+                build_input_from_db_anchor(
+                    db_path,
+                    first_new_height,
+                    config.num_headers,
+                    previous_proof.as_ref(),
+                    pk.verifying_key(),
+                    genesis_hash,
+                )
+            })?;
             generate_compressed_proof_with_prover(
                 "cpu",
                 &prover,
-                &current_state,
+                &pk,
+                &input,
+                &witnesses,
                 previous_proof.as_ref(),
-                &headers,
-                &median_hints,
-                (&expected_state, expected_continuation_digest),
             )
             .await?
         }
@@ -741,15 +829,25 @@ pub async fn generate_and_save_proofs(
                     })
                 })
                 .await?;
+                let pk = timed_async("setup_vkey", || async { prover.setup(ELF).await }).await?;
+                let (input, witnesses) = timed_sync("build_input", || {
+                    build_input_from_db_anchor(
+                        db_path,
+                        first_new_height,
+                        config.num_headers,
+                        previous_proof.as_ref(),
+                        pk.verifying_key(),
+                        genesis_hash,
+                    )
+                })?;
 
                 generate_compressed_proof_with_prover(
                     "cuda",
                     &prover,
-                    &current_state,
+                    &pk,
+                    &input,
+                    &witnesses,
                     previous_proof.as_ref(),
-                    &headers,
-                    &median_hints,
-                    (&expected_state, expected_continuation_digest),
                 )
                 .await?
             }
@@ -765,6 +863,9 @@ pub async fn generate_and_save_proofs(
     let vk = compressed_artifacts.vk;
     let compressed_proof = compressed_artifacts.compressed_proof;
     let execution_report = compressed_artifacts.execution_report;
+    let public_values = HeaderChainPublicValues::parse(compressed_proof.public_values.as_ref())
+        .map_err(|err| err.to_string())?;
+    let end_height = public_values.claim().height;
 
     timed_sync("create_output_dir", || -> Result<(), BoxError> {
         std::fs::create_dir_all(&config.output_dir)?;
@@ -772,8 +873,7 @@ pub async fn generate_and_save_proofs(
     })?;
     let compressed_path = config.output_dir.join(format!(
         "proof_height_{}_to_{}.bin",
-        first_new_height,
-        start_height + loaded_count,
+        first_new_height, end_height,
     ));
     timed_sync("save_compressed_proof", || -> Result<(), BoxError> {
         compressed_proof.save(&compressed_path)?;
@@ -851,8 +951,7 @@ pub async fn generate_and_save_proofs(
         );
         let groth16_path = config.output_dir.join(format!(
             "proof_height_{}_to_{}_groth16.bin",
-            first_new_height,
-            start_height + loaded_count,
+            first_new_height, end_height,
         ));
         timed_sync("save_groth16_proof", || -> Result<(), BoxError> {
             groth16_proof.save(&groth16_path)?;
@@ -873,7 +972,7 @@ pub async fn generate_and_save_proofs(
         groth16_proof,
         execution_report,
         first_new_height,
-        end_height: start_height + loaded_count,
+        end_height,
         total_duration_secs: total_duration.as_secs_f64(),
         phase_timings: collected_phase_timings(),
     })
@@ -1110,6 +1209,7 @@ mod tests {
             let output_dir = unique_test_output_dir();
             let config = ProofGenerationConfig {
                 prev_proof_path: None,
+                start_height: None,
                 num_headers: 1,
                 db_path: PathBuf::from(DEFAULT_DB_PATH),
                 output_dir: output_dir.clone(),
@@ -1164,6 +1264,7 @@ mod tests {
             let output_dir = unique_test_output_dir();
             let config = ProofGenerationConfig {
                 prev_proof_path: None,
+                start_height: None,
                 num_headers: 1,
                 db_path: PathBuf::from(DEFAULT_DB_PATH),
                 output_dir,
@@ -1259,6 +1360,7 @@ NVIDIA RTX 3090, 8.6, 24268\n";
             ("GENERATE_GROTH16", std::env::var_os("GENERATE_GROTH16")),
             ("OUTPUT_DIR", std::env::var_os("OUTPUT_DIR")),
             ("PREV_PROOF", std::env::var_os("PREV_PROOF")),
+            ("START_HEIGHT", std::env::var_os("START_HEIGHT")),
             ("NUM_HEADERS", std::env::var_os("NUM_HEADERS")),
         ];
 
@@ -1285,6 +1387,7 @@ NVIDIA RTX 3090, 8.6, 24268\n";
             ("GENERATE_GROTH16", std::env::var_os("GENERATE_GROTH16")),
             ("OUTPUT_DIR", std::env::var_os("OUTPUT_DIR")),
             ("PREV_PROOF", std::env::var_os("PREV_PROOF")),
+            ("START_HEIGHT", std::env::var_os("START_HEIGHT")),
             ("NUM_HEADERS", std::env::var_os("NUM_HEADERS")),
         ];
 

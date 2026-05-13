@@ -253,20 +253,107 @@ pub fn genesis_state(genesis_header: Header, genesis_hash: BlockHash) -> State {
 }
 
 pub fn genesis_state_from_record(genesis: HeaderRecord, genesis_hash: BlockHash) -> State {
-    let mut state = genesis_state(genesis.header, genesis_hash);
-    state.height = genesis.height as u32;
-    state.chain_work = genesis.chain_work;
-    state
+    genesis_state(genesis.header, genesis_hash)
+}
+
+/// Materialize a [`State`] for `block` directly from database columns.
+///
+/// `next_block` is the first block that will be validated *after*
+/// `block`; its `compact_target` gives `next_nbits` without any simulation.
+pub(crate) fn state_from_db(
+    db_path: &str,
+    block: &HeaderRecord,
+    next_block: &HeaderRecord,
+    genesis_hash: BlockHash,
+) -> Result<State, Box<dyn std::error::Error + Send + Sync + 'static>> {
+    let next_nbits = next_block.header.compact_target;
+    let next_target = compact_to_target(next_nbits);
+    let next_work = work_from_target(next_target);
+    let chain_work = if block.height == 0 {
+        work_from_target(compact_to_target(block.header.compact_target))
+    } else {
+        let block_work = work_from_target(compact_to_target(block.header.compact_target));
+        block.chain_work + block_work
+    };
+
+    let epoch_start_height = block.height - (block.height % zkpow_core::EPOCH_LENGTH as u64);
+    let epoch_start_record = load_header_record_from_db(db_path, epoch_start_height);
+
+    let window_count = (block.height as usize + 1).min(zkpow_core::WINDOW_SIZE);
+    let window_start = block.height + 1 - window_count as u64;
+    let window_records = load_header_records_from_db(db_path, window_start, window_count as u64);
+    let mut timestamps = [BlockTimestamp::default(); zkpow_core::WINDOW_SIZE];
+    for r in &window_records {
+        timestamps[r.height as usize % zkpow_core::WINDOW_SIZE] = r.header.timestamp;
+    }
+
+    Ok(State {
+        header: block.header,
+        block_hash: hash_header(&block.header),
+        genesis_hash,
+        next_nbits,
+        height: block.height as u32,
+        chain_work,
+        next_work,
+        next_target,
+        epoch_start_timestamp: epoch_start_record.header.timestamp,
+        timestamps,
+        _environment: core::marker::PhantomData,
+    })
+}
+
+fn compact_to_target(compact: CompactTarget) -> Target {
+    let bits = compact.to_consensus();
+    let size = (bits >> 24) as usize;
+    let word = bits & 0x007f_ffff;
+    if size == 0 {
+        return Target::from_limbs([0; 4]);
+    }
+    let mut bytes = [0u8; 32];
+    if size <= 3 {
+        let shifted = word >> (8 * (3 - size));
+        bytes[0] = shifted as u8;
+        if size >= 2 {
+            bytes[1] = (shifted >> 8) as u8;
+        }
+        if size >= 3 {
+            bytes[2] = (shifted >> 16) as u8;
+        }
+    } else {
+        let base = size - 3;
+        if base < 32 {
+            bytes[base] = word as u8;
+        }
+        if base + 1 < 32 {
+            bytes[base + 1] = (word >> 8) as u8;
+        }
+        if base + 2 < 32 {
+            bytes[base + 2] = (word >> 16) as u8;
+        }
+    }
+    Target::from_le_bytes(bytes)
 }
 
 /// Simulate the zkVM program locally to compute the expected [`State`] after
 /// validating a batch of headers.
+///
+/// # Note
+///
+/// This function is intended for test and adversarial-input construction only.
+/// The production proof pipeline derives the batch anchor state directly from
+/// database rows with [`state_from_db`].
 pub fn compute_final_state(initial_state: &State, headers: &[NewHeader]) -> State {
     let hints = median_time_past_hints_for_headers(initial_state, headers);
     compute_final_state_with_hints(initial_state, headers, &hints)
 }
 
 /// Simulate the zkVM program locally using the supplied median-time-past hints.
+///
+/// # Note
+///
+/// This function is intended for test and adversarial-input construction only.
+/// The production proof pipeline derives the batch anchor state directly from
+/// database rows with [`state_from_db`].
 pub fn compute_final_state_with_hints(
     initial_state: &State,
     headers: &[NewHeader],
@@ -298,9 +385,11 @@ pub fn median_time_past_hints_from_records(records: &[HeaderRecord]) -> MedianTi
 
 /// Build the median-time-past witness hints by sorting on the host.
 ///
-/// This is a host-only fallback for tests/local simulation. Production proof
-/// generation should prefer [`median_time_past_hints_from_records`] so the host
-/// uses the database-provided MTP column.
+/// # Note
+///
+/// This function is intended for test and adversarial-input construction only.
+/// Production proof generation should use [`median_time_past_hints_from_records`]
+/// so the host uses the database-provided MTP column.
 pub fn median_time_past_hints_for_headers(
     initial_state: &State,
     headers: &[NewHeader],
@@ -370,5 +459,30 @@ mod tests {
         let hints = median_time_past_hints_from_records(&records);
 
         compute_final_state_with_hints(&genesis_state, &headers, &hints);
+    }
+
+    #[test]
+    fn db_state_matches_simulated_state_at_batch_anchors() {
+        let genesis = load_header_record_from_db(TEST_DB_PATH, 0);
+        let genesis_hash = hash_header(&genesis.header);
+        let genesis_state = genesis_state_from_record(genesis, genesis_hash);
+
+        for height in [0u64, 10, 2015, 2016] {
+            let expected = if height == 0 {
+                genesis_state.clone()
+            } else {
+                let records = load_header_records_from_db(TEST_DB_PATH, 1, height);
+                let headers = records_to_new_headers(&records);
+                let hints = median_time_past_hints_from_records(&records);
+                compute_final_state_with_hints(&genesis_state, &headers, &hints)
+            };
+
+            let anchor = load_header_record_from_db(TEST_DB_PATH, height);
+            let next = load_header_record_from_db(TEST_DB_PATH, height + 1);
+            let actual = state_from_db(TEST_DB_PATH, &anchor, &next, genesis_hash)
+                .expect("DB state should materialize");
+
+            assert_eq!(actual, expected, "height {height}");
+        }
     }
 }
