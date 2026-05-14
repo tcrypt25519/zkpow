@@ -8,10 +8,10 @@ use sha2::{Digest, Sha256};
 use sp1_sdk::SP1PublicValues;
 
 pub use zkpow_core::{
-    bits_to_target, u256, work_from_target, ApplyFailure, BlockHash, BlockTimestamp, ChainWork,
-    CompactTarget, Header, HeaderChainPublicValues, Input, InputError, MedianTimePastHints,
-    MinimalPublicValues, NewHeader, NewHeaderHintError, NewHeaderHints, NewHeaderHintsRef,
-    ParseError, PrivateContinuationState, ProofFailure, PublicChainClaim, PublicValuesDigest,
+    u256, work_from_target, ApplyFailure, BlockHash, BlockTimestamp, ChainWork, CompactTarget,
+    Header, HeaderChainPublicValues, Input, InputError, MedianTimePastHints, MinimalPublicValues,
+    NewHeader, NewHeaderHintError, NewHeaderHints, NewHeaderHintsRef, ParseError,
+    PrivateContinuationState, ProofFailure, PublicChainClaim, PublicValuesDigest,
     PublicValuesParseError, RecursiveProof, State, Target, ValidationErrorCode, ValidationState,
     VerifierKeyDigest, GENESIS_TARGET, MINIMAL_PV_SIZE, NEW_HEADER_SIZE,
     PRIVATE_CONTINUATION_STATE_SIZE, PUBLIC_CHAIN_CLAIM_SIZE, STATE_SIZE,
@@ -24,6 +24,25 @@ pub struct HeaderRecord {
     pub chain_work: ChainWork,
     pub median_time_past: BlockTimestamp,
 }
+
+/// Error returned when consensus compact target bits do not encode a valid
+/// positive 256-bit Bitcoin PoW target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompactTargetError {
+    Negative,
+    Overflow,
+}
+
+impl std::fmt::Display for CompactTargetError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Negative => f.write_str("compact target encodes a negative value"),
+            Self::Overflow => f.write_str("compact target overflows 256 bits"),
+        }
+    }
+}
+
+impl std::error::Error for CompactTargetError {}
 
 // ============================================================================
 // Database & I/O
@@ -254,6 +273,50 @@ pub fn genesis_state(genesis_header: Header, genesis_hash: BlockHash) -> State {
 
 pub fn genesis_state_from_record(genesis: HeaderRecord, genesis_hash: BlockHash) -> State {
     genesis_state(genesis.header, genesis_hash)
+}
+
+/// Convert Bitcoin compact `bits` encoding into a full 256-bit target.
+///
+/// Host-only: the guest receives an expanded target in authenticated state and
+/// should not decode compact targets during validation.
+pub fn bits_to_target(compact: CompactTarget) -> Result<Target, CompactTargetError> {
+    let bits = compact.to_consensus();
+    let size = (bits >> 24) as usize;
+    let mut word = bits & 0x007f_ffff;
+
+    if size <= 3 {
+        word >>= 8 * (3 - size);
+    }
+
+    if word != 0 && (bits & 0x0080_0000) != 0 {
+        return Err(CompactTargetError::Negative);
+    }
+
+    if word != 0 && (size > 34 || (word > 0xff && size > 33) || (word > 0xffff && size > 32)) {
+        return Err(CompactTargetError::Overflow);
+    }
+
+    let mut bytes = [0u8; 32];
+    if size <= 3 {
+        bytes[0] = word as u8;
+        if size >= 2 {
+            bytes[1] = (word >> 8) as u8;
+        }
+        if size >= 3 {
+            bytes[2] = (word >> 16) as u8;
+        }
+    } else {
+        let base = size - 3;
+        bytes[base] = word as u8;
+        if base + 1 < 32 {
+            bytes[base + 1] = (word >> 8) as u8;
+        }
+        if base + 2 < 32 {
+            bytes[base + 2] = (word >> 16) as u8;
+        }
+    }
+
+    Ok(Target::from_le_bytes(bytes))
 }
 
 /// Materialize a [`State`] for `block` directly from database columns.

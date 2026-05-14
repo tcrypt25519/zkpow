@@ -1,16 +1,18 @@
-//! Compatibility tests ported from Bitcoin Core's `pow_tests.cpp` and
-//! `arith_uint256_tests.cpp`.
+//! Host-side compatibility tests ported from Bitcoin Core's `pow_tests.cpp`
+//! and `arith_uint256_tests.cpp`.
 //!
 //! These vectors intentionally mirror Bitcoin Core's compact-target, proof of
-//! work, and 256-bit arithmetic expectations where this crate exposes the same
-//! consensus surface. Bitcoin Core tests for operators that zkpow does not
-//! expose are omitted.
+//! work, and 256-bit arithmetic expectations where this project exposes the
+//! same consensus surface. Compact-target decoding stays here because the
+//! zkVM guest receives an expanded target in authenticated state and should not
+//! have a compact-target decoding API.
 
 use zkpow_core::{
-    bits_to_target, calculate_next_work_required, check_proof_of_work, target_gt, target_to_bits,
-    work_from_target, BlockHash, ChainWork, CompactTarget, CompactTargetError, Target,
-    EXPECTED_EPOCH_TIMESPAN, GENESIS_TARGET, MAX_EPOCH_TIMESPAN, MIN_EPOCH_TIMESPAN,
+    calculate_next_work_required, check_proof_of_work, target_gt, target_to_bits, work_from_target,
+    BlockHash, ChainWork, CompactTarget, Target, EXPECTED_EPOCH_TIMESPAN, GENESIS_TARGET,
+    MAX_EPOCH_TIMESPAN, MIN_EPOCH_TIMESPAN,
 };
+use zkpow_host::util::{bits_to_target, CompactTargetError};
 
 fn le_bytes_from_be_hex(hex: &str) -> [u8; 32] {
     assert_eq!(hex.len(), 64);
