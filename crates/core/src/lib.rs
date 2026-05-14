@@ -838,6 +838,69 @@ impl core::fmt::Display for PublicValuesParseError {
     }
 }
 
+/// Error returned when consensus compact target bits do not encode a valid
+/// positive 256-bit Bitcoin PoW target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompactTargetError {
+    Negative,
+    Overflow,
+}
+
+impl core::fmt::Display for CompactTargetError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Negative => f.write_str("compact target encodes a negative value"),
+            Self::Overflow => f.write_str("compact target overflows 256 bits"),
+        }
+    }
+}
+
+/// Convert Bitcoin compact `bits` encoding into a full 256-bit target.
+///
+/// This follows Bitcoin Core's `arith_uint256::SetCompact` rules: the sign bit
+/// and overflow are validation failures, while zero mantissas decode to zero.
+pub fn bits_to_target(compact: CompactTarget) -> Result<Target, CompactTargetError> {
+    cycle_track("difficulty/bits_to_target", || {
+        let bits = compact.to_consensus();
+        let size = (bits >> 24) as usize;
+        let mut word = bits & 0x007f_ffff;
+
+        if size <= 3 {
+            word >>= 8 * (3 - size);
+        }
+
+        if word != 0 && (bits & 0x0080_0000) != 0 {
+            return Err(CompactTargetError::Negative);
+        }
+
+        if word != 0 && (size > 34 || (word > 0xff && size > 33) || (word > 0xffff && size > 32)) {
+            return Err(CompactTargetError::Overflow);
+        }
+
+        let mut bytes = [0u8; 32];
+        if size <= 3 {
+            bytes[0] = word as u8;
+            if size >= 2 {
+                bytes[1] = (word >> 8) as u8;
+            }
+            if size >= 3 {
+                bytes[2] = (word >> 16) as u8;
+            }
+        } else {
+            let base = size - 3;
+            bytes[base] = word as u8;
+            if base + 1 < 32 {
+                bytes[base + 1] = (word >> 8) as u8;
+            }
+            if base + 2 < 32 {
+                bytes[base + 2] = (word >> 16) as u8;
+            }
+        }
+
+        Ok(Target::from_le_bytes(bytes))
+    })
+}
+
 /// Convert a full 256-bit target into compact `bits` encoding.
 #[must_use]
 pub fn target_to_bits(target: Target) -> CompactTarget {
@@ -888,6 +951,12 @@ fn u256_cmp(lhs: &u256, rhs: &u256) -> core::cmp::Ordering {
     })
 }
 
+fn u256_is_zero(value: &u256) -> bool {
+    cycle_track("difficulty/u256_is_zero", || {
+        value.as_limbs().iter().all(|limb| *limb == 0)
+    })
+}
+
 /// Return `true` when `lhs` is strictly greater than `rhs` as unsigned 256-bit integers.
 #[must_use]
 pub fn target_gt(lhs: Target, rhs: Target) -> bool {
@@ -900,6 +969,10 @@ pub fn target_gt(lhs: Target, rhs: Target) -> bool {
 #[must_use]
 pub fn check_proof_of_work(hash: BlockHash, target: Target) -> bool {
     cycle_track("pow/check_proof_of_work", || {
+        if u256_is_zero(&target) || target_gt(target, GENESIS_TARGET) {
+            return false;
+        }
+
         let hash_u256 = u256::from_le_bytes(*hash.as_raw());
         u256_cmp(&hash_u256, &target) != core::cmp::Ordering::Greater
     })

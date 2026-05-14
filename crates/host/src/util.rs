@@ -8,10 +8,10 @@ use sha2::{Digest, Sha256};
 use sp1_sdk::SP1PublicValues;
 
 pub use zkpow_core::{
-    u256, work_from_target, ApplyFailure, BlockHash, BlockTimestamp, ChainWork, CompactTarget,
-    Header, HeaderChainPublicValues, Input, InputError, MedianTimePastHints, MinimalPublicValues,
-    NewHeader, NewHeaderHintError, NewHeaderHints, NewHeaderHintsRef, ParseError,
-    PrivateContinuationState, ProofFailure, PublicChainClaim, PublicValuesDigest,
+    bits_to_target, u256, work_from_target, ApplyFailure, BlockHash, BlockTimestamp, ChainWork,
+    CompactTarget, Header, HeaderChainPublicValues, Input, InputError, MedianTimePastHints,
+    MinimalPublicValues, NewHeader, NewHeaderHintError, NewHeaderHints, NewHeaderHintsRef,
+    ParseError, PrivateContinuationState, ProofFailure, PublicChainClaim, PublicValuesDigest,
     PublicValuesParseError, RecursiveProof, State, Target, ValidationErrorCode, ValidationState,
     VerifierKeyDigest, GENESIS_TARGET, MINIMAL_PV_SIZE, NEW_HEADER_SIZE,
     PRIVATE_CONTINUATION_STATE_SIZE, PUBLIC_CHAIN_CLAIM_SIZE, STATE_SIZE,
@@ -267,12 +267,14 @@ pub(crate) fn state_from_db(
     genesis_hash: BlockHash,
 ) -> Result<State, Box<dyn std::error::Error + Send + Sync + 'static>> {
     let next_nbits = next_block.header.compact_target;
-    let next_target = compact_to_target(next_nbits);
+    let next_target = valid_target_from_compact(next_nbits, "next")?;
     let next_work = work_from_target(next_target);
     let chain_work = if block.height == 0 {
-        work_from_target(compact_to_target(block.header.compact_target))
+        let block_target = valid_target_from_compact(block.header.compact_target, "block")?;
+        work_from_target(block_target)
     } else {
-        let block_work = work_from_target(compact_to_target(block.header.compact_target));
+        let block_target = valid_target_from_compact(block.header.compact_target, "block")?;
+        let block_work = work_from_target(block_target);
         block.chain_work + block_work
     };
 
@@ -302,36 +304,19 @@ pub(crate) fn state_from_db(
     })
 }
 
-fn compact_to_target(compact: CompactTarget) -> Target {
-    let bits = compact.to_consensus();
-    let size = (bits >> 24) as usize;
-    let word = bits & 0x007f_ffff;
-    if size == 0 {
-        return Target::from_limbs([0; 4]);
-    }
-    let mut bytes = [0u8; 32];
-    if size <= 3 {
-        let shifted = word >> (8 * (3 - size));
-        bytes[0] = shifted as u8;
-        if size >= 2 {
-            bytes[1] = (shifted >> 8) as u8;
-        }
-        if size >= 3 {
-            bytes[2] = (shifted >> 16) as u8;
-        }
-    } else {
-        let base = size - 3;
-        if base < 32 {
-            bytes[base] = word as u8;
-        }
-        if base + 1 < 32 {
-            bytes[base + 1] = (word >> 8) as u8;
-        }
-        if base + 2 < 32 {
-            bytes[base + 2] = (word >> 16) as u8;
-        }
-    }
-    Target::from_le_bytes(bytes)
+fn valid_target_from_compact(
+    compact: CompactTarget,
+    label: &str,
+) -> Result<Target, Box<dyn std::error::Error + Send + Sync + 'static>> {
+    bits_to_target(compact).map_err(
+        |err| -> Box<dyn std::error::Error + Send + Sync + 'static> {
+            format!(
+                "invalid {label} compact target {:#010x}: {err}",
+                compact.to_consensus()
+            )
+            .into()
+        },
+    )
 }
 
 /// Simulate the zkVM program locally to compute the expected [`State`] after
