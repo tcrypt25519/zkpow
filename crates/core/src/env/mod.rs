@@ -193,9 +193,32 @@ impl<E: Env> StateInner<E> {
                     if target_gt(new_target, GENESIS_TARGET) {
                         new_target = GENESIS_TARGET;
                     }
-                    self.next_target = new_target;
-                    self.next_nbits = target_to_bits(new_target);
-                    self.next_work = work_from_target(new_target);
+                    let next_nbits = target_to_bits(new_target);
+                    let bits = next_nbits.to_consensus();
+                    let size = (bits >> 24) as usize;
+                    let mantissa = bits & 0x007f_ffff;
+                    let mut normalized_target_bytes = [0u8; 32];
+
+                    if size <= 3 {
+                        let value = mantissa >> (8 * (3 - size));
+                        normalized_target_bytes[0..4].copy_from_slice(&value.to_le_bytes());
+                    } else {
+                        let offset = size - 3;
+                        if offset < 32 {
+                            normalized_target_bytes[offset] = (mantissa & 0xff) as u8;
+                        }
+                        if offset + 1 < 32 {
+                            normalized_target_bytes[offset + 1] = ((mantissa >> 8) & 0xff) as u8;
+                        }
+                        if offset + 2 < 32 {
+                            normalized_target_bytes[offset + 2] = ((mantissa >> 16) & 0xff) as u8;
+                        }
+                    }
+
+                    let normalized_target = Target::from_le_bytes(normalized_target_bytes);
+                    self.next_nbits = next_nbits;
+                    self.next_target = normalized_target;
+                    self.next_work = work_from_target(normalized_target);
                 });
             }
 

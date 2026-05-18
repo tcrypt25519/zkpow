@@ -371,4 +371,18 @@ mod tests {
 
         compute_final_state_with_hints(&genesis_state, &headers, &hints);
     }
+
+    #[test]
+    fn db_retarget_schedule_matches_height_40320() {
+        let genesis = load_header_record_from_db(TEST_DB_PATH, 0);
+        let genesis_hash = hash_header(&genesis.header);
+        let genesis_state = genesis_state_from_record(genesis, genesis_hash);
+        let records = load_header_records_from_db(TEST_DB_PATH, 1, 40319);
+        let headers = records_to_new_headers(&records);
+        let state = compute_final_state(&genesis_state, &headers);
+        let boundary = load_header_record_from_db(TEST_DB_PATH, 40320);
+
+        assert_eq!(state.height, 40319);
+        assert_eq!(state.next_nbits, boundary.header.compact_target);
+    }
 }
