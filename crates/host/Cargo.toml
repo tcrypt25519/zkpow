@@ -5,6 +5,10 @@ edition = "2021"
 publish = false
 
 [[bin]]
+name = "continuous-prover"
+path = "src/bin/continuous_prover.rs"
+
+[[bin]]
 name = "zkpow-host"
 path = "src/main.rs"
 
@@ -26,6 +30,10 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
 tracing-appender = "0.2"
+jemalloc = { workspace = true, optional = true }
+jemalloc-ctl = { workspace = true, optional = true }
+jemallocator = { workspace = true, optional = true }
+
 
 [build-dependencies]
 sp1-build = { workspace = true }
@@ -33,5 +41,6 @@ sp1-build = { workspace = true }
 [features]
 default = []
 CUDA = ["sp1-sdk/cuda"]
+memory-diagnostics = ["dep:jemalloc", "dep:jemalloc-ctl", "dep:jemallocator"]
 # Opt in to the slow proof-generation tests.
 slow-tests = []
