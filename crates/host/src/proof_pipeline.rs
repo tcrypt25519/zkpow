@@ -19,9 +19,14 @@ use sp1_sdk::prelude::*;
 use sp1_sdk::proof::SP1Proof;
 use sp1_sdk::ExecutionReport;
 use sp1_sdk::{
-    HashableKey, ProveRequest, Prover, ProverClient, ProvingKey, SP1ProofWithPublicValues,
+    CpuProver, HashableKey, ProveRequest, Prover, ProverClient, ProvingKey, SP1ProofWithPublicValues,
+    SP1ProvingKey,
 };
+use tokio::sync::Mutex as AsyncMutex;
 use tracing::Instrument;
+
+#[cfg(feature = "CUDA")]
+use sp1_sdk::CudaProver;
 
 pub type BoxError = Box<dyn Error + Send + Sync + 'static>;
 
@@ -154,6 +159,32 @@ struct CompressedProofArtifacts {
     vk: sp1_prover::SP1VerifyingKey,
     compressed_proof: SP1ProofWithPublicValues,
     execution_report: ExecutionReport,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PreparedProverConfig {
+    backend: ProverBackend,
+    cuda_device_id: Option<u32>,
+}
+
+#[derive(Clone)]
+enum PreparedProver {
+    Cpu {
+        prover: CpuProver,
+        proving_key: SP1ProvingKey,
+    },
+    #[cfg(feature = "CUDA")]
+    Cuda {
+        prover: CudaProver,
+        proving_key: <CudaProver as Prover>::ProvingKey,
+    },
+}
+
+static PREPARED_PROVER: OnceLock<AsyncMutex<Option<(PreparedProverConfig, PreparedProver)>>> =
+    OnceLock::new();
+
+fn prepared_prover_store() -> &'static AsyncMutex<Option<(PreparedProverConfig, PreparedProver)>> {
+    PREPARED_PROVER.get_or_init(|| AsyncMutex::new(None))
 }
 
 fn parse_genesis_hash() -> Result<util::BlockHash, BoxError> {
@@ -409,7 +440,10 @@ pub fn config_from_env() -> Result<ProofGenerationConfig, BoxError> {
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(100),
-        db_path: PathBuf::from(DEFAULT_DB_PATH),
+        db_path: std::env::var("DB_PATH")
+            .ok()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(DEFAULT_DB_PATH)),
         output_dir: std::env::var("OUTPUT_DIR")
             .ok()
             .map(PathBuf::from)
@@ -529,6 +563,7 @@ fn build_stdin(
 async fn generate_compressed_proof_with_prover<P>(
     prover_name: &str,
     prover: &P,
+    proving_key: &P::ProvingKey,
     current_state: &util::State,
     previous_proof: Option<&SP1ProofWithPublicValues>,
     headers: &[util::NewHeader],
@@ -539,17 +574,16 @@ where
     P: Prover,
     P::Error: Error + Send + Sync + 'static,
 {
-    let pk = timed_async("setup_vkey", || async { prover.setup(ELF).await }).await?;
     let (expected_state, expected_continuation_digest) = expected_pv_parts;
     let expected_pv = util::MinimalPublicValues::success(
         expected_state,
         expected_continuation_digest,
-        VerifierKeyDigest::from_raw(pk.verifying_key().hash_u32()),
+        VerifierKeyDigest::from_raw(proving_key.verifying_key().hash_u32()),
     )
     .to_bytes()
     .to_vec();
     let recursive_proof = timed_sync("build_recursive_proof", || {
-        build_recursive_proof(pk.verifying_key(), previous_proof)
+        build_recursive_proof(proving_key.verifying_key(), previous_proof)
     })?;
     let input = timed_sync("build_input", || -> Result<_, BoxError> {
         let validation_state = zkpow_core::ValidationState::from_state(current_state);
@@ -562,7 +596,7 @@ where
             headers,
             median_hints,
             previous_proof,
-            pk.verifying_key(),
+            proving_key.verifying_key(),
         )
     })?;
 
@@ -595,7 +629,7 @@ where
     }
 
     let compressed_proof = timed_async("prove_compressed", || async {
-        async { prover.prove(&pk, stdin.clone()).compressed().await }
+        async { prover.prove(proving_key, stdin.clone()).compressed().await }
             .instrument(tracing::info_span!("prove_compressed_detail"))
             .await
     })
@@ -611,14 +645,75 @@ where
         },
     )?;
     timed_sync("verify_compressed_proof", || -> Result<(), BoxError> {
-        Ok(prover.verify(&compressed_proof, pk.verifying_key(), None)?)
+        Ok(prover.verify(&compressed_proof, proving_key.verifying_key(), None)?)
     })?;
 
     Ok(CompressedProofArtifacts {
-        vk: pk.verifying_key().clone(),
+        vk: proving_key.verifying_key().clone(),
         compressed_proof,
         execution_report: report,
     })
+}
+
+async fn get_prepared_prover(config: &ProofGenerationConfig) -> Result<PreparedProver, BoxError> {
+    let desired = PreparedProverConfig {
+        backend: config.prover_backend,
+        cuda_device_id: config.cuda_device_id,
+    };
+
+    {
+        let guard = prepared_prover_store().lock().await;
+        if let Some((cached_cfg, prepared)) = guard.as_ref() {
+            if *cached_cfg == desired {
+                return Ok(prepared.clone());
+            }
+        }
+    }
+
+    let prepared = match config.prover_backend {
+        ProverBackend::Cpu => {
+            let prover = timed_async("build_cpu_prover", || async {
+                Ok::<_, BoxError>(ProverClient::builder().cpu().build().await)
+            })
+            .await?;
+            let proving_key =
+                timed_async("setup_vkey", || async { prover.setup(ELF).await }).await?;
+            PreparedProver::Cpu { prover, proving_key }
+        }
+        ProverBackend::Cuda => {
+            let report = timed_sync("cuda_preflight", || run_cuda_preflight(config))?;
+            log_cuda_preflight(&report);
+
+            #[cfg(feature = "CUDA")]
+            {
+                let prover = timed_async("build_cuda_prover", || async {
+                    let device_id = config.cuda_device_id;
+                    let handle = tokio::spawn(async move {
+                        let builder = if let Some(device_id) = device_id {
+                            ProverClient::builder().cuda().with_device_id(device_id)
+                        } else {
+                            ProverClient::builder().cuda()
+                        };
+                        builder.build().await
+                    });
+                    handle.await.map_err(|err| -> BoxError {
+                        format!("failed to initialize CUDA prover task: {err}").into()
+                    })
+                })
+                .await?;
+                let proving_key =
+                    timed_async("setup_vkey", || async { prover.setup(ELF).await }).await?;
+                PreparedProver::Cuda { prover, proving_key }
+            }
+
+            #[cfg(not(feature = "CUDA"))]
+            unreachable!("CUDA config should already be rejected when the CUDA feature is absent")
+        }
+    };
+
+    let mut guard = prepared_prover_store().lock().await;
+    *guard = Some((desired, prepared.clone()));
+    Ok(prepared)
 }
 
 pub async fn generate_and_save_proofs(
@@ -704,15 +799,15 @@ pub async fn generate_and_save_proofs(
         let vs = zkpow_core::ValidationState::from_state(&expected_state);
         util::continuation_digest(&vs.private)
     };
-    let compressed_artifacts = match config.prover_backend {
-        ProverBackend::Cpu => {
-            let prover = timed_async("build_cpu_prover", || async {
-                Ok::<_, BoxError>(ProverClient::builder().cpu().build().await)
-            })
-            .await?;
+    let compressed_artifacts = match get_prepared_prover(config).await? {
+        PreparedProver::Cpu {
+            prover,
+            proving_key,
+        } => {
             generate_compressed_proof_with_prover(
                 "cpu",
                 &prover,
+                &proving_key,
                 &current_state,
                 previous_proof.as_ref(),
                 &headers,
@@ -721,46 +816,22 @@ pub async fn generate_and_save_proofs(
             )
             .await?
         }
-        ProverBackend::Cuda => {
-            let report = timed_sync("cuda_preflight", || run_cuda_preflight(config))?;
-            log_cuda_preflight(&report);
-
-            #[cfg(feature = "CUDA")]
-            {
-                let prover = timed_async("build_cuda_prover", || async {
-                    let device_id = config.cuda_device_id;
-                    let handle = tokio::spawn(async move {
-                        let builder = if let Some(device_id) = device_id {
-                            ProverClient::builder().cuda().with_device_id(device_id)
-                        } else {
-                            ProverClient::builder().cuda()
-                        };
-                        builder.build().await
-                    });
-                    handle.await.map_err(|err| -> BoxError {
-                        format!("failed to initialize CUDA prover task: {err}").into()
-                    })
-                })
-                .await?;
-
-                generate_compressed_proof_with_prover(
-                    "cuda",
-                    &prover,
-                    &current_state,
-                    previous_proof.as_ref(),
-                    &headers,
-                    &median_hints,
-                    (&expected_state, expected_continuation_digest),
-                )
-                .await?
-            }
-
-            #[cfg(not(feature = "CUDA"))]
-            {
-                unreachable!(
-                    "CUDA config should already be rejected when the CUDA feature is absent"
-                )
-            }
+        #[cfg(feature = "CUDA")]
+        PreparedProver::Cuda {
+            prover,
+            proving_key,
+        } => {
+            generate_compressed_proof_with_prover(
+                "cuda",
+                &prover,
+                &proving_key,
+                &current_state,
+                previous_proof.as_ref(),
+                &headers,
+                &median_hints,
+                (&expected_state, expected_continuation_digest),
+            )
+            .await?
         }
     };
     let vk = compressed_artifacts.vk;

@@ -5,10 +5,6 @@ edition = "2021"
 publish = false
 
 [[bin]]
-name = "continuous-prover"
-path = "src/bin/continuous_prover.rs"
-
-[[bin]]
 name = "zkpow-host"
 path = "src/main.rs"
 
