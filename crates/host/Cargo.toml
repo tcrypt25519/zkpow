@@ -31,7 +31,7 @@ tracing = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
 tracing-appender = "0.2"
 jemalloc = { workspace = true, optional = true }
-jemalloc-ctl = { workspace = true, optional = true }
+jemalloc-ctl = { workspace = true, optional = true, features = ["use_std"] }
 jemallocator = { workspace = true, optional = true }
 
 

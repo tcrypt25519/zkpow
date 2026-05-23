@@ -6,6 +6,7 @@ use std::process::Command;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+use crate::memory_profiler;
 use crate::util;
 use crate::util::{
     HeaderChainPublicValues, Input, PublicValuesDigest, RecursiveProof, VerifierKeyDigest,
@@ -890,11 +891,19 @@ where
     E: Into<BoxError>,
 {
     let started = Instant::now();
-    tracing::info!("{label} started");
+    let start_memory = memory_profiler::capture_snapshot();
+    memory_profiler::log_snapshot(label, &start_memory, "proof phase started");
     let output = f().map_err(Into::into);
     let elapsed = started.elapsed();
+    let end_memory = memory_profiler::capture_snapshot();
     record_phase_timing(label, elapsed);
-    tracing::info!("{label} finished in {:?}", elapsed);
+    memory_profiler::log_snapshot_delta(
+        label,
+        &start_memory,
+        &end_memory,
+        elapsed,
+        "proof phase finished",
+    );
     output
 }
 
@@ -905,11 +914,19 @@ where
     E: Into<BoxError>,
 {
     let started = Instant::now();
-    tracing::info!("{label} started");
+    let start_memory = memory_profiler::capture_snapshot();
+    memory_profiler::log_snapshot(label, &start_memory, "proof phase started");
     let output = f().await.map_err(Into::into);
     let elapsed = started.elapsed();
+    let end_memory = memory_profiler::capture_snapshot();
     record_phase_timing(label, elapsed);
-    tracing::info!("{label} finished in {:?}", elapsed);
+    memory_profiler::log_snapshot_delta(
+        label,
+        &start_memory,
+        &end_memory,
+        elapsed,
+        "proof phase finished",
+    );
     output
 }
 
