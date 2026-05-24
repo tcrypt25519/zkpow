@@ -393,13 +393,13 @@ mod tests {
             NewHeader {
                 version: 1,
                 merkle_root: [4; 32],
-                timestamp: BlockTimestamp::from_consensus(100),
+                timestamp: BlockTimestamp::from_inner(100),
                 nonce: 0,
             },
             NewHeader {
                 version: 2,
                 merkle_root: [5; 32],
-                timestamp: BlockTimestamp::from_consensus(200),
+                timestamp: BlockTimestamp::from_inner(200),
                 nonce: 1,
             },
         ];
@@ -439,7 +439,7 @@ mod tests {
         let headers = NewHeaderHints::new(vec![NewHeader {
             version: 1,
             merkle_root: [4; 32],
-            timestamp: BlockTimestamp::from_consensus(100),
+            timestamp: BlockTimestamp::from_inner(100),
             nonce: 0,
         }]);
         let mut bytes = headers.to_bytes();
@@ -458,9 +458,9 @@ mod tests {
     #[test]
     fn median_time_past_hints_round_trip() {
         let hints = MedianTimePastHints::new(vec![
-            BlockTimestamp::from_consensus(0),
-            BlockTimestamp::from_consensus(123),
-            BlockTimestamp::from_consensus(456),
+            BlockTimestamp::from_inner(0),
+            BlockTimestamp::from_inner(123),
+            BlockTimestamp::from_inner(456),
         ]);
 
         let bytes = hints.to_bytes();
@@ -471,7 +471,7 @@ mod tests {
 
     #[test]
     fn median_time_past_hints_reject_wrong_count_length() {
-        let bytes = MedianTimePastHints::new(vec![BlockTimestamp::from_consensus(123)]).to_bytes();
+        let bytes = MedianTimePastHints::new(vec![BlockTimestamp::from_inner(123)]).to_bytes();
 
         let err = MedianTimePastHintsRef::parse(&bytes, 2).unwrap_err();
 
@@ -486,8 +486,7 @@ mod tests {
 
     #[test]
     fn median_time_past_hints_reject_truncated_payload() {
-        let mut bytes =
-            MedianTimePastHints::new(vec![BlockTimestamp::from_consensus(123)]).to_bytes();
+        let mut bytes = MedianTimePastHints::new(vec![BlockTimestamp::from_inner(123)]).to_bytes();
         bytes.pop();
 
         let err = MedianTimePastHintsRef::parse(&bytes, 1).unwrap_err();

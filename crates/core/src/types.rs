@@ -86,13 +86,7 @@ impl CompactTarget {
 
     /// Construct from consensus-encoded compact bits.
     #[must_use]
-    pub const fn from_consensus(bits: u32) -> Self {
+    pub const fn from_inner(bits: u32) -> Self {
         Self(bits)
-    }
-
-    /// Return the consensus-encoded compact bits.
-    #[must_use]
-    pub const fn to_consensus(&self) -> u32 {
-        self.0
     }
 }

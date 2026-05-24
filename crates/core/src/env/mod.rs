@@ -144,7 +144,7 @@ impl<E: Env> StateInner<E> {
     #[must_use]
     pub fn continuation_bytes(&self) -> [u8; PRIVATE_CONTINUATION_STATE_SIZE] {
         let mut out = [0u8; PRIVATE_CONTINUATION_STATE_SIZE];
-        out[0..4].copy_from_slice(&self.next_nbits.to_consensus().to_le_bytes());
+        out[0..4].copy_from_slice(&self.next_nbits.into_inner().to_le_bytes());
         out[4..36].copy_from_slice(&self.next_work.to_le_bytes());
         out[36..68].copy_from_slice(&self.next_target.to_le_bytes());
         out[68..72].copy_from_slice(&self.epoch_start_timestamp.to_le_bytes());
@@ -220,7 +220,7 @@ impl<E: Env> StateInner<E> {
                         new_target = GENESIS_TARGET;
                     }
                     let next_nbits = target_to_bits(new_target);
-                    let bits = next_nbits.to_consensus();
+                    let bits = next_nbits.into_inner();
                     let size = (bits >> 24) as usize;
                     let mantissa = bits & 0x007f_ffff;
                     let mut normalized_target_bytes = [0u8; 32];

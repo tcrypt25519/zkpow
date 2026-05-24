@@ -418,7 +418,7 @@ impl PrivateContinuationState {
     #[must_use]
     pub fn to_bytes(&self) -> [u8; PRIVATE_CONTINUATION_STATE_SIZE] {
         let mut out = [0u8; PRIVATE_CONTINUATION_STATE_SIZE];
-        out[0..4].copy_from_slice(&self.next_nbits.to_consensus().to_le_bytes());
+        out[0..4].copy_from_slice(self.next_nbits.to_u32());
         out[4..36].copy_from_slice(&self.next_work.to_le_bytes());
         out[36..68].copy_from_slice(&self.next_target.to_le_bytes());
         out[68..72].copy_from_slice(&self.epoch_start_timestamp.to_le_bytes());
@@ -431,7 +431,7 @@ impl PrivateContinuationState {
     pub fn parse(bytes: &[u8]) -> Result<Self, ParseError> {
         check_exact_len(bytes, PRIVATE_CONTINUATION_STATE_SIZE)?;
         let next_nbits =
-            CompactTarget::from_consensus(u32::from_le_bytes(bytes[0..4].try_into().unwrap()));
+            CompactTarget::from_inner(u32::from_le_bytes(bytes[0..4].try_into().unwrap()));
         let next_work = ChainWork::from_le_bytes(bytes[4..36].try_into().unwrap());
         let next_target = Target::from_le_bytes(bytes[36..68].try_into().unwrap());
         let epoch_start_timestamp =
@@ -817,7 +817,7 @@ pub fn target_to_bits(target: Target) -> CompactTarget {
             nbytes -= 1;
         }
         if nbytes == 0 {
-            return CompactTarget::from_consensus(0);
+            return CompactTarget::from_inner(0);
         }
 
         let mut compact = if nbytes <= 3 {
@@ -837,7 +837,7 @@ pub fn target_to_bits(target: Target) -> CompactTarget {
             nbytes += 1;
         }
 
-        CompactTarget::from_consensus(((nbytes as u32) << 24) | (compact & 0x007f_ffff))
+        CompactTarget::from_inner(((nbytes as u32) << 24) | (compact & 0x007f_ffff))
     })
 }
 
@@ -1042,7 +1042,7 @@ mod tests {
     use super::*;
 
     fn ts(seconds: u32) -> BlockTimestamp {
-        BlockTimestamp::from_consensus(seconds)
+        BlockTimestamp::from_inner(seconds)
     }
 
     fn zero_hash() -> BlockHash {
@@ -1057,7 +1057,7 @@ mod tests {
 
     fn test_state() -> State {
         State {
-            next_nbits: CompactTarget::from_consensus(GENESIS_NBITS),
+            next_nbits: CompactTarget::from_inner(GENESIS_NBITS),
             next_work: genesis_work(),
             next_target: GENESIS_TARGET,
             ..State::default()
@@ -1147,8 +1147,8 @@ mod tests {
             version: 7,
             prev_blockhash: BlockHash::from_raw([0x11; 32]),
             merkle_root: [0x22; 32],
-            timestamp: BlockTimestamp::from_consensus(123_456),
-            compact_target: CompactTarget::from_consensus(0x1d00ffff),
+            timestamp: BlockTimestamp::from_inner(123_456),
+            compact_target: CompactTarget::from_inner(0x1d00ffff),
             nonce: 99,
         };
 
@@ -1201,13 +1201,10 @@ mod tests {
         assert_eq!(header.version, 0x1122_3344);
         assert_eq!(header.prev_blockhash, BlockHash::from_raw([0x55; 32]));
         assert_eq!(header.merkle_root, [0x66; 32]);
-        assert_eq!(
-            header.timestamp,
-            BlockTimestamp::from_consensus(0x7788_99aa)
-        );
+        assert_eq!(header.timestamp, BlockTimestamp::from_inner(0x7788_99aa));
         assert_eq!(
             header.compact_target,
-            CompactTarget::from_consensus(0x1d00_ffff)
+            CompactTarget::from_inner(0x1d00_ffff)
         );
         assert_eq!(header.nonce, 0xbbcc_ddee);
         assert_eq!(header.to_bytes(), header_bytes);
@@ -1223,7 +1220,7 @@ mod tests {
         assert_eq!(new_header.merkle_root, [0x66; 32]);
         assert_eq!(
             new_header.timestamp,
-            BlockTimestamp::from_consensus(0x7788_99aa)
+            BlockTimestamp::from_inner(0x7788_99aa)
         );
         assert_eq!(new_header.nonce, 0xbbcc_ddee);
         assert_eq!(new_header.to_bytes(), new_header_bytes);
@@ -1261,7 +1258,7 @@ mod tests {
     #[test]
     fn target_to_bits_round_trips_genesis_target() {
         let round_trip = target_to_bits(GENESIS_TARGET);
-        assert_eq!(round_trip.to_consensus(), GENESIS_NBITS);
+        i
     }
 
     #[test]
@@ -1330,7 +1327,7 @@ mod tests {
         // Start at height 5 and fail on the first new header → failure_height = 6.
         let mut state: State = State {
             height: 5,
-            next_nbits: CompactTarget::from_consensus(GENESIS_NBITS),
+            next_nbits: CompactTarget::from_inner(GENESIS_NBITS),
             next_work: genesis_work(),
             next_target: GENESIS_TARGET,
             ..State::default()
@@ -1468,7 +1465,7 @@ mod tests {
     fn hinted_median_validation_accepts_duplicate_median_values() {
         let mut state: State = State {
             height: WINDOW_SIZE as u32,
-            next_nbits: CompactTarget::from_consensus(GENESIS_NBITS),
+            next_nbits: CompactTarget::from_inner(GENESIS_NBITS),
             next_work: genesis_work(),
             next_target: GENESIS_TARGET,
             timestamps: [
@@ -1502,7 +1499,7 @@ mod tests {
     fn hinted_median_validation_rejects_wrong_rank_hint() {
         let state: State = State {
             height: WINDOW_SIZE as u32,
-            next_nbits: CompactTarget::from_consensus(GENESIS_NBITS),
+            next_nbits: CompactTarget::from_inner(GENESIS_NBITS),
             next_work: genesis_work(),
             next_target: GENESIS_TARGET,
             timestamps: [
@@ -1600,7 +1597,7 @@ mod tests {
         ];
         let mut state: State = State {
             block_hash: BlockHash::from_raw([0x11; 32]),
-            next_nbits: CompactTarget::from_consensus(GENESIS_NBITS),
+            next_nbits: CompactTarget::from_inner(GENESIS_NBITS),
             next_work: genesis_work(),
             next_target: GENESIS_TARGET,
             height: WINDOW_SIZE as u32,
@@ -1636,13 +1633,13 @@ mod tests {
             header: Header::default(),
             block_hash: BlockHash::from_raw([0xAB; 32]),
             genesis_hash: BlockHash::from_raw([0xCD; 32]),
-            next_nbits: CompactTarget::from_consensus(GENESIS_NBITS),
+            next_nbits: CompactTarget::from_inner(GENESIS_NBITS),
             height: 42,
             chain_work: ChainWork::from_limbs([1, 2, 3, 4]),
             next_work: ChainWork::from_limbs([5, 6, 7, 8]),
             next_target: GENESIS_TARGET,
-            epoch_start_timestamp: BlockTimestamp::from_consensus(1000),
-            timestamps: [BlockTimestamp::from_consensus(100); WINDOW_SIZE],
+            epoch_start_timestamp: BlockTimestamp::from_inner(1000),
+            timestamps: [BlockTimestamp::from_inner(100); WINDOW_SIZE],
             _environment: PhantomData,
         };
 
@@ -1676,11 +1673,11 @@ mod tests {
     #[test]
     fn private_continuation_state_serializes_to_fixed_width() {
         let pcs = PrivateContinuationState {
-            next_nbits: CompactTarget::from_consensus(GENESIS_NBITS),
+            next_nbits: CompactTarget::from_inner(GENESIS_NBITS),
             next_work: ChainWork::from_limbs([1, 2, 3, 4]),
             next_target: GENESIS_TARGET,
-            epoch_start_timestamp: BlockTimestamp::from_consensus(500),
-            timestamps: [BlockTimestamp::from_consensus(10); WINDOW_SIZE],
+            epoch_start_timestamp: BlockTimestamp::from_inner(500),
+            timestamps: [BlockTimestamp::from_inner(10); WINDOW_SIZE],
         };
         let bytes = pcs.to_bytes();
         assert_eq!(bytes.len(), PRIVATE_CONTINUATION_STATE_SIZE);
@@ -1691,11 +1688,11 @@ mod tests {
     #[test]
     fn state_continuation_bytes_matches_pcs_to_bytes() {
         let state = State {
-            next_nbits: CompactTarget::from_consensus(GENESIS_NBITS),
+            next_nbits: CompactTarget::from_inner(GENESIS_NBITS),
             next_work: ChainWork::from_limbs([1, 2, 3, 4]),
             next_target: GENESIS_TARGET,
-            epoch_start_timestamp: BlockTimestamp::from_consensus(500),
-            timestamps: [BlockTimestamp::from_consensus(10); WINDOW_SIZE],
+            epoch_start_timestamp: BlockTimestamp::from_inner(500),
+            timestamps: [BlockTimestamp::from_inner(10); WINDOW_SIZE],
             ..Default::default()
         };
         let vs = ValidationState::from_state(&state);

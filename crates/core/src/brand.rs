@@ -67,7 +67,7 @@ impl<Tag> Branded<Tag, u32> {
 
     /// Construct from a consensus-encoded u32 (generic constructor).
     #[must_use]
-    pub const fn from_consensus(value: u32) -> Self {
+    pub const fn from_inner(value: u32) -> Self {
         Self::new(value)
     }
 
