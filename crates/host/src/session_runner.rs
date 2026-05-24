@@ -132,6 +132,10 @@ pub async fn run_batch_session(default_max_batches: u32) -> Result<(), BoxError>
         let batch_elapsed_secs = batch_started.elapsed().as_secs_f64();
         drop(artifacts);
 
+        // Aggressive allocator purge: attempt to return freed pages to the OS.
+        // Only effective when built with --features memory-diagnostics (jemalloc).
+        memory_profiler::maybe_purge_allocator();
+
         let end_memory = memory_profiler::capture_snapshot();
         current_prev_proof = Some(compressed_path.clone());
         tracing::info!(

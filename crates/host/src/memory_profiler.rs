@@ -330,6 +330,57 @@ fn snapshot_line(snapshot: &MemorySnapshot) -> String {
     }
 }
 
+/// Best-effort attempt to force the allocator to return unused pages to the OS.
+///
+/// - With jemalloc (memory-diagnostics feature): flushes thread caches and purges
+///   all arenas. This only works on targets where jemalloc is the active allocator.
+/// - Without jemalloc: currently a no-op.
+pub fn maybe_purge_allocator() {
+    #[cfg(feature = "memory-diagnostics")]
+    {
+        use jemalloc_sys::mallctl;
+        use libc::{c_char, c_int, c_void, size_t};
+        use std::ptr;
+
+        unsafe {
+            // Flush thread-local caches first.
+            let _ = mallctl(
+                b"thread.tcache.flush\0" as *const _ as *const c_char,
+                ptr::null_mut(),
+                ptr::null_mut(),
+                ptr::null_mut(),
+                0,
+            );
+
+            // Read number of arenas.
+            let mut narenas: c_int = 0;
+            let mut sz = std::mem::size_of::<c_int>() as size_t;
+            let rc = mallctl(
+                b"arenas.narenas\0" as *const _ as *const c_char,
+                &mut narenas as *mut _ as *mut c_void,
+                &mut sz,
+                ptr::null_mut(),
+                0,
+            );
+            if rc == 0 {
+                for i in 0..narenas {
+                    let name = format!("arena.{}.purge\0", i);
+                    let _ = mallctl(
+                        name.as_ptr() as *const c_char,
+                        ptr::null_mut(),
+                        ptr::null_mut(),
+                        ptr::null_mut(),
+                        0,
+                    );
+                }
+            }
+        }
+
+        // Epoch advance so subsequent stat reads reflect the purge.
+        let _ = jemalloc_ctl::epoch::advance();
+    }
+}
+
 /// Spawn a background thread that writes the process's memory usage (VmRSS) to `path`
 /// every `interval` seconds. The thread runs until the process exits.
 pub fn spawn_mem_logger(path: PathBuf, interval: Duration) {

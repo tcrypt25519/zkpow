@@ -6445,6 +6445,7 @@ dependencies = [
  "jemalloc",
  "jemalloc-ctl",
  "jemallocator",
+ "libc",
  "num-bigint 0.4.6",
  "rusqlite",
  "sha2",

@@ -8,6 +8,10 @@ publish = false
 name = "zkpow-host"
 path = "src/main.rs"
 
+[[bin]]
+name = "sp1_stress"
+path = "src/bin/sp1_stress.rs"
+
 [lib]
 path = "src/lib.rs"
 
@@ -29,6 +33,7 @@ tracing-appender = "0.2"
 jemalloc = { workspace = true, optional = true }
 jemalloc-ctl = { workspace = true, optional = true, features = ["use_std"] }
 jemallocator = { workspace = true, optional = true }
+libc = { version = "0.2", optional = true }
 
 
 [build-dependencies]
@@ -37,6 +42,6 @@ sp1-build = { workspace = true }
 [features]
 default = []
 CUDA = ["sp1-sdk/cuda"]
-memory-diagnostics = ["dep:jemalloc", "dep:jemalloc-ctl", "dep:jemallocator"]
+memory-diagnostics = ["dep:jemalloc", "dep:jemalloc-ctl", "dep:jemallocator", "dep:libc"]
 # Opt in to the slow proof-generation tests.
 slow-tests = []
