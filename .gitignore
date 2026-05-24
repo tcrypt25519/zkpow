@@ -21,3 +21,4 @@ docs/plans/
 
 # OS
 .DS_Store
+.todos/

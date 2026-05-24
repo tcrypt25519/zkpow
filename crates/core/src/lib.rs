@@ -368,9 +368,7 @@ impl PublicChainClaim {
         let mut out = [0u8; PUBLIC_CHAIN_CLAIM_SIZE];
         out[0..32].copy_from_slice(self.genesis_hash.as_raw());
         out[32..64].copy_from_slice(self.tip_hash.as_raw());
-        for (i, limb) in self.chain_work.as_limbs().iter().enumerate() {
-            out[64 + i * 8..64 + (i + 1) * 8].copy_from_slice(&limb.to_le_bytes());
-        }
+        out[64..96].copy_from_slice(&self.chain_work.to_le_bytes());
         out[96..100].copy_from_slice(&self.height.to_le_bytes());
         out
     }
@@ -379,11 +377,7 @@ impl PublicChainClaim {
         check_exact_len(bytes, PUBLIC_CHAIN_CLAIM_SIZE)?;
         let genesis_hash = BlockHash::from_raw(bytes[0..32].try_into().unwrap());
         let tip_hash = BlockHash::from_raw(bytes[32..64].try_into().unwrap());
-        let mut work_limbs = [0u64; 4];
-        for (i, limb) in work_limbs.iter_mut().enumerate() {
-            *limb = u64::from_le_bytes(bytes[64 + i * 8..64 + (i + 1) * 8].try_into().unwrap());
-        }
-        let chain_work = ChainWork::from_limbs(work_limbs);
+        let chain_work = ChainWork::from_le_bytes(bytes[64..96].try_into().unwrap());
         let height = u32::from_le_bytes(bytes[96..100].try_into().unwrap());
         Ok(Self {
             genesis_hash,
@@ -425,12 +419,8 @@ impl PrivateContinuationState {
     pub fn to_bytes(&self) -> [u8; PRIVATE_CONTINUATION_STATE_SIZE] {
         let mut out = [0u8; PRIVATE_CONTINUATION_STATE_SIZE];
         out[0..4].copy_from_slice(&self.next_nbits.to_consensus().to_le_bytes());
-        for (i, limb) in self.next_work.as_limbs().iter().enumerate() {
-            out[4 + i * 8..4 + (i + 1) * 8].copy_from_slice(&limb.to_le_bytes());
-        }
-        for (i, limb) in self.next_target.as_limbs().iter().enumerate() {
-            out[36 + i * 8..36 + (i + 1) * 8].copy_from_slice(&limb.to_le_bytes());
-        }
+        out[4..36].copy_from_slice(&self.next_work.to_le_bytes());
+        out[36..68].copy_from_slice(&self.next_target.to_le_bytes());
         out[68..72].copy_from_slice(&self.epoch_start_timestamp.to_le_bytes());
         for (i, ts) in self.timestamps.iter().enumerate() {
             out[72 + i * 4..72 + (i + 1) * 4].copy_from_slice(&ts.to_le_bytes());
@@ -442,16 +432,8 @@ impl PrivateContinuationState {
         check_exact_len(bytes, PRIVATE_CONTINUATION_STATE_SIZE)?;
         let next_nbits =
             CompactTarget::from_consensus(u32::from_le_bytes(bytes[0..4].try_into().unwrap()));
-        let mut work_limbs = [0u64; 4];
-        for (i, limb) in work_limbs.iter_mut().enumerate() {
-            *limb = u64::from_le_bytes(bytes[4 + i * 8..4 + (i + 1) * 8].try_into().unwrap());
-        }
-        let next_work = ChainWork::from_limbs(work_limbs);
-        let mut target_limbs = [0u64; 4];
-        for (i, limb) in target_limbs.iter_mut().enumerate() {
-            *limb = u64::from_le_bytes(bytes[36 + i * 8..36 + (i + 1) * 8].try_into().unwrap());
-        }
-        let next_target = Target::from_limbs(target_limbs);
+        let next_work = ChainWork::from_le_bytes(bytes[4..36].try_into().unwrap());
+        let next_target = Target::from_le_bytes(bytes[36..68].try_into().unwrap());
         let epoch_start_timestamp =
             BlockTimestamp::from_le_bytes(bytes[68..72].try_into().unwrap());
         let mut timestamps = [BlockTimestamp::default(); WINDOW_SIZE];
@@ -622,22 +604,18 @@ pub struct MinimalPublicValues {
 pub const MINIMAL_PV_SIZE: usize = 32 + 32 + 32 + 4 + 1 + 4 + 32 + 32; // = 169
 
 impl MinimalPublicValues {
-    /// Build success public values from a final state and continuation digest.
+    /// Build success public values from a public claim and continuation digest.
     #[must_use]
     pub fn success(
-        state: &State,
+        claim: &PublicChainClaim,
         continuation_digest: [u8; 32],
         verifier_key: VerifierKeyDigest,
     ) -> Self {
-        let mut chain_work = [0u8; 32];
-        for (i, limb) in state.chain_work.as_limbs().iter().enumerate() {
-            chain_work[i * 8..(i + 1) * 8].copy_from_slice(&limb.to_le_bytes());
-        }
         Self {
-            genesis_hash: state.genesis_hash,
-            tip_hash: state.block_hash,
-            chain_work,
-            height: state.height,
+            genesis_hash: claim.genesis_hash,
+            tip_hash: claim.tip_hash,
+            chain_work: claim.chain_work.to_le_bytes(),
+            height: claim.height,
             return_code: 0,
             failure_height: 0,
             continuation_digest,
@@ -645,25 +623,20 @@ impl MinimalPublicValues {
         }
     }
 
-    /// Build failure public values from the last valid state, error, and continuation digest.
-    // TODO: Use a ProofFailure instead of its components.
+    /// Build failure public values from a public claim, error, and continuation digest.
     #[must_use]
     pub fn failure(
-        state: &State,
+        claim: &PublicChainClaim,
         error_code: ValidationErrorCode,
         failure_height: u32,
         continuation_digest: [u8; 32],
         verifier_key: VerifierKeyDigest,
     ) -> Self {
-        let mut chain_work = [0u8; 32];
-        for (i, limb) in state.chain_work.as_limbs().iter().enumerate() {
-            chain_work[i * 8..(i + 1) * 8].copy_from_slice(&limb.to_le_bytes());
-        }
         Self {
-            genesis_hash: state.genesis_hash,
-            tip_hash: state.block_hash,
-            chain_work,
-            height: state.height,
+            genesis_hash: claim.genesis_hash,
+            tip_hash: claim.tip_hash,
+            chain_work: claim.chain_work.to_le_bytes(),
+            height: claim.height,
             return_code: error_code.as_byte(),
             failure_height,
             continuation_digest,
@@ -716,11 +689,7 @@ impl MinimalPublicValues {
     /// Extract the chain work as a [`ChainWork`].
     #[must_use]
     pub fn chain_work(&self) -> ChainWork {
-        let mut limbs = [0u64; 4];
-        for (i, limb) in limbs.iter_mut().enumerate() {
-            *limb = u64::from_le_bytes(self.chain_work[i * 8..(i + 1) * 8].try_into().unwrap());
-        }
-        ChainWork::from_limbs(limbs)
+        ChainWork::from_le_bytes(self.chain_work)
     }
 
     /// Return the error code if this is a failure, or `None` on success.
@@ -1140,7 +1109,7 @@ mod tests {
 
     fn failure_public_value_bytes(failure: &ApplyFailure) -> [u8; MINIMAL_PV_SIZE] {
         MinimalPublicValues::failure(
-            &failure.last_valid_state,
+            &failure.last_valid_state.public_claim(),
             failure.error_code,
             failure.failure_height,
             [0xA5; 32],
@@ -1204,7 +1173,7 @@ mod tests {
         };
         let digest = [0x11u8; 32];
         let verifier_key = VerifierKeyDigest::from_raw([9; 8]);
-        let pv = MinimalPublicValues::success(&state, digest, verifier_key);
+        let pv = MinimalPublicValues::success(&state.public_claim(), digest, verifier_key);
         let bytes = pv.to_bytes();
         assert_eq!(bytes.len(), MINIMAL_PV_SIZE);
         assert_eq!(bytes[137..169], verifier_key.to_bytes());
@@ -1720,6 +1689,20 @@ mod tests {
     }
 
     #[test]
+    fn state_continuation_bytes_matches_pcs_to_bytes() {
+        let state = State {
+            next_nbits: CompactTarget::from_consensus(GENESIS_NBITS),
+            next_work: ChainWork::from_limbs([1, 2, 3, 4]),
+            next_target: GENESIS_TARGET,
+            epoch_start_timestamp: BlockTimestamp::from_consensus(500),
+            timestamps: [BlockTimestamp::from_consensus(10); WINDOW_SIZE],
+            ..Default::default()
+        };
+        let vs = ValidationState::from_state(&state);
+        assert_eq!(state.continuation_bytes(), vs.private.to_bytes());
+    }
+
+    #[test]
     fn public_chain_claim_serializes_to_fixed_width() {
         let claim = PublicChainClaim {
             genesis_hash: BlockHash::from_raw([1; 32]),
@@ -1736,5 +1719,138 @@ mod tests {
         assert_eq!(bytes[96..100], 99u32.to_le_bytes());
         let parsed = PublicChainClaim::parse(&bytes).unwrap();
         assert_eq!(parsed, claim);
+    }
+
+    // ---------------------------------------------------------------------
+    // Additional tests from TESTING_GAPS.md
+    // ---------------------------------------------------------------------
+
+    // Difficulty retargeting edge cases using the pure helper. These represent
+    // the extremes the state machine will clamp to during epoch transitions.
+    #[test]
+    fn retarget_no_change_when_timespan_equals_expected() {
+        let old = GENESIS_TARGET;
+        let new =
+            calculate_next_work_required(old, EXPECTED_EPOCH_TIMESPAN, EXPECTED_EPOCH_TIMESPAN);
+        assert_eq!(
+            new, old,
+            "target should be unchanged when actual == expected"
+        );
+    }
+
+    #[test]
+    fn retarget_stricter_when_timespan_shorter() {
+        let old = GENESIS_TARGET;
+        let new =
+            calculate_next_work_required(old, EXPECTED_EPOCH_TIMESPAN / 4, EXPECTED_EPOCH_TIMESPAN);
+        // Shorter timespan increases difficulty ⇒ numeric target must not be greater than old.
+        assert!(
+            !target_gt(new, old),
+            "new target should be <= old target when timespan shortens"
+        );
+    }
+
+    #[test]
+    fn retarget_easier_when_timespan_longer() {
+        let old = GENESIS_TARGET;
+        let new =
+            calculate_next_work_required(old, EXPECTED_EPOCH_TIMESPAN * 4, EXPECTED_EPOCH_TIMESPAN);
+        // Longer timespan lowers difficulty ⇒ target should be >= old.
+        assert!(
+            target_gt(new, old) || new == old,
+            "new target should be >= old when timespan grows"
+        );
+    }
+
+    #[test]
+    fn retarget_at_min_and_max_timespans() {
+        let old = GENESIS_TARGET;
+        let at_min =
+            calculate_next_work_required(old, MIN_EPOCH_TIMESPAN as u32, EXPECTED_EPOCH_TIMESPAN);
+        let at_max =
+            calculate_next_work_required(old, MAX_EPOCH_TIMESPAN as u32, EXPECTED_EPOCH_TIMESPAN);
+        assert!(
+            !target_gt(at_min, old),
+            "min timespan should not increase target"
+        );
+        assert!(
+            target_gt(at_max, old) || at_max == old,
+            "max timespan should not decrease target"
+        );
+    }
+
+    // Malformed header scenarios mapped to ValidationErrorCode
+    #[test]
+    fn malformed_header_pow_and_timestamp_errors() {
+        let mut state = test_state();
+        let hdr1 = NewHeader {
+            version: 1,
+            merkle_root: [0x22; 32],
+            timestamp: ts(1),
+            nonce: 7,
+        };
+        let hints = median_hints_for_headers(&state, &[hdr1]);
+
+        // PowInsufficient on first header using a deliberately large hash value (> target).
+        state
+            .apply_headers(&[hdr1], &hints, |_| BlockHash::from_raw([0xFF; 32]))
+            .expect_err("expected PoW failure");
+
+        // TimestampTooOld on equality to median (<= median should fail).
+        let mut s2 = test_state();
+        // First, accept a valid header to seed the window deterministically.
+        let median0 = test_median_time_past(&s2);
+        let ok_hdr = NewHeader {
+            version: 2,
+            merkle_root: [0x33; 32],
+            timestamp: ts(1),
+            nonce: 9,
+        };
+        s2.apply_headers(&[ok_hdr], &[median0], |_| zero_hash())
+            .unwrap();
+        let median_after_1 = test_median_time_past(&s2);
+        let bad_hdr = NewHeader {
+            version: 42,
+            merkle_root: [0x44; 32],
+            timestamp: median_after_1,
+            nonce: 10,
+        };
+        let failure = s2
+            .apply_headers(&[bad_hdr], &[median_after_1], |_| zero_hash())
+            .expect_err("timestamp equal to median must fail");
+        assert_eq!(failure.error_code, ValidationErrorCode::TimestampTooOld);
+
+        // Version field is not validated by consensus here; a weird version should still pass if PoW/timestamp do.
+        let mut s3 = test_state();
+        let median_start = test_median_time_past(&s3);
+        let odd_version_hdr = NewHeader {
+            version: 0xFFFF_FFFF,
+            merkle_root: [0x55; 32],
+            timestamp: ts(median_start.into_inner().wrapping_add(1)),
+            nonce: 1,
+        };
+        s3.apply_headers(&[odd_version_hdr], &[median_start], |_| zero_hash())
+            .expect("unexpected failure due to version only");
+    }
+
+    // Median time boundary: timestamp == median must fail
+    #[test]
+    fn median_time_boundary_equality_fails() {
+        let mut state = test_state();
+        // Seed a few headers to make median meaningful.
+        for t in 1..=5 {
+            apply_header(&mut state, t);
+        }
+        let median = test_median_time_past(&state);
+        let hdr = NewHeader {
+            version: 1,
+            merkle_root: [0x66; 32],
+            timestamp: median,
+            nonce: 1,
+        };
+        let failure = state
+            .apply_headers(&[hdr], &[median], |_| zero_hash())
+            .expect_err("timestamp equal to median must fail");
+        assert_eq!(failure.error_code, ValidationErrorCode::TimestampTooOld);
     }
 }

@@ -33,34 +33,9 @@ impl<Tag, T> core::ops::Deref for Branded<Tag, T> {
     }
 }
 
-impl<Tag, T> core::ops::DerefMut for Branded<Tag, T> {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.inner
-    }
-}
-
 impl<Tag, T: core::fmt::Debug> core::fmt::Debug for Branded<Tag, T> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         self.inner.fmt(f)
-    }
-}
-
-pub trait IsBranded {
-    type Tag;
-    type Inner;
-    fn inner(&self) -> &Self::Inner;
-    fn into_inner(self) -> Self::Inner;
-}
-
-impl<Tag, T> IsBranded for Branded<Tag, T> {
-    type Tag = Tag;
-    type Inner = T;
-    fn inner(&self) -> &T {
-        &self.inner
-    }
-    fn into_inner(self) -> T {
-        self.inner
     }
 }
 
@@ -74,6 +49,11 @@ impl<Tag> Branded<Tag, u256> {
     #[must_use]
     pub fn from_le_bytes(bytes: [u8; 32]) -> Self {
         Self::new(u256::from_le_bytes(bytes))
+    }
+
+    #[must_use]
+    pub fn to_le_bytes(self) -> [u8; 32] {
+        self.inner.to_le_bytes()
     }
 }
 

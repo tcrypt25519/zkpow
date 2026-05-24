@@ -293,16 +293,12 @@ impl Input {
             recursive_proof,
         }
     }
-}
 
-impl Input {
     /// Parse and validate input from the host/guest wire format.
     pub fn parse(bytes: &[u8]) -> Result<Self, InputError> {
         InputRef::parse(bytes).map(|input| input.to_owned())
     }
-}
 
-impl Input {
     /// Serialize to the host/guest wire format.
     #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
@@ -322,7 +318,7 @@ mod tests {
     use alloc::vec;
 
     use super::*;
-    use crate::{BlockHash, BlockTimestamp, State, ValidationState};
+    use crate::{BlockHash, BlockTimestamp, State};
 
     #[test]
     fn test_recursive_proof_default_is_zeros() {
@@ -351,7 +347,7 @@ mod tests {
             block_hash: BlockHash::from_raw([2; 32]),
             ..Default::default()
         };
-        let claim = ValidationState::from_state(&genesis_state).public;
+        let claim = genesis_state.public_claim();
         let input = Input::new(claim, RecursiveProof::default()).to_bytes();
         let input = Input::parse(&input).unwrap();
 
@@ -379,7 +375,7 @@ mod tests {
             public_values_digest: expected_public_values_digest,
             ..Default::default()
         };
-        let claim = ValidationState::from_state(&non_genesis_state).public;
+        let claim = non_genesis_state.public_claim();
         let input = Input::new(claim, recursive_proof_data).to_bytes();
         let input = Input::parse(&input).unwrap();
 
@@ -422,7 +418,7 @@ mod tests {
             genesis_hash: BlockHash::default(),
             ..Default::default()
         };
-        let claim = ValidationState::from_state(&genesis_state).public;
+        let claim = genesis_state.public_claim();
         let input = Input::new(claim, RecursiveProof::default()).to_bytes();
 
         let mut misaligned = Vec::with_capacity(input.len() + 1);

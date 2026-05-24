@@ -1,0 +1,161 @@
+## Diagram 1: Genesis as Trusted Anchor (commit 3ff88a5)
+##
+## Before: height-0 state carried a zero genesis_hash placeholder; the guest
+## would hash the first header and fill it in, then re-validate it.
+## After:  height-0 state is accepted as-is — genesis_hash + block_hash are
+## already set by the host and treated as the trusted starting point.
+## Block 1 is the first *validated* header, not block 0.
+
+direction: right
+
+classes: {
+  host_box: {
+    style.fill: "#E3F2FD"
+    style.stroke: "#1565C0"
+    style.stroke-width: 2
+  }
+  guest_box: {
+    style.fill: "#F3E5F5"
+    style.stroke: "#6A1B9A"
+    style.stroke-width: 2
+  }
+  data: {
+    shape: stored_data
+    style.fill: "#FFF9C4"
+    style.stroke: "#F9A825"
+  }
+  removed: {
+    style.fill: "#FFEBEE"
+    style.stroke: "#B71C1C"
+    style.opacity: 0.6
+  }
+  ok: {
+    style.fill: "#E8F5E9"
+    style.stroke: "#2E7D32"
+    style.stroke-width: 2
+  }
+}
+
+host: Host {
+  class: host_box
+
+  genesis_state: Height-0 State {
+    class: data
+    tooltip: |
+      genesis_hash = SHA256d(genesis_header)
+      block_hash   = SHA256d(genesis_header)
+      height       = 0
+      (fully populated — no placeholder)
+    |
+  }
+
+  input_wire: Input Wire {
+    shape: queue
+    style.fill: "#E3F2FD"
+    tooltip: PublicChainClaim || RecursiveProof
+  }
+
+  state_wire: State Witness Wire {
+    shape: queue
+    style.fill: "#E3F2FD"
+    tooltip: Full State bytes (separate channel)
+  }
+
+  genesis_state -> input_wire: extract PublicChainClaim
+  genesis_state -> state_wire: pass full State
+}
+
+guest: Guest (zkVM) {
+  class: guest_box
+
+  parse_input: Parse Input {
+    shape: hexagon
+    style.fill: "#EDE7F6"
+  }
+
+  parse_state: Parse State Witness {
+    shape: hexagon
+    style.fill: "#EDE7F6"
+  }
+
+  verify_claim: Verify State ↔ Claim {
+    shape: diamond
+    style.fill: "#FFF9C4"
+    tooltip: ValidationState::from_state(state).public == claim
+  }
+
+  anchor_check: height == 0? {
+    shape: diamond
+    style.fill: "#FFF9C4"
+  }
+
+  trusted: Accept as Trusted Anchor {
+    class: ok
+    tooltip: |
+      No genesis re-derivation.
+      genesis_hash and block_hash
+      are already authoritative.
+    |
+  }
+
+  apply_headers: Apply Headers (block 1+) {
+    class: ok
+    tooltip: |
+      First validated header is block 1.
+      prev_blockhash must equal state.block_hash.
+    |
+  }
+
+  parse_input -> parse_state
+  parse_state -> verify_claim
+  verify_claim -> anchor_check: claim matches
+  anchor_check -> trusted: yes (height 0)
+  anchor_check -> apply_headers: no (height > 0)
+  trusted -> apply_headers: proceed
+}
+
+removed_old: REMOVED: Genesis Bootstrap Logic {
+  class: removed
+
+  zero_placeholder: Zero genesis_hash placeholder {
+    class: removed
+    tooltip: |
+      OLD: host serialized genesis_hash = 0x00..00
+      guest detected it and filled it in
+    |
+  }
+
+  recompute: Guest re-derives genesis_hash {
+    class: removed
+    tooltip: genesis_hash = SHA256d(first_header)
+  }
+
+  revalidate: Re-validate against first header {
+    class: removed
+    tooltip: |
+      OLD error code: GenesisHashMismatch (4)
+      if recomputed hash ≠ expected
+    |
+  }
+
+  zero_placeholder -> recompute -> revalidate
+}
+
+host.input_wire -> guest.parse_input: "stdin[0]"
+host.state_wire -> guest.parse_state: "stdin[1]"
+
+note: |md
+  **Commit 3ff88a5** — treat initial header state as trusted anchor
+
+  *Before*: height-0 wire input carried `genesis_hash = 0x00..00`; the guest
+  hashed the first header to fill it in, then checked for mismatch.
+
+  *After*: the host populates `genesis_hash` and `block_hash` before
+  serializing. The guest accepts height-0 state unconditionally as the
+  chain anchor. `GenesisHashMustBeZero` validation and `update_genesis_hash`
+  are deleted.
+| {
+  shape: text
+  near: "bottom-center"
+  style.font-size: 13
+}

@@ -221,6 +221,38 @@ pub fn continuation_digest(private: &PrivateContinuationState) -> [u8; 32] {
     Sha256::digest(private.to_bytes()).into()
 }
 
+/// Compute the continuation digest directly from a [`State`], avoiding
+/// [`PrivateContinuationState`] construction.
+pub fn continuation_digest_from_state(state: &State) -> [u8; 32] {
+    Sha256::digest(state.continuation_bytes()).into()
+}
+
+#[must_use]
+pub fn target_from_compact(compact_target: CompactTarget) -> Target {
+    let bits = compact_target.to_consensus();
+    let size = (bits >> 24) as usize;
+    let mantissa = bits & 0x007f_ffff;
+    let mut normalized_target_bytes = [0u8; 32];
+
+    if size <= 3 {
+        let value = mantissa >> (8 * (3 - size));
+        normalized_target_bytes[0..4].copy_from_slice(&value.to_le_bytes());
+    } else {
+        let offset = size - 3;
+        if offset < 32 {
+            normalized_target_bytes[offset] = (mantissa & 0xff) as u8;
+        }
+        if offset + 1 < 32 {
+            normalized_target_bytes[offset + 1] = ((mantissa >> 8) & 0xff) as u8;
+        }
+        if offset + 2 < 32 {
+            normalized_target_bytes[offset + 2] = ((mantissa >> 16) & 0xff) as u8;
+        }
+    }
+
+    Target::from_le_bytes(normalized_target_bytes)
+}
+
 // ============================================================================
 // State Computation (host-side simulation of zkVM logic)
 // ============================================================================
@@ -257,6 +289,42 @@ pub fn genesis_state_from_record(genesis: HeaderRecord, genesis_hash: BlockHash)
     state.height = genesis.height as u32;
     state.chain_work = genesis.chain_work;
     state
+}
+
+pub fn state_from_db_at_height(db_path: &str, height: u32, genesis_hash: BlockHash) -> State {
+    if height == 0 {
+        let genesis = load_header_record_from_db(db_path, 0);
+        return genesis_state_from_record(genesis, genesis_hash);
+    }
+
+    let current = load_header_record_from_db(db_path, height as u64);
+    let next = load_header_record_from_db(db_path, height as u64 + 1);
+    let epoch_start_height = (height / zkpow_core::EPOCH_LENGTH) * zkpow_core::EPOCH_LENGTH;
+    let epoch_start_record = load_header_record_from_db(db_path, epoch_start_height as u64);
+    let window_count = (height as usize + 1).min(zkpow_core::WINDOW_SIZE) as u64;
+    let window_start = height as u64 + 1 - window_count;
+    let window_records = load_header_records_from_db(db_path, window_start, window_count);
+
+    let mut timestamps = [BlockTimestamp::default(); zkpow_core::WINDOW_SIZE];
+    for record in window_records {
+        timestamps[record.height as usize % zkpow_core::WINDOW_SIZE] = record.header.timestamp;
+    }
+
+    let next_target = target_from_compact(next.header.compact_target);
+
+    State {
+        header: current.header,
+        block_hash: hash_header(&current.header),
+        genesis_hash,
+        next_nbits: next.header.compact_target,
+        height,
+        chain_work: next.chain_work,
+        next_work: work_from_target(next_target),
+        next_target,
+        epoch_start_timestamp: epoch_start_record.header.timestamp,
+        timestamps,
+        _environment: core::marker::PhantomData,
+    }
 }
 
 /// Simulate the zkVM program locally to compute the expected [`State`] after
@@ -370,5 +438,19 @@ mod tests {
         let hints = median_time_past_hints_from_records(&records);
 
         compute_final_state_with_hints(&genesis_state, &headers, &hints);
+    }
+
+    #[test]
+    fn db_retarget_schedule_matches_height_40320() {
+        let genesis = load_header_record_from_db(TEST_DB_PATH, 0);
+        let genesis_hash = hash_header(&genesis.header);
+        let genesis_state = genesis_state_from_record(genesis, genesis_hash);
+        let records = load_header_records_from_db(TEST_DB_PATH, 1, 40319);
+        let headers = records_to_new_headers(&records);
+        let state = compute_final_state(&genesis_state, &headers);
+        let boundary = load_header_record_from_db(TEST_DB_PATH, 40320);
+
+        assert_eq!(state.height, 40319);
+        assert_eq!(state.next_nbits, boundary.header.compact_target);
     }
 }

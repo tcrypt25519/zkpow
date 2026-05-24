@@ -151,8 +151,7 @@ fn stdin_for_recursive_input(
 }
 
 fn input_for_state(state: &util::State, recursive_proof: RecursiveProof) -> Input {
-    let validation_state = zkpow_core::ValidationState::from_state(state);
-    Input::new(validation_state.public, recursive_proof)
+    Input::new(state.public_claim(), recursive_proof)
 }
 
 #[tokio::main]
@@ -452,10 +451,10 @@ async fn test_error_recursive_on_tampered_state_witness() -> Result<(), String> 
     let headers_to_5 = util::records_to_new_headers(&records);
     let state_at_5 = util::compute_final_state(&genesis_state, &headers_to_5);
 
-    let original_vs = zkpow_core::ValidationState::from_state(&state_at_5);
-    let original_digest = util::continuation_digest(&original_vs.private);
+    let original_digest = util::continuation_digest_from_state(&state_at_5);
     let verifier_key = VerifierKeyDigest::from_raw([0u32; 8]);
-    let original_pv = MinimalPublicValues::success(&state_at_5, original_digest, verifier_key);
+    let original_pv =
+        MinimalPublicValues::success(&state_at_5.public_claim(), original_digest, verifier_key);
     let recursive_proof = RecursiveProof {
         verifier_key,
         public_values_digest: PublicValuesDigest::from_raw(util::compute_pv_digest(
@@ -532,8 +531,7 @@ async fn test_pv_minimal_format() -> Result<(), String> {
     let records2 = util::load_header_records_from_db(DEFAULT_DB_PATH, 1, 10);
     let headers2 = util::records_to_new_headers(&records2);
     let final_state = util::compute_final_state(&genesis_state2, &headers2);
-    let vs = zkpow_core::ValidationState::from_state(&final_state);
-    let host_digest = util::continuation_digest(&vs.private);
+    let host_digest = util::continuation_digest_from_state(&final_state);
     if host_digest != mpv.continuation_digest {
         return Err(format!(
             "host digest {:?} != committed digest {:?}",

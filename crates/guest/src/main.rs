@@ -18,9 +18,9 @@
 sp1_zkvm::entrypoint!(main);
 
 use zkpow_core::{
-    cycle_track, BlockHash, Header, Input, MedianTimePastHintsRef, MinimalPublicValues,
-    NewHeaderHintsRef, PrivateContinuationState, PublicChainClaim, RecursiveProof, State,
-    ValidationState, MINIMAL_PV_SIZE, PRIVATE_CONTINUATION_STATE_SIZE,
+    cycle_track, BlockHash, Header, InputRef, MedianTimePastHintsRef, MinimalPublicValues,
+    NewHeaderHintsRef, PublicChainClaim, RecursiveProof, State, MINIMAL_PV_SIZE,
+    PRIVATE_CONTINUATION_STATE_SIZE,
 };
 
 mod sha256;
@@ -38,11 +38,10 @@ fn hash_header(header: &Header) -> BlockHash {
     })
 }
 
-/// Compute the continuation digest: SHA-256 of the serialized PrivateContinuationState.
+/// Compute the continuation digest: SHA-256 of the serialized private continuation fields.
 fn compute_continuation_digest(state: &State) -> [u8; 32] {
     cycle_track("crypto/continuation_digest", || {
-        let vs = ValidationState::from_state(state);
-        let pcs_bytes: [u8; PRIVATE_CONTINUATION_STATE_SIZE] = vs.private.to_bytes();
+        let pcs_bytes: [u8; PRIVATE_CONTINUATION_STATE_SIZE] = state.continuation_bytes();
         sha256_116bytes(&pcs_bytes)
     })
 }
@@ -54,8 +53,8 @@ fn commit_minimal_pv(pv: &MinimalPublicValues) -> ! {
     sp1_zkvm::syscalls::syscall_halt(0)
 }
 
-fn parse_input(input_bytes: &[u8]) -> Input {
-    Input::parse(input_bytes).expect("input should parse")
+fn parse_input(input_bytes: &[u8]) -> InputRef<'_> {
+    InputRef::parse(input_bytes).expect("input should parse")
 }
 
 fn parse_state_witness(state_bytes: &[u8]) -> State {
@@ -64,13 +63,15 @@ fn parse_state_witness(state_bytes: &[u8]) -> State {
     })
 }
 
-fn verify_state_claim(state: &State, claim: &PublicChainClaim) -> PrivateContinuationState {
+fn verify_state_claim(state: &State, claim: &PublicChainClaim) {
     cycle_track("input/verify_state_claim", || {
-        let validation_state = ValidationState::from_state(state);
-        if validation_state.public != *claim {
-            panic!("state witness public claim mismatch");
-        }
-        validation_state.private
+        assert!(
+            state.genesis_hash == claim.genesis_hash
+                && state.block_hash == claim.tip_hash
+                && state.chain_work == claim.chain_work
+                && state.height == claim.height,
+            "state witness public claim mismatch"
+        );
     })
 }
 
@@ -94,7 +95,7 @@ fn parse_median_hints<'a>(hint_bytes: &'a [u8], header_count: usize) -> MedianTi
 fn verify_recursive_proof(
     recursive_proof: &RecursiveProof,
     prior_claim: &PublicChainClaim,
-    prior_continuation: &PrivateContinuationState,
+    prior_continuation_bytes: &[u8; PRIVATE_CONTINUATION_STATE_SIZE],
 ) {
     cycle_track("recursive/verify_proof", || {
         // Reject continuation from a failed prior proof.
@@ -106,21 +107,13 @@ fn verify_recursive_proof(
         }
 
         // 1. Hash the supplied continuation state.
-        let continuation_bytes: [u8; PRIVATE_CONTINUATION_STATE_SIZE] =
-            prior_continuation.to_bytes();
         let continuation_digest = cycle_track("recursive/continuation_digest", || {
-            sha256_116bytes(&continuation_bytes)
+            sha256_116bytes(prior_continuation_bytes)
         });
 
         // 2. Reconstruct the prior proof's minimal public values and hash them.
-        //    Build a temporary State to use MinimalPublicValues::success.
-        let prior_state: State = ValidationState {
-            public: *prior_claim,
-            private: prior_continuation.clone(),
-        }
-        .into_state();
         let prior_pv = MinimalPublicValues::success(
-            &prior_state,
+            prior_claim,
             continuation_digest,
             recursive_proof.verifier_key,
         );
@@ -156,12 +149,18 @@ pub fn main() {
 
         let input = parse_input(&input_bytes);
         let mut state = parse_state_witness(&state_bytes);
-        let continuation = verify_state_claim(&state, &input.claim);
+        verify_state_claim(&state, &input.claim);
         let header_hints = parse_header_hints(&header_hint_bytes);
         let median_hints = parse_median_hints(&median_hint_bytes, header_hints.headers.len());
 
         if input.claim.height > 0 {
-            verify_recursive_proof(&input.recursive_proof, &input.claim, &continuation);
+            let prior_continuation_bytes: [u8; PRIVATE_CONTINUATION_STATE_SIZE] =
+                state.continuation_bytes();
+            verify_recursive_proof(
+                input.recursive_proof,
+                &input.claim,
+                &prior_continuation_bytes,
+            );
         }
 
         // Apply headers; on failure commit minimal PV and halt.
@@ -170,7 +169,7 @@ pub fn main() {
         {
             let digest = compute_continuation_digest(&failure.last_valid_state);
             let pv = MinimalPublicValues::failure(
-                &failure.last_valid_state,
+                &failure.last_valid_state.public_claim(),
                 failure.error_code,
                 failure.failure_height,
                 digest,
@@ -180,7 +179,11 @@ pub fn main() {
         }
 
         let digest = compute_continuation_digest(&state);
-        let pv = MinimalPublicValues::success(&state, digest, input.recursive_proof.verifier_key);
+        let pv = MinimalPublicValues::success(
+            &state.public_claim(),
+            digest,
+            input.recursive_proof.verifier_key,
+        );
         commit_minimal_pv(&pv);
     });
 }

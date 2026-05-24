@@ -1,0 +1,13 @@
+{
+	"folders": [
+		{
+			"path": "../../succinctlabs/sp1-cluster"
+		},
+		{
+			"path": "."
+		}
+	],
+	"settings": {
+		"python.languageServer": "None"
+	}
+}

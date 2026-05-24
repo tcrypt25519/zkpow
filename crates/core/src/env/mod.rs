@@ -4,9 +4,9 @@ compile_error!("zkpow wire types require a little-endian target");
 use crate::{
     calculate_next_work_required, check_proof_of_work, copy_from_bytes, copy_to_bytes,
     ref_from_bytes, target_gt, target_to_bits, work_from_target, ApplyFailure, BlockHash,
-    BlockTimestamp, ChainWork, CompactTarget, Header, NewHeader, ParseError, Target,
-    ValidationErrorCode, EXPECTED_EPOCH_TIMESPAN, GENESIS_TARGET, MAX_EPOCH_TIMESPAN,
-    MIN_EPOCH_TIMESPAN, STATE_SIZE, WINDOW_SIZE,
+    BlockTimestamp, ChainWork, CompactTarget, Header, NewHeader, ParseError, PublicChainClaim,
+    Target, ValidationErrorCode, EXPECTED_EPOCH_TIMESPAN, GENESIS_TARGET, MAX_EPOCH_TIMESPAN,
+    MIN_EPOCH_TIMESPAN, PRIVATE_CONTINUATION_STATE_SIZE, STATE_SIZE, WINDOW_SIZE,
 };
 use core::marker::PhantomData;
 
@@ -128,6 +128,32 @@ impl<E: Env> StateInner<E> {
         cycle_track("parse/state_ref", || ref_from_bytes(bytes))
     }
 
+    /// Extract the verifier-visible public claim from this state.
+    #[must_use]
+    pub fn public_claim(&self) -> PublicChainClaim {
+        PublicChainClaim {
+            genesis_hash: self.genesis_hash,
+            tip_hash: self.block_hash,
+            chain_work: self.chain_work,
+            height: self.height,
+        }
+    }
+
+    /// Serialize the private continuation fields directly to bytes,
+    /// bypassing [`PrivateContinuationState`](crate::PrivateContinuationState) construction.
+    #[must_use]
+    pub fn continuation_bytes(&self) -> [u8; PRIVATE_CONTINUATION_STATE_SIZE] {
+        let mut out = [0u8; PRIVATE_CONTINUATION_STATE_SIZE];
+        out[0..4].copy_from_slice(&self.next_nbits.to_consensus().to_le_bytes());
+        out[4..36].copy_from_slice(&self.next_work.to_le_bytes());
+        out[36..68].copy_from_slice(&self.next_target.to_le_bytes());
+        out[68..72].copy_from_slice(&self.epoch_start_timestamp.to_le_bytes());
+        for (i, ts) in self.timestamps.iter().enumerate() {
+            out[72 + i * 4..72 + (i + 1) * 4].copy_from_slice(&ts.to_le_bytes());
+        }
+        out
+    }
+
     /// The expanded proof-of-work target required for the next header.
     #[must_use]
     pub fn next_target(&self) -> Target {
@@ -193,9 +219,32 @@ impl<E: Env> StateInner<E> {
                     if target_gt(new_target, GENESIS_TARGET) {
                         new_target = GENESIS_TARGET;
                     }
-                    self.next_target = new_target;
-                    self.next_nbits = target_to_bits(new_target);
-                    self.next_work = work_from_target(new_target);
+                    let next_nbits = target_to_bits(new_target);
+                    let bits = next_nbits.to_consensus();
+                    let size = (bits >> 24) as usize;
+                    let mantissa = bits & 0x007f_ffff;
+                    let mut normalized_target_bytes = [0u8; 32];
+
+                    if size <= 3 {
+                        let value = mantissa >> (8 * (3 - size));
+                        normalized_target_bytes[0..4].copy_from_slice(&value.to_le_bytes());
+                    } else {
+                        let offset = size - 3;
+                        if offset < 32 {
+                            normalized_target_bytes[offset] = (mantissa & 0xff) as u8;
+                        }
+                        if offset + 1 < 32 {
+                            normalized_target_bytes[offset + 1] = ((mantissa >> 8) & 0xff) as u8;
+                        }
+                        if offset + 2 < 32 {
+                            normalized_target_bytes[offset + 2] = ((mantissa >> 16) & 0xff) as u8;
+                        }
+                    }
+
+                    let normalized_target = Target::from_le_bytes(normalized_target_bytes);
+                    self.next_nbits = next_nbits;
+                    self.next_target = normalized_target;
+                    self.next_work = work_from_target(normalized_target);
                 });
             }
 
