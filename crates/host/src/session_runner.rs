@@ -4,6 +4,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::batch_runner::run_single_batch;
 use crate::memory_profiler;
+use crate::proof_pipeline::clear_prepared_prover_cache;
 
 pub type BoxError = Box<dyn std::error::Error + Send + Sync + 'static>;
 
@@ -82,6 +83,16 @@ pub async fn run_batch_session(default_max_batches: u32) -> Result<(), BoxError>
 
     let mut current_prev_proof: Option<PathBuf> = env::var("PREV_PROOF").ok().map(PathBuf::from);
     let mut batch_count: u32 = 0;
+    let prover_rebuild_every: u32 = env::var("PROVER_REBUILD_EVERY_N_BATCHES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    if prover_rebuild_every > 0 {
+        tracing::info!(
+            prover_rebuild_every,
+            "Periodic prover rebuild enabled; clears cache every N batches"
+        );
+    }
 
     loop {
         if batch_count >= max_batches {
@@ -162,6 +173,19 @@ pub async fn run_batch_session(default_max_batches: u32) -> Result<(), BoxError>
                 "logs/jemalloc_{}_batch_{:04}_after_drop.json",
                 timestamp, batch_count
             )));
+        }
+
+        // Periodic prover rebuild: if configured, clear the cached prover every N batches
+        // so the next batch rebuilds it from scratch. This resets all SP1 internal state
+        // (artifact client, channels, etc.) and is the strongest in-process mitigation
+        // for memory leaks inside SP1's proving layer.
+        if prover_rebuild_every > 0 && batch_count % prover_rebuild_every == 0 && batch_count < max_batches {
+            tracing::info!(
+                batch = batch_count,
+                prover_rebuild_every,
+                "Periodic prover rebuild triggered; clearing prepared prover cache"
+            );
+            clear_prepared_prover_cache();
         }
     }
 

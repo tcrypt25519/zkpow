@@ -103,10 +103,6 @@ fn raw_header_bits(raw_headers: &[u8], height: usize) -> Result<u32, String> {
     Ok(u32::from_le_bytes(bits))
 }
 
-fn consensus_bits(bits: util::CompactTarget) -> u32 {
-    bits.to_consensus()
-}
-
 fn mainnet_genesis_hash() -> util::BlockHash {
     let mut bytes: [u8; 32] = hex::decode(MAINNET_GENESIS_HEX)
         .expect("mainnet genesis hash should decode")
@@ -226,20 +222,20 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
     let first_epoch_headers = util::raw_headers_to_new_headers(&first_epoch_raw);
     let first_epoch_state = util::compute_final_state(&genesis_state, &first_epoch_headers);
     println!(
-        "retarget-debug: first_epoch loaded={} state.height={} state.next_nbits={:#x}",
+        "retarget-debug: first_epoch loaded={} state.height={} state.target={:?}",
         first_epoch_headers.len(),
         first_epoch_state.height,
-        consensus_bits(first_epoch_state.next_nbits),
+        first_epoch_state.target,
     );
     let first_retarget_bits = raw_header_bits(
         &util::load_headers_from_db(DEFAULT_DB_PATH, (FIRST_BOUNDARY_TIP_HEIGHT + 1) as u64, 1),
         0,
     )?;
-    if consensus_bits(first_epoch_state.next_nbits) != first_retarget_bits {
+    if first_epoch_state.target != util::target_from_compact(util::CompactTarget::from_inner(first_retarget_bits)) {
         return Err(format!(
-            "expected first retarget boundary bits {:#x}, got {:#x}",
-            first_retarget_bits,
-            consensus_bits(first_epoch_state.next_nbits),
+            "expected first retarget boundary target {:?}, got {:?}",
+            util::target_from_compact(util::CompactTarget::from_inner(first_retarget_bits)),
+            first_epoch_state.target,
         ));
     }
 
@@ -247,10 +243,10 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
     let new_headers = util::raw_headers_to_new_headers(&raw_headers);
     let state = util::compute_final_state(&genesis_state, &new_headers);
     println!(
-        "retarget-debug: retarget loaded={} state.height={} state.next_nbits={:#x}",
+        "retarget-debug: retarget loaded={} state.height={} state.target={:?}",
         new_headers.len(),
         state.height,
-        consensus_bits(state.next_nbits),
+        state.target,
     );
     println!(
         "retarget-debug: prev_epoch_bits={:#x} next_header_bits={:#x}",
@@ -281,11 +277,11 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
         ));
     }
 
-    if consensus_bits(state.next_nbits) != next_header_bits {
+    if state.target != util::target_from_compact(util::CompactTarget::from_inner(next_header_bits)) {
         return Err(format!(
-            "expected next-header bits {:#x} after completing epoch, got {:#x}",
-            next_header_bits,
-            consensus_bits(state.next_nbits),
+            "expected next-header target {:?} after completing epoch, got {:?}",
+            util::target_from_compact(util::CompactTarget::from_inner(next_header_bits)),
+            state.target,
         ));
     }
 
@@ -294,11 +290,11 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
     let pre_boundary_headers = util::raw_headers_to_new_headers(&pre_boundary_raw);
     let pre_boundary_state = util::compute_final_state(&genesis_state, &pre_boundary_headers);
 
-    if consensus_bits(pre_boundary_state.next_nbits) != previous_epoch_bits {
+    if pre_boundary_state.target != util::target_from_compact(util::CompactTarget::from_inner(previous_epoch_bits)) {
         return Err(format!(
-            "expected pre-boundary bits {:#x}, got {:#x}",
-            previous_epoch_bits,
-            consensus_bits(pre_boundary_state.next_nbits),
+            "expected pre-boundary target {:?}, got {:?}",
+            util::target_from_compact(util::CompactTarget::from_inner(previous_epoch_bits)),
+            pre_boundary_state.target,
         ));
     }
 
@@ -314,7 +310,7 @@ async fn test_error_timestamp_too_old() -> Result<(), String> {
     let records = util::load_header_records_from_db(DEFAULT_DB_PATH, 1, 13);
     let mut headers = util::records_to_new_headers(&records);
     let hints = util::median_time_past_hints_for_headers(&genesis_state, &headers);
-    headers[11].timestamp = util::BlockTimestamp::from_consensus(1231006505);
+    headers[11].timestamp = util::BlockTimestamp::from_inner(1231006505);
     let input = input_for_state(&genesis_state, RecursiveProof::default());
     let stdin = stdin_for_input(&input, &genesis_state, &headers, &hints);
 
@@ -465,7 +461,7 @@ async fn test_error_recursive_on_tampered_state_witness() -> Result<(), String> 
     };
 
     let mut tampered_state = state_at_5.clone();
-    tampered_state.next_work = util::ChainWork::default();
+    tampered_state.work = util::ChainWork::default();
 
     let input = input_for_state(&state_at_5, recursive_proof);
     let empty_headers = [];

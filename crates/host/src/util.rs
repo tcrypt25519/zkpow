@@ -60,7 +60,7 @@ pub fn load_headers_from_db(db_path: &str, start_height: u64, count: u64) -> Vec
                     .try_into()
                     .expect("merkle_root must be 32 bytes"),
                 timestamp: BlockTimestamp::new(timestamp as u32),
-                compact_target: zkpow_core::CompactTarget::from_consensus(nbits as u32),
+                compact_target: zkpow_core::CompactTarget::from_inner(nbits as u32),
                 nonce: nonce as u32,
             };
             Ok(header.to_bytes())
@@ -122,7 +122,7 @@ pub fn load_header_records_from_db(
                     .try_into()
                     .expect("merkle_root must be 32 bytes"),
                 timestamp: BlockTimestamp::new(timestamp as u32),
-                compact_target: CompactTarget::from_consensus(nbits as u32),
+                compact_target: CompactTarget::from_inner(nbits as u32),
                 nonce: nonce as u32,
             };
 
@@ -229,7 +229,7 @@ pub fn continuation_digest_from_state(state: &State) -> [u8; 32] {
 
 #[must_use]
 pub fn target_from_compact(compact_target: CompactTarget) -> Target {
-    let bits = compact_target.to_consensus();
+    let bits = compact_target.into_inner();
     let size = (bits >> 24) as usize;
     let mantissa = bits & 0x007f_ffff;
     let mut normalized_target_bytes = [0u8; 32];
@@ -273,11 +273,10 @@ pub fn genesis_state(genesis_header: Header, genesis_hash: BlockHash) -> State {
         header: genesis_header,
         block_hash,
         genesis_hash,
-        next_nbits: genesis_header.compact_target,
         height: 0,
         chain_work: genesis_work,
-        next_work: genesis_work,
-        next_target: GENESIS_TARGET,
+        work: genesis_work,
+        target: GENESIS_TARGET,
         epoch_start_timestamp: genesis_header.timestamp,
         timestamps,
         _environment: core::marker::PhantomData,
@@ -316,11 +315,10 @@ pub fn state_from_db_at_height(db_path: &str, height: u32, genesis_hash: BlockHa
         header: current.header,
         block_hash: hash_header(&current.header),
         genesis_hash,
-        next_nbits: next.header.compact_target,
         height,
         chain_work: next.chain_work,
-        next_work: work_from_target(next_target),
-        next_target,
+        work: work_from_target(next_target),
+        target: next_target,
         epoch_start_timestamp: epoch_start_record.header.timestamp,
         timestamps,
         _environment: core::marker::PhantomData,
@@ -389,17 +387,16 @@ pub fn median_time_past_hints_for_headers(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zkpow_core::{BlockTimestamp, CompactTarget, GENESIS_NBITS, WINDOW_SIZE};
+    use zkpow_core::{BlockTimestamp, WINDOW_SIZE};
 
     const TEST_DB_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../headers.db");
 
     fn make_pcs() -> PrivateContinuationState {
         PrivateContinuationState {
-            next_nbits: CompactTarget::from_consensus(GENESIS_NBITS),
-            next_work: zkpow_core::ChainWork::from_limbs([1, 2, 3, 4]),
-            next_target: zkpow_core::GENESIS_TARGET,
-            epoch_start_timestamp: BlockTimestamp::from_consensus(500),
-            timestamps: [BlockTimestamp::from_consensus(10); WINDOW_SIZE],
+            work: zkpow_core::ChainWork::from_limbs([1, 2, 3, 4]),
+            target: zkpow_core::GENESIS_TARGET,
+            epoch_start_timestamp: BlockTimestamp::from_inner(500),
+            timestamps: [BlockTimestamp::from_inner(10); WINDOW_SIZE],
         }
     }
 
@@ -451,6 +448,9 @@ mod tests {
         let boundary = load_header_record_from_db(TEST_DB_PATH, 40320);
 
         assert_eq!(state.height, 40319);
-        assert_eq!(state.next_nbits, boundary.header.compact_target);
+        assert_eq!(
+            state.target,
+            target_from_compact(boundary.header.compact_target)
+        );
     }
 }

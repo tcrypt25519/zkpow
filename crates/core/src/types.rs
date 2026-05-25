@@ -89,4 +89,10 @@ impl CompactTarget {
     pub const fn from_inner(bits: u32) -> Self {
         Self(bits)
     }
+
+    /// Convert to a 4-byte little-endian byte array.
+    #[must_use]
+    pub const fn to_le_bytes(self) -> [u8; 4] {
+        self.0.to_le_bytes()
+    }
 }

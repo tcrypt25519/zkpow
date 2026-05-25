@@ -7,20 +7,31 @@
 //!   cargo run --release -p zkpow-host --bin sp1_stress
 //!
 //! Environment:
-//!   ITERATIONS      Number of prove loops (default: 5)
-//!   NUM_HEADERS     Headers per batch (default: 1)
+//!   ITERATIONS              Number of prove loops (default: 5)
+//!   NUM_HEADERS             Headers per batch (default: 1)
+//!   FRESH_PROVER=1          Drop and rebuild CpuProver before each iteration.
+//!                           Isolates whether leak is in prover state vs. SP1 internals.
 //!   MEMORY_DIAGNOSTICS_DUMP=1  Write jemalloc JSON dumps per iteration
 //!
-//! If RSS ratchets upward across iterations with the prover cached, the leak
-//! is inside SP1 (or jemalloc fragmentation). If RSS is flat, the leak is in
-//! application-level state retained between batches.
+//! Interpretation:
+//!   - Cached prover (default): if RSS ratchets, leak is inside SP1 proving engine.
+//!   - FRESH_PROVER=1: if ratchet stops, the prover holds state between iterations.
+//!     If ratchet continues with fresh prover, leak is in SP1 internals (rayon thread
+//!     locals, jemalloc fragmentation, or global caches outside the prover object).
+
+#[cfg(feature = "memory-diagnostics")]
+#[global_allocator]
+static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 use std::path::PathBuf;
 use std::time::Duration;
 
 use zkpow_host::memory_profiler;
 use zkpow_host::observability;
-use zkpow_host::proof_pipeline::{generate_and_save_proofs, ProofGenerationConfig, ProverBackend};
+use zkpow_host::proof_pipeline::{
+    artifact_client_stats, clear_prepared_prover_cache, generate_and_save_proofs,
+    ProofGenerationConfig, ProverBackend,
+};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -36,6 +47,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .unwrap_or(1);
     let memory_diagnostics_dump_enabled =
         std::env::var("MEMORY_DIAGNOSTICS_DUMP").as_deref() == Ok("1");
+    // When FRESH_PROVER=1, drop and rebuild the CpuProver before each iteration.
+    // This tests whether memory accumulation is inside the prover itself or elsewhere.
+    let fresh_prover_each_iter =
+        std::env::var("FRESH_PROVER").as_deref() == Ok("1");
 
     std::fs::create_dir_all("logs").ok();
 
@@ -54,6 +69,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     tracing::info!(
         iterations,
         num_headers,
+        fresh_prover_each_iter,
         "SP1 stress test starting"
     );
 
@@ -81,6 +97,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
         std::fs::create_dir_all(&config.output_dir).ok();
 
+        if fresh_prover_each_iter && i > 1 {
+            tracing::info!(iteration = i, "FRESH_PROVER: dropping cached prover before iteration");
+            clear_prepared_prover_cache();
+            // Allow the allocator to return freed pages before we snapshot memory.
+            memory_profiler::maybe_purge_allocator();
+        }
+
         let start_mem = memory_profiler::capture_snapshot();
         memory_profiler::log_snapshot("stress_iter_start", &start_mem, "Stress iteration start");
 
@@ -94,7 +117,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let iter_start = std::time::Instant::now();
         let artifacts = generate_and_save_proofs(&config).await?;
         let compressed_path = artifacts.compressed_path.clone();
+
+        #[cfg(feature = "memory-diagnostics")]
+        let mem_before_drop = memory_profiler::capture_snapshot();
+        #[cfg(feature = "memory-diagnostics")]
+        memory_profiler::log_snapshot(
+            "before_artifacts_drop",
+            &mem_before_drop,
+            "Memory before dropping ProofArtifacts",
+        );
+
         drop(artifacts);
+
+        #[cfg(feature = "memory-diagnostics")]
+        let mem_after_drop = memory_profiler::capture_snapshot();
+        #[cfg(feature = "memory-diagnostics")]
+        memory_profiler::log_snapshot_delta(
+            "after_artifacts_drop",
+            &mem_before_drop,
+            &mem_after_drop,
+            Duration::ZERO,
+            "Memory after dropping ProofArtifacts",
+        );
+
         let iter_elapsed = iter_start.elapsed();
 
         let end_mem = memory_profiler::capture_snapshot();
@@ -160,6 +205,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     "Cumulative ratchet since iteration 1 start"
                 );
             }
+        }
+
+        // Log artifact client stats to check for artifact leaks.
+        if let Some((artifact_count, artifact_bytes)) = artifact_client_stats().await {
+            tracing::info!(
+                iteration = i,
+                artifact_count,
+                artifact_bytes,
+                artifact_mb = artifact_bytes / (1024 * 1024),
+                "Artifact client stats after proof"
+            );
         }
 
         prev_proof_path = Some(compressed_path);

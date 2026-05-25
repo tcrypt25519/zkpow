@@ -152,6 +152,38 @@ fn prepared_prover_store() -> &'static AsyncMutex<Option<(PreparedProverConfig, 
     PREPARED_PROVER.get_or_init(|| AsyncMutex::new(None))
 }
 
+/// Clear the cached prepared prover so the next call to [`get_prepared_prover`] rebuilds it.
+pub fn clear_prepared_prover_cache() {
+    if let Some(store) = PREPARED_PROVER.get() {
+        let mut guard = match store.try_lock() {
+            Ok(g) => g,
+            Err(_) => {
+                tracing::warn!("prepared prover cache locked; skipping clear");
+                return;
+            }
+        };
+        if guard.is_some() {
+            tracing::info!("clearing prepared prover cache; next batch will rebuild");
+            *guard = None;
+        }
+    }
+}
+
+/// Returns (artifact_count, total_bytes) for the in-memory artifact client of the
+/// cached prover, or None if the prover isn't initialized yet.
+pub async fn artifact_client_stats() -> Option<(usize, usize)> {
+    let store = PREPARED_PROVER.get()?;
+    let guard = store.lock().await;
+    match guard.as_ref() {
+        Some((_, PreparedProver::Cpu { prover, .. })) => {
+            Some(prover.artifact_client_stats().await)
+        }
+        #[cfg(feature = "CUDA")]
+        Some((_, PreparedProver::Cuda { .. })) => None,
+        None => None,
+    }
+}
+
 fn parse_genesis_hash() -> Result<util::BlockHash, BoxError> {
     let mut genesis_hash: [u8; 32] = hex::decode(GENESIS_HASH_HEX)?
         .try_into()
@@ -349,11 +381,31 @@ where
         )
     })?;
 
+    #[cfg(feature = "memory-diagnostics")]
+    let mem_before_execute = crate::memory_profiler::capture_snapshot();
+    #[cfg(feature = "memory-diagnostics")]
+    crate::memory_profiler::log_snapshot(
+        "before_execute",
+        &mem_before_execute,
+        "Memory before SP1 execute (program execution)",
+    );
+
     let (public_values, report) = timed_async("execute_program", || async {
         prover.execute(ELF, stdin.clone()).await
     })
     .await?;
     tracing::info!(prover = prover_name, "Execution completed");
+
+    #[cfg(feature = "memory-diagnostics")]
+    let mem_after_execute = crate::memory_profiler::capture_snapshot();
+    #[cfg(feature = "memory-diagnostics")]
+    crate::memory_profiler::log_snapshot_delta(
+        "after_execute",
+        &mem_before_execute,
+        &mem_after_execute,
+        std::time::Duration::ZERO,
+        "Memory after SP1 execute (before proving)",
+    );
 
     let execution_public_values = public_values.to_vec();
     match HeaderChainPublicValues::parse(&execution_public_values) {
@@ -377,12 +429,32 @@ where
         }
     }
 
+    #[cfg(feature = "memory-diagnostics")]
+    let mem_before_prove_compressed = crate::memory_profiler::capture_snapshot();
+    #[cfg(feature = "memory-diagnostics")]
+    crate::memory_profiler::log_snapshot(
+        "before_prove_compressed",
+        &mem_before_prove_compressed,
+        "Memory before SP1 prove_compressed call",
+    );
+
     let compressed_proof = timed_async("prove_compressed", || async {
         async { prover.prove(proving_key, stdin).compressed().await }
             .instrument(tracing::info_span!("prove_compressed_detail"))
             .await
     })
     .await?;
+
+    #[cfg(feature = "memory-diagnostics")]
+    let mem_after_prove_compressed = crate::memory_profiler::capture_snapshot();
+    #[cfg(feature = "memory-diagnostics")]
+    crate::memory_profiler::log_snapshot_delta(
+        "after_prove_compressed",
+        &mem_before_prove_compressed,
+        &mem_after_prove_compressed,
+        std::time::Duration::ZERO,
+        "Memory after SP1 prove_compressed call (proof artifacts still in artifact client)",
+    );
     timed_sync(
         "verify_compressed_public_values",
         || -> Result<(), BoxError> {
@@ -618,6 +690,16 @@ where
 
     let total_duration = overall_start.elapsed();
 
+    #[cfg(feature = "memory-diagnostics")]
+    {
+        let mem_before_return = crate::memory_profiler::capture_snapshot();
+        crate::memory_profiler::log_snapshot(
+            "before_artifacts_return",
+            &mem_before_return,
+            "Memory before returning ProofArtifacts (compressed_proof still in scope)",
+        );
+    }
+
     Ok(ProofArtifacts {
         compressed_path,
         groth16_path,
@@ -716,7 +798,14 @@ pub async fn generate_and_save_proofs(
     log_prover_backend_selection(config);
     match get_prepared_prover(config).await? {
         PreparedProver::Cpu { prover, proving_key } => {
-            generate_and_save_proofs_inner(config, "cpu", &prover, &proving_key).await
+            let artifacts =
+                generate_and_save_proofs_inner(config, "cpu", &prover, &proving_key).await?;
+            // Complete the proof to clean up SP1 internal task tracking state.
+            if let Some(proof_id) = prover.last_proof_id() {
+                tracing::info!(%proof_id, "completing proof to free SP1 worker state");
+                prover.complete_proof(proof_id).await?;
+            }
+            Ok(artifacts)
         }
         #[cfg(feature = "CUDA")]
         PreparedProver::Cuda { prover, proving_key } => {

@@ -30,8 +30,8 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
 tracing-appender = "0.2"
-jemalloc = { workspace = true, optional = true }
 jemalloc-ctl = { workspace = true, optional = true, features = ["use_std"] }
+jemalloc-sys = { workspace = true, optional = true }
 jemallocator = { workspace = true, optional = true }
 libc = { version = "0.2", optional = true }
 
@@ -42,6 +42,6 @@ sp1-build = { workspace = true }
 [features]
 default = []
 CUDA = ["sp1-sdk/cuda"]
-memory-diagnostics = ["dep:jemalloc", "dep:jemalloc-ctl", "dep:jemallocator", "dep:libc"]
+memory-diagnostics = ["dep:jemalloc-ctl", "dep:jemalloc-sys", "dep:jemallocator", "dep:libc"]
 # Opt in to the slow proof-generation tests.
 slow-tests = []
