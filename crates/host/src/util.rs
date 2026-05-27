@@ -205,7 +205,7 @@ pub fn sha256d(data: &[u8]) -> [u8; 32] {
 /// Hash a full Bitcoin header with SHA256d.
 #[must_use]
 pub fn hash_header(header: &Header) -> BlockHash {
-    BlockHash::from_raw(sha256d(&header.to_bytes()))
+    sha256d(&header.to_bytes())
 }
 
 /// Compute SHA-256 digest of public values.

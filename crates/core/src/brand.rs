@@ -2,7 +2,7 @@ use crate::types::u256;
 use core::marker::PhantomData;
 
 /// Generic branded newtype wrapper providing type-safe distinction without runtime overhead.
-#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(transparent)]
 pub struct Branded<Tag, T> {
     inner: T,

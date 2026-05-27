@@ -15,6 +15,8 @@
 //! Output: MinimalPublicValues (169 bytes) on success or failure.
 
 #![no_main]
+extern crate core;
+
 sp1_zkvm::entrypoint!(main);
 
 use zkpow_core::{
@@ -75,13 +77,13 @@ fn verify_state_claim(state: &State, claim: &PublicChainClaim) {
     })
 }
 
-fn parse_header_hints<'a>(hint_bytes: &'a [u8]) -> NewHeaderHintsRef<'a> {
+fn parse_header_hints<'a>(hint_bytes: &'_ [u8]) -> NewHeaderHintsRef<'_> {
     cycle_track("input/parse_header_hints", || {
         NewHeaderHintsRef::parse(hint_bytes).expect("new header hints should parse")
     })
 }
 
-fn parse_median_hints<'a>(hint_bytes: &'a [u8], header_count: usize) -> MedianTimePastHintsRef<'a> {
+fn parse_median_hints<'a>(hint_bytes: &'_ [u8], header_count: usize) -> MedianTimePastHintsRef<'_> {
     cycle_track("input/parse_median_hints", || {
         MedianTimePastHintsRef::parse(hint_bytes, header_count)
             .expect("median time past hints should parse")

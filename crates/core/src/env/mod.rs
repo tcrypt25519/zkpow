@@ -203,51 +203,6 @@ impl<E: Env> StateInner<E> {
                 });
             }
 
-            if cycle_track("state/next_inner/check_retarget", || {
-                (self.height + 1).is_multiple_of(2016)
-            }) {
-                cycle_track("state/next_inner/retarget", || {
-                    let actual_timespan =
-                        header.timestamp.as_i64() - self.epoch_start_timestamp.as_i64();
-                    let clamped =
-                        actual_timespan.clamp(MIN_EPOCH_TIMESPAN, MAX_EPOCH_TIMESPAN) as u32;
-                    let mut new_target = calculate_next_work_required(
-                        required_target,
-                        clamped,
-                        EXPECTED_EPOCH_TIMESPAN,
-                    );
-                    if target_gt(new_target, GENESIS_TARGET) {
-                        new_target = GENESIS_TARGET;
-                    }
-                    let next_nbits = target_to_bits(new_target);
-                    let bits = next_nbits.into_inner();
-                    let size = (bits >> 24) as usize;
-                    let mantissa = bits & 0x007f_ffff;
-                    let mut normalized_target_bytes = [0u8; 32];
-
-                    if size <= 3 {
-                        let value = mantissa >> (8 * (3 - size));
-                        normalized_target_bytes[0..4].copy_from_slice(&value.to_le_bytes());
-                    } else {
-                        let offset = size - 3;
-                        if offset < 32 {
-                            normalized_target_bytes[offset] = (mantissa & 0xff) as u8;
-                        }
-                        if offset + 1 < 32 {
-                            normalized_target_bytes[offset + 1] = ((mantissa >> 8) & 0xff) as u8;
-                        }
-                        if offset + 2 < 32 {
-                            normalized_target_bytes[offset + 2] = ((mantissa >> 16) & 0xff) as u8;
-                        }
-                    }
-
-                    let normalized_target = Target::from_le_bytes(normalized_target_bytes);
-                    self.next_nbits = next_nbits;
-                    self.next_target = normalized_target;
-                    self.next_work = work_from_target(normalized_target);
-                });
-            }
-
             if update_chain_work {
                 self.chain_work = cycle_track("state/next_inner/chain_work", || {
                     self.chain_work + required_work
@@ -339,6 +294,26 @@ impl<E: Env> StateInner<E> {
                 .zip(median_hints.iter().copied())
                 .enumerate()
             {
+                // If the next block opens a new difficulty epoch, retarget *before* we
+                // build the header and validate it, so the target/nbits are correct.
+                // Fires when self.height is the last block of an epoch (2015, 4031, …).
+                // At this point epoch_start_timestamp still holds the start of the
+                // completed epoch and self.header.timestamp is its last block — exactly
+                // what Bitcoin's retarget formula needs.
+                if self.height % 2016 == 2015 {
+                    cycle_track("state/apply_headers/retarget", || {
+                        let (new_target, new_nbits) = calculate_next_work_required(
+                            self.target,
+                            self.epoch_start_timestamp,
+                            self.header.timestamp,
+                        );
+
+                        self.header.compact_target = new_nbits;
+                        self.target = new_target;
+                        self.work = work_from_target(new_target);
+                    });
+                }
+
                 let required_nbits = self.next_nbits;
                 let required_work = self.next_work;
                 let header = cycle_track("state/apply_headers/build_header", || {
@@ -363,10 +338,11 @@ impl<E: Env> StateInner<E> {
                     self.next_inner(header, block_hash, median_time_past, false)
                 {
                     flush_pending_chain_work(self, &mut pending_run_work, &mut pending_run_count);
+                    let failure_height = self.height + 1;
                     return Err(ApplyFailure {
                         last_valid_state: self.clone(),
                         error_code,
-                        failure_height: self.height + 1,
+                        failure_height,
                     });
                 }
 

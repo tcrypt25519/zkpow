@@ -113,7 +113,7 @@ fn mainnet_genesis_hash() -> util::BlockHash {
         .try_into()
         .expect("mainnet genesis hash should be 32 bytes");
     bytes.reverse();
-    util::BlockHash::from_raw(bytes)
+    bytes
 }
 
 fn mainnet_genesis_state() -> util::State {
@@ -348,7 +348,7 @@ async fn test_recursive_chain_success() -> Result<(), String> {
     let records1 = util::load_header_records_from_db(DEFAULT_DB_PATH, 1, 10);
     let headers1 = util::records_to_new_headers(&records1);
     let hints1 = util::median_time_past_hints_for_headers(&genesis_state, &headers1);
-    let verifier_key = VerifierKeyDigest::from_raw(vk.hash_u32());
+    let verifier_key = VerifierKeyDigest::from_le_bytes(vk.hash_u32());
     let input1 = input_for_state(
         &genesis_state,
         RecursiveProof {
@@ -385,7 +385,7 @@ async fn test_recursive_chain_success() -> Result<(), String> {
         &state1,
         RecursiveProof {
             verifier_key,
-            public_values_digest: PublicValuesDigest::from_raw(util::compute_pv_digest(&pv1_bytes)),
+            public_values_digest: PublicValuesDigest::from_le_bytes(util::compute_pv_digest(&pv1_bytes)),
             previous_return_code: 0,
             ..Default::default()
         },
@@ -415,8 +415,8 @@ async fn test_error_recursive_on_failed_proof() -> Result<(), String> {
 
     // Craft a RecursiveProof that claims the prior proof had a failure (return code 2).
     let bad_recursive_proof = RecursiveProof {
-        verifier_key: VerifierKeyDigest::from_raw([0u32; 8]),
-        public_values_digest: PublicValuesDigest::from_raw([0u8; 32]),
+        verifier_key: VerifierKeyDigest::from_le_bytes([0u32; 8]),
+        public_values_digest: PublicValuesDigest::from_le_bytes([0u8; 32]),
         previous_return_code: 2,
         ..Default::default()
     };
@@ -452,12 +452,12 @@ async fn test_error_recursive_on_tampered_state_witness() -> Result<(), String> 
     let state_at_5 = util::compute_final_state(&genesis_state, &headers_to_5);
 
     let original_digest = util::continuation_digest_from_state(&state_at_5);
-    let verifier_key = VerifierKeyDigest::from_raw([0u32; 8]);
+    let verifier_key = VerifierKeyDigest::from_le_bytes([0u32; 8]);
     let original_pv =
         MinimalPublicValues::success(&state_at_5.public_claim(), original_digest, verifier_key);
     let recursive_proof = RecursiveProof {
         verifier_key,
-        public_values_digest: PublicValuesDigest::from_raw(util::compute_pv_digest(
+        public_values_digest: PublicValuesDigest::from_le_bytes(util::compute_pv_digest(
             &original_pv.to_bytes(),
         )),
         previous_return_code: 0,

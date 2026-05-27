@@ -56,10 +56,12 @@ pub const TARGET_BLOCK_TIME: u32 = 600;
 pub const EXPECTED_EPOCH_TIMESPAN: u32 = EPOCH_LENGTH * TARGET_BLOCK_TIME;
 
 /// Minimum clamped epoch timespan used for difficulty retargeting.
-pub const MIN_EPOCH_TIMESPAN: i64 = (EXPECTED_EPOCH_TIMESPAN / 4) as i64;
+pub const MIN_EPOCH_TIMESPAN: BlockTimestamp =
+    BlockTimestamp::from_u32(EXPECTED_EPOCH_TIMESPAN / 4);
 
 /// Maximum clamped epoch timespan used for difficulty retargeting.
-pub const MAX_EPOCH_TIMESPAN: i64 = (EXPECTED_EPOCH_TIMESPAN * 4) as i64;
+pub const MAX_EPOCH_TIMESPAN: BlockTimestamp =
+    BlockTimestamp::from_u32(EXPECTED_EPOCH_TIMESPAN * 4);
 
 /// Mainnet PoW limit in compact form.
 pub const GENESIS_NBITS: u32 = 0x1d00ffff;
@@ -77,8 +79,7 @@ pub const MAINNET_GENESIS_HASH_RAW: [u8; 32] = [
     0x93, 0x1e, 0x83, 0x65, 0xe1, 0x5a, 0x08, 0x9c, 0x68, 0xd6, 0x19, 0x00, 0x00, 0x00, 0x00, 0x00,
 ];
 
-#[repr(C)]
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Header {
     /// TODO: Make a newtype for Version.
     /// The maximally correct underlying type is a NonZero<i32>
@@ -91,15 +92,32 @@ pub struct Header {
 }
 
 impl Header {
-    /// Serialize to exactly [`BLOCK_HEADER_SIZE`] bytes.
+    /// Serialize to exactly [`BLOCK_HEADER_SIZE`] bytes (Bitcoin wire format).
     #[must_use]
     pub fn to_bytes(&self) -> [u8; BLOCK_HEADER_SIZE] {
-        copy_to_bytes(self)
+        let mut out = [0u8; BLOCK_HEADER_SIZE];
+        out[0..4].copy_from_slice(&self.version.to_le_bytes());
+        out[4..36].copy_from_slice(&self.prev_blockhash);
+        out[36..68].copy_from_slice(&self.merkle_root);
+        out[68..72].copy_from_slice(&self.timestamp.to_le_bytes());
+        out[72..76].copy_from_slice(&self.compact_target.to_le_bytes());
+        out[76..80].copy_from_slice(&self.nonce.to_le_bytes());
+        out
     }
 
-    /// Deserialize from exactly [`BLOCK_HEADER_SIZE`] bytes.
+    /// Deserialize from exactly [`BLOCK_HEADER_SIZE`] bytes (Bitcoin wire format).
     pub fn parse(bytes: &[u8]) -> Result<Self, ParseError> {
-        cycle_track("parse/header", || copy_from_bytes(bytes))
+        cycle_track("parse/header", || {
+            check_exact_len(bytes, BLOCK_HEADER_SIZE)?;
+            Ok(Self {
+                version: u32::from_le_bytes(bytes[0..4].try_into().unwrap()),
+                prev_blockhash: bytes[4..36].try_into().unwrap(),
+                merkle_root: bytes[36..68].try_into().unwrap(),
+                timestamp: BlockTimestamp::from_le_bytes(bytes[68..72].try_into().unwrap()),
+                compact_target: CompactTarget::from_le_bytes(bytes[72..76].try_into().unwrap()),
+                nonce: u32::from_le_bytes(bytes[76..80].try_into().unwrap()),
+            })
+        })
     }
 }
 
@@ -110,7 +128,7 @@ pub struct VerifierKeyDigest([u32; 8]);
 
 impl VerifierKeyDigest {
     #[must_use]
-    pub const fn from_raw(raw: [u32; 8]) -> Self {
+    pub const fn from_le_bytes(raw: [u32; 8]) -> Self {
         Self(raw)
     }
 
@@ -162,7 +180,7 @@ pub struct PublicValuesDigest([u8; 32]);
 
 impl PublicValuesDigest {
     #[must_use]
-    pub const fn from_raw(raw: [u8; 32]) -> Self {
+    pub const fn from_le_bytes(raw: [u8; 32]) -> Self {
         Self(raw)
     }
 
@@ -366,8 +384,8 @@ impl PublicChainClaim {
     #[must_use]
     pub fn to_bytes(&self) -> [u8; PUBLIC_CHAIN_CLAIM_SIZE] {
         let mut out = [0u8; PUBLIC_CHAIN_CLAIM_SIZE];
-        out[0..32].copy_from_slice(self.genesis_hash.as_raw());
-        out[32..64].copy_from_slice(self.tip_hash.as_raw());
+        out[0..32].copy_from_slice(&self.genesis_hash);
+        out[32..64].copy_from_slice(&self.tip_hash);
         out[64..96].copy_from_slice(&self.chain_work.to_le_bytes());
         out[96..100].copy_from_slice(&self.height.to_le_bytes());
         out
@@ -375,8 +393,8 @@ impl PublicChainClaim {
 
     pub fn parse(bytes: &[u8]) -> Result<Self, ParseError> {
         check_exact_len(bytes, PUBLIC_CHAIN_CLAIM_SIZE)?;
-        let genesis_hash = BlockHash::from_raw(bytes[0..32].try_into().unwrap());
-        let tip_hash = BlockHash::from_raw(bytes[32..64].try_into().unwrap());
+        let genesis_hash: BlockHash = bytes[0..32].try_into().unwrap();
+        let tip_hash: BlockHash = bytes[32..64].try_into().unwrap();
         let chain_work = ChainWork::from_le_bytes(bytes[64..96].try_into().unwrap());
         let height = u32::from_le_bytes(bytes[96..100].try_into().unwrap());
         Ok(Self {
@@ -648,8 +666,8 @@ impl MinimalPublicValues {
     #[must_use]
     pub fn to_bytes(&self) -> [u8; MINIMAL_PV_SIZE] {
         let mut out = [0u8; MINIMAL_PV_SIZE];
-        out[0..32].copy_from_slice(self.genesis_hash.as_raw());
-        out[32..64].copy_from_slice(self.tip_hash.as_raw());
+        out[0..32].copy_from_slice(&self.genesis_hash);
+        out[32..64].copy_from_slice(&self.tip_hash);
         out[64..96].copy_from_slice(&self.chain_work);
         out[96..100].copy_from_slice(&self.height.to_le_bytes());
         out[100] = self.return_code;
@@ -666,8 +684,8 @@ impl MinimalPublicValues {
                 actual: bytes.len(),
             });
         }
-        let genesis_hash = BlockHash::from_raw(bytes[0..32].try_into().unwrap());
-        let tip_hash = BlockHash::from_raw(bytes[32..64].try_into().unwrap());
+        let genesis_hash: BlockHash = bytes[0..32].try_into().unwrap();
+        let tip_hash: BlockHash = bytes[32..64].try_into().unwrap();
         let chain_work: [u8; 32] = bytes[64..96].try_into().unwrap();
         let height = u32::from_le_bytes(bytes[96..100].try_into().unwrap());
         let return_code = bytes[100];
@@ -817,7 +835,7 @@ pub fn target_to_bits(target: Target) -> CompactTarget {
             nbytes -= 1;
         }
         if nbytes == 0 {
-            return CompactTarget::from_inner(0);
+            return CompactTarget::from_u32(0);
         }
 
         let mut compact = if nbytes <= 3 {
@@ -837,7 +855,7 @@ pub fn target_to_bits(target: Target) -> CompactTarget {
             nbytes += 1;
         }
 
-        CompactTarget::from_inner(((nbytes as u32) << 24) | (compact & 0x007f_ffff))
+        CompactTarget::from_u32(((nbytes as u32) << 24) | (compact & 0x007f_ffff))
     })
 }
 
@@ -869,7 +887,7 @@ pub fn target_gt(lhs: Target, rhs: Target) -> bool {
 #[must_use]
 pub fn check_proof_of_work(hash: BlockHash, target: Target) -> bool {
     cycle_track("pow/check_proof_of_work", || {
-        let hash_u256 = u256::from_le_bytes(*hash.as_raw());
+        let hash_u256 = u256::from_le_bytes(hash);
         u256_cmp(&hash_u256, &target) != core::cmp::Ordering::Greater
     })
 }
@@ -904,7 +922,7 @@ impl core::ops::Mul<u32> for ChainWork {
             let multiplier = rhs as u128;
 
             for i in 0..4 {
-                let product = (limbs[i] as u128) * multiplier + carry;
+                let product = u128::from(limbs[i]) * multiplier + carry;
                 result[i] = product as u64;
                 carry = product >> 64;
             }
@@ -1006,7 +1024,7 @@ pub fn work_from_target(target: Target) -> ChainWork {
 
 /// Compute a retargeted 256-bit target from the previous target and measured timespan.
 #[must_use]
-pub fn calculate_next_work_required(
+pub fn calculate_next_work_required_from_timespan(
     old_target: Target,
     actual_timespan: u32,
     expected_timespan: u32,
@@ -1034,6 +1052,30 @@ pub fn calculate_next_work_required(
     })
 }
 
+/// Compute a retargeted 256-bit target from the previous target and measured timespan.
+#[must_use]
+pub fn calculate_next_work_required(
+    old_target: Target,
+    epoch_start_timestamp: BlockTimestamp,
+    last_block_timestamp: BlockTimestamp,
+) -> (Target, CompactTarget) {
+    let actual_timespan =
+        last_block_timestamp.as_i64() - epoch_start_timestamp.as_i64();
+    let clamped_timespan =
+        actual_timespan.clamp(MIN_EPOCH_TIMESPAN.as_i64(), MAX_EPOCH_TIMESPAN.as_i64()) as u32;
+
+    let mut new_target = calculate_next_work_required_from_timespan(
+        old_target,
+        clamped_timespan,
+        EXPECTED_EPOCH_TIMESPAN,
+    );
+    if target_gt(new_target, GENESIS_TARGET) {
+        new_target = GENESIS_TARGET;
+    }
+    let new_nbits = target_to_bits(new_target);
+    (new_target, new_nbits)
+}
+
 #[cfg(test)]
 mod tests {
     use alloc::vec::Vec;
@@ -1042,11 +1084,11 @@ mod tests {
     use super::*;
 
     fn ts(seconds: u32) -> BlockTimestamp {
-        BlockTimestamp::from_inner(seconds)
+        BlockTimestamp::from_u32(seconds)
     }
 
     fn zero_hash() -> BlockHash {
-        BlockHash::from_raw([0; 32])
+        [0u8; 32]
     }
 
     /// Convert compact `bits` into cumulative-work units using the genesis constant.
@@ -1113,7 +1155,7 @@ mod tests {
             failure.error_code,
             failure.failure_height,
             [0xA5; 32],
-            VerifierKeyDigest::from_raw([0xA5A5_A5A5; 8]),
+            VerifierKeyDigest::from_le_bytes([0xA5A5_A5A5; 8]),
         )
         .to_bytes()
     }
@@ -1145,14 +1187,14 @@ mod tests {
     fn new_header_from_header_round_trips_with_into_header() {
         let header = Header {
             version: 7,
-            prev_blockhash: BlockHash::from_raw([0x11; 32]),
+            prev_blockhash: [0x11u8; 32],
             merkle_root: [0x22; 32],
-            timestamp: BlockTimestamp::from_inner(123_456),
-            compact_target: CompactTarget::from_inner(0x1d00ffff),
+            timestamp: BlockTimestamp::from_u32(123_456),
+            compact_target: CompactTarget::from_u32(0x1d00ffff),
             nonce: 99,
         };
 
-        let new_header = NewHeader::from_header(&header);
+        let mut new_header = NewHeader::from_header(&header);
         assert_eq!(new_header.version, header.version);
         assert_eq!(new_header.merkle_root, header.merkle_root);
         assert_eq!(new_header.timestamp, header.timestamp);
@@ -1165,14 +1207,14 @@ mod tests {
     #[test]
     fn minimal_public_values_round_trips() {
         let state: State = State {
-            block_hash: BlockHash::from_raw([0xAB; 32]),
-            genesis_hash: BlockHash::from_raw([0xCD; 32]),
+            block_hash: [0xABu8; 32],
+            genesis_hash: [0xCDu8; 32],
             chain_work: ChainWork::from_limbs([1, 2, 3, 4]),
             height: 42,
             ..State::default()
         };
         let digest = [0x11u8; 32];
-        let verifier_key = VerifierKeyDigest::from_raw([9; 8]);
+        let verifier_key = VerifierKeyDigest::from_le_bytes([9; 8]);
         let pv = MinimalPublicValues::success(&state.public_claim(), digest, verifier_key);
         let bytes = pv.to_bytes();
         assert_eq!(bytes.len(), MINIMAL_PV_SIZE);
@@ -1199,13 +1241,10 @@ mod tests {
 
         let header = Header::parse(&header_bytes).unwrap();
         assert_eq!(header.version, 0x1122_3344);
-        assert_eq!(header.prev_blockhash, BlockHash::from_raw([0x55; 32]));
+        assert_eq!(header.prev_blockhash, [0x55u8; 32]);
         assert_eq!(header.merkle_root, [0x66; 32]);
-        assert_eq!(header.timestamp, BlockTimestamp::from_inner(0x7788_99aa));
-        assert_eq!(
-            header.compact_target,
-            CompactTarget::from_inner(0x1d00_ffff)
-        );
+        assert_eq!(header.timestamp, BlockTimestamp::from_u32(0x7788_99aa));
+        assert_eq!(header.compact_target, CompactTarget::from_u32(0x1d00_ffff));
         assert_eq!(header.nonce, 0xbbcc_ddee);
         assert_eq!(header.to_bytes(), header_bytes);
 
@@ -1218,10 +1257,7 @@ mod tests {
         let new_header = NewHeader::parse(&new_header_bytes).unwrap();
         assert_eq!(new_header.version, 0x1122_3344);
         assert_eq!(new_header.merkle_root, [0x66; 32]);
-        assert_eq!(
-            new_header.timestamp,
-            BlockTimestamp::from_inner(0x7788_99aa)
-        );
+        assert_eq!(new_header.timestamp, BlockTimestamp::from_u32(0x7788_99aa));
         assert_eq!(new_header.nonce, 0xbbcc_ddee);
         assert_eq!(new_header.to_bytes(), new_header_bytes);
     }
@@ -1251,7 +1287,7 @@ mod tests {
 
     #[test]
     fn check_proof_of_work_accepts_exact_target_boundary() {
-        let hash = BlockHash::from_raw(GENESIS_TARGET.to_le_bytes());
+        let hash: BlockHash = GENESIS_TARGET.to_le_bytes();
         assert!(check_proof_of_work(hash, GENESIS_TARGET));
     }
 
@@ -1340,7 +1376,7 @@ mod tests {
         }];
         // Use a hash that exceeds the target to trigger PowInsufficient.
         let failure = state
-            .apply_headers(&headers, &[ts(0)], |_| BlockHash::from_raw([0xFF; 32]))
+            .apply_headers(&headers, &[ts(0)], |_| [0xFFu8; 32])
             .expect_err("should fail PoW");
 
         assert_eq!(failure.error_code, ValidationErrorCode::PowInsufficient);
@@ -1537,8 +1573,8 @@ mod tests {
     #[test]
     fn apply_headers_treats_height_zero_state_as_trusted_anchor() {
         let mut state = test_state();
-        state.genesis_hash = BlockHash::from_raw([0x11; 32]);
-        state.block_hash = BlockHash::from_raw([0x22; 32]);
+        state.genesis_hash = [0x11u8; 32];
+        state.block_hash = [0x22u8; 32];
         let headers = [NewHeader {
             version: 1,
             merkle_root: [0x33; 32],
@@ -1551,8 +1587,8 @@ mod tests {
             .expect("height-zero anchor should already be trusted");
 
         assert_eq!(state.height, 1);
-        assert_eq!(state.genesis_hash, BlockHash::from_raw([0x11; 32]));
-        assert_eq!(state.header.prev_blockhash, BlockHash::from_raw([0x22; 32]));
+        assert_eq!(state.genesis_hash, [0x11u8; 32]);
+        assert_eq!(state.header.prev_blockhash, [0x22u8; 32]);
         assert_eq!(state.block_hash, zero_hash());
     }
 
@@ -1614,7 +1650,7 @@ mod tests {
                     nonce: 7,
                 }],
                 &[median_hint],
-                |_| BlockHash::from_raw([0; 32]), // Use zero hash which meets any target
+                |_| [0u8; 32], // Use zero hash which meets any target
             )
             .unwrap();
 
@@ -1702,8 +1738,8 @@ mod tests {
     #[test]
     fn public_chain_claim_serializes_to_fixed_width() {
         let claim = PublicChainClaim {
-            genesis_hash: BlockHash::from_raw([1; 32]),
-            tip_hash: BlockHash::from_raw([2; 32]),
+            genesis_hash: [1u8; 32],
+            tip_hash: [2u8; 32],
             chain_work: ChainWork::from_limbs([3, 4, 5, 6]),
             height: 99,
         };
@@ -1728,7 +1764,7 @@ mod tests {
     fn retarget_no_change_when_timespan_equals_expected() {
         let old = GENESIS_TARGET;
         let new =
-            calculate_next_work_required(old, EXPECTED_EPOCH_TIMESPAN, EXPECTED_EPOCH_TIMESPAN);
+            calculate_next_work_required_from_timespan(old, EXPECTED_EPOCH_TIMESPAN, EXPECTED_EPOCH_TIMESPAN);
         assert_eq!(
             new, old,
             "target should be unchanged when actual == expected"
@@ -1739,7 +1775,7 @@ mod tests {
     fn retarget_stricter_when_timespan_shorter() {
         let old = GENESIS_TARGET;
         let new =
-            calculate_next_work_required(old, EXPECTED_EPOCH_TIMESPAN / 4, EXPECTED_EPOCH_TIMESPAN);
+            calculate_next_work_required_from_timespan(old, EXPECTED_EPOCH_TIMESPAN / 4, EXPECTED_EPOCH_TIMESPAN);
         // Shorter timespan increases difficulty ⇒ numeric target must not be greater than old.
         assert!(
             !target_gt(new, old),
@@ -1751,7 +1787,7 @@ mod tests {
     fn retarget_easier_when_timespan_longer() {
         let old = GENESIS_TARGET;
         let new =
-            calculate_next_work_required(old, EXPECTED_EPOCH_TIMESPAN * 4, EXPECTED_EPOCH_TIMESPAN);
+            calculate_next_work_required_from_timespan(old, EXPECTED_EPOCH_TIMESPAN * 4, EXPECTED_EPOCH_TIMESPAN);
         // Longer timespan lowers difficulty ⇒ target should be >= old.
         assert!(
             target_gt(new, old) || new == old,
@@ -1763,9 +1799,9 @@ mod tests {
     fn retarget_at_min_and_max_timespans() {
         let old = GENESIS_TARGET;
         let at_min =
-            calculate_next_work_required(old, MIN_EPOCH_TIMESPAN as u32, EXPECTED_EPOCH_TIMESPAN);
+            calculate_next_work_required_from_timespan(old, MIN_EPOCH_TIMESPAN as u32, EXPECTED_EPOCH_TIMESPAN);
         let at_max =
-            calculate_next_work_required(old, MAX_EPOCH_TIMESPAN as u32, EXPECTED_EPOCH_TIMESPAN);
+            calculate_next_work_required_from_timespan(old, MAX_EPOCH_TIMESPAN as u32, EXPECTED_EPOCH_TIMESPAN);
         assert!(
             !target_gt(at_min, old),
             "min timespan should not increase target"
@@ -1790,7 +1826,7 @@ mod tests {
 
         // PowInsufficient on first header using a deliberately large hash value (> target).
         state
-            .apply_headers(&[hdr1], &hints, |_| BlockHash::from_raw([0xFF; 32]))
+            .apply_headers(&[hdr1], &hints, |_| [0xFFu8; 32])
             .expect_err("expected PoW failure");
 
         // TimestampTooOld on equality to median (<= median should fail).

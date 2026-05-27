@@ -10,6 +10,7 @@ path = "src/lib.rs"
 [features]
 host = []
 profiling = []
+copy = []
 
 [dependencies]
 sp1-zkvm = { workspace = true }

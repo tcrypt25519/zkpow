@@ -37,12 +37,33 @@ impl u256 {
         Self(limbs)
     }
 
+    /// Construct from a 32-byte big-endian byte array.
+    #[must_use]
+    pub fn from_be_bytes(bytes: [u8; 32]) -> Self {
+        let mut limbs = [0u64; 4];
+        for (idx, limb) in limbs.iter_mut().enumerate() {
+            let start = idx * 8;
+            *limb = u64::from_be_bytes(bytes[start..start + 8].try_into().unwrap());
+        }
+        Self(limbs)
+    }
+
     /// Convert to a 32-byte little-endian byte array.
     #[must_use]
     pub fn to_le_bytes(self) -> [u8; 32] {
         let mut bytes = [0u8; 32];
         for (idx, limb) in self.0.iter().enumerate() {
             bytes[idx * 8..(idx + 1) * 8].copy_from_slice(&limb.to_le_bytes());
+        }
+        bytes
+    }
+
+    /// Convert to a 32-byte big-endian byte array.
+    #[must_use]
+    pub fn to_be_bytes(self) -> [u8; 32] {
+        let mut bytes = [0u8; 32];
+        for (idx, limb) in self.0.iter().enumerate() {
+            bytes[idx * 8..(idx + 1) * 8].copy_from_slice(&limb.to_be_bytes());
         }
         bytes
     }
@@ -88,5 +109,11 @@ impl CompactTarget {
     #[must_use]
     pub const fn from_inner(bits: u32) -> Self {
         Self(bits)
+    }
+
+    /// Convert to a 4-byte little-endian byte array.
+    #[must_use]
+    pub const fn to_le_bytes(self) -> [u8; 4] {
+        self.0.to_le_bytes()
     }
 }

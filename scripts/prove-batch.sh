@@ -3,33 +3,28 @@ set -euo pipefail
 
 # Unconditionally set ROOT and TIMESTAMP
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TIMESTAMP="$(date -u +%Y%m%dT%H%M%S)"
+TIMESTAMP="${TIMESTAMP:=$(date -u +%Y%m%dT%H%M%S)}"
 ENV_FILE="${ENV_FILE:=$ROOT/.env}"
-export PROFILE_ROOT="${PROFILE_ROOT:=$ROOT/profiling}"
-export RUN_DIR="$PROFILE_ROOT/runs/$TIMESTAMP"
-#PROFILE_ROOT="${PROFILE_ROOT:=$ROOT/profiling/runs}";
-#PROFILE_OUT="${RUN_DIR}"
-
-#if [[ -v "$SP1_ENABLE_TOKIO_CONSOLE" ]]; then
-#  CALLER_SP1_ENABLE_TOKIO_CONSOLE_SET=1
-#  CALLER_SP1_ENABLE_TOKIO_CONSOLE="$SP1_ENABLE_TOKIO_CONSOLE"
-#else
-#  CALLER_SP1_ENABLE_TOKIO_CONSOLE_SET=0
-#  CALLER_SP1_ENABLE_TOKIO_CONSOLE=""
-#fi
-
-# Set defaults for run configuration
-#RUN_DIR="${RUN_DIR:-$PROFILE_ROOT/$TIMESTAMP}"
+PROFILE_ROOT="${PROFILE_ROOT:=$ROOT/profiling}"
+RUN_DIR="$PROFILE_ROOT/runs/$TIMESTAMP"
+OUTPUT_DIR="${OUTPUT_DIR:=$RUN_DIR/output}"
 LATEST_LINK="${LATEST_LINK:-$PROFILE_ROOT/latest}"
-export OUTPUT_DIR="${OUTPUT_DIR:=$RUN_DIR/output}"
+
+if [[ -v "${SP1_ENABLE_TOKIO_CONSOLE:-}" ]]; then
+ CALLER_SP1_ENABLE_TOKIO_CONSOLE_SET=1
+ CALLER_SP1_ENABLE_TOKIO_CONSOLE="$SP1_ENABLE_TOKIO_CONSOLE"
+else
+ CALLER_SP1_ENABLE_TOKIO_CONSOLE_SET=0
+ CALLER_SP1_ENABLE_TOKIO_CONSOLE=""
+fi
 
 # Set defaults for the guest program
-#unset sp1_core
-#if [[ "$CALLER_SP1_ENABLE_TOKIO_CONSOLE_SET" == "1" ]]; then
-#  export SP1_ENABLE_TOKIO_CONSOLE="$CALLER_SP1_ENABLE_TOKIO_CONSOLE"
-#else
-#  export SP1_ENABLE_TOKIO_CONSOLE="false"
-#fi
+unset sp1_core
+if [[ "${CALLER_SP1_ENABLE_TOKIO_CONSOLE_SET:-}" == "1" ]]; then
+ export SP1_ENABLE_TOKIO_CONSOLE="${CALLER_SP1_ENABLE_TOKIO_CONSOLE:-}"
+else
+ export SP1_ENABLE_TOKIO_CONSOLE="false"
+fi
 export TRACE_FILE="${TRACE_FILE:-$RUN_DIR/tracing.json}"
 export RUST_BACKTRACE="${RUST_BACKTRACE:-1}"
 export RUST_LOG="${RUST_LOG:-info}"
@@ -57,10 +52,8 @@ ln -sfn "$RUN_DIR" "$LATEST_LINK"
 rm -f "$ROOT/logs/run.jsonl"
 
 set +e
-if [[ "$BUILD" == "true" ]]; then
-  cargo build --release \
-    --manifest-path "$ROOT/crates/host/Cargo.toml" \
-    --bin zkpow-host 2>&1 | tee "$RUN_DIR/build.log"
+if [[ "${BUILD:-}" == "true" ]]; then
+  sh "$ROOT/scripts/build_prover.sh" 2>&1 | tee "$RUN_DIR/build.log"
 fi
 
 MAX_BATCHES=1 "$ROOT/target/release/zkpow-host" > >(tee -a "$RUN_DIR/run.log") 2> >(tee -a "$RUN_DIR/run.log" >&2)

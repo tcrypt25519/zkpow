@@ -133,9 +133,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         }
 
         // Compute ratchet against baseline and previous iteration.
-        let start_rss = start_mem.rss_kb;
-        let end_rss = end_mem.rss_kb;
-        let post_purge_rss = post_purge_mem.rss_kb;
+        let start_rss = start_mem.rss_kb();
+        let end_rss = end_mem.rss_kb();
+        let post_purge_rss = post_purge_mem.rss_kb();
 
         if let (Some(start), Some(end)) = (start_rss, end_rss) {
             let ratchet_kb = end as i64 - start as i64;

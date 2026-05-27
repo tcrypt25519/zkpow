@@ -19,8 +19,8 @@ use sp1_sdk::proof::SP1Proof;
 use sp1_sdk::Elf;
 use sp1_sdk::ExecutionReport;
 use sp1_sdk::{
-    CpuProver, HashableKey, ProveRequest, Prover, ProverClient, ProvingKey, SP1ProofWithPublicValues,
-    SP1ProvingKey,
+    CpuProver, HashableKey, ProveRequest, Prover, ProverClient, ProvingKey,
+    SP1ProofWithPublicValues, SP1ProvingKey,
 };
 use tokio::sync::Mutex as AsyncMutex;
 use tracing::Instrument;
@@ -258,7 +258,7 @@ fn build_recursive_proof(
     vk: &sp1_prover::SP1VerifyingKey,
     previous_proof: Option<&SP1ProofWithPublicValues>,
 ) -> Result<RecursiveProof, BoxError> {
-    let verifier_key = VerifierKeyDigest::from_raw(vk.hash_u32());
+    let verifier_key = VerifierKeyDigest::from_le_bytes(vk.hash_u32());
     Ok(if let Some(prev_proof_val) = previous_proof {
         let pv_bytes = prev_proof_val.public_values.to_vec();
         // Determine the return code from the previous proof's public values.
@@ -273,7 +273,9 @@ fn build_recursive_proof(
         };
         RecursiveProof {
             verifier_key,
-            public_values_digest: PublicValuesDigest::from_raw(util::compute_pv_digest(&pv_bytes)),
+            public_values_digest: PublicValuesDigest::from_le_bytes(util::compute_pv_digest(
+                &pv_bytes,
+            )),
             previous_return_code,
             ..Default::default()
         }
@@ -328,7 +330,7 @@ where
     let expected_pv = util::MinimalPublicValues::success(
         &expected_state.public_claim(),
         expected_continuation_digest,
-        VerifierKeyDigest::from_raw(proving_key.verifying_key().hash_u32()),
+        VerifierKeyDigest::from_le_bytes(proving_key.verifying_key().hash_u32()),
     )
     .to_bytes()
     .to_vec();
@@ -672,7 +674,10 @@ async fn get_prepared_prover(config: &ProofGenerationConfig) -> Result<PreparedP
             .await?;
             let proving_key =
                 timed_async("setup_vkey", || async { prover.setup(ELF).await }).await?;
-            PreparedProver::Cpu { prover, proving_key }
+            PreparedProver::Cpu {
+                prover,
+                proving_key,
+            }
         }
         ProverBackend::Cuda => {
             #[cfg(feature = "CUDA")]
@@ -697,7 +702,10 @@ async fn get_prepared_prover(config: &ProofGenerationConfig) -> Result<PreparedP
                 .await?;
                 let proving_key =
                     timed_async("setup_vkey", || async { prover.setup(ELF).await }).await?;
-                PreparedProver::Cuda { prover, proving_key }
+                PreparedProver::Cuda {
+                    prover,
+                    proving_key,
+                }
             }
 
             #[cfg(not(feature = "CUDA"))]
@@ -944,7 +952,7 @@ pub fn log_execution_report(report: &ExecutionReport, total_proving_time_secs: f
 mod tests {
     use super::*;
     use std::sync::{Mutex, OnceLock};
-
+    
     fn env_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| Mutex::new(()))
@@ -954,7 +962,7 @@ mod tests {
     mod slow_tests {
         use super::*;
         use std::time::{SystemTime, UNIX_EPOCH};
-
+        
         fn unique_test_output_dir() -> PathBuf {
             let nanos = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -1220,7 +1228,7 @@ mod tests {
         // summarizing the failure code and height.
         let state: util::State = util::State::default();
         let digest = [0xAAu8; 32];
-        let vk = VerifierKeyDigest::from_raw([0x11u32; 8]);
+        let vk = VerifierKeyDigest::from_le_bytes([0x11u32; 8]);
         let claim = state.public_claim();
         let pv_bytes = util::MinimalPublicValues::failure(
             &claim,

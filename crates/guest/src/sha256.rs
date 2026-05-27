@@ -11,6 +11,7 @@
 //! are hardcoded for each size.
 
 use sp1_zkvm::syscalls::{syscall_sha256_compress, syscall_sha256_extend};
+use zkpow_core::BlockHash;
 
 /// SHA-256 IV constants.
 const SHA256_IV: [u64; 8] = [
