@@ -53,14 +53,12 @@ pub fn load_headers_from_db(db_path: &str, start_height: u64, count: u64) -> Vec
 
             let header = Header {
                 version: version as u32,
-                prev_blockhash: BlockHash::from_raw(
-                    prev.try_into().expect("prev must be 32 bytes"),
-                ),
+                prev_blockhash: prev.try_into().expect("prev must be 32 bytes"),
                 merkle_root: merkle_root
                     .try_into()
                     .expect("merkle_root must be 32 bytes"),
-                timestamp: BlockTimestamp::new(timestamp as u32),
-                compact_target: zkpow_core::CompactTarget::from_consensus(nbits as u32),
+                timestamp: BlockTimestamp::from_u32(timestamp as u32),
+                compact_target: zkpow_core::CompactTarget::from_u32(nbits as u32),
                 nonce: nonce as u32,
             };
             Ok(header.to_bytes())
@@ -115,14 +113,12 @@ pub fn load_header_records_from_db(
 
             let header = Header {
                 version: version as u32,
-                prev_blockhash: BlockHash::from_raw(
-                    prev.try_into().expect("prev must be 32 bytes"),
-                ),
+                prev_blockhash: prev.try_into().expect("prev must be 32 bytes"),
                 merkle_root: merkle_root
                     .try_into()
                     .expect("merkle_root must be 32 bytes"),
-                timestamp: BlockTimestamp::new(timestamp as u32),
-                compact_target: CompactTarget::from_consensus(nbits as u32),
+                timestamp: BlockTimestamp::from_u32(timestamp as u32),
+                compact_target: CompactTarget::from_u32(nbits as u32),
                 nonce: nonce as u32,
             };
 
@@ -130,7 +126,7 @@ pub fn load_header_records_from_db(
                 height: height as u64,
                 header,
                 chain_work: chain_work_from_db_bytes(&chainwork),
-                median_time_past: BlockTimestamp::new(median_time_past as u32),
+                median_time_past: BlockTimestamp::from_u32(median_time_past as u32),
             })
         })
         .expect("failed to execute query");
@@ -395,11 +391,11 @@ mod tests {
 
     fn make_pcs() -> PrivateContinuationState {
         PrivateContinuationState {
-            next_nbits: CompactTarget::from_consensus(GENESIS_NBITS),
+            next_nbits: CompactTarget::from_inner(GENESIS_NBITS),
             next_work: zkpow_core::ChainWork::from_limbs([1, 2, 3, 4]),
             next_target: zkpow_core::GENESIS_TARGET,
-            epoch_start_timestamp: BlockTimestamp::from_consensus(500),
-            timestamps: [BlockTimestamp::from_consensus(10); WINDOW_SIZE],
+            epoch_start_timestamp: BlockTimestamp::from_u32(500),
+            timestamps: [BlockTimestamp::from_u32(10); WINDOW_SIZE],
         }
     }
 
@@ -445,7 +441,7 @@ mod tests {
         let genesis = load_header_record_from_db(TEST_DB_PATH, 0);
         let genesis_hash = hash_header(&genesis.header);
         let genesis_state = genesis_state_from_record(genesis, genesis_hash);
-        let records = load_header_records_from_db(TEST_DB_PATH, 1, 40319);
+        let records = load_header_records_from_db(TEST_DB_PATH, 1, 40320);
         let headers = records_to_new_headers(&records);
         let state = compute_final_state(&genesis_state, &headers);
         let boundary = load_header_record_from_db(TEST_DB_PATH, 40320);

@@ -305,6 +305,53 @@ pub fn sha256d_80bytes(data: &[u8; 80]) -> [u8; 32] {
     sha256_32bytes(&inner)
 }
 
+pub fn hash_header(
+    version: u32,
+    prev_hash: &BlockHash,
+    merkle: &BlockHash,
+    timestamp: u32,
+    nbits: u32,
+    nonce: u32,
+) -> [u8; 32] {
+    let mut state = SHA256_IV;
+
+    let prev_hash = *prev_hash;
+    let merkle = *merkle;
+
+    let mut w = [0u64; 64];
+    w[0] = version.to_be() as u64;
+    w[1] = be_u64(prev_hash[0], prev_hash[1], prev_hash[2], prev_hash[3]);
+    w[2] = be_u64(prev_hash[4], prev_hash[5], prev_hash[6], prev_hash[7]);
+    w[3] = be_u64(prev_hash[8], prev_hash[9], prev_hash[10], prev_hash[11]);
+    w[4] = be_u64(prev_hash[12], prev_hash[13], prev_hash[14], prev_hash[15]);
+    w[5] = be_u64(prev_hash[16], prev_hash[17], prev_hash[18], prev_hash[19]);
+    w[6] = be_u64(prev_hash[20], prev_hash[21], prev_hash[22], prev_hash[23]);
+    w[7] = be_u64(prev_hash[24], prev_hash[25], prev_hash[26], prev_hash[27]);
+    w[8] = be_u64(prev_hash[28], prev_hash[29], prev_hash[30], prev_hash[31]);
+    w[9] = be_u64(merkle[0], merkle[1], merkle[2], merkle[3]);
+    w[10] = be_u64(merkle[4], merkle[5], merkle[6], merkle[7]);
+    w[11] = be_u64(merkle[8], merkle[9], merkle[10], merkle[11]);
+    w[12] = be_u64(merkle[12], merkle[13], merkle[14], merkle[15]);
+    w[13] = be_u64(merkle[16], merkle[17], merkle[18], merkle[19]);
+    w[14] = be_u64(merkle[20], merkle[21], merkle[22], merkle[23]);
+    w[15] = be_u64(merkle[24], merkle[25], merkle[26], merkle[27]);
+    syscall_sha256_extend(&mut w);
+    syscall_sha256_compress(&mut w, &mut state);
+
+    let mut w = [0u64; 64];
+    w[0] = be_u64(merkle[28], merkle[29], merkle[30], merkle[31]);
+    w[1] = timestamp.to_be() as u64;
+    w[2] = nbits.to_be() as u64;
+    w[3] = nonce.to_be() as u64;
+    w[4] = 0x80000000;
+    w[15] = 0x280;
+    syscall_sha256_extend(&mut w);
+    syscall_sha256_compress(&mut w, &mut state);
+
+    let h1 = state_to_hash(&state);
+    sha256_32bytes(&h1)
+}
+
 /// Compute SHA-256 of exactly 116 bytes.
 ///
 /// Produces two blocks:

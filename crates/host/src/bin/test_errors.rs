@@ -314,7 +314,7 @@ async fn test_error_timestamp_too_old() -> Result<(), String> {
     let records = util::load_header_records_from_db(DEFAULT_DB_PATH, 1, 13);
     let mut headers = util::records_to_new_headers(&records);
     let hints = util::median_time_past_hints_for_headers(&genesis_state, &headers);
-    headers[11].timestamp = util::BlockTimestamp::from_consensus(1231006505);
+    headers[11].timestamp = util::BlockTimestamp::from_u32(1231006505);
     let input = input_for_state(&genesis_state, RecursiveProof::default());
     let stdin = stdin_for_input(&input, &genesis_state, &headers, &hints);
 

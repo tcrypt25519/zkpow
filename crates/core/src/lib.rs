@@ -436,7 +436,7 @@ impl PrivateContinuationState {
     #[must_use]
     pub fn to_bytes(&self) -> [u8; PRIVATE_CONTINUATION_STATE_SIZE] {
         let mut out = [0u8; PRIVATE_CONTINUATION_STATE_SIZE];
-        out[0..4].copy_from_slice(self.next_nbits.to_u32());
+        out[0..4].copy_from_slice(&self.next_nbits.to_le_bytes());
         out[4..36].copy_from_slice(&self.next_work.to_le_bytes());
         out[36..68].copy_from_slice(&self.next_target.to_le_bytes());
         out[68..72].copy_from_slice(&self.epoch_start_timestamp.to_le_bytes());
@@ -1055,25 +1055,30 @@ pub fn calculate_next_work_required_from_timespan(
 /// Compute a retargeted 256-bit target from the previous target and measured timespan.
 #[must_use]
 pub fn calculate_next_work_required(
-    old_target: Target,
-    epoch_start_timestamp: BlockTimestamp,
-    last_block_timestamp: BlockTimestamp,
+    target: Target,
+    start_timestamp: BlockTimestamp,
+    end_timestamp: BlockTimestamp,
 ) -> (Target, CompactTarget) {
-    let actual_timespan =
-        last_block_timestamp.as_i64() - epoch_start_timestamp.as_i64();
-    let clamped_timespan =
-        actual_timespan.clamp(MIN_EPOCH_TIMESPAN.as_i64(), MAX_EPOCH_TIMESPAN.as_i64()) as u32;
+    cycle_track("pow/calculate_next_work_required", || {
+        let unbounded_timespan = end_timestamp
+            .checked_sub(start_timestamp)
+            .unwrap_or(MIN_EPOCH_TIMESPAN);
 
-    let mut new_target = calculate_next_work_required_from_timespan(
-        old_target,
-        clamped_timespan,
-        EXPECTED_EPOCH_TIMESPAN,
-    );
-    if target_gt(new_target, GENESIS_TARGET) {
-        new_target = GENESIS_TARGET;
-    }
-    let new_nbits = target_to_bits(new_target);
-    (new_target, new_nbits)
+        let bounded_timespan = unbounded_timespan
+            .clamp(MIN_EPOCH_TIMESPAN, MAX_EPOCH_TIMESPAN)
+            .into_inner();
+
+        let mut new_target = calculate_next_work_required_from_timespan(
+            target,
+            bounded_timespan,
+            EXPECTED_EPOCH_TIMESPAN,
+        );
+        if target_gt(new_target, GENESIS_TARGET) {
+            new_target = GENESIS_TARGET;
+        }
+        let new_nbits = target_to_bits(new_target);
+        (new_target, new_nbits)
+    })
 }
 
 #[cfg(test)]
@@ -1194,7 +1199,7 @@ mod tests {
             nonce: 99,
         };
 
-        let mut new_header = NewHeader::from_header(&header);
+        let new_header = NewHeader::from_header(&header);
         assert_eq!(new_header.version, header.version);
         assert_eq!(new_header.merkle_root, header.merkle_root);
         assert_eq!(new_header.timestamp, header.timestamp);
@@ -1294,7 +1299,7 @@ mod tests {
     #[test]
     fn target_to_bits_round_trips_genesis_target() {
         let round_trip = target_to_bits(GENESIS_TARGET);
-        i
+        assert_eq!(round_trip, CompactTarget::from_u32(GENESIS_NBITS));
     }
 
     #[test]
@@ -1632,7 +1637,7 @@ mod tests {
             ts(110),
         ];
         let mut state: State = State {
-            block_hash: BlockHash::from_raw([0x11; 32]),
+            block_hash: [0x11; 32],
             next_nbits: CompactTarget::from_inner(GENESIS_NBITS),
             next_work: genesis_work(),
             next_target: GENESIS_TARGET,
@@ -1667,8 +1672,8 @@ mod tests {
     fn state_round_trips_through_validation_state() {
         let state: State = State {
             header: Header::default(),
-            block_hash: BlockHash::from_raw([0xAB; 32]),
-            genesis_hash: BlockHash::from_raw([0xCD; 32]),
+            block_hash: [0xAB; 32],
+            genesis_hash: [0xCD; 32],
             next_nbits: CompactTarget::from_inner(GENESIS_NBITS),
             height: 42,
             chain_work: ChainWork::from_limbs([1, 2, 3, 4]),
@@ -1798,10 +1803,10 @@ mod tests {
     #[test]
     fn retarget_at_min_and_max_timespans() {
         let old = GENESIS_TARGET;
-        let at_min =
-            calculate_next_work_required_from_timespan(old, MIN_EPOCH_TIMESPAN as u32, EXPECTED_EPOCH_TIMESPAN);
-        let at_max =
-            calculate_next_work_required_from_timespan(old, MAX_EPOCH_TIMESPAN as u32, EXPECTED_EPOCH_TIMESPAN);
+        let (at_min, _) =
+            calculate_next_work_required(old, BlockTimestamp::from_u32(0), MIN_EPOCH_TIMESPAN);
+        let (at_max, _) =
+            calculate_next_work_required(old, BlockTimestamp::from_u32(0), MAX_EPOCH_TIMESPAN);
         assert!(
             !target_gt(at_min, old),
             "min timespan should not increase target"

@@ -3,10 +3,9 @@ compile_error!("zkpow wire types require a little-endian target");
 
 use crate::{
     calculate_next_work_required, check_proof_of_work, copy_from_bytes, copy_to_bytes,
-    ref_from_bytes, target_gt, target_to_bits, work_from_target, ApplyFailure, BlockHash,
-    BlockTimestamp, ChainWork, CompactTarget, Header, NewHeader, ParseError, PublicChainClaim,
-    Target, ValidationErrorCode, EXPECTED_EPOCH_TIMESPAN, GENESIS_TARGET, MAX_EPOCH_TIMESPAN,
-    MIN_EPOCH_TIMESPAN, PRIVATE_CONTINUATION_STATE_SIZE, STATE_SIZE, WINDOW_SIZE,
+    ref_from_bytes, work_from_target, ApplyFailure, BlockHash, BlockTimestamp, ChainWork,
+    CompactTarget, Header, NewHeader, ParseError, PublicChainClaim, Target,
+    ValidationErrorCode, PRIVATE_CONTINUATION_STATE_SIZE, STATE_SIZE, WINDOW_SIZE,
 };
 use core::marker::PhantomData;
 
@@ -303,14 +302,14 @@ impl<E: Env> StateInner<E> {
                 if self.height % 2016 == 2015 {
                     cycle_track("state/apply_headers/retarget", || {
                         let (new_target, new_nbits) = calculate_next_work_required(
-                            self.target,
+                            self.next_target,
                             self.epoch_start_timestamp,
                             self.header.timestamp,
                         );
 
-                        self.header.compact_target = new_nbits;
-                        self.target = new_target;
-                        self.work = work_from_target(new_target);
+                        self.next_nbits = new_nbits;
+                        self.next_target = new_target;
+                        self.next_work = work_from_target(new_target);
                     });
                 }
 

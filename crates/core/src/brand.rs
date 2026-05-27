@@ -2,7 +2,7 @@ use crate::types::u256;
 use core::marker::PhantomData;
 
 /// Generic branded newtype wrapper providing type-safe distinction without runtime overhead.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(transparent)]
 pub struct Branded<Tag, T> {
     inner: T,
@@ -71,12 +71,52 @@ impl<Tag> Branded<Tag, u32> {
         Self::new(value)
     }
 
+    #[must_use]
+    pub const fn from_u32(value: u32) -> Self {
+        Self::new(value)
+    }
+
+    #[must_use]
+    pub const fn from_consensus(value: u32) -> Self {
+        Self::new(value)
+    }
+
     pub fn to_le_bytes(self) -> [u8; 4] {
         self.inner.to_le_bytes()
     }
 
-    pub fn wrapping_sub(self, other: Self) -> u32 {
-        self.inner.wrapping_sub(*other)
+    #[must_use]
+    pub const fn to_consensus(self) -> u32 {
+        self.inner
+    }
+
+    #[must_use]
+    pub const fn as_u32(&self) -> u32 {
+        self.inner
+    }
+
+    #[must_use]
+    pub fn checked_sub(self, other: Self) -> Option<Self> {
+        self.inner.checked_sub(other.inner).map(Self::new)
+    }
+
+    #[must_use]
+    pub fn clamp(self, min: Self, max: Self) -> Self
+    where
+        Tag: PartialOrd,
+    {
+        if self < min {
+            min
+        } else if self > max {
+            max
+        } else {
+            self
+        }
+    }
+
+    #[must_use]
+    pub fn wrapping_sub(self, other: Self) -> Self {
+        Self::new(self.inner.wrapping_sub(*other))
     }
 }
 

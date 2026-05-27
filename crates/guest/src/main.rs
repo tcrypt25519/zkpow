@@ -26,17 +26,23 @@ use zkpow_core::{
 };
 
 mod sha256;
-use sha256::{sha256_116bytes, sha256_169bytes, sha256d_80bytes};
+use sha256::{sha256_116bytes, sha256_169bytes};
 
 // ============================================================================
 // Helpers
 // ============================================================================
 
-/// Hash a full 80-byte Bitcoin header with SHA256d.
+/// Hash a full 80-byte Bitcoin header using the optimized guest precompile syscall.
 fn hash_header(header: &Header) -> BlockHash {
     cycle_track("crypto/hash_header", || {
-        let header_bytes: &[u8; 80] = unsafe { &*(header as *const Header as *const [u8; 80]) };
-        BlockHash::from_raw(sha256d_80bytes(header_bytes))
+        sha256::hash_header(
+            header.version,
+            &header.prev_blockhash,
+            &header.merkle_root,
+            header.timestamp.into_inner(),
+            header.compact_target.into_inner(),
+            header.nonce,
+        )
     })
 }
 

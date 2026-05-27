@@ -157,7 +157,7 @@ fn parse_genesis_hash() -> Result<util::BlockHash, BoxError> {
         .try_into()
         .map_err(|_| "genesis hash should be 32 bytes")?;
     genesis_hash.reverse();
-    Ok(util::BlockHash::from_raw(genesis_hash))
+    Ok(genesis_hash)
 }
 
 fn parse_bool_env(var_name: &'static str) -> Result<bool, BoxError> {
