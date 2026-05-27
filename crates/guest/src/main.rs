@@ -24,8 +24,7 @@ use zkpow_core::{
 };
 
 mod sha256;
-use crate::sha256::sha256;
-use crate::sha256::sha256d;
+use sha256::{sha256_116bytes, sha256_169bytes, sha256d_80bytes};
 
 // ============================================================================
 // Helpers
@@ -35,7 +34,7 @@ use crate::sha256::sha256d;
 fn hash_header(header: &Header) -> BlockHash {
     cycle_track("crypto/hash_header", || {
         let header_bytes: &[u8; 80] = unsafe { &*(header as *const Header as *const [u8; 80]) };
-        BlockHash::from_raw(sha256d(header_bytes))
+        BlockHash::from_raw(sha256d_80bytes(header_bytes))
     })
 }
 
@@ -43,7 +42,7 @@ fn hash_header(header: &Header) -> BlockHash {
 fn compute_continuation_digest(state: &State) -> [u8; 32] {
     cycle_track("crypto/continuation_digest", || {
         let pcs_bytes: [u8; PRIVATE_CONTINUATION_STATE_SIZE] = state.continuation_bytes();
-        sha256(&pcs_bytes)
+        sha256_116bytes(&pcs_bytes)
     })
 }
 
@@ -109,7 +108,7 @@ fn verify_recursive_proof(
 
         // 1. Hash the supplied continuation state.
         let continuation_digest = cycle_track("recursive/continuation_digest", || {
-            sha256(prior_continuation_bytes)
+            sha256_116bytes(prior_continuation_bytes)
         });
 
         // 2. Reconstruct the prior proof's minimal public values and hash them.
@@ -119,8 +118,9 @@ fn verify_recursive_proof(
             recursive_proof.verifier_key,
         );
         let prior_pv_bytes: [u8; MINIMAL_PV_SIZE] = prior_pv.to_bytes();
-        let actual_pv_hash =
-            cycle_track("recursive/public_values_digest", || sha256(&prior_pv_bytes));
+        let actual_pv_hash = cycle_track("recursive/public_values_digest", || {
+            sha256_169bytes(&prior_pv_bytes)
+        });
 
         if actual_pv_hash != recursive_proof.public_values_digest.into_raw() {
             panic!("recursive proof public values digest mismatch");
