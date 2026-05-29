@@ -395,18 +395,18 @@ impl PublicChainClaim {
 ///
 /// Serialized without struct padding (116 bytes):
 /// ```text
-///  0..  4  next_nbits              u32 LE
-///  4.. 36  next_work               [u64; 4] LE
-/// 36.. 68  next_target             [u64; 4] LE
+///  0..  4  current_nbits           u32 LE
+///  4.. 36  current_work            [u64; 4] LE
+/// 36.. 68  current_target          [u64; 4] LE
 /// 68.. 72  epoch_start_timestamp   u32 LE
 /// 72..116  timestamps              [u32; 11] LE
 /// ```
 #[repr(C)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PrivateContinuationState {
-    pub next_nbits: CompactTarget,
-    pub next_work: ChainWork,
-    pub next_target: Target,
+    pub current_nbits: CompactTarget,
+    pub current_work: ChainWork,
+    pub current_target: Target,
     pub epoch_start_timestamp: BlockTimestamp,
     pub timestamps: [BlockTimestamp; WINDOW_SIZE],
 }
@@ -418,9 +418,9 @@ impl PrivateContinuationState {
     #[must_use]
     pub fn to_bytes(&self) -> [u8; PRIVATE_CONTINUATION_STATE_SIZE] {
         let mut out = [0u8; PRIVATE_CONTINUATION_STATE_SIZE];
-        out[0..4].copy_from_slice(self.next_nbits.to_le_bytes_slice());
-        out[4..36].copy_from_slice(self.next_work.to_le_bytes_slice());
-        out[36..68].copy_from_slice(self.next_target.to_le_bytes_slice());
+        out[0..4].copy_from_slice(self.current_nbits.to_le_bytes_slice());
+        out[4..36].copy_from_slice(self.current_work.to_le_bytes_slice());
+        out[36..68].copy_from_slice(self.current_target.to_le_bytes_slice());
         out[68..72].copy_from_slice(self.epoch_start_timestamp.to_le_bytes_slice());
         for (i, ts) in self.timestamps.iter().enumerate() {
             out[72 + i * 4..72 + (i + 1) * 4].copy_from_slice(ts.to_le_bytes_slice());
@@ -430,10 +430,9 @@ impl PrivateContinuationState {
 
     pub fn parse(bytes: &[u8]) -> Result<Self, ParseError> {
         check_exact_len(bytes, PRIVATE_CONTINUATION_STATE_SIZE)?;
-        let next_nbits =
-            CompactTarget::new(u32::from_le_bytes(bytes[0..4].try_into().unwrap()));
-        let next_work = ChainWork::from_le_bytes(bytes[4..36].try_into().unwrap());
-        let next_target = Target::from_le_bytes(bytes[36..68].try_into().unwrap());
+        let current_nbits = CompactTarget::new(u32::from_le_bytes(bytes[0..4].try_into().unwrap()));
+        let current_work = ChainWork::from_le_bytes(bytes[4..36].try_into().unwrap());
+        let current_target = Target::from_le_bytes(bytes[36..68].try_into().unwrap());
         let epoch_start_timestamp =
             BlockTimestamp::from_le_bytes(bytes[68..72].try_into().unwrap());
         let mut timestamps = [BlockTimestamp::default(); WINDOW_SIZE];
@@ -443,9 +442,9 @@ impl PrivateContinuationState {
             );
         }
         Ok(Self {
-            next_nbits,
-            next_work,
-            next_target,
+            current_nbits,
+            current_work,
+            current_target,
             epoch_start_timestamp,
             timestamps,
         })
@@ -471,9 +470,9 @@ impl ValidationState {
                 height: state.height,
             },
             private: PrivateContinuationState {
-                next_nbits: state.next_nbits,
-                next_work: state.next_work,
-                next_target: state.next_target,
+                current_nbits: state.current_nbits,
+                current_work: state.current_work,
+                current_target: state.current_target,
                 epoch_start_timestamp: state.epoch_start_timestamp,
                 timestamps: state.timestamps,
             },
@@ -490,11 +489,11 @@ impl ValidationState {
             header: Header::default(),
             block_hash: self.public.tip_hash,
             genesis_hash: self.public.genesis_hash,
-            next_nbits: self.private.next_nbits,
+            current_nbits: self.private.current_nbits,
             height: self.public.height,
             chain_work: self.public.chain_work,
-            next_work: self.private.next_work,
-            next_target: self.private.next_target,
+            current_work: self.private.current_work,
+            current_target: self.private.current_target,
             epoch_start_timestamp: self.private.epoch_start_timestamp,
             timestamps: self.private.timestamps,
             _environment: PhantomData,
@@ -841,6 +840,35 @@ pub fn target_to_bits(target: Target) -> CompactTarget {
     })
 }
 
+/// Expand compact Bitcoin `bits` into a normalized full 256-bit target.
+#[must_use]
+pub fn target_from_bits(compact_target: CompactTarget) -> Target {
+    cycle_track("difficulty/target_from_bits", || {
+        let bits = compact_target.into_inner();
+        let size = (bits >> 24) as usize;
+        let mantissa = bits & 0x007f_ffff;
+        let mut normalized_target_bytes = [0u8; 32];
+
+        if size <= 3 {
+            let value = mantissa >> (8 * (3 - size));
+            normalized_target_bytes[0..4].copy_from_slice(&value.to_le_bytes());
+        } else {
+            let offset = size - 3;
+            if offset < 32 {
+                normalized_target_bytes[offset] = (mantissa & 0xff) as u8;
+            }
+            if offset + 1 < 32 {
+                normalized_target_bytes[offset + 1] = ((mantissa >> 8) & 0xff) as u8;
+            }
+            if offset + 2 < 32 {
+                normalized_target_bytes[offset + 2] = ((mantissa >> 16) & 0xff) as u8;
+            }
+        }
+
+        Target::from_le_bytes(normalized_target_bytes)
+    })
+}
+
 /// Compare two u256 values. Returns `Greater` if `lhs > rhs`.
 #[must_use]
 fn u256_cmp(lhs: &u256, rhs: &u256) -> core::cmp::Ordering {
@@ -1004,33 +1032,47 @@ pub fn work_from_target(target: Target) -> ChainWork {
     })
 }
 
-/// Compute a retargeted 256-bit target from the previous target and measured timespan.
+fn retarget_target(old_target: Target, actual_timespan: u32, expected_timespan: u32) -> Target {
+    let old_u64 = old_target.as_limbs();
+
+    let mut product = [0u64; 4];
+    let mut carry = 0u128;
+    for i in 0..4 {
+        let prod = (old_u64[i] as u128) * (actual_timespan as u128) + carry;
+        product[i] = prod as u64;
+        carry = prod >> 64;
+    }
+
+    let mut result = [0u64; 4];
+    let mut remainder = 0u128;
+    for i in (0..4).rev() {
+        let val = (remainder << 64) | (product[i] as u128);
+        result[i] = (val / (expected_timespan as u128)) as u64;
+        remainder = val % (expected_timespan as u128);
+    }
+
+    Target::from_limbs(result)
+}
+
+/// Compute the compact and normalized full target required at a difficulty boundary.
 #[must_use]
-pub fn calculate_next_work_required(
+pub fn calculate_next_target_required(
     old_target: Target,
-    actual_timespan: u32,
-    expected_timespan: u32,
-) -> Target {
-    cycle_track("pow/calculate_next_work_required", || {
-        let old_u64 = old_target.as_limbs();
-
-        let mut product = [0u64; 4];
-        let mut carry = 0u128;
-        for i in 0..4 {
-            let prod = (old_u64[i] as u128) * (actual_timespan as u128) + carry;
-            product[i] = prod as u64;
-            carry = prod >> 64;
+    epoch_start_timestamp: BlockTimestamp,
+    previous_timestamp: BlockTimestamp,
+) -> (CompactTarget, Target) {
+    cycle_track("pow/calculate_next_target_required", || {
+        let actual_timespan = i64::from(*previous_timestamp) - i64::from(*epoch_start_timestamp);
+        let clamped_timespan = actual_timespan.clamp(MIN_EPOCH_TIMESPAN, MAX_EPOCH_TIMESPAN) as u32;
+        let mut calculated_target =
+            retarget_target(old_target, clamped_timespan, EXPECTED_EPOCH_TIMESPAN);
+        if target_gt(calculated_target, GENESIS_TARGET) {
+            calculated_target = GENESIS_TARGET;
         }
 
-        let mut result = [0u64; 4];
-        let mut remainder = 0u128;
-        for i in (0..4).rev() {
-            let val = (remainder << 64) | (product[i] as u128);
-            result[i] = (val / (expected_timespan as u128)) as u64;
-            remainder = val % (expected_timespan as u128);
-        }
-
-        Target::from_limbs(result)
+        let compact_target = target_to_bits(calculated_target);
+        let normalized_target = target_from_bits(compact_target);
+        (compact_target, normalized_target)
     })
 }
 
@@ -1057,9 +1099,9 @@ mod tests {
 
     fn test_state() -> State {
         State {
-            next_nbits: CompactTarget::new(GENESIS_NBITS),
-            next_work: genesis_work(),
-            next_target: GENESIS_TARGET,
+            current_nbits: CompactTarget::new(GENESIS_NBITS),
+            current_work: genesis_work(),
+            current_target: GENESIS_TARGET,
             ..State::default()
         }
     }
@@ -1100,7 +1142,7 @@ mod tests {
         let mut medians = Vec::with_capacity(headers.len());
         for header in headers {
             medians.push(test_median_time_past(&state));
-            let timestamp_slot = state.next_timestamp_slot();
+            let timestamp_slot = (state.height as usize + 1) % WINDOW_SIZE;
             state.timestamps[timestamp_slot] = header.timestamp;
             state.height += 1;
         }
@@ -1202,10 +1244,7 @@ mod tests {
         assert_eq!(header.prev_blockhash, BlockHash::new([0x55; 32]));
         assert_eq!(header.merkle_root, [0x66; 32]);
         assert_eq!(header.timestamp, BlockTimestamp::new(0x7788_99aa));
-        assert_eq!(
-            header.compact_target,
-            CompactTarget::new(0x1d00_ffff)
-        );
+        assert_eq!(header.compact_target, CompactTarget::new(0x1d00_ffff));
         assert_eq!(header.nonce, 0xbbcc_ddee);
         assert_eq!(header.to_bytes(), header_bytes);
 
@@ -1218,10 +1257,7 @@ mod tests {
         let new_header = NewHeader::parse(&new_header_bytes).unwrap();
         assert_eq!(new_header.version, 0x1122_3344);
         assert_eq!(new_header.merkle_root, [0x66; 32]);
-        assert_eq!(
-            new_header.timestamp,
-            BlockTimestamp::new(0x7788_99aa)
-        );
+        assert_eq!(new_header.timestamp, BlockTimestamp::new(0x7788_99aa));
         assert_eq!(new_header.nonce, 0xbbcc_ddee);
         assert_eq!(new_header.to_bytes(), new_header_bytes);
     }
@@ -1259,6 +1295,12 @@ mod tests {
     fn target_to_bits_round_trips_genesis_target() {
         let round_trip = target_to_bits(GENESIS_TARGET);
         assert_eq!(round_trip, CompactTarget::new(GENESIS_NBITS));
+    }
+
+    #[test]
+    fn target_from_bits_expands_genesis_bits() {
+        let expanded = target_from_bits(CompactTarget::new(GENESIS_NBITS));
+        assert_eq!(expanded, GENESIS_TARGET);
     }
 
     #[test]
@@ -1327,9 +1369,9 @@ mod tests {
         // Start at height 5 and fail on the first new header → failure_height = 6.
         let mut state: State = State {
             height: 5,
-            next_nbits: CompactTarget::new(GENESIS_NBITS),
-            next_work: genesis_work(),
-            next_target: GENESIS_TARGET,
+            current_nbits: CompactTarget::new(GENESIS_NBITS),
+            current_work: genesis_work(),
+            current_target: GENESIS_TARGET,
             ..State::default()
         };
         let headers = [NewHeader {
@@ -1465,9 +1507,9 @@ mod tests {
     fn hinted_median_validation_accepts_duplicate_median_values() {
         let mut state: State = State {
             height: WINDOW_SIZE as u32,
-            next_nbits: CompactTarget::new(GENESIS_NBITS),
-            next_work: genesis_work(),
-            next_target: GENESIS_TARGET,
+            current_nbits: CompactTarget::new(GENESIS_NBITS),
+            current_work: genesis_work(),
+            current_target: GENESIS_TARGET,
             timestamps: [
                 ts(1),
                 ts(2),
@@ -1499,9 +1541,9 @@ mod tests {
     fn hinted_median_validation_rejects_wrong_rank_hint() {
         let state: State = State {
             height: WINDOW_SIZE as u32,
-            next_nbits: CompactTarget::new(GENESIS_NBITS),
-            next_work: genesis_work(),
-            next_target: GENESIS_TARGET,
+            current_nbits: CompactTarget::new(GENESIS_NBITS),
+            current_work: genesis_work(),
+            current_target: GENESIS_TARGET,
             timestamps: [
                 ts(1),
                 ts(2),
@@ -1597,9 +1639,9 @@ mod tests {
         ];
         let mut state: State = State {
             block_hash: BlockHash::new([0x11; 32]),
-            next_nbits: CompactTarget::new(GENESIS_NBITS),
-            next_work: genesis_work(),
-            next_target: GENESIS_TARGET,
+            current_nbits: CompactTarget::new(GENESIS_NBITS),
+            current_work: genesis_work(),
+            current_target: GENESIS_TARGET,
             height: WINDOW_SIZE as u32,
             timestamps: original,
             ..State::default()
@@ -1633,11 +1675,11 @@ mod tests {
             header: Header::default(),
             block_hash: BlockHash::new([0xAB; 32]),
             genesis_hash: BlockHash::new([0xCD; 32]),
-            next_nbits: CompactTarget::new(GENESIS_NBITS),
+            current_nbits: CompactTarget::new(GENESIS_NBITS),
             height: 42,
             chain_work: ChainWork::from_limbs([1, 2, 3, 4]),
-            next_work: ChainWork::from_limbs([5, 6, 7, 8]),
-            next_target: GENESIS_TARGET,
+            current_work: ChainWork::from_limbs([5, 6, 7, 8]),
+            current_target: GENESIS_TARGET,
             epoch_start_timestamp: BlockTimestamp::new(1000),
             timestamps: [BlockTimestamp::new(100); WINDOW_SIZE],
             _environment: PhantomData,
@@ -1648,9 +1690,9 @@ mod tests {
         assert_eq!(vs.public.tip_hash, state.block_hash);
         assert_eq!(vs.public.chain_work, state.chain_work);
         assert_eq!(vs.public.height, state.height);
-        assert_eq!(vs.private.next_nbits, state.next_nbits);
-        assert_eq!(vs.private.next_work, state.next_work);
-        assert_eq!(vs.private.next_target, state.next_target);
+        assert_eq!(vs.private.current_nbits, state.current_nbits);
+        assert_eq!(vs.private.current_work, state.current_work);
+        assert_eq!(vs.private.current_target, state.current_target);
         assert_eq!(
             vs.private.epoch_start_timestamp,
             state.epoch_start_timestamp
@@ -1661,11 +1703,11 @@ mod tests {
         // header is zeroed in round-trip (not stored in split form)
         assert_eq!(recovered.block_hash, state.block_hash);
         assert_eq!(recovered.genesis_hash, state.genesis_hash);
-        assert_eq!(recovered.next_nbits, state.next_nbits);
+        assert_eq!(recovered.current_nbits, state.current_nbits);
         assert_eq!(recovered.height, state.height);
         assert_eq!(recovered.chain_work, state.chain_work);
-        assert_eq!(recovered.next_work, state.next_work);
-        assert_eq!(recovered.next_target, state.next_target);
+        assert_eq!(recovered.current_work, state.current_work);
+        assert_eq!(recovered.current_target, state.current_target);
         assert_eq!(recovered.epoch_start_timestamp, state.epoch_start_timestamp);
         assert_eq!(recovered.timestamps, state.timestamps);
     }
@@ -1673,9 +1715,9 @@ mod tests {
     #[test]
     fn private_continuation_state_serializes_to_fixed_width() {
         let pcs = PrivateContinuationState {
-            next_nbits: CompactTarget::new(GENESIS_NBITS),
-            next_work: ChainWork::from_limbs([1, 2, 3, 4]),
-            next_target: GENESIS_TARGET,
+            current_nbits: CompactTarget::new(GENESIS_NBITS),
+            current_work: ChainWork::from_limbs([1, 2, 3, 4]),
+            current_target: GENESIS_TARGET,
             epoch_start_timestamp: BlockTimestamp::new(500),
             timestamps: [BlockTimestamp::new(10); WINDOW_SIZE],
         };
@@ -1688,9 +1730,9 @@ mod tests {
     #[test]
     fn state_continuation_bytes_matches_pcs_to_bytes() {
         let state = State {
-            next_nbits: CompactTarget::new(GENESIS_NBITS),
-            next_work: ChainWork::from_limbs([1, 2, 3, 4]),
-            next_target: GENESIS_TARGET,
+            current_nbits: CompactTarget::new(GENESIS_NBITS),
+            current_work: ChainWork::from_limbs([1, 2, 3, 4]),
+            current_target: GENESIS_TARGET,
             epoch_start_timestamp: BlockTimestamp::new(500),
             timestamps: [BlockTimestamp::new(10); WINDOW_SIZE],
             ..Default::default()
@@ -1727,8 +1769,8 @@ mod tests {
     #[test]
     fn retarget_no_change_when_timespan_equals_expected() {
         let old = GENESIS_TARGET;
-        let new =
-            calculate_next_work_required(old, EXPECTED_EPOCH_TIMESPAN, EXPECTED_EPOCH_TIMESPAN);
+        let (bits, new) = calculate_next_target_required(old, ts(0), ts(EXPECTED_EPOCH_TIMESPAN));
+        assert_eq!(bits, CompactTarget::new(GENESIS_NBITS));
         assert_eq!(
             new, old,
             "target should be unchanged when actual == expected"
@@ -1738,8 +1780,7 @@ mod tests {
     #[test]
     fn retarget_stricter_when_timespan_shorter() {
         let old = GENESIS_TARGET;
-        let new =
-            calculate_next_work_required(old, EXPECTED_EPOCH_TIMESPAN / 4, EXPECTED_EPOCH_TIMESPAN);
+        let (_, new) = calculate_next_target_required(old, ts(0), ts(EXPECTED_EPOCH_TIMESPAN / 4));
         // Shorter timespan increases difficulty ⇒ numeric target must not be greater than old.
         assert!(
             !target_gt(new, old),
@@ -1750,8 +1791,7 @@ mod tests {
     #[test]
     fn retarget_easier_when_timespan_longer() {
         let old = GENESIS_TARGET;
-        let new =
-            calculate_next_work_required(old, EXPECTED_EPOCH_TIMESPAN * 4, EXPECTED_EPOCH_TIMESPAN);
+        let (_, new) = calculate_next_target_required(old, ts(0), ts(EXPECTED_EPOCH_TIMESPAN * 4));
         // Longer timespan lowers difficulty ⇒ target should be >= old.
         assert!(
             target_gt(new, old) || new == old,
@@ -1762,10 +1802,8 @@ mod tests {
     #[test]
     fn retarget_at_min_and_max_timespans() {
         let old = GENESIS_TARGET;
-        let at_min =
-            calculate_next_work_required(old, MIN_EPOCH_TIMESPAN as u32, EXPECTED_EPOCH_TIMESPAN);
-        let at_max =
-            calculate_next_work_required(old, MAX_EPOCH_TIMESPAN as u32, EXPECTED_EPOCH_TIMESPAN);
+        let (_, at_min) = calculate_next_target_required(old, ts(0), ts(MIN_EPOCH_TIMESPAN as u32));
+        let (_, at_max) = calculate_next_target_required(old, ts(0), ts(MAX_EPOCH_TIMESPAN as u32));
         assert!(
             !target_gt(at_min, old),
             "min timespan should not increase target"

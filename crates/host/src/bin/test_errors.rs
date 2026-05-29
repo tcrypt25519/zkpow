@@ -218,7 +218,7 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
     const FIRST_BOUNDARY_TIP_HEIGHT: usize = 2015;
     const RETARGET_HEIGHT: usize = 32256;
     const RETARGET_TIP_HEIGHT: usize = RETARGET_HEIGHT - 1;
-    const EPOCH_LENGTH: usize = 2016;
+    const EPOCH_LENGTH: usize = zkpow_core::EPOCH_LENGTH as usize;
     let genesis_state = mainnet_genesis_state();
 
     let first_epoch_raw =
@@ -226,20 +226,20 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
     let first_epoch_headers = util::raw_headers_to_new_headers(&first_epoch_raw);
     let first_epoch_state = util::compute_final_state(&genesis_state, &first_epoch_headers);
     println!(
-        "retarget-debug: first_epoch loaded={} state.height={} state.next_nbits={:#x}",
+        "retarget-debug: first_epoch loaded={} state.height={} state.current_nbits={:#x}",
         first_epoch_headers.len(),
         first_epoch_state.height,
-        consensus_bits(first_epoch_state.next_nbits),
+        consensus_bits(first_epoch_state.current_nbits),
     );
     let first_retarget_bits = raw_header_bits(
         &util::load_headers_from_db(DEFAULT_DB_PATH, (FIRST_BOUNDARY_TIP_HEIGHT + 1) as u64, 1),
         0,
     )?;
-    if consensus_bits(first_epoch_state.next_nbits) != first_retarget_bits {
+    if consensus_bits(first_epoch_state.current_nbits) != first_retarget_bits {
         return Err(format!(
             "expected first retarget boundary bits {:#x}, got {:#x}",
             first_retarget_bits,
-            consensus_bits(first_epoch_state.next_nbits),
+            consensus_bits(first_epoch_state.current_nbits),
         ));
     }
 
@@ -247,10 +247,10 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
     let new_headers = util::raw_headers_to_new_headers(&raw_headers);
     let state = util::compute_final_state(&genesis_state, &new_headers);
     println!(
-        "retarget-debug: retarget loaded={} state.height={} state.next_nbits={:#x}",
+        "retarget-debug: retarget loaded={} state.height={} state.current_nbits={:#x}",
         new_headers.len(),
         state.height,
-        consensus_bits(state.next_nbits),
+        consensus_bits(state.current_nbits),
     );
     println!(
         "retarget-debug: prev_epoch_bits={:#x} next_header_bits={:#x}",
@@ -281,11 +281,28 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
         ));
     }
 
-    if consensus_bits(state.next_nbits) != next_header_bits {
+    if consensus_bits(state.current_nbits) != previous_epoch_bits {
         return Err(format!(
-            "expected next-header bits {:#x} after completing epoch, got {:#x}",
+            "expected current epoch bits {:#x} before boundary block, got {:#x}",
+            previous_epoch_bits,
+            consensus_bits(state.current_nbits),
+        ));
+    }
+
+    let boundary_raw = util::load_headers_from_db(DEFAULT_DB_PATH, RETARGET_HEIGHT as u64, 1);
+    let boundary_headers = util::raw_headers_to_new_headers(&boundary_raw);
+    let boundary_state = util::compute_final_state(&state, &boundary_headers);
+    if boundary_state.height != RETARGET_HEIGHT as u32 {
+        return Err(format!(
+            "expected boundary height {}, got {}",
+            RETARGET_HEIGHT, boundary_state.height,
+        ));
+    }
+    if consensus_bits(boundary_state.current_nbits) != next_header_bits {
+        return Err(format!(
+            "expected boundary bits {:#x}, got {:#x}",
             next_header_bits,
-            consensus_bits(state.next_nbits),
+            consensus_bits(boundary_state.current_nbits),
         ));
     }
 
@@ -294,11 +311,11 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
     let pre_boundary_headers = util::raw_headers_to_new_headers(&pre_boundary_raw);
     let pre_boundary_state = util::compute_final_state(&genesis_state, &pre_boundary_headers);
 
-    if consensus_bits(pre_boundary_state.next_nbits) != previous_epoch_bits {
+    if consensus_bits(pre_boundary_state.current_nbits) != previous_epoch_bits {
         return Err(format!(
             "expected pre-boundary bits {:#x}, got {:#x}",
             previous_epoch_bits,
-            consensus_bits(pre_boundary_state.next_nbits),
+            consensus_bits(pre_boundary_state.current_nbits),
         ));
     }
 
@@ -465,7 +482,7 @@ async fn test_error_recursive_on_tampered_state_witness() -> Result<(), String> 
     };
 
     let mut tampered_state = state_at_5.clone();
-    tampered_state.next_work = util::ChainWork::default();
+    tampered_state.current_work = util::ChainWork::default();
 
     let input = input_for_state(&state_at_5, recursive_proof);
     let empty_headers = [];

@@ -8,10 +8,10 @@ use sha2::{Digest, Sha256};
 use sp1_sdk::SP1PublicValues;
 
 pub use zkpow_core::{
-    u256, work_from_target, ApplyFailure, BlockHash, BlockTimestamp, ChainWork, CompactTarget,
-    Header, HeaderChainPublicValues, Input, InputError, MedianTimePastHints, MinimalPublicValues,
-    NewHeader, NewHeaderHintError, NewHeaderHints, NewHeaderHintsRef, ParseError,
-    PrivateContinuationState, ProofFailure, PublicChainClaim, PublicValuesDigest,
+    target_from_bits, u256, work_from_target, ApplyFailure, BlockHash, BlockTimestamp, ChainWork,
+    CompactTarget, Header, HeaderChainPublicValues, Input, InputError, MedianTimePastHints,
+    MinimalPublicValues, NewHeader, NewHeaderHintError, NewHeaderHints, NewHeaderHintsRef,
+    ParseError, PrivateContinuationState, ProofFailure, PublicChainClaim, PublicValuesDigest,
     PublicValuesParseError, RecursiveProof, State, Target, ValidationErrorCode, ValidationState,
     VerifierKeyDigest, GENESIS_TARGET, MINIMAL_PV_SIZE, NEW_HEADER_SIZE,
     PRIVATE_CONTINUATION_STATE_SIZE, PUBLIC_CHAIN_CLAIM_SIZE, STATE_SIZE,
@@ -227,32 +227,6 @@ pub fn continuation_digest_from_state(state: &State) -> [u8; 32] {
     Sha256::digest(state.continuation_bytes()).into()
 }
 
-#[must_use]
-pub fn target_from_compact(compact_target: CompactTarget) -> Target {
-    let bits = compact_target.into_inner();
-    let size = (bits >> 24) as usize;
-    let mantissa = bits & 0x007f_ffff;
-    let mut normalized_target_bytes = [0u8; 32];
-
-    if size <= 3 {
-        let value = mantissa >> (8 * (3 - size));
-        normalized_target_bytes[0..4].copy_from_slice(&value.to_le_bytes());
-    } else {
-        let offset = size - 3;
-        if offset < 32 {
-            normalized_target_bytes[offset] = (mantissa & 0xff) as u8;
-        }
-        if offset + 1 < 32 {
-            normalized_target_bytes[offset + 1] = ((mantissa >> 8) & 0xff) as u8;
-        }
-        if offset + 2 < 32 {
-            normalized_target_bytes[offset + 2] = ((mantissa >> 16) & 0xff) as u8;
-        }
-    }
-
-    Target::from_le_bytes(normalized_target_bytes)
-}
-
 // ============================================================================
 // State Computation (host-side simulation of zkVM logic)
 // ============================================================================
@@ -273,11 +247,11 @@ pub fn genesis_state(genesis_header: Header, genesis_hash: BlockHash) -> State {
         header: genesis_header,
         block_hash,
         genesis_hash,
-        next_nbits: genesis_header.compact_target,
+        current_nbits: genesis_header.compact_target,
         height: 0,
         chain_work: genesis_work,
-        next_work: genesis_work,
-        next_target: GENESIS_TARGET,
+        current_work: genesis_work,
+        current_target: GENESIS_TARGET,
         epoch_start_timestamp: genesis_header.timestamp,
         timestamps,
         _environment: core::marker::PhantomData,
@@ -298,7 +272,7 @@ pub fn state_from_db_at_height(db_path: &str, height: u32, genesis_hash: BlockHa
     }
 
     let current = load_header_record_from_db(db_path, height as u64);
-    let next = load_header_record_from_db(db_path, height as u64 + 1);
+    let chain_work_record = load_header_record_from_db(db_path, height as u64 + 1);
     let epoch_start_height = (height / zkpow_core::EPOCH_LENGTH) * zkpow_core::EPOCH_LENGTH;
     let epoch_start_record = load_header_record_from_db(db_path, epoch_start_height as u64);
     let window_count = (height as usize + 1).min(zkpow_core::WINDOW_SIZE) as u64;
@@ -310,17 +284,17 @@ pub fn state_from_db_at_height(db_path: &str, height: u32, genesis_hash: BlockHa
         timestamps[record.height as usize % zkpow_core::WINDOW_SIZE] = record.header.timestamp;
     }
 
-    let next_target = target_from_compact(next.header.compact_target);
+    let current_target = target_from_bits(current.header.compact_target);
 
     State {
         header: current.header,
         block_hash: hash_header(&current.header),
         genesis_hash,
-        next_nbits: next.header.compact_target,
+        current_nbits: current.header.compact_target,
         height,
-        chain_work: next.chain_work,
-        next_work: work_from_target(next_target),
-        next_target,
+        chain_work: chain_work_record.chain_work,
+        current_work: work_from_target(current_target),
+        current_target,
         epoch_start_timestamp: epoch_start_record.header.timestamp,
         timestamps,
         _environment: core::marker::PhantomData,
@@ -395,9 +369,9 @@ mod tests {
 
     fn make_pcs() -> PrivateContinuationState {
         PrivateContinuationState {
-            next_nbits: CompactTarget::new(GENESIS_NBITS),
-            next_work: zkpow_core::ChainWork::from_limbs([1, 2, 3, 4]),
-            next_target: zkpow_core::GENESIS_TARGET,
+            current_nbits: CompactTarget::new(GENESIS_NBITS),
+            current_work: zkpow_core::ChainWork::from_limbs([1, 2, 3, 4]),
+            current_target: zkpow_core::GENESIS_TARGET,
             epoch_start_timestamp: BlockTimestamp::new(500),
             timestamps: [BlockTimestamp::new(10); WINDOW_SIZE],
         }
@@ -448,9 +422,15 @@ mod tests {
         let records = load_header_records_from_db(TEST_DB_PATH, 1, 40319);
         let headers = records_to_new_headers(&records);
         let state = compute_final_state(&genesis_state, &headers);
-        let boundary = load_header_record_from_db(TEST_DB_PATH, 40320);
+        let pre_boundary = load_header_record_from_db(TEST_DB_PATH, 40319);
 
         assert_eq!(state.height, 40319);
-        assert_eq!(state.next_nbits, boundary.header.compact_target);
+        assert_eq!(state.current_nbits, pre_boundary.header.compact_target);
+
+        let boundary = load_header_record_from_db(TEST_DB_PATH, 40320);
+        let boundary_state =
+            compute_final_state(&state, &[NewHeader::from_header(&boundary.header)]);
+        assert_eq!(boundary_state.height, 40320);
+        assert_eq!(boundary_state.current_nbits, boundary.header.compact_target);
     }
 }

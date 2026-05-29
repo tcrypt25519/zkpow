@@ -202,8 +202,9 @@ The prover reads from `headers.db` (SQLite, ~258 MB). The path is hardcoded as
 
 **State reconstruction** (`state_from_db_at_height`):
 - At height 0: loads genesis record, builds genesis state
-- At height N > 0: loads record at N, record at N+1 (for next_nbits/next_target),
-  epoch-start record, and the timestamp window (last 11 records)
+- At height N > 0: loads record at N for the active compact target, record at
+  N+1 for the DB's chainwork alignment, the epoch-start record, and the
+  timestamp window (last 11 records)
 - All data comes from the DB — no recomputation from state
 
 ---
@@ -231,12 +232,12 @@ Host: load state from DB, load headers, load MTP hints
 
 | Constant | Bytes | Description |
 |----------|-------|-------------|
-| `STATE_SIZE` | 296 | Full `State` (header + hash + genesis + nbits + height + chain_work + next_work + next_target + epoch_ts + timestamps) |
+| `STATE_SIZE` | 296 | Full `State` (header + hash + genesis + current_nbits + height + chain_work + current_work + current_target + epoch_ts + timestamps) |
 | `NEW_HEADER_SIZE` | 44 | `NewHeader` (version + merkle_root + timestamp + nonce) |
 | `PUBLIC_CHAIN_CLAIM_SIZE` | 100 | `PublicChainClaim` (genesis_hash + tip_hash + chain_work + height) |
 | `RECURSIVE_PROOF_SIZE` | 68 | `RecursiveProof` (verifier_key + pv_digest + return_code) |
 | `PROOF_CARRYING_STATE_SIZE` | 168 | `PublicChainClaim + RecursiveProof` |
-| `PRIVATE_CONTINUATION_STATE_SIZE` | 116 | Next nbits + work + target + epoch_ts + timestamps |
+| `PRIVATE_CONTINUATION_STATE_SIZE` | 116 | Current nbits + work + target + epoch_ts + timestamps |
 | `MINIMAL_PV_SIZE` | 169 | Committed public values (success or failure) |
 
 ### MinimalPublicValues Layout (169 bytes)

@@ -2,11 +2,10 @@
 compile_error!("zkpow wire types require a little-endian target");
 
 use crate::{
-    calculate_next_work_required, check_proof_of_work, copy_from_bytes, copy_to_bytes,
-    ref_from_bytes, target_gt, target_to_bits, work_from_target, ApplyFailure, BlockHash,
-    BlockTimestamp, ChainWork, CompactTarget, Header, NewHeader, ParseError, PublicChainClaim,
-    Target, ValidationErrorCode, EXPECTED_EPOCH_TIMESPAN, GENESIS_TARGET, MAX_EPOCH_TIMESPAN,
-    MIN_EPOCH_TIMESPAN, PRIVATE_CONTINUATION_STATE_SIZE, STATE_SIZE, WINDOW_SIZE,
+    calculate_next_target_required, check_proof_of_work, copy_from_bytes, copy_to_bytes,
+    ref_from_bytes, work_from_target, ApplyFailure, BlockHash, BlockTimestamp, ChainWork,
+    CompactTarget, Header, NewHeader, ParseError, PublicChainClaim, Target, ValidationErrorCode,
+    EPOCH_LENGTH, PRIVATE_CONTINUATION_STATE_SIZE, STATE_SIZE, WINDOW_SIZE,
 };
 use core::marker::PhantomData;
 
@@ -83,14 +82,14 @@ pub struct StateInner<E: Env> {
     pub header: Header,
     pub block_hash: BlockHash,
     pub genesis_hash: BlockHash,
-    pub next_nbits: CompactTarget,
+    pub current_nbits: CompactTarget,
     pub height: u32,
     pub chain_work: ChainWork,
-    pub next_work: ChainWork,
+    pub current_work: ChainWork,
     /// Expanded 256-bit target for the current difficulty period.
-    /// Cached to avoid recomputing from `next_nbits` on every block.
-    /// Updated only at retarget boundaries (every 2016 blocks) and at genesis.
-    pub next_target: Target,
+    /// Cached to avoid recomputing from `current_nbits` on every block.
+    /// Updated only at retarget boundaries and at genesis.
+    pub current_target: Target,
     pub epoch_start_timestamp: BlockTimestamp,
     pub timestamps: [BlockTimestamp; WINDOW_SIZE],
     pub _environment: PhantomData<E>,
@@ -106,10 +105,10 @@ impl<E: Env> StateInner<E> {
         (self.height as usize + 1).min(WINDOW_SIZE)
     }
 
-    /// The circular-buffer slot where the next timestamp should be written.
+    /// The circular-buffer slot containing the current tip timestamp.
     #[must_use]
-    pub(crate) fn next_timestamp_slot(&self) -> usize {
-        (self.height as usize + 1) % WINDOW_SIZE
+    pub(crate) fn current_timestamp_slot(&self) -> usize {
+        self.height as usize % WINDOW_SIZE
     }
 
     /// Serialize to exactly [`STATE_SIZE`] bytes.
@@ -144,9 +143,9 @@ impl<E: Env> StateInner<E> {
     #[must_use]
     pub fn continuation_bytes(&self) -> [u8; PRIVATE_CONTINUATION_STATE_SIZE] {
         let mut out = [0u8; PRIVATE_CONTINUATION_STATE_SIZE];
-        out[0..4].copy_from_slice(self.next_nbits.to_le_bytes_slice());
-        out[4..36].copy_from_slice(self.next_work.to_le_bytes_slice());
-        out[36..68].copy_from_slice(self.next_target.to_le_bytes_slice());
+        out[0..4].copy_from_slice(self.current_nbits.to_le_bytes_slice());
+        out[4..36].copy_from_slice(self.current_work.to_le_bytes_slice());
+        out[36..68].copy_from_slice(self.current_target.to_le_bytes_slice());
         out[68..72].copy_from_slice(self.epoch_start_timestamp.to_le_bytes_slice());
         for (i, ts) in self.timestamps.iter().enumerate() {
             out[72 + i * 4..72 + (i + 1) * 4].copy_from_slice(ts.to_le_bytes_slice());
@@ -154,110 +153,25 @@ impl<E: Env> StateInner<E> {
         out
     }
 
-    /// The expanded proof-of-work target required for the next header.
+    /// The expanded proof-of-work target active at the current height.
     #[must_use]
-    pub fn next_target(&self) -> Target {
-        self.next_target
+    pub fn current_target(&self) -> Target {
+        self.current_target
     }
 
-    /// Build the next authenticated state from the current state, a prover-supplied header,
-    /// and a pre-computed block hash.
-    fn next_inner(
-        &mut self,
-        header: Header,
-        block_hash: BlockHash,
-        median_time_past: BlockTimestamp,
-        update_chain_work: bool,
-    ) -> Result<(), ValidationErrorCode> {
-        cycle_track("state/next_inner", || {
-            let (required_target, required_work, timestamp_slot) =
-                cycle_track("state/next_inner/setup", || {
-                    (self.next_target, self.next_work, self.next_timestamp_slot())
-                });
-            cycle_track("state/next_inner/validate/median_time_past", || {
-                if header.timestamp <= median_time_past {
-                    return Err(ValidationErrorCode::TimestampTooOld);
-                }
-                Ok(())
-            })?;
-
-            cycle_track("state/next_inner/validate/pow", || {
-                if !check_proof_of_work(block_hash, required_target) {
-                    return Err(ValidationErrorCode::PowInsufficient);
-                }
-                Ok(())
-            })?;
-
-            cycle_track("state/next_inner/update_height", || {
-                self.height += 1;
-            });
-            cycle_track("state/next_inner/timestamp_window", || {
-                self.timestamps[timestamp_slot] = header.timestamp;
-            });
-
-            if cycle_track("state/next_inner/check_epoch_timestamp", || {
-                self.height.is_multiple_of(2016)
-            }) {
-                cycle_track("state/next_inner/epoch_timestamp", || {
-                    self.epoch_start_timestamp = header.timestamp;
-                });
-            }
-
-            if cycle_track("state/next_inner/check_retarget", || {
-                (self.height + 1).is_multiple_of(2016)
-            }) {
-                cycle_track("state/next_inner/retarget", || {
-                    let actual_timespan =
-                        i64::from(*header.timestamp) - i64::from(*self.epoch_start_timestamp);
-                    let clamped =
-                        actual_timespan.clamp(MIN_EPOCH_TIMESPAN, MAX_EPOCH_TIMESPAN) as u32;
-                    let mut new_target = calculate_next_work_required(
-                        required_target,
-                        clamped,
-                        EXPECTED_EPOCH_TIMESPAN,
-                    );
-                    if target_gt(new_target, GENESIS_TARGET) {
-                        new_target = GENESIS_TARGET;
-                    }
-                    let next_nbits = target_to_bits(new_target);
-                    let bits = next_nbits.into_inner();
-                    let size = (bits >> 24) as usize;
-                    let mantissa = bits & 0x007f_ffff;
-                    let mut normalized_target_bytes = [0u8; 32];
-
-                    if size <= 3 {
-                        let value = mantissa >> (8 * (3 - size));
-                        normalized_target_bytes[0..4].copy_from_slice(&value.to_le_bytes());
-                    } else {
-                        let offset = size - 3;
-                        if offset < 32 {
-                            normalized_target_bytes[offset] = (mantissa & 0xff) as u8;
-                        }
-                        if offset + 1 < 32 {
-                            normalized_target_bytes[offset + 1] = ((mantissa >> 8) & 0xff) as u8;
-                        }
-                        if offset + 2 < 32 {
-                            normalized_target_bytes[offset + 2] = ((mantissa >> 16) & 0xff) as u8;
-                        }
-                    }
-
-                    let normalized_target = Target::from_le_bytes(normalized_target_bytes);
-                    self.next_nbits = next_nbits;
-                    self.next_target = normalized_target;
-                    self.next_work = work_from_target(normalized_target);
-                });
-            }
-
-            if update_chain_work {
-                self.chain_work = cycle_track("state/next_inner/chain_work", || {
-                    self.chain_work + required_work
-                });
-            }
-            cycle_track("state/next_inner/assign_state", || {
-                self.header = header;
-                self.block_hash = block_hash;
-            });
-            Ok(())
+    /// Compute the difficulty values that become active at a new epoch boundary.
+    fn prepare_new_epoch(
+        &self,
+        previous_timestamp: BlockTimestamp,
+    ) -> (CompactTarget, Target, ChainWork) {
+        cycle_track("state/prepare_new_epoch", || {
+            let (current_nbits, current_target) = calculate_next_target_required(
+                self.current_target,
+                self.epoch_start_timestamp,
+                previous_timestamp,
+            );
+            let current_work = work_from_target(current_target);
+            (current_nbits, current_target, current_work)
         })
     }
 }
@@ -339,13 +253,14 @@ impl<E: Env> StateInner<E> {
                 .zip(median_hints.iter().copied())
                 .enumerate()
             {
-                let required_nbits = self.next_nbits;
-                let required_work = self.next_work;
-                let header = cycle_track("state/apply_headers/build_header", || {
-                    new_header.into_header(self.block_hash, required_nbits)
-                });
-                let block_hash =
-                    cycle_track("state/apply_headers/hash_header", || hash_header(&header));
+                let candidate_height =
+                    cycle_track("state/apply_headers/candidate_height", || self.height + 1);
+                let previous_timestamp =
+                    cycle_track("state/apply_headers/load_previous_timestamp", || {
+                        self.timestamps[self.current_timestamp_slot()]
+                    });
+                let timestamp_slot = candidate_height as usize % WINDOW_SIZE;
+
                 cycle_track("state/apply_headers/median_hint_check", || {
                     assert!(
                         self.median_time_past_hinted(claimed_median),
@@ -353,27 +268,65 @@ impl<E: Env> StateInner<E> {
                         header_index
                     );
                 });
-                let median_time_past = claimed_median;
-                if pending_run_work != Some(required_work) {
-                    flush_pending_chain_work(self, &mut pending_run_work, &mut pending_run_count);
-                    pending_run_work = Some(required_work);
-                }
 
-                if let Err(error_code) =
-                    self.next_inner(header, block_hash, median_time_past, false)
-                {
+                if cycle_track("state/apply_headers/validate/median_time_past", || {
+                    new_header.timestamp <= claimed_median
+                }) {
                     flush_pending_chain_work(self, &mut pending_run_work, &mut pending_run_count);
                     return Err(ApplyFailure {
                         last_valid_state: self.clone(),
-                        error_code,
-                        failure_height: self.height + 1,
+                        error_code: ValidationErrorCode::TimestampTooOld,
+                        failure_height: candidate_height,
                     });
                 }
 
-                pending_run_count += 1;
-                if self.next_nbits != required_nbits {
-                    flush_pending_chain_work(self, &mut pending_run_work, &mut pending_run_count);
+                let mut active_nbits = self.current_nbits;
+                let mut active_target = self.current_target;
+                let mut active_work = self.current_work;
+                if cycle_track("state/apply_headers/check_retarget", || {
+                    candidate_height.is_multiple_of(EPOCH_LENGTH)
+                }) {
+                    let prepared = self.prepare_new_epoch(previous_timestamp);
+                    active_nbits = prepared.0;
+                    active_target = prepared.1;
+                    active_work = prepared.2;
                 }
+
+                let header = cycle_track("state/apply_headers/build_header", || {
+                    new_header.into_header(self.block_hash, active_nbits)
+                });
+                let block_hash =
+                    cycle_track("state/apply_headers/hash_header", || hash_header(&header));
+
+                if cycle_track("state/apply_headers/validate/pow", || {
+                    !check_proof_of_work(block_hash, active_target)
+                }) {
+                    flush_pending_chain_work(self, &mut pending_run_work, &mut pending_run_count);
+                    return Err(ApplyFailure {
+                        last_valid_state: self.clone(),
+                        error_code: ValidationErrorCode::PowInsufficient,
+                        failure_height: candidate_height,
+                    });
+                }
+
+                if pending_run_work != Some(active_work) {
+                    flush_pending_chain_work(self, &mut pending_run_work, &mut pending_run_count);
+                    pending_run_work = Some(active_work);
+                }
+
+                pending_run_count += 1;
+                cycle_track("state/apply_headers/assign_state", || {
+                    self.height = candidate_height;
+                    self.timestamps[timestamp_slot] = header.timestamp;
+                    self.current_nbits = active_nbits;
+                    self.current_target = active_target;
+                    self.current_work = active_work;
+                    if candidate_height.is_multiple_of(EPOCH_LENGTH) {
+                        self.epoch_start_timestamp = header.timestamp;
+                    }
+                    self.header = header;
+                    self.block_hash = block_hash;
+                });
             }
 
             flush_pending_chain_work(self, &mut pending_run_work, &mut pending_run_count);
@@ -389,11 +342,11 @@ impl<E: Env> Default for StateInner<E> {
             header: Header::default(),
             block_hash: BlockHash::default(),
             genesis_hash: BlockHash::default(),
-            next_nbits: CompactTarget::default(),
+            current_nbits: CompactTarget::default(),
             height: 0,
             chain_work: ChainWork::default(),
-            next_work: ChainWork::default(),
-            next_target: Target::default(),
+            current_work: ChainWork::default(),
+            current_target: Target::default(),
             epoch_start_timestamp: BlockTimestamp::default(),
             timestamps: [BlockTimestamp::default(); WINDOW_SIZE],
             _environment: PhantomData,
