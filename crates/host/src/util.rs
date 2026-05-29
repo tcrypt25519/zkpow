@@ -53,14 +53,14 @@ pub fn load_headers_from_db(db_path: &str, start_height: u64, count: u64) -> Vec
 
             let header = Header {
                 version: version as u32,
-                prev_blockhash: BlockHash::from_raw(
+                prev_blockhash: BlockHash::new(
                     prev.try_into().expect("prev must be 32 bytes"),
                 ),
                 merkle_root: merkle_root
                     .try_into()
                     .expect("merkle_root must be 32 bytes"),
                 timestamp: BlockTimestamp::new(timestamp as u32),
-                compact_target: zkpow_core::CompactTarget::from_consensus(nbits as u32),
+                compact_target: zkpow_core::CompactTarget::new(nbits as u32),
                 nonce: nonce as u32,
             };
             Ok(header.to_bytes())
@@ -115,14 +115,14 @@ pub fn load_header_records_from_db(
 
             let header = Header {
                 version: version as u32,
-                prev_blockhash: BlockHash::from_raw(
+                prev_blockhash: BlockHash::new(
                     prev.try_into().expect("prev must be 32 bytes"),
                 ),
                 merkle_root: merkle_root
                     .try_into()
                     .expect("merkle_root must be 32 bytes"),
                 timestamp: BlockTimestamp::new(timestamp as u32),
-                compact_target: CompactTarget::from_consensus(nbits as u32),
+                compact_target: CompactTarget::new(nbits as u32),
                 nonce: nonce as u32,
             };
 
@@ -205,7 +205,7 @@ pub fn sha256d(data: &[u8]) -> [u8; 32] {
 /// Hash a full Bitcoin header with SHA256d.
 #[must_use]
 pub fn hash_header(header: &Header) -> BlockHash {
-    BlockHash::from_raw(sha256d(&header.to_bytes()))
+    BlockHash::new(sha256d(&header.to_bytes()))
 }
 
 /// Compute SHA-256 digest of public values.
@@ -229,7 +229,7 @@ pub fn continuation_digest_from_state(state: &State) -> [u8; 32] {
 
 #[must_use]
 pub fn target_from_compact(compact_target: CompactTarget) -> Target {
-    let bits = compact_target.to_consensus();
+    let bits = compact_target.into_inner();
     let size = (bits >> 24) as usize;
     let mantissa = bits & 0x007f_ffff;
     let mut normalized_target_bytes = [0u8; 32];
@@ -395,11 +395,11 @@ mod tests {
 
     fn make_pcs() -> PrivateContinuationState {
         PrivateContinuationState {
-            next_nbits: CompactTarget::from_consensus(GENESIS_NBITS),
+            next_nbits: CompactTarget::new(GENESIS_NBITS),
             next_work: zkpow_core::ChainWork::from_limbs([1, 2, 3, 4]),
             next_target: zkpow_core::GENESIS_TARGET,
-            epoch_start_timestamp: BlockTimestamp::from_consensus(500),
-            timestamps: [BlockTimestamp::from_consensus(10); WINDOW_SIZE],
+            epoch_start_timestamp: BlockTimestamp::new(500),
+            timestamps: [BlockTimestamp::new(10); WINDOW_SIZE],
         }
     }
 

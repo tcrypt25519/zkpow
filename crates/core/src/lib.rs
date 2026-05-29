@@ -366,17 +366,17 @@ impl PublicChainClaim {
     #[must_use]
     pub fn to_bytes(&self) -> [u8; PUBLIC_CHAIN_CLAIM_SIZE] {
         let mut out = [0u8; PUBLIC_CHAIN_CLAIM_SIZE];
-        out[0..32].copy_from_slice(self.genesis_hash.as_raw());
-        out[32..64].copy_from_slice(self.tip_hash.as_raw());
-        out[64..96].copy_from_slice(&self.chain_work.to_le_bytes());
+        out[0..32].copy_from_slice(self.genesis_hash.to_le_bytes_slice());
+        out[32..64].copy_from_slice(self.tip_hash.to_le_bytes_slice());
+        out[64..96].copy_from_slice(self.chain_work.to_le_bytes_slice());
         out[96..100].copy_from_slice(&self.height.to_le_bytes());
         out
     }
 
     pub fn parse(bytes: &[u8]) -> Result<Self, ParseError> {
         check_exact_len(bytes, PUBLIC_CHAIN_CLAIM_SIZE)?;
-        let genesis_hash = BlockHash::from_raw(bytes[0..32].try_into().unwrap());
-        let tip_hash = BlockHash::from_raw(bytes[32..64].try_into().unwrap());
+        let genesis_hash = BlockHash::new(bytes[0..32].try_into().unwrap());
+        let tip_hash = BlockHash::new(bytes[32..64].try_into().unwrap());
         let chain_work = ChainWork::from_le_bytes(bytes[64..96].try_into().unwrap());
         let height = u32::from_le_bytes(bytes[96..100].try_into().unwrap());
         Ok(Self {
@@ -418,12 +418,12 @@ impl PrivateContinuationState {
     #[must_use]
     pub fn to_bytes(&self) -> [u8; PRIVATE_CONTINUATION_STATE_SIZE] {
         let mut out = [0u8; PRIVATE_CONTINUATION_STATE_SIZE];
-        out[0..4].copy_from_slice(self.next_nbits.to_u32());
-        out[4..36].copy_from_slice(&self.next_work.to_le_bytes());
-        out[36..68].copy_from_slice(&self.next_target.to_le_bytes());
-        out[68..72].copy_from_slice(&self.epoch_start_timestamp.to_le_bytes());
+        out[0..4].copy_from_slice(self.next_nbits.to_le_bytes_slice());
+        out[4..36].copy_from_slice(self.next_work.to_le_bytes_slice());
+        out[36..68].copy_from_slice(self.next_target.to_le_bytes_slice());
+        out[68..72].copy_from_slice(self.epoch_start_timestamp.to_le_bytes_slice());
         for (i, ts) in self.timestamps.iter().enumerate() {
-            out[72 + i * 4..72 + (i + 1) * 4].copy_from_slice(&ts.to_le_bytes());
+            out[72 + i * 4..72 + (i + 1) * 4].copy_from_slice(ts.to_le_bytes_slice());
         }
         out
     }
@@ -431,7 +431,7 @@ impl PrivateContinuationState {
     pub fn parse(bytes: &[u8]) -> Result<Self, ParseError> {
         check_exact_len(bytes, PRIVATE_CONTINUATION_STATE_SIZE)?;
         let next_nbits =
-            CompactTarget::from_inner(u32::from_le_bytes(bytes[0..4].try_into().unwrap()));
+            CompactTarget::new(u32::from_le_bytes(bytes[0..4].try_into().unwrap()));
         let next_work = ChainWork::from_le_bytes(bytes[4..36].try_into().unwrap());
         let next_target = Target::from_le_bytes(bytes[36..68].try_into().unwrap());
         let epoch_start_timestamp =
@@ -648,8 +648,8 @@ impl MinimalPublicValues {
     #[must_use]
     pub fn to_bytes(&self) -> [u8; MINIMAL_PV_SIZE] {
         let mut out = [0u8; MINIMAL_PV_SIZE];
-        out[0..32].copy_from_slice(self.genesis_hash.as_raw());
-        out[32..64].copy_from_slice(self.tip_hash.as_raw());
+        out[0..32].copy_from_slice(self.genesis_hash.to_le_bytes_slice());
+        out[32..64].copy_from_slice(self.tip_hash.to_le_bytes_slice());
         out[64..96].copy_from_slice(&self.chain_work);
         out[96..100].copy_from_slice(&self.height.to_le_bytes());
         out[100] = self.return_code;
@@ -666,8 +666,8 @@ impl MinimalPublicValues {
                 actual: bytes.len(),
             });
         }
-        let genesis_hash = BlockHash::from_raw(bytes[0..32].try_into().unwrap());
-        let tip_hash = BlockHash::from_raw(bytes[32..64].try_into().unwrap());
+        let genesis_hash = BlockHash::new(bytes[0..32].try_into().unwrap());
+        let tip_hash = BlockHash::new(bytes[32..64].try_into().unwrap());
         let chain_work: [u8; 32] = bytes[64..96].try_into().unwrap();
         let height = u32::from_le_bytes(bytes[96..100].try_into().unwrap());
         let return_code = bytes[100];
@@ -817,7 +817,7 @@ pub fn target_to_bits(target: Target) -> CompactTarget {
             nbytes -= 1;
         }
         if nbytes == 0 {
-            return CompactTarget::from_inner(0);
+            return CompactTarget::new(0);
         }
 
         let mut compact = if nbytes <= 3 {
@@ -837,7 +837,7 @@ pub fn target_to_bits(target: Target) -> CompactTarget {
             nbytes += 1;
         }
 
-        CompactTarget::from_inner(((nbytes as u32) << 24) | (compact & 0x007f_ffff))
+        CompactTarget::new(((nbytes as u32) << 24) | (compact & 0x007f_ffff))
     })
 }
 
@@ -869,7 +869,7 @@ pub fn target_gt(lhs: Target, rhs: Target) -> bool {
 #[must_use]
 pub fn check_proof_of_work(hash: BlockHash, target: Target) -> bool {
     cycle_track("pow/check_proof_of_work", || {
-        let hash_u256 = u256::from_le_bytes(*hash.as_raw());
+        let hash_u256 = u256::from_le_bytes(*hash.as_inner());
         u256_cmp(&hash_u256, &target) != core::cmp::Ordering::Greater
     })
 }
@@ -1042,11 +1042,11 @@ mod tests {
     use super::*;
 
     fn ts(seconds: u32) -> BlockTimestamp {
-        BlockTimestamp::from_inner(seconds)
+        BlockTimestamp::new(seconds)
     }
 
     fn zero_hash() -> BlockHash {
-        BlockHash::from_raw([0; 32])
+        BlockHash::new([0; 32])
     }
 
     /// Convert compact `bits` into cumulative-work units using the genesis constant.
@@ -1057,7 +1057,7 @@ mod tests {
 
     fn test_state() -> State {
         State {
-            next_nbits: CompactTarget::from_inner(GENESIS_NBITS),
+            next_nbits: CompactTarget::new(GENESIS_NBITS),
             next_work: genesis_work(),
             next_target: GENESIS_TARGET,
             ..State::default()
@@ -1145,10 +1145,10 @@ mod tests {
     fn new_header_from_header_round_trips_with_into_header() {
         let header = Header {
             version: 7,
-            prev_blockhash: BlockHash::from_raw([0x11; 32]),
+            prev_blockhash: BlockHash::new([0x11; 32]),
             merkle_root: [0x22; 32],
-            timestamp: BlockTimestamp::from_inner(123_456),
-            compact_target: CompactTarget::from_inner(0x1d00ffff),
+            timestamp: BlockTimestamp::new(123_456),
+            compact_target: CompactTarget::new(0x1d00ffff),
             nonce: 99,
         };
 
@@ -1165,8 +1165,8 @@ mod tests {
     #[test]
     fn minimal_public_values_round_trips() {
         let state: State = State {
-            block_hash: BlockHash::from_raw([0xAB; 32]),
-            genesis_hash: BlockHash::from_raw([0xCD; 32]),
+            block_hash: BlockHash::new([0xAB; 32]),
+            genesis_hash: BlockHash::new([0xCD; 32]),
             chain_work: ChainWork::from_limbs([1, 2, 3, 4]),
             height: 42,
             ..State::default()
@@ -1199,12 +1199,12 @@ mod tests {
 
         let header = Header::parse(&header_bytes).unwrap();
         assert_eq!(header.version, 0x1122_3344);
-        assert_eq!(header.prev_blockhash, BlockHash::from_raw([0x55; 32]));
+        assert_eq!(header.prev_blockhash, BlockHash::new([0x55; 32]));
         assert_eq!(header.merkle_root, [0x66; 32]);
-        assert_eq!(header.timestamp, BlockTimestamp::from_inner(0x7788_99aa));
+        assert_eq!(header.timestamp, BlockTimestamp::new(0x7788_99aa));
         assert_eq!(
             header.compact_target,
-            CompactTarget::from_inner(0x1d00_ffff)
+            CompactTarget::new(0x1d00_ffff)
         );
         assert_eq!(header.nonce, 0xbbcc_ddee);
         assert_eq!(header.to_bytes(), header_bytes);
@@ -1220,7 +1220,7 @@ mod tests {
         assert_eq!(new_header.merkle_root, [0x66; 32]);
         assert_eq!(
             new_header.timestamp,
-            BlockTimestamp::from_inner(0x7788_99aa)
+            BlockTimestamp::new(0x7788_99aa)
         );
         assert_eq!(new_header.nonce, 0xbbcc_ddee);
         assert_eq!(new_header.to_bytes(), new_header_bytes);
@@ -1251,14 +1251,14 @@ mod tests {
 
     #[test]
     fn check_proof_of_work_accepts_exact_target_boundary() {
-        let hash = BlockHash::from_raw(GENESIS_TARGET.to_le_bytes());
+        let hash = BlockHash::new(GENESIS_TARGET.to_le_bytes());
         assert!(check_proof_of_work(hash, GENESIS_TARGET));
     }
 
     #[test]
     fn target_to_bits_round_trips_genesis_target() {
         let round_trip = target_to_bits(GENESIS_TARGET);
-        i
+        assert_eq!(round_trip, CompactTarget::new(GENESIS_NBITS));
     }
 
     #[test]
@@ -1327,7 +1327,7 @@ mod tests {
         // Start at height 5 and fail on the first new header → failure_height = 6.
         let mut state: State = State {
             height: 5,
-            next_nbits: CompactTarget::from_inner(GENESIS_NBITS),
+            next_nbits: CompactTarget::new(GENESIS_NBITS),
             next_work: genesis_work(),
             next_target: GENESIS_TARGET,
             ..State::default()
@@ -1340,7 +1340,7 @@ mod tests {
         }];
         // Use a hash that exceeds the target to trigger PowInsufficient.
         let failure = state
-            .apply_headers(&headers, &[ts(0)], |_| BlockHash::from_raw([0xFF; 32]))
+            .apply_headers(&headers, &[ts(0)], |_| BlockHash::new([0xFF; 32]))
             .expect_err("should fail PoW");
 
         assert_eq!(failure.error_code, ValidationErrorCode::PowInsufficient);
@@ -1465,7 +1465,7 @@ mod tests {
     fn hinted_median_validation_accepts_duplicate_median_values() {
         let mut state: State = State {
             height: WINDOW_SIZE as u32,
-            next_nbits: CompactTarget::from_inner(GENESIS_NBITS),
+            next_nbits: CompactTarget::new(GENESIS_NBITS),
             next_work: genesis_work(),
             next_target: GENESIS_TARGET,
             timestamps: [
@@ -1499,7 +1499,7 @@ mod tests {
     fn hinted_median_validation_rejects_wrong_rank_hint() {
         let state: State = State {
             height: WINDOW_SIZE as u32,
-            next_nbits: CompactTarget::from_inner(GENESIS_NBITS),
+            next_nbits: CompactTarget::new(GENESIS_NBITS),
             next_work: genesis_work(),
             next_target: GENESIS_TARGET,
             timestamps: [
@@ -1537,8 +1537,8 @@ mod tests {
     #[test]
     fn apply_headers_treats_height_zero_state_as_trusted_anchor() {
         let mut state = test_state();
-        state.genesis_hash = BlockHash::from_raw([0x11; 32]);
-        state.block_hash = BlockHash::from_raw([0x22; 32]);
+        state.genesis_hash = BlockHash::new([0x11; 32]);
+        state.block_hash = BlockHash::new([0x22; 32]);
         let headers = [NewHeader {
             version: 1,
             merkle_root: [0x33; 32],
@@ -1551,8 +1551,8 @@ mod tests {
             .expect("height-zero anchor should already be trusted");
 
         assert_eq!(state.height, 1);
-        assert_eq!(state.genesis_hash, BlockHash::from_raw([0x11; 32]));
-        assert_eq!(state.header.prev_blockhash, BlockHash::from_raw([0x22; 32]));
+        assert_eq!(state.genesis_hash, BlockHash::new([0x11; 32]));
+        assert_eq!(state.header.prev_blockhash, BlockHash::new([0x22; 32]));
         assert_eq!(state.block_hash, zero_hash());
     }
 
@@ -1596,8 +1596,8 @@ mod tests {
             ts(110),
         ];
         let mut state: State = State {
-            block_hash: BlockHash::from_raw([0x11; 32]),
-            next_nbits: CompactTarget::from_inner(GENESIS_NBITS),
+            block_hash: BlockHash::new([0x11; 32]),
+            next_nbits: CompactTarget::new(GENESIS_NBITS),
             next_work: genesis_work(),
             next_target: GENESIS_TARGET,
             height: WINDOW_SIZE as u32,
@@ -1614,7 +1614,7 @@ mod tests {
                     nonce: 7,
                 }],
                 &[median_hint],
-                |_| BlockHash::from_raw([0; 32]), // Use zero hash which meets any target
+                |_| BlockHash::new([0; 32]), // Use zero hash which meets any target
             )
             .unwrap();
 
@@ -1631,15 +1631,15 @@ mod tests {
     fn state_round_trips_through_validation_state() {
         let state: State = State {
             header: Header::default(),
-            block_hash: BlockHash::from_raw([0xAB; 32]),
-            genesis_hash: BlockHash::from_raw([0xCD; 32]),
-            next_nbits: CompactTarget::from_inner(GENESIS_NBITS),
+            block_hash: BlockHash::new([0xAB; 32]),
+            genesis_hash: BlockHash::new([0xCD; 32]),
+            next_nbits: CompactTarget::new(GENESIS_NBITS),
             height: 42,
             chain_work: ChainWork::from_limbs([1, 2, 3, 4]),
             next_work: ChainWork::from_limbs([5, 6, 7, 8]),
             next_target: GENESIS_TARGET,
-            epoch_start_timestamp: BlockTimestamp::from_inner(1000),
-            timestamps: [BlockTimestamp::from_inner(100); WINDOW_SIZE],
+            epoch_start_timestamp: BlockTimestamp::new(1000),
+            timestamps: [BlockTimestamp::new(100); WINDOW_SIZE],
             _environment: PhantomData,
         };
 
@@ -1673,11 +1673,11 @@ mod tests {
     #[test]
     fn private_continuation_state_serializes_to_fixed_width() {
         let pcs = PrivateContinuationState {
-            next_nbits: CompactTarget::from_inner(GENESIS_NBITS),
+            next_nbits: CompactTarget::new(GENESIS_NBITS),
             next_work: ChainWork::from_limbs([1, 2, 3, 4]),
             next_target: GENESIS_TARGET,
-            epoch_start_timestamp: BlockTimestamp::from_inner(500),
-            timestamps: [BlockTimestamp::from_inner(10); WINDOW_SIZE],
+            epoch_start_timestamp: BlockTimestamp::new(500),
+            timestamps: [BlockTimestamp::new(10); WINDOW_SIZE],
         };
         let bytes = pcs.to_bytes();
         assert_eq!(bytes.len(), PRIVATE_CONTINUATION_STATE_SIZE);
@@ -1688,11 +1688,11 @@ mod tests {
     #[test]
     fn state_continuation_bytes_matches_pcs_to_bytes() {
         let state = State {
-            next_nbits: CompactTarget::from_inner(GENESIS_NBITS),
+            next_nbits: CompactTarget::new(GENESIS_NBITS),
             next_work: ChainWork::from_limbs([1, 2, 3, 4]),
             next_target: GENESIS_TARGET,
-            epoch_start_timestamp: BlockTimestamp::from_inner(500),
-            timestamps: [BlockTimestamp::from_inner(10); WINDOW_SIZE],
+            epoch_start_timestamp: BlockTimestamp::new(500),
+            timestamps: [BlockTimestamp::new(10); WINDOW_SIZE],
             ..Default::default()
         };
         let vs = ValidationState::from_state(&state);
@@ -1702,8 +1702,8 @@ mod tests {
     #[test]
     fn public_chain_claim_serializes_to_fixed_width() {
         let claim = PublicChainClaim {
-            genesis_hash: BlockHash::from_raw([1; 32]),
-            tip_hash: BlockHash::from_raw([2; 32]),
+            genesis_hash: BlockHash::new([1; 32]),
+            tip_hash: BlockHash::new([2; 32]),
             chain_work: ChainWork::from_limbs([3, 4, 5, 6]),
             height: 99,
         };
@@ -1790,7 +1790,7 @@ mod tests {
 
         // PowInsufficient on first header using a deliberately large hash value (> target).
         state
-            .apply_headers(&[hdr1], &hints, |_| BlockHash::from_raw([0xFF; 32]))
+            .apply_headers(&[hdr1], &hints, |_| BlockHash::new([0xFF; 32]))
             .expect_err("expected PoW failure");
 
         // TimestampTooOld on equality to median (<= median should fail).

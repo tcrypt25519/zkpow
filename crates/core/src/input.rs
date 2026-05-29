@@ -343,8 +343,8 @@ mod tests {
     fn test_parse_from_bytes_genesis_no_proof() {
         let genesis_state: State = State {
             height: 0,
-            genesis_hash: BlockHash::from_raw([1; 32]),
-            block_hash: BlockHash::from_raw([2; 32]),
+            genesis_hash: BlockHash::new([1; 32]),
+            block_hash: BlockHash::new([2; 32]),
             ..Default::default()
         };
         let claim = genesis_state.public_claim();
@@ -352,8 +352,8 @@ mod tests {
         let input = Input::parse(&input).unwrap();
 
         assert_eq!(input.claim.height, 0);
-        assert_eq!(input.claim.genesis_hash, BlockHash::from_raw([1; 32]));
-        assert_eq!(input.claim.tip_hash, BlockHash::from_raw([2; 32]));
+        assert_eq!(input.claim.genesis_hash, BlockHash::new([1; 32]));
+        assert_eq!(input.claim.tip_hash, BlockHash::new([2; 32]));
         assert_eq!(input.recursive_proof, RecursiveProof::default());
     }
 
@@ -364,9 +364,9 @@ mod tests {
             ..Default::default()
         };
         // For height > 0, genesis_hash must be set
-        non_genesis_state.genesis_hash = BlockHash::from_raw([1; 32]);
-        non_genesis_state.block_hash = BlockHash::from_raw([2; 32]);
-        non_genesis_state.header.prev_blockhash = BlockHash::from_raw([3; 32]);
+        non_genesis_state.genesis_hash = BlockHash::new([1; 32]);
+        non_genesis_state.block_hash = BlockHash::new([2; 32]);
+        non_genesis_state.header.prev_blockhash = BlockHash::new([3; 32]);
 
         let expected_verifier_key = VerifierKeyDigest::from_raw([1; 8]);
         let expected_public_values_digest = PublicValuesDigest::from_raw([2; 32]);
@@ -393,13 +393,13 @@ mod tests {
             NewHeader {
                 version: 1,
                 merkle_root: [4; 32],
-                timestamp: BlockTimestamp::from_inner(100),
+                timestamp: BlockTimestamp::new(100),
                 nonce: 0,
             },
             NewHeader {
                 version: 2,
                 merkle_root: [5; 32],
-                timestamp: BlockTimestamp::from_inner(200),
+                timestamp: BlockTimestamp::new(200),
                 nonce: 1,
             },
         ];
@@ -439,7 +439,7 @@ mod tests {
         let headers = NewHeaderHints::new(vec![NewHeader {
             version: 1,
             merkle_root: [4; 32],
-            timestamp: BlockTimestamp::from_inner(100),
+            timestamp: BlockTimestamp::new(100),
             nonce: 0,
         }]);
         let mut bytes = headers.to_bytes();
@@ -458,9 +458,9 @@ mod tests {
     #[test]
     fn median_time_past_hints_round_trip() {
         let hints = MedianTimePastHints::new(vec![
-            BlockTimestamp::from_inner(0),
-            BlockTimestamp::from_inner(123),
-            BlockTimestamp::from_inner(456),
+            BlockTimestamp::new(0),
+            BlockTimestamp::new(123),
+            BlockTimestamp::new(456),
         ]);
 
         let bytes = hints.to_bytes();
@@ -471,7 +471,7 @@ mod tests {
 
     #[test]
     fn median_time_past_hints_reject_wrong_count_length() {
-        let bytes = MedianTimePastHints::new(vec![BlockTimestamp::from_inner(123)]).to_bytes();
+        let bytes = MedianTimePastHints::new(vec![BlockTimestamp::new(123)]).to_bytes();
 
         let err = MedianTimePastHintsRef::parse(&bytes, 2).unwrap_err();
 
@@ -486,7 +486,7 @@ mod tests {
 
     #[test]
     fn median_time_past_hints_reject_truncated_payload() {
-        let mut bytes = MedianTimePastHints::new(vec![BlockTimestamp::from_inner(123)]).to_bytes();
+        let mut bytes = MedianTimePastHints::new(vec![BlockTimestamp::new(123)]).to_bytes();
         bytes.pop();
 
         let err = MedianTimePastHintsRef::parse(&bytes, 1).unwrap_err();

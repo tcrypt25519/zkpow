@@ -9,7 +9,7 @@ const MAINNET_GENESIS_HEX: &str =
     "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f";
 
 fn reverse_hash_display(hash: util::BlockHash) -> String {
-    let mut hash_be = hash.into_raw();
+    let mut hash_be = hash.into_inner();
     hash_be.reverse();
     encode(hash_be)
 }
@@ -93,7 +93,7 @@ fn display_claim(claim: &util::PublicChainClaim) {
         "Genesis Hash:      {}",
         reverse_hash_display(claim.genesis_hash)
     );
-    if claim.genesis_hash == util::BlockHash::from_raw(mainnet_genesis_raw) {
+    if claim.genesis_hash == util::BlockHash::new(mainnet_genesis_raw) {
         println!("                     ↳ mainnet ✓");
     } else {
         println!("                     ↳ NOT mainnet (different chain)");

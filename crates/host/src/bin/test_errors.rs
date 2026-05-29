@@ -104,7 +104,7 @@ fn raw_header_bits(raw_headers: &[u8], height: usize) -> Result<u32, String> {
 }
 
 fn consensus_bits(bits: util::CompactTarget) -> u32 {
-    bits.to_consensus()
+    bits.into_inner()
 }
 
 fn mainnet_genesis_hash() -> util::BlockHash {
@@ -113,7 +113,7 @@ fn mainnet_genesis_hash() -> util::BlockHash {
         .try_into()
         .expect("mainnet genesis hash should be 32 bytes");
     bytes.reverse();
-    util::BlockHash::from_raw(bytes)
+    util::BlockHash::new(bytes)
 }
 
 fn mainnet_genesis_state() -> util::State {
@@ -314,7 +314,7 @@ async fn test_error_timestamp_too_old() -> Result<(), String> {
     let records = util::load_header_records_from_db(DEFAULT_DB_PATH, 1, 13);
     let mut headers = util::records_to_new_headers(&records);
     let hints = util::median_time_past_hints_for_headers(&genesis_state, &headers);
-    headers[11].timestamp = util::BlockTimestamp::from_consensus(1231006505);
+    headers[11].timestamp = util::BlockTimestamp::new(1231006505);
     let input = input_for_state(&genesis_state, RecursiveProof::default());
     let stdin = stdin_for_input(&input, &genesis_state, &headers, &hints);
 

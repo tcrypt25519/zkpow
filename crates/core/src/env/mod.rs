@@ -144,12 +144,12 @@ impl<E: Env> StateInner<E> {
     #[must_use]
     pub fn continuation_bytes(&self) -> [u8; PRIVATE_CONTINUATION_STATE_SIZE] {
         let mut out = [0u8; PRIVATE_CONTINUATION_STATE_SIZE];
-        out[0..4].copy_from_slice(&self.next_nbits.into_inner().to_le_bytes());
-        out[4..36].copy_from_slice(&self.next_work.to_le_bytes());
-        out[36..68].copy_from_slice(&self.next_target.to_le_bytes());
-        out[68..72].copy_from_slice(&self.epoch_start_timestamp.to_le_bytes());
+        out[0..4].copy_from_slice(self.next_nbits.to_le_bytes_slice());
+        out[4..36].copy_from_slice(self.next_work.to_le_bytes_slice());
+        out[36..68].copy_from_slice(self.next_target.to_le_bytes_slice());
+        out[68..72].copy_from_slice(self.epoch_start_timestamp.to_le_bytes_slice());
         for (i, ts) in self.timestamps.iter().enumerate() {
-            out[72 + i * 4..72 + (i + 1) * 4].copy_from_slice(&ts.to_le_bytes());
+            out[72 + i * 4..72 + (i + 1) * 4].copy_from_slice(ts.to_le_bytes_slice());
         }
         out
     }
@@ -208,7 +208,7 @@ impl<E: Env> StateInner<E> {
             }) {
                 cycle_track("state/next_inner/retarget", || {
                     let actual_timespan =
-                        header.timestamp.as_i64() - self.epoch_start_timestamp.as_i64();
+                        i64::from(*header.timestamp) - i64::from(*self.epoch_start_timestamp);
                     let clamped =
                         actual_timespan.clamp(MIN_EPOCH_TIMESPAN, MAX_EPOCH_TIMESPAN) as u32;
                     let mut new_target = calculate_next_work_required(
