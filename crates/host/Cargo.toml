@@ -38,6 +38,7 @@ sp1-build = { workspace = true }
 
 [features]
 default = []
+ansi = []
 CUDA = ["sp1-sdk/cuda"]
 memory-diagnostics = []
 # Opt in to the slow proof-generation tests.
