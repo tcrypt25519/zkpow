@@ -36,19 +36,18 @@ pub const GENESIS_HASH_HEX: &str =
     "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f";
 pub const DEFAULT_DB_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../headers.db");
 
-#[cfg(feature = "ansi")]
-const ACTUAL_START: &str = "\x1b[31m";
-#[cfg(feature = "ansi")]
-const EXPECTED_START: &str = "\x1b[32m";
-#[cfg(feature = "ansi")]
-const MARK_END: &str = "\x1b[0m";
+const ACTUAL_ANSI_START: &str = "\x1b[31m";
+const EXPECTED_ANSI_START: &str = "\x1b[32m";
+const LEADING_ZERO_ANSI_START: &str = "\x1b[97m";
+const ANSI_END: &str = "\x1b[0m";
+const BRACKET_START: &str = "[";
+const BRACKET_END: &str = "]";
 
-#[cfg(not(feature = "ansi"))]
-const ACTUAL_START: &str = "[";
-#[cfg(not(feature = "ansi"))]
-const EXPECTED_START: &str = "[";
-#[cfg(not(feature = "ansi"))]
-const MARK_END: &str = "]";
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HighlightMode {
+    Ansi,
+    Brackets,
+}
 
 fn format_claim_pretty(claim: &util::PublicChainClaim) -> String {
     let mut output = String::new();
@@ -66,16 +65,32 @@ fn format_claim_pretty(claim: &util::PublicChainClaim) -> String {
 }
 
 fn push_claim_field(output: &mut String, name: &str, value: &str) {
-    output.push_str("      ");
-    output.push_str(name);
-    output.push_str(": ");
-    output.push_str(value);
-    output.push_str(",\n");
+    let prefix = field_prefix(name);
+    if value.len() == 64 {
+        output.push_str(&prefix);
+        output.push_str(&value[..32]);
+        output.push_str("\n");
+        output.push_str(&value_prefix(name));
+        output.push_str(&value[32..]);
+        output.push_str(",\n");
+    } else {
+        output.push_str(&prefix);
+        output.push_str(value);
+        output.push_str(",\n");
+    }
 }
 
 fn format_claim_mismatch(
     actual: &util::PublicChainClaim,
     expected: &util::PublicChainClaim,
+) -> String {
+    format_claim_mismatch_with_mode(actual, expected, highlight_mode_from_env())
+}
+
+fn format_claim_mismatch_with_mode(
+    actual: &util::PublicChainClaim,
+    expected: &util::PublicChainClaim,
+    mode: HighlightMode,
 ) -> String {
     let mut output = String::new();
     output.push_str("  actual claim:\n");
@@ -85,24 +100,28 @@ fn format_claim_mismatch(
         "genesis_hash",
         &actual.genesis_hash_display_hex(),
         &expected.genesis_hash_display_hex(),
+        mode,
     );
     push_claim_mismatch_field(
         &mut output,
         "tip_hash",
         &actual.tip_hash_display_hex(),
         &expected.tip_hash_display_hex(),
+        mode,
     );
     push_claim_mismatch_field(
         &mut output,
         "chain_work",
         &actual.chain_work_display_hex(),
         &expected.chain_work_display_hex(),
+        mode,
     );
     push_claim_mismatch_field(
         &mut output,
         "height",
         &actual.height_display_hex(),
         &expected.height_display_hex(),
+        mode,
     );
     output.push_str("    }\n");
     output.push_str("  expected claim:\n");
@@ -110,56 +129,173 @@ fn format_claim_mismatch(
     output
 }
 
-fn push_claim_mismatch_field(output: &mut String, name: &str, actual: &str, expected: &str) {
-    let (actual, expected) = highlight_with_expected(expected, actual);
-    output.push_str("      ");
-    output.push_str(name);
-    output.push_str(": ");
-    output.push_str(&actual);
-    output.push_str(",\n      ");
-    output.push_str(&" ".repeat(name.len()));
-    output.push_str("  ");
-    output.push_str(&expected);
-    output.push('\n');
+fn push_claim_mismatch_field(
+    output: &mut String,
+    name: &str,
+    actual: &str,
+    expected: &str,
+    mode: HighlightMode,
+) {
+    if actual.len() == 64 {
+        push_wide_claim_mismatch_field(output, name, actual, expected, mode);
+    } else {
+        let has_mismatch = actual != expected;
+        let (actual, expected) =
+            highlight_with_expected_mode(expected, actual, mode, actual.len() == 8);
+        output.push_str(&field_prefix(name));
+        output.push_str(&actual);
+        output.push_str(",\n");
+        if has_mismatch {
+            output.push_str(&value_prefix(name));
+            output.push_str(&expected);
+            output.push('\n');
+        }
+    }
 }
 
-fn highlight_with_expected(expected: &str, actual: &str) -> (String, String) {
+fn push_wide_claim_mismatch_field(
+    output: &mut String,
+    name: &str,
+    actual: &str,
+    expected: &str,
+    mode: HighlightMode,
+) {
+    let first_actual = &actual[..32];
+    let first_expected = &expected[..32];
+    let second_actual = &actual[32..];
+    let second_expected = &expected[32..];
+    let first_mismatch = first_actual != first_expected;
+    let second_mismatch = second_actual != second_expected;
+    let has_mismatch = first_mismatch || second_mismatch;
+
+    let (first_actual, first_expected) =
+        highlight_with_expected_mode(first_expected, first_actual, mode, false);
+    let (second_actual, second_expected) =
+        highlight_with_expected_mode(second_expected, second_actual, mode, false);
+
+    output.push_str(&field_prefix(name));
+    output.push_str(&first_actual);
+    output.push('\n');
+    if first_mismatch {
+        output.push_str(&value_prefix(name));
+        output.push_str(&first_expected);
+        output.push('\n');
+    }
+    if has_mismatch {
+        output.push('\n');
+    }
+    output.push_str(&value_prefix(name));
+    output.push_str(&second_actual);
+    output.push_str(",\n");
+    if second_mismatch {
+        output.push_str(&value_prefix(name));
+        output.push_str(&second_expected);
+        output.push('\n');
+    }
+}
+
+fn highlight_with_expected_mode(
+    expected: &str,
+    actual: &str,
+    mode: HighlightMode,
+    highlight_leading_zeros: bool,
+) -> (String, String) {
     assert_eq!(expected.len(), actual.len());
     assert_eq!(expected.len() % 2, 0);
 
     let mut actual_out = String::with_capacity(actual.len() * 2);
     let mut expected_out = String::with_capacity(expected.len() * 2);
-    let mut in_run = false;
+    let mut in_mismatch_run = false;
+    let mut in_leading_zero_run = false;
+    let mut still_leading_zeros = highlight_leading_zeros;
 
     for i in (0..actual.len()).step_by(2) {
         let exp = &expected[i..i + 2];
         let act = &actual[i..i + 2];
 
         if exp == act {
-            if in_run {
-                actual_out.push_str(MARK_END);
-                expected_out.push_str(MARK_END);
-                in_run = false;
+            if in_mismatch_run {
+                actual_out.push_str(mode.end());
+                expected_out.push_str(mode.end());
+                in_mismatch_run = false;
+            }
+            if still_leading_zeros && exp == "00" && mode == HighlightMode::Ansi {
+                if !in_leading_zero_run {
+                    actual_out.push_str(LEADING_ZERO_ANSI_START);
+                    in_leading_zero_run = true;
+                }
+            } else {
+                if in_leading_zero_run {
+                    actual_out.push_str(ANSI_END);
+                    in_leading_zero_run = false;
+                }
+                still_leading_zeros = false;
             }
             actual_out.push_str(act);
             expected_out.push_str("  ");
         } else {
-            if !in_run {
-                actual_out.push_str(ACTUAL_START);
-                expected_out.push_str(EXPECTED_START);
-                in_run = true;
+            if in_leading_zero_run {
+                actual_out.push_str(ANSI_END);
+                in_leading_zero_run = false;
+            }
+            still_leading_zeros = false;
+            if !in_mismatch_run {
+                actual_out.push_str(mode.actual_start());
+                expected_out.push_str(mode.expected_start());
+                in_mismatch_run = true;
             }
             actual_out.push_str(act);
             expected_out.push_str(exp);
         }
     }
 
-    if in_run {
-        actual_out.push_str(MARK_END);
-        expected_out.push_str(MARK_END);
+    if in_leading_zero_run {
+        actual_out.push_str(ANSI_END);
+    }
+    if in_mismatch_run {
+        actual_out.push_str(mode.end());
+        expected_out.push_str(mode.end());
     }
 
     (actual_out, expected_out)
+}
+
+impl HighlightMode {
+    fn actual_start(self) -> &'static str {
+        match self {
+            Self::Ansi => ACTUAL_ANSI_START,
+            Self::Brackets => BRACKET_START,
+        }
+    }
+
+    fn expected_start(self) -> &'static str {
+        match self {
+            Self::Ansi => EXPECTED_ANSI_START,
+            Self::Brackets => BRACKET_START,
+        }
+    }
+
+    fn end(self) -> &'static str {
+        match self {
+            Self::Ansi => ANSI_END,
+            Self::Brackets => BRACKET_END,
+        }
+    }
+}
+
+fn highlight_mode_from_env() -> HighlightMode {
+    match std::env::var_os("CLICOLOR") {
+        Some(value) if value.to_string_lossy() != "0" => HighlightMode::Ansi,
+        _ => HighlightMode::Brackets,
+    }
+}
+
+fn field_prefix(name: &str) -> String {
+    format!("      {name}: ")
+}
+
+fn value_prefix(name: &str) -> String {
+    format!("      {}  ", " ".repeat(name.len()))
 }
 
 trait ClaimHex {
@@ -1410,26 +1546,34 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(feature = "ansi"))]
     fn highlight_marks_mismatched_bytes_with_brackets() {
-        let (actual, expected) = highlight_with_expected("00010203", "0001ff04");
+        let (actual, expected) =
+            highlight_with_expected_mode("00010203", "0001ff04", HighlightMode::Brackets, false);
 
         assert_eq!(actual, "0001[ff04]");
         assert_eq!(expected, "    [0203]");
     }
 
     #[test]
-    #[cfg(feature = "ansi")]
     fn highlight_marks_mismatched_bytes_with_color() {
-        let (actual, expected) = highlight_with_expected("00010203", "0001ff04");
+        let (actual, expected) =
+            highlight_with_expected_mode("00010203", "0001ff04", HighlightMode::Ansi, false);
 
         assert_eq!(actual, "0001\x1b[31mff04\x1b[0m");
         assert_eq!(expected, "    \x1b[32m0203\x1b[0m");
     }
 
     #[test]
-    #[cfg(not(feature = "ansi"))]
-    fn claim_mismatch_pairs_actual_and_expected_fields() {
+    fn highlight_marks_matching_leading_zero_bytes_with_bright_white() {
+        let (actual, expected) =
+            highlight_with_expected_mode("00000102", "00000002", HighlightMode::Ansi, true);
+
+        assert_eq!(actual, "\x1b[97m0000\x1b[0m\x1b[31m00\x1b[0m02");
+        assert_eq!(expected, "    \x1b[32m01\x1b[0m  ");
+    }
+
+    #[test]
+    fn claim_mismatch_splits_32_byte_fields_and_pairs_corrections() {
         let actual = util::PublicChainClaim {
             genesis_hash: util::BlockHash::from_le_bytes([0x11; 32]),
             tip_hash: util::BlockHash::from_le_bytes([0x22; 32]),
@@ -1442,19 +1586,36 @@ mod tests {
             ..actual
         };
 
-        let output = format_claim_mismatch(&actual, &expected);
+        let output = format_claim_mismatch_with_mode(&actual, &expected, HighlightMode::Brackets);
 
+        let tip_hash_value_prefix = value_prefix("tip_hash");
         assert!(output.contains(
-            "tip_hash: [2222222222222222222222222222222222222222222222222222222222222222]"
+            &format!("tip_hash: [22222222222222222222222222222222]\n{tip_hash_value_prefix}[44444444444444444444444444444444]\n\n{tip_hash_value_prefix}[22222222222222222222222222222222]")
         ));
-        assert!(output.contains(
-            "          [4444444444444444444444444444444444444444444444444444444444444444]"
-        ));
+        assert!(output.contains(&format!(
+            "{tip_hash_value_prefix}[44444444444444444444444444444444]"
+        )));
         assert!(output.contains("height: 000000[01]"));
-        assert!(output.contains("        [02]"));
+        assert!(output.contains(&format!("{}[02]", value_prefix("height"))));
         assert!(output.contains("expected claim:"));
         assert!(output.contains(
-            "tip_hash: 4444444444444444444444444444444444444444444444444444444444444444"
+            "tip_hash: 44444444444444444444444444444444\n                44444444444444444444444444444444"
+        ));
+    }
+
+    #[test]
+    fn claim_mismatch_keeps_matching_32_byte_fields_to_two_lines() {
+        let claim = util::PublicChainClaim {
+            genesis_hash: util::BlockHash::from_le_bytes([0x11; 32]),
+            tip_hash: util::BlockHash::from_le_bytes([0x22; 32]),
+            chain_work: util::ChainWork::from_le_bytes([0x33; 32]),
+            height: 1,
+        };
+
+        let output = format_claim_mismatch_with_mode(&claim, &claim, HighlightMode::Brackets);
+
+        assert!(output.contains(
+            "genesis_hash: 11111111111111111111111111111111\n                    11111111111111111111111111111111,"
         ));
     }
 }
