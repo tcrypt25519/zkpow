@@ -53,9 +53,7 @@ pub fn load_headers_from_db(db_path: &str, start_height: u64, count: u64) -> Vec
 
             let header = Header {
                 version: version as u32,
-                prev_blockhash: BlockHash::new(
-                    prev.try_into().expect("prev must be 32 bytes"),
-                ),
+                prev_blockhash: BlockHash::new(prev.try_into().expect("prev must be 32 bytes")),
                 merkle_root: merkle_root
                     .try_into()
                     .expect("merkle_root must be 32 bytes"),
@@ -115,9 +113,7 @@ pub fn load_header_records_from_db(
 
             let header = Header {
                 version: version as u32,
-                prev_blockhash: BlockHash::new(
-                    prev.try_into().expect("prev must be 32 bytes"),
-                ),
+                prev_blockhash: BlockHash::new(prev.try_into().expect("prev must be 32 bytes")),
                 merkle_root: merkle_root
                     .try_into()
                     .expect("merkle_root must be 32 bytes"),
@@ -272,7 +268,6 @@ pub fn state_from_db_at_height(db_path: &str, height: u32, genesis_hash: BlockHa
     }
 
     let current = load_header_record_from_db(db_path, height as u64);
-    let chain_work_record = load_header_record_from_db(db_path, height as u64 + 1);
     let epoch_start_height = (height / zkpow_core::EPOCH_LENGTH) * zkpow_core::EPOCH_LENGTH;
     let epoch_start_record = load_header_record_from_db(db_path, epoch_start_height as u64);
     let window_count = (height as usize + 1).min(zkpow_core::WINDOW_SIZE) as u64;
@@ -292,7 +287,7 @@ pub fn state_from_db_at_height(db_path: &str, height: u32, genesis_hash: BlockHa
         genesis_hash,
         current_nbits: current.header.compact_target,
         height,
-        chain_work: chain_work_record.chain_work,
+        chain_work: current.chain_work,
         current_work: work_from_target(current_target),
         current_target,
         epoch_start_timestamp: epoch_start_record.header.timestamp,
@@ -432,5 +427,22 @@ mod tests {
             compute_final_state(&state, &[NewHeader::from_header(&boundary.header)]);
         assert_eq!(boundary_state.height, 40320);
         assert_eq!(boundary_state.current_nbits, boundary.header.compact_target);
+    }
+
+    #[test]
+    fn db_chainwork_matches_retarget_boundary_batch_32256() {
+        let genesis = load_header_record_from_db(TEST_DB_PATH, 0);
+        let genesis_hash = hash_header(&genesis.header);
+        let initial_state = state_from_db_at_height(TEST_DB_PATH, 30240, genesis_hash);
+        let records = load_header_records_from_db(TEST_DB_PATH, 30241, 2016);
+        let headers = records_to_new_headers(&records);
+        let hints = median_time_past_hints_from_records(&records);
+        let final_state = compute_final_state_with_hints(&initial_state, &headers, &hints);
+        let db_state = state_from_db_at_height(TEST_DB_PATH, 32256, genesis_hash);
+
+        assert_eq!(final_state.height, 32256);
+        assert_eq!(final_state.block_hash, db_state.block_hash);
+        assert_eq!(final_state.current_nbits, db_state.current_nbits);
+        assert_eq!(final_state.chain_work, db_state.chain_work);
     }
 }
