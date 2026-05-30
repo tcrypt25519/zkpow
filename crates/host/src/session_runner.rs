@@ -1,9 +1,10 @@
 use std::env;
 use std::path::PathBuf;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::batch_runner::run_single_batch;
-use crate::memory_profiler;
+use crate::memory_monitor;
+use memory_usage::{StageHistory, StageMetric};
 
 pub type BoxError = Box<dyn std::error::Error + Send + Sync + 'static>;
 
@@ -24,34 +25,11 @@ fn effective_max_batches(default_max_batches: u32) -> u32 {
 
 pub async fn run_batch_session(default_max_batches: u32) -> Result<(), BoxError> {
     let timestamp = session_timestamp();
-
-    let memory_profiling_enabled = env::var("MEMORY_PROFILING").as_deref() == Ok("1");
-    let memory_diagnostics_dump_enabled =
-        env::var("MEMORY_DIAGNOSTICS_DUMP").as_deref() == Ok("1");
-
-    if memory_profiling_enabled || memory_diagnostics_dump_enabled {
-        std::fs::create_dir_all("logs").ok();
-    }
-
-    if memory_profiling_enabled {
-        std::fs::create_dir_all("logs").ok();
-        let log_path = PathBuf::from(format!("logs/mem_{}.log", timestamp));
-        memory_profiler::spawn_mem_logger(log_path, Duration::from_secs(1));
-        tracing::info!(
-            "Memory profiling enabled; writing to logs/mem_{}.log",
-            timestamp
-        );
-    }
-
-    if memory_diagnostics_dump_enabled {
-        tracing::info!(
-            "Memory diagnostics dumps enabled; writing jemalloc snapshots to logs/"
-        );
-        memory_profiler::maybe_dump_allocator_stats(&PathBuf::from(format!(
-            "logs/jemalloc_{}_session_start.json",
-            timestamp
-        )));
-    }
+    let mut memory_history = StageHistory::new(["Batch start", "Before prove", "Batch end"]);
+    memory_monitor::log_point(
+        "session_memory_start",
+        "Session memory snapshot before batches",
+    );
 
     let max_batches = effective_max_batches(default_max_batches);
     let explicit_output_dir = env::var("OUTPUT_DIR").ok().map(PathBuf::from);
@@ -111,32 +89,24 @@ pub async fn run_batch_session(default_max_batches: u32) -> Result<(), BoxError>
             tracing::info!("  extending from: {}", prev.display());
         }
 
-        let start_memory = memory_profiler::capture_snapshot();
-        memory_profiler::log_snapshot(
+        let start_memory = memory_monitor::log_point(
             "batch_memory_start",
-            &start_memory,
             "Batch memory snapshot before proof generation",
         );
-        if memory_diagnostics_dump_enabled {
-            memory_profiler::maybe_dump_allocator_stats(&PathBuf::from(format!(
-                "logs/jemalloc_{}_batch_{:04}_start.json",
-                timestamp, batch_count
-            )));
-        }
         let batch_started = std::time::Instant::now();
 
         let artifacts = run_single_batch().await?;
         let compressed_path = artifacts.compressed_path.clone();
         let first_new_height = artifacts.first_new_height;
         let end_height = artifacts.end_height;
+        let before_prove_memory = artifacts.before_prove_sample;
         let batch_elapsed_secs = batch_started.elapsed().as_secs_f64();
         drop(artifacts);
 
-        // Aggressive allocator purge: attempt to return freed pages to the OS.
-        // Only effective when built with --features memory-diagnostics (jemalloc).
-        memory_profiler::maybe_purge_allocator();
-
-        let end_memory = memory_profiler::capture_snapshot();
+        let end_memory = memory_monitor::log_point(
+            "batch_memory_after_drop",
+            "Batch memory snapshot after dropping proof artifacts",
+        );
         current_prev_proof = Some(compressed_path.clone());
         tracing::info!(
             "=== Batch {} complete. Next proof: {} ===",
@@ -150,19 +120,29 @@ pub async fn run_batch_session(default_max_batches: u32) -> Result<(), BoxError>
             elapsed_secs = batch_elapsed_secs,
             "Batch memory summary after dropping proof artifacts"
         );
-        memory_profiler::log_snapshot_delta(
+        memory_monitor::log_delta(
             "batch_memory_after_drop",
-            &start_memory,
-            &end_memory,
+            start_memory,
+            end_memory,
             batch_started.elapsed(),
             "Batch memory summary after dropping proof artifacts",
         );
-        if memory_diagnostics_dump_enabled {
-            memory_profiler::maybe_dump_allocator_stats(&PathBuf::from(format!(
-                "logs/jemalloc_{}_batch_{:04}_after_drop.json",
-                timestamp, batch_count
-            )));
-        }
+        memory_history.push_iteration([start_memory, before_prove_memory, end_memory])?;
+    }
+
+    if memory_monitor::logging_enabled() {
+        println!(
+            "\n{}",
+            memory_history.render_table(StageMetric::RssKb, "BATCH RSS MATRIX (KB)")
+        );
+        println!(
+            "\n{}",
+            memory_history.render_table(StageMetric::LiveKb, "BATCH LIVE HEAP MATRIX (KB)")
+        );
+        memory_monitor::log_point(
+            "session_memory_end",
+            "Session memory snapshot after batches",
+        );
     }
 
     Ok(())

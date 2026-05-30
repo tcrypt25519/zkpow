@@ -24,9 +24,7 @@ tracing = "0.1"
 rusqlite = { version = "0.32", features = ["bundled"] }
 humantime = "2.3"
 num-bigint = "0.4.6"
-jemalloc = "0.3.0"
-jemalloc-ctl = "0.5.4"
-jemallocator = "0.5.4"
+memory-usage = { path = "../memory-usage" }
 
 [profile.release]
 debug = true          # Keeps debug symbols for your code

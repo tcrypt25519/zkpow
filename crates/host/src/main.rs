@@ -22,14 +22,18 @@ use zkpow_host::observability;
 use zkpow_host::session_runner::run_batch_session;
 
 #[cfg(feature = "memory-diagnostics")]
+use memory_usage::TrackingAllocator;
+#[cfg(feature = "memory-diagnostics")]
+use std::alloc::System;
+
+#[cfg(feature = "memory-diagnostics")]
 #[global_allocator]
-static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
+static ALLOC: TrackingAllocator<'static, System> =
+    TrackingAllocator::new(System, &zkpow_host::memory_monitor::ALLOCATION_TRACKER);
 
 #[tokio::main]
 async fn main() {
-    println!(
-        "Host script started. For detailed tracing, set RUST_LOG=info."
-    );
+    println!("Host script started. For detailed tracing, set RUST_LOG=info.");
     observability::init();
 
     if let Err(e) = run_batch_session(1).await {

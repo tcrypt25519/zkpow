@@ -21,6 +21,7 @@ console-subscriber = "0.4.1"
 sp1-sdk = { workspace = true }
 sp1-prover = { workspace = true }
 sp1-recursion-gnark-ffi = { workspace = true, features = ["native"] }
+memory-usage = { workspace = true }
 hex = { workspace = true }
 humantime = { workspace = true }
 num-bigint = { workspace = true }
@@ -30,10 +31,6 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
 tracing-appender = "0.2"
-jemalloc = { workspace = true, optional = true }
-jemalloc-ctl = { workspace = true, optional = true, features = ["use_std"] }
-jemallocator = { workspace = true, optional = true }
-libc = { version = "0.2", optional = true }
 
 
 [build-dependencies]
@@ -42,6 +39,6 @@ sp1-build = { workspace = true }
 [features]
 default = []
 CUDA = ["sp1-sdk/cuda"]
-memory-diagnostics = ["dep:jemalloc", "dep:jemalloc-ctl", "dep:jemallocator", "dep:libc"]
+memory-diagnostics = []
 # Opt in to the slow proof-generation tests.
 slow-tests = []

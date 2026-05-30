@@ -52,7 +52,7 @@ bitcoin-header-chain/
             ├── proof_pipeline.rs # Core proof generation + save logic
             ├── util.rs           # DB loading, state reconstruction, SHA-256
             ├── observability.rs  # Tracing init (stderr + JSON file)
-            ├── memory_profiler.rs # RSS tracking
+            ├── memory_monitor.rs  # Allocation/RSS tracking
             ├── cuda_env.rs       # CUDA preflight checks
             └── bin/
                 ├── continuous_prover.rs  # Multi-batch binary (default MAX_BATCHES=1)
@@ -91,7 +91,7 @@ BUILD=true NUM_HEADERS=100 ./scripts/prove-batch.sh
 | `RUST_LOG` | off | Tracing filter for stderr (JSON log always at info+) |
 | `GUEST_PROFILING` | 0 | Enable cycle-tracker report spans in guest |
 | `PROVE_COMPRESSED_SPANS` | 0 | Enable DEBUG-level SP1 span timing in JSON log |
-| `MEMORY_PROFILING` | 0 | Write RSS snapshots to `logs/mem_<ts>.log` every 1s |
+| `memory-diagnostics` feature | off | Enable fixed-point RSS/live-heap tracking |
 
 ### Proof Files
 
@@ -345,11 +345,8 @@ GUEST_PROFILING=1 cargo run --release -p zkpow-host --bin zkpow-host
 ### Memory Profiling
 
 ```bash
-# Enable periodic RSS logging
-MEMORY_PROFILING=1 cargo run --release -p zkpow-host --bin zkpow-host
-
-# For memory-diagnostics feature (jemalloc stats)
-cargo run --release -p zkpow-host --bin continuous-prover --features memory-diagnostics
+# Enable fixed-point RSS/live-heap logging
+cargo run --release -p zkpow-host --bin zkpow-host --features memory-diagnostics
 ```
 
 ### Profiling Script Output
@@ -380,7 +377,7 @@ cargo build --release
 # Build with CUDA support
 cargo build --release -p zkpow-host --features CUDA
 
-# Build with memory diagnostics (jemalloc)
+# Build with memory diagnostics
 cargo build --release -p zkpow-host --features memory-diagnostics
 
 # Clippy (note: skips script binary due to sp1-build)
@@ -423,7 +420,7 @@ GPU query parameters).
 | `zkpow-core` | `host` | Enables `HostEnvironment` state type (full access) |
 | `zkpow-core` | `profiling` | Enables `cycle_track_report` with SP1 report-backed markers |
 | `zkpow-host` | `CUDA` | GPU prover via `sp1-sdk/cuda` |
-| `zkpow-host` | `memory-diagnostics` | jemalloc global allocator + RSS tracking |
+| `zkpow-host` | `memory-diagnostics` | System allocator live-byte tracking + RSS snapshots |
 | `zkpow-host` | `slow-tests` | Proof-generation integration tests |
 
 ---

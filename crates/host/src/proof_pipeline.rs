@@ -5,11 +5,12 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use crate::memory_profiler;
+use crate::memory_monitor;
 use crate::util;
 use crate::util::{
     HeaderChainPublicValues, Input, PublicValuesDigest, RecursiveProof, VerifierKeyDigest,
 };
+use memory_usage::StageSample;
 use num_bigint::BigUint;
 use sp1_prover::build::{build_constraints_and_witness, try_build_groth16_artifacts_dir};
 use sp1_prover::worker::{cpu_worker_builder, SP1LocalNodeBuilder};
@@ -19,8 +20,8 @@ use sp1_sdk::proof::SP1Proof;
 use sp1_sdk::Elf;
 use sp1_sdk::ExecutionReport;
 use sp1_sdk::{
-    CpuProver, HashableKey, ProveRequest, Prover, ProverClient, ProvingKey, SP1ProofWithPublicValues,
-    SP1ProvingKey,
+    CpuProver, HashableKey, ProveRequest, Prover, ProverClient, ProvingKey,
+    SP1ProofWithPublicValues, SP1ProvingKey,
 };
 use tokio::sync::Mutex as AsyncMutex;
 use tracing::Instrument;
@@ -58,6 +59,7 @@ pub struct ProofArtifacts {
     pub groth16_path: Option<PathBuf>,
     pub compressed_proof: SP1ProofWithPublicValues,
     pub groth16_proof: Option<SP1ProofWithPublicValues>,
+    pub before_prove_sample: StageSample,
     pub execution_report: ExecutionReport,
     pub first_new_height: u32,
     pub end_height: u32,
@@ -123,6 +125,7 @@ fn collected_phase_timings() -> Vec<PhaseTiming> {
 struct CompressedProofArtifacts {
     vk: sp1_prover::SP1VerifyingKey,
     compressed_proof: SP1ProofWithPublicValues,
+    before_prove_sample: StageSample,
     execution_report: ExecutionReport,
 }
 
@@ -377,6 +380,11 @@ where
         }
     }
 
+    let before_prove_sample = memory_monitor::log_point(
+        "before_prove_compressed",
+        "Memory snapshot after VM execution before compressed proof generation",
+    );
+
     let compressed_proof = timed_async("prove_compressed", || async {
         async { prover.prove(proving_key, stdin).compressed().await }
             .instrument(tracing::info_span!("prove_compressed_detail"))
@@ -400,6 +408,7 @@ where
     Ok(CompressedProofArtifacts {
         vk: proving_key.verifying_key().clone(),
         compressed_proof,
+        before_prove_sample,
         execution_report: report,
     })
 }
@@ -583,6 +592,7 @@ where
     .await?;
     let vk = compressed_artifacts.vk;
     let compressed_proof = compressed_artifacts.compressed_proof;
+    let before_prove_sample = compressed_artifacts.before_prove_sample;
     let execution_report = compressed_artifacts.execution_report;
 
     timed_sync("create_output_dir", || -> Result<(), BoxError> {
@@ -623,6 +633,7 @@ where
         groth16_path,
         compressed_proof,
         groth16_proof,
+        before_prove_sample,
         execution_report,
         first_new_height,
         end_height: start_height + loaded_count,
@@ -672,7 +683,10 @@ async fn get_prepared_prover(config: &ProofGenerationConfig) -> Result<PreparedP
             .await?;
             let proving_key =
                 timed_async("setup_vkey", || async { prover.setup(ELF).await }).await?;
-            PreparedProver::Cpu { prover, proving_key }
+            PreparedProver::Cpu {
+                prover,
+                proving_key,
+            }
         }
         ProverBackend::Cuda => {
             #[cfg(feature = "CUDA")]
@@ -697,7 +711,10 @@ async fn get_prepared_prover(config: &ProofGenerationConfig) -> Result<PreparedP
                 .await?;
                 let proving_key =
                     timed_async("setup_vkey", || async { prover.setup(ELF).await }).await?;
-                PreparedProver::Cuda { prover, proving_key }
+                PreparedProver::Cuda {
+                    prover,
+                    proving_key,
+                }
             }
 
             #[cfg(not(feature = "CUDA"))]
@@ -715,13 +732,15 @@ pub async fn generate_and_save_proofs(
 ) -> Result<ProofArtifacts, BoxError> {
     log_prover_backend_selection(config);
     match get_prepared_prover(config).await? {
-        PreparedProver::Cpu { prover, proving_key } => {
-            generate_and_save_proofs_inner(config, "cpu", &prover, &proving_key).await
-        }
+        PreparedProver::Cpu {
+            prover,
+            proving_key,
+        } => generate_and_save_proofs_inner(config, "cpu", &prover, &proving_key).await,
         #[cfg(feature = "CUDA")]
-        PreparedProver::Cuda { prover, proving_key } => {
-            generate_and_save_proofs_inner(config, "cuda", &prover, &proving_key).await
-        }
+        PreparedProver::Cuda {
+            prover,
+            proving_key,
+        } => generate_and_save_proofs_inner(config, "cuda", &prover, &proving_key).await,
     }
 }
 
@@ -736,16 +755,15 @@ where
     E: Into<BoxError>,
 {
     let started = Instant::now();
-    let start_memory = memory_profiler::capture_snapshot();
-    memory_profiler::log_snapshot(label, &start_memory, "proof phase started");
+    let start_memory = memory_monitor::log_point(label, "proof phase started");
     let output = f().map_err(Into::into);
     let elapsed = started.elapsed();
-    let end_memory = memory_profiler::capture_snapshot();
+    let end_memory = memory_monitor::sample();
     record_phase_timing(label, elapsed);
-    memory_profiler::log_snapshot_delta(
+    memory_monitor::log_delta(
         label,
-        &start_memory,
-        &end_memory,
+        start_memory,
+        end_memory,
         elapsed,
         "proof phase finished",
     );
@@ -759,16 +777,15 @@ where
     E: Into<BoxError>,
 {
     let started = Instant::now();
-    let start_memory = memory_profiler::capture_snapshot();
-    memory_profiler::log_snapshot(label, &start_memory, "proof phase started");
+    let start_memory = memory_monitor::log_point(label, "proof phase started");
     let output = f().await.map_err(Into::into);
     let elapsed = started.elapsed();
-    let end_memory = memory_profiler::capture_snapshot();
+    let end_memory = memory_monitor::sample();
     record_phase_timing(label, elapsed);
-    memory_profiler::log_snapshot_delta(
+    memory_monitor::log_delta(
         label,
-        &start_memory,
-        &end_memory,
+        start_memory,
+        end_memory,
         elapsed,
         "proof phase finished",
     );
