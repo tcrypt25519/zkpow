@@ -286,6 +286,7 @@ impl<E: Env> StateInner<E> {
                 if cycle_track("state/apply_headers/check_retarget", || {
                     candidate_height.is_multiple_of(EPOCH_LENGTH)
                 }) {
+                    flush_pending_chain_work(self, &mut pending_run_work, &mut pending_run_count);
                     let prepared = self.prepare_new_epoch(previous_timestamp);
                     active_nbits = prepared.0;
                     active_target = prepared.1;
