@@ -779,6 +779,35 @@ async fn generate_groth16_proof(
     ))
 }
 
+fn find_first_diverging_state_index(
+    states: &[util::State],
+    first_new_height: u32,
+    db_path: &str,
+    genesis_hash: util::BlockHash,
+) -> usize {
+    assert!(
+        !states.is_empty(),
+        "find_first_diverging_state_index requires at least one state"
+    );
+
+    let mut lo: usize = 0;
+    let mut hi: usize = states.len() - 1;
+
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        let height = first_new_height + (mid as u32);
+        let db_state = util::state_from_db_at_height(db_path, height, genesis_hash);
+
+        if states[mid].public_claim() == db_state.public_claim() {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+
+    lo
+}
+
 async fn generate_and_save_proofs_inner<P, K>(
     config: &ProofGenerationConfig,
     prover_name: &str,
@@ -862,13 +891,52 @@ where
         Ok(util::median_time_past_hints_from_records(&header_records))
     })?;
     let loaded_count = headers.len() as u32;
-    let expected_state = timed_sync("simulate_expected_state", || -> Result<_, BoxError> {
-        Ok(util::compute_final_state_with_hints(
-            &current_state,
-            &headers,
-            &median_hints,
+    let (expected_state, intermediate_states) =
+        timed_sync("simulate_expected_state", || -> Result<_, BoxError> {
+            Ok(util::compute_final_state_with_history(
+                &current_state,
+                &headers,
+                &median_hints,
+            ))
+        })?;
+
+    let end_height = start_height + loaded_count;
+    let db_end_state = timed_sync("load_db_end_state", || -> Result<_, BoxError> {
+        Ok(util::state_from_db_at_height(
+            path_to_str(&config.db_path)?,
+            end_height,
+            genesis_hash,
         ))
     })?;
+
+    if expected_state.public_claim() != db_end_state.public_claim() {
+        let bad_index = timed_sync("bisect_divergence", || -> Result<_, BoxError> {
+            Ok(find_first_diverging_state_index(
+                &intermediate_states,
+                first_new_height,
+                path_to_str(&config.db_path)?,
+                genesis_hash,
+            ))
+        })?;
+
+        let bad_height = first_new_height + (bad_index as u32);
+        let expected_claim = util::state_from_db_at_height(
+            path_to_str(&config.db_path)?,
+            bad_height,
+            genesis_hash,
+        )
+        .public_claim();
+        let actual_claim = intermediate_states[bad_index].public_claim();
+
+        return Err(format!(
+            "host simulation diverges from database\n  first bad header index in batch: {}\n  bad height: {}\n{}",
+            bad_index,
+            bad_height,
+            format_claim_mismatch(&actual_claim, &expected_claim),
+        )
+        .into());
+    }
+
     let expected_continuation_digest = util::continuation_digest_from_state(&expected_state);
     let compressed_artifacts = generate_compressed_proof_with_prover(
         prover_name,

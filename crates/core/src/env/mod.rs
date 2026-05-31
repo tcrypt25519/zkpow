@@ -212,6 +212,15 @@ impl<E: Env> StateInner<E> {
         })
     }
 
+    pub fn apply_chain_work_run(&mut self, run_work: ChainWork, run_count: u32) {
+        if run_count > 0 {
+            cycle_track("state/apply_headers/chain_work_flush", || {
+                let accumulated_work = run_work * run_count;
+                self.chain_work = self.chain_work + accumulated_work;
+            });
+        }
+    }
+
     #[allow(clippy::result_large_err)]
     pub fn apply_headers<F>(
         &mut self,
@@ -236,13 +245,8 @@ impl<E: Env> StateInner<E> {
                 |state: &mut StateInner<E>,
                  run_work: &mut Option<ChainWork>,
                  run_count: &mut u32| {
-                    if let (Some(run_work), count) = (run_work.take(), *run_count) {
-                        if count > 0 {
-                            cycle_track("state/apply_headers/chain_work_flush", || {
-                                let accumulated_work = run_work * count;
-                                state.chain_work = state.chain_work + accumulated_work;
-                            });
-                        }
+                    if let Some(run_work) = run_work.take() {
+                        state.apply_chain_work_run(run_work, *run_count);
                     }
                     *run_count = 0;
                 };

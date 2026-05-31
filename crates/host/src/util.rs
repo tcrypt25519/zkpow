@@ -320,6 +320,41 @@ pub fn compute_final_state_with_hints(
     state
 }
 
+/// Simulate the zkVM program locally while retaining each intermediate state.
+///
+/// Returns `(final_state, history)` where `history[i]` is the state after
+/// applying `headers[i]`.
+pub fn compute_final_state_with_history(
+    initial_state: &State,
+    headers: &[NewHeader],
+    hints: &MedianTimePastHints,
+) -> (State, Vec<State>) {
+    assert_eq!(
+        headers.len(),
+        hints.medians.len(),
+        "median hint count must match header count"
+    );
+
+    let mut state = initial_state.clone();
+    let mut history = Vec::with_capacity(headers.len());
+
+    for (index, (header, median)) in headers
+        .iter()
+        .copied()
+        .zip(hints.medians.iter().copied())
+        .enumerate()
+    {
+        state
+            .apply_headers(&[header], &[median], hash_header)
+            .unwrap_or_else(|err| {
+                panic!("host state transition should succeed at header index {index}: {err:?}")
+            });
+        history.push(state.clone());
+    }
+
+    (state, history)
+}
+
 pub fn records_to_new_headers(records: &[HeaderRecord]) -> Vec<NewHeader> {
     records
         .iter()
@@ -428,6 +463,46 @@ mod tests {
         assert_eq!(final_state.block_hash, db_state.block_hash);
         assert_eq!(final_state.current_nbits, db_state.current_nbits);
         assert_eq!(final_state.chain_work, db_state.chain_work);
+    }
+
+    #[test]
+    fn compute_final_state_with_history_matches_final_state() {
+        let genesis = load_header_record_from_db(TEST_DB_PATH, 0);
+        let genesis_hash = hash_header(&genesis.header);
+        let genesis_state = genesis_state_from_record(genesis, genesis_hash);
+        let records = load_header_records_from_db(TEST_DB_PATH, 1, 128);
+        let headers = records_to_new_headers(&records);
+        let hints = median_time_past_hints_from_records(&records);
+
+        let expected_final = compute_final_state_with_hints(&genesis_state, &headers, &hints);
+        let (history_final, history) =
+            compute_final_state_with_history(&genesis_state, &headers, &hints);
+
+        assert_eq!(history.len(), headers.len());
+        assert_eq!(history_final.public_claim(), expected_final.public_claim());
+        assert_eq!(
+            history.last().expect("history should not be empty").public_claim(),
+            expected_final.public_claim()
+        );
+    }
+
+    #[test]
+    fn compute_final_state_with_history_entries_match_db_claims() {
+        let genesis = load_header_record_from_db(TEST_DB_PATH, 0);
+        let genesis_hash = hash_header(&genesis.header);
+        let genesis_state = genesis_state_from_record(genesis, genesis_hash);
+        let records = load_header_records_from_db(TEST_DB_PATH, 1, 64);
+        let headers = records_to_new_headers(&records);
+        let hints = median_time_past_hints_from_records(&records);
+
+        let (_final_state, history) =
+            compute_final_state_with_history(&genesis_state, &headers, &hints);
+
+        for (index, state) in history.iter().enumerate() {
+            let height = (index as u32) + 1;
+            let db_state = state_from_db_at_height(TEST_DB_PATH, height, genesis_hash);
+            assert_eq!(state.public_claim(), db_state.public_claim());
+        }
     }
 
     #[test]
