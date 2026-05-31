@@ -69,7 +69,11 @@ impl<Tag> Branded<Tag, u256> {
 
     #[must_use]
     pub fn from_le_bytes_slice(slice: &[u8]) -> Self {
-        assert!(slice.len() == 32, "from_le_bytes_slice: expected 32 bytes, got {}", slice.len());
+        assert!(
+            slice.len() == 32,
+            "from_le_bytes_slice: expected 32 bytes, got {}",
+            slice.len()
+        );
         let bytes: [u8; 32] = slice.try_into().unwrap();
         Self::from_le_bytes(bytes)
     }
@@ -100,7 +104,11 @@ impl<Tag> Branded<Tag, u32> {
 
     #[must_use]
     pub fn from_le_bytes_slice(slice: &[u8]) -> Self {
-        assert!(slice.len() == 4, "from_le_bytes_slice: expected 4 bytes, got {}", slice.len());
+        assert!(
+            slice.len() == 4,
+            "from_le_bytes_slice: expected 4 bytes, got {}",
+            slice.len()
+        );
         let bytes: [u8; 4] = slice.try_into().unwrap();
         Self::from_le_bytes(bytes)
     }
@@ -125,7 +133,11 @@ impl<Tag> Branded<Tag, [u8; 32]> {
 
     #[must_use]
     pub fn from_le_bytes_slice(slice: &[u8]) -> Self {
-        assert!(slice.len() == 32, "from_le_bytes_slice: expected 32 bytes, got {}", slice.len());
+        assert!(
+            slice.len() == 32,
+            "from_le_bytes_slice: expected 32 bytes, got {}",
+            slice.len()
+        );
         let bytes: [u8; 32] = slice.try_into().unwrap();
         Self::new(bytes)
     }
