@@ -245,7 +245,7 @@ pub fn genesis_state(genesis_header: Header, genesis_hash: BlockHash) -> State {
         genesis_hash,
         current_nbits: genesis_header.compact_target,
         height: 0,
-        chain_work: genesis_work,
+        chain_work: ChainWork::default(),
         current_work: genesis_work,
         current_target: GENESIS_TARGET,
         epoch_start_timestamp: genesis_header.timestamp,
@@ -257,7 +257,6 @@ pub fn genesis_state(genesis_header: Header, genesis_hash: BlockHash) -> State {
 pub fn genesis_state_from_record(genesis: HeaderRecord, genesis_hash: BlockHash) -> State {
     let mut state = genesis_state(genesis.header, genesis_hash);
     state.height = genesis.height as u32;
-    state.chain_work = genesis.chain_work;
     state
 }
 
@@ -407,6 +406,23 @@ mod tests {
         let hints = median_time_past_hints_from_records(&records);
 
         compute_final_state_with_hints(&genesis_state, &headers, &hints);
+    }
+
+    #[test]
+    fn db_chainwork_matches_genesis_started_batch_4096() {
+        let genesis = load_header_record_from_db(TEST_DB_PATH, 0);
+        let genesis_hash = hash_header(&genesis.header);
+        let genesis_state = genesis_state_from_record(genesis, genesis_hash);
+        let records = load_header_records_from_db(TEST_DB_PATH, 1, 4096);
+        let headers = records_to_new_headers(&records);
+        let hints = median_time_past_hints_from_records(&records);
+        let final_state = compute_final_state_with_hints(&genesis_state, &headers, &hints);
+        let db_state = state_from_db_at_height(TEST_DB_PATH, 4096, genesis_hash);
+
+        assert_eq!(final_state.height, 4096);
+        assert_eq!(final_state.block_hash, db_state.block_hash);
+        assert_eq!(final_state.current_nbits, db_state.current_nbits);
+        assert_eq!(final_state.chain_work, db_state.chain_work);
     }
 
     #[test]
