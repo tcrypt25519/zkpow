@@ -172,16 +172,6 @@ pub fn raw_headers_to_new_headers(raw_headers: &[u8]) -> Vec<NewHeader> {
     out
 }
 
-/// Load and parse a single header from the SQLite database.
-pub fn load_header_from_db(db_path: &str, height: u64) -> Header {
-    let raw_headers = load_headers_from_db(db_path, height, 1);
-    let raw_header: [u8; 80] = raw_headers
-        .as_slice()
-        .try_into()
-        .expect("exactly one raw header should be returned");
-    Header::parse(&raw_header).expect("raw Bitcoin header should parse")
-}
-
 pub fn load_header_record_from_db(db_path: &str, height: u64) -> HeaderRecord {
     load_header_records_from_db(db_path, height, 1)
         .into_iter()
@@ -397,9 +387,8 @@ pub fn median_time_past_hints_for_headers(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::db_path;
     use zkpow_core::{BlockTimestamp, CompactTarget, GENESIS_NBITS, WINDOW_SIZE};
-
-    const TEST_DB_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../headers.db");
 
     fn make_pcs() -> PrivateContinuationState {
         PrivateContinuationState {
@@ -438,10 +427,10 @@ mod tests {
 
     #[test]
     fn db_median_time_hints_match_genesis_seeded_state() {
-        let genesis = load_header_record_from_db(TEST_DB_PATH, 0);
+        let genesis = load_header_record_from_db(db_path(), 0);
         let genesis_hash = hash_header(&genesis.header);
         let genesis_state = genesis_state_from_record(genesis, genesis_hash);
-        let records = load_header_records_from_db(TEST_DB_PATH, 1, 13);
+        let records = load_header_records_from_db(db_path(), 1, 13);
         let headers = records_to_new_headers(&records);
         let hints = median_time_past_hints_from_records(&records);
 
@@ -450,14 +439,14 @@ mod tests {
 
     #[test]
     fn db_chainwork_matches_genesis_started_batch_4096() {
-        let genesis = load_header_record_from_db(TEST_DB_PATH, 0);
+        let genesis = load_header_record_from_db(db_path(), 0);
         let genesis_hash = hash_header(&genesis.header);
         let genesis_state = genesis_state_from_record(genesis, genesis_hash);
-        let records = load_header_records_from_db(TEST_DB_PATH, 1, 4096);
+        let records = load_header_records_from_db(db_path(), 1, 4096);
         let headers = records_to_new_headers(&records);
         let hints = median_time_past_hints_from_records(&records);
         let final_state = compute_final_state_with_hints(&genesis_state, &headers, &hints);
-        let db_state = state_from_db_at_height(TEST_DB_PATH, 4096, genesis_hash);
+        let db_state = state_from_db_at_height(db_path(), 4096, genesis_hash);
 
         assert_eq!(final_state.height, 4096);
         assert_eq!(final_state.block_hash, db_state.block_hash);
@@ -467,10 +456,10 @@ mod tests {
 
     #[test]
     fn compute_final_state_with_history_matches_final_state() {
-        let genesis = load_header_record_from_db(TEST_DB_PATH, 0);
+        let genesis = load_header_record_from_db(db_path(), 0);
         let genesis_hash = hash_header(&genesis.header);
         let genesis_state = genesis_state_from_record(genesis, genesis_hash);
-        let records = load_header_records_from_db(TEST_DB_PATH, 1, 128);
+        let records = load_header_records_from_db(db_path(), 1, 128);
         let headers = records_to_new_headers(&records);
         let hints = median_time_past_hints_from_records(&records);
 
@@ -481,17 +470,20 @@ mod tests {
         assert_eq!(history.len(), headers.len());
         assert_eq!(history_final.public_claim(), expected_final.public_claim());
         assert_eq!(
-            history.last().expect("history should not be empty").public_claim(),
+            history
+                .last()
+                .expect("history should not be empty")
+                .public_claim(),
             expected_final.public_claim()
         );
     }
 
     #[test]
     fn compute_final_state_with_history_entries_match_db_claims() {
-        let genesis = load_header_record_from_db(TEST_DB_PATH, 0);
+        let genesis = load_header_record_from_db(db_path(), 0);
         let genesis_hash = hash_header(&genesis.header);
         let genesis_state = genesis_state_from_record(genesis, genesis_hash);
-        let records = load_header_records_from_db(TEST_DB_PATH, 1, 64);
+        let records = load_header_records_from_db(db_path(), 1, 64);
         let headers = records_to_new_headers(&records);
         let hints = median_time_past_hints_from_records(&records);
 
@@ -500,25 +492,25 @@ mod tests {
 
         for (index, state) in history.iter().enumerate() {
             let height = (index as u32) + 1;
-            let db_state = state_from_db_at_height(TEST_DB_PATH, height, genesis_hash);
+            let db_state = state_from_db_at_height(db_path(), height, genesis_hash);
             assert_eq!(state.public_claim(), db_state.public_claim());
         }
     }
 
     #[test]
     fn db_retarget_schedule_matches_height_40320() {
-        let genesis = load_header_record_from_db(TEST_DB_PATH, 0);
+        let genesis = load_header_record_from_db(db_path(), 0);
         let genesis_hash = hash_header(&genesis.header);
         let genesis_state = genesis_state_from_record(genesis, genesis_hash);
-        let records = load_header_records_from_db(TEST_DB_PATH, 1, 40319);
+        let records = load_header_records_from_db(db_path(), 1, 40319);
         let headers = records_to_new_headers(&records);
         let state = compute_final_state(&genesis_state, &headers);
-        let pre_boundary = load_header_record_from_db(TEST_DB_PATH, 40319);
+        let pre_boundary = load_header_record_from_db(db_path(), 40319);
 
         assert_eq!(state.height, 40319);
         assert_eq!(state.current_nbits, pre_boundary.header.compact_target);
 
-        let boundary = load_header_record_from_db(TEST_DB_PATH, 40320);
+        let boundary = load_header_record_from_db(db_path(), 40320);
         let boundary_state =
             compute_final_state(&state, &[NewHeader::from_header(&boundary.header)]);
         assert_eq!(boundary_state.height, 40320);
@@ -527,14 +519,14 @@ mod tests {
 
     #[test]
     fn db_chainwork_matches_retarget_boundary_batch_32256() {
-        let genesis = load_header_record_from_db(TEST_DB_PATH, 0);
+        let genesis = load_header_record_from_db(db_path(), 0);
         let genesis_hash = hash_header(&genesis.header);
-        let initial_state = state_from_db_at_height(TEST_DB_PATH, 30240, genesis_hash);
-        let records = load_header_records_from_db(TEST_DB_PATH, 30241, 2016);
+        let initial_state = state_from_db_at_height(db_path(), 30240, genesis_hash);
+        let records = load_header_records_from_db(db_path(), 30241, 2016);
         let headers = records_to_new_headers(&records);
         let hints = median_time_past_hints_from_records(&records);
         let final_state = compute_final_state_with_hints(&initial_state, &headers, &hints);
-        let db_state = state_from_db_at_height(TEST_DB_PATH, 32256, genesis_hash);
+        let db_state = state_from_db_at_height(db_path(), 32256, genesis_hash);
 
         assert_eq!(final_state.height, 32256);
         assert_eq!(final_state.block_hash, db_state.block_hash);

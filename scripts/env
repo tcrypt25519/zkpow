@@ -6,6 +6,7 @@ else
   SCRIPT_PATH="$0"
 fi
 
+# Runtime
 ROOT="$(cd "$(dirname "$SCRIPT_PATH")/.." >/dev/null 2>&1 && pwd)"
 export ROOT
 
@@ -22,11 +23,15 @@ export OUT_DIR
 # Defaults
 export NUM_HEADERS="${NUM_HEADERS:-2016}"
 export MAX_BATCHES="${MAX_BATCHES:-1000}"
+export HEADERS_DB="${ROOT:-headers.db}"
+
+# Rust
 export RUST_LOG="${RUST_LOG:-info}"
 export RUST_LOGGER=flat
 export RUST_BACKTRACE="${RUST_BACKTRACE:-1}"
-export GUEST_PROFILING="${GUEST_PROFILING:-0}"
 
+# SP1
+export GUEST_PROFILING="${GUEST_PROFILING:-0}"
 export TRACE_FILE="${TRACE_FILE:-trace.json}"
 export TRACE_SAMPLE_RATE="${TRACE_FILE:-100}"
 export SP1_ENABLE_TOKIO_CONSOLE="${TRACE_FILE:-true}"

@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 
-. ./scripts/set-env
-./scripts/build-prover.sh
+source ./scripts/set-env
+
+if [ "${BUILD:-true}"]; then
+  ./scripts/build-prover.sh
+fi
 
 export LOG="$RUN_DIR/run.log"
 mkdir -p "$(dirname $LOG)"

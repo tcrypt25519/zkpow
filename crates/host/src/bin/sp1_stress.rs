@@ -21,6 +21,7 @@ use memory_usage::TrackingAllocator;
 use memory_usage::{StageHistory, StageMetric};
 #[cfg(feature = "memory-diagnostics")]
 use std::alloc::System;
+use zkpow_host::config::db_path;
 use zkpow_host::memory_monitor;
 use zkpow_host::observability;
 use zkpow_host::proof_pipeline::{generate_and_save_proofs, ProofGenerationConfig, ProverBackend};
@@ -68,9 +69,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             db_path: std::env::var("DB_PATH")
                 .ok()
                 .map(PathBuf::from)
-                .unwrap_or_else(|| {
-                    PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../headers.db"))
-                }),
+                .unwrap_or_else(|| PathBuf::from(db_path())),
             output_dir: PathBuf::from(format!("profiling/sp1/stress/{}/iter_{}", timestamp, i)),
             generate_groth16: false,
             prover_backend: ProverBackend::Cpu,
