@@ -245,7 +245,7 @@ pub fn genesis_state(genesis_header: Header, genesis_hash: BlockHash) -> State {
         genesis_hash,
         current_nbits: genesis_header.compact_target,
         height: 0,
-        chain_work: ChainWork::default(),
+        chain_work: genesis_work,
         current_work: genesis_work,
         current_target: GENESIS_TARGET,
         epoch_start_timestamp: genesis_header.timestamp,
@@ -257,6 +257,7 @@ pub fn genesis_state(genesis_header: Header, genesis_hash: BlockHash) -> State {
 pub fn genesis_state_from_record(genesis: HeaderRecord, genesis_hash: BlockHash) -> State {
     let mut state = genesis_state(genesis.header, genesis_hash);
     state.height = genesis.height as u32;
+    state.chain_work = genesis.chain_work;
     state
 }
 
@@ -279,6 +280,10 @@ pub fn state_from_db_at_height(db_path: &str, height: u32, genesis_hash: BlockHa
     }
 
     let current_target = target_from_bits(current.header.compact_target);
+    // Temporary compatibility for the current SQLite snapshot: non-genesis
+    // rows are missing genesis work, so normalize DB state to canonical
+    // Bitcoin chainwork until the database is regenerated.
+    let canonical_chain_work = current.chain_work + work_from_target(GENESIS_TARGET);
 
     State {
         header: current.header,
@@ -286,7 +291,7 @@ pub fn state_from_db_at_height(db_path: &str, height: u32, genesis_hash: BlockHa
         genesis_hash,
         current_nbits: current.header.compact_target,
         height,
-        chain_work: current.chain_work,
+        chain_work: canonical_chain_work,
         current_work: work_from_target(current_target),
         current_target,
         epoch_start_timestamp: epoch_start_record.header.timestamp,
