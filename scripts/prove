@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+
+. ./scripts/set-env
+./scripts/build-prover.sh
+
+export LOG="$RUN_DIR/run.log"
+mkdir -p "$(dirname $LOG)"
+
+./target/release/zkpow-host | tee &>"$LOG"
