@@ -51,7 +51,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .as_secs()
         .to_string();
 
-    tracing::info!(iterations, num_headers, "SP1 stress test starting");
+    let execute_only = std::env::var("EXECUTE_ONLY")
+        .ok()
+        .map(|v| v == "1" || v.to_ascii_lowercase() == "true")
+        .unwrap_or(false);
+
+    tracing::info!(
+        iterations,
+        num_headers,
+        execute_only,
+        "SP1 stress test starting"
+    );
     memory_monitor::log_point("stress_session_start", "Stress session memory snapshot");
 
     let mut prev_proof_path: Option<PathBuf> = None;
@@ -72,7 +82,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 .unwrap_or_else(|| PathBuf::from(db_path())),
             output_dir: PathBuf::from(format!("profiling/sp1/stress/{}/iter_{}", timestamp, i)),
             generate_groth16: false,
-            prover_backend: ProverBackend::Cpu,
+            execute_only,
+            prover_backend: if execute_only {
+                ProverBackend::Mock
+            } else {
+                ProverBackend::Cpu
+            },
             cuda_device_id: None,
         };
 
@@ -83,6 +98,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let iter_start = std::time::Instant::now();
         let artifacts = generate_and_save_proofs(&config).await?;
         let compressed_path = artifacts.compressed_path.clone();
+        if !execute_only && compressed_path.is_none() {
+            return Err("sp1_stress expected compressed proof but got none".into());
+        }
         let before_prove_mem = artifacts.before_prove_sample;
         drop(artifacts);
         let iter_elapsed = iter_start.elapsed();
@@ -123,7 +141,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         }
 
         history.push_iteration([start_mem, before_prove_mem, end_mem])?;
-        prev_proof_path = Some(compressed_path);
+        prev_proof_path = compressed_path;
         tracing::info!(
             iteration = i,
             elapsed_secs = iter_elapsed.as_secs_f64(),

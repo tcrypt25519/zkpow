@@ -2,8 +2,9 @@ use std::env;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::batch_runner::run_single_batch;
+use crate::batch_runner::run_single_batch_with_config;
 use crate::memory_monitor;
+use crate::proof_pipeline::config_from_env;
 use memory_usage::{StageHistory, StageMetric};
 
 pub type BoxError = Box<dyn std::error::Error + Send + Sync + 'static>;
@@ -32,6 +33,7 @@ pub async fn run_batch_session(default_max_batches: u32) -> Result<(), BoxError>
     );
 
     let max_batches = effective_max_batches(default_max_batches);
+    let mut batch_config = config_from_env()?;
     let explicit_output_dir = env::var("OUTPUT_DIR").ok().map(PathBuf::from);
     let continuous_dir = PathBuf::from(format!("profiling/sp1/continuous/{}", timestamp));
     if max_batches == 1 {
@@ -58,7 +60,7 @@ pub async fn run_batch_session(default_max_batches: u32) -> Result<(), BoxError>
         );
     }
 
-    let mut current_prev_proof: Option<PathBuf> = env::var("PREV_PROOF").ok().map(PathBuf::from);
+    let mut current_prev_proof = batch_config.prev_proof_path.clone();
     let mut batch_count: u32 = 0;
 
     loop {
@@ -77,11 +79,8 @@ pub async fn run_batch_session(default_max_batches: u32) -> Result<(), BoxError>
         };
         std::fs::create_dir_all(&output_dir).expect("failed to create batch output dir");
 
-        env::set_var("OUTPUT_DIR", &output_dir);
-        match current_prev_proof.as_deref() {
-            Some(path) => env::set_var("PREV_PROOF", path),
-            None => env::remove_var("PREV_PROOF"),
-        }
+        batch_config.output_dir = output_dir.clone();
+        batch_config.prev_proof_path = current_prev_proof.clone();
 
         tracing::info!("=== Starting Batch {} ===", batch_count);
         tracing::info!("  output dir: {}", output_dir.display());
@@ -95,7 +94,7 @@ pub async fn run_batch_session(default_max_batches: u32) -> Result<(), BoxError>
         );
         let batch_started = std::time::Instant::now();
 
-        let artifacts = run_single_batch().await?;
+        let artifacts = run_single_batch_with_config(&batch_config).await?;
         let compressed_path = artifacts.compressed_path.clone();
         let first_new_height = artifacts.first_new_height;
         let end_height = artifacts.end_height;
@@ -107,12 +106,19 @@ pub async fn run_batch_session(default_max_batches: u32) -> Result<(), BoxError>
             "batch_memory_after_drop",
             "Batch memory snapshot after dropping proof artifacts",
         );
-        current_prev_proof = Some(compressed_path.clone());
-        tracing::info!(
-            "=== Batch {} complete. Next proof: {} ===",
-            batch_count,
-            compressed_path.display()
-        );
+        current_prev_proof = compressed_path.clone();
+        if let Some(path) = compressed_path.as_ref() {
+            tracing::info!(
+                "=== Batch {} complete. Next proof: {} ===",
+                batch_count,
+                path.display()
+            );
+        } else {
+            tracing::info!(
+                "=== Batch {} complete. Execute-only mode produced no chained proof ===",
+                batch_count
+            );
+        }
         tracing::info!(
             batch = batch_count,
             first_new_height,

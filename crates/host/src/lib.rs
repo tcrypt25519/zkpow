@@ -4,8 +4,8 @@ pub mod config;
 pub mod cuda_env;
 pub mod memory_monitor;
 pub mod observability;
+pub mod pipeline;
 pub mod proof_pipeline;
-pub mod proof_pipeline_diagnostics;
 pub mod session_runner;
 pub mod util;
 

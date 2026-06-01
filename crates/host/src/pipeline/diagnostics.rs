@@ -1,7 +1,9 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
+use crate::memory_monitor;
+use crate::pipeline::BoxError;
 use crate::util;
 use sp1_sdk::ExecutionReport;
 
@@ -493,4 +495,47 @@ pub fn log_execution_report(report: &ExecutionReport, total_proving_time_secs: f
             );
         }
     }
+}
+
+pub fn timed_sync<T, E, F>(label: &'static str, f: F) -> Result<T, BoxError>
+where
+    F: FnOnce() -> Result<T, E>,
+    E: Into<BoxError>,
+{
+    let started = Instant::now();
+    let start_memory = memory_monitor::log_point(label, "proof phase started");
+    let output = f().map_err(Into::into);
+    let elapsed = started.elapsed();
+    let end_memory = memory_monitor::sample();
+    record_phase_timing(label, elapsed);
+    memory_monitor::log_delta(
+        label,
+        start_memory,
+        end_memory,
+        elapsed,
+        "proof phase finished",
+    );
+    output
+}
+
+pub async fn timed_async<T, E, F, Fut>(label: &'static str, f: F) -> Result<T, BoxError>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<T, E>>,
+    E: Into<BoxError>,
+{
+    let started = Instant::now();
+    let start_memory = memory_monitor::log_point(label, "proof phase started");
+    let output = f().await.map_err(Into::into);
+    let elapsed = started.elapsed();
+    let end_memory = memory_monitor::sample();
+    record_phase_timing(label, elapsed);
+    memory_monitor::log_delta(
+        label,
+        start_memory,
+        end_memory,
+        elapsed,
+        "proof phase finished",
+    );
+    output
 }
