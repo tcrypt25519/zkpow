@@ -1,9 +1,9 @@
-use std::env;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::batch_runner::run_single_batch_with_config;
 use crate::memory_monitor;
+use crate::pipeline::batch::NO_HEADERS_REMAINING_PREFIX;
 use crate::proof_pipeline::config_from_env;
 use memory_usage::{StageHistory, StageMetric};
 
@@ -17,14 +17,11 @@ fn session_timestamp() -> String {
         .to_string()
 }
 
-fn effective_max_batches(default_max_batches: u32) -> u32 {
-    env::var("MAX_BATCHES")
-        .ok()
-        .and_then(|value| value.parse::<u32>().ok())
-        .unwrap_or(default_max_batches)
+fn is_header_exhaustion_error(err: &BoxError) -> bool {
+    err.to_string().starts_with(NO_HEADERS_REMAINING_PREFIX)
 }
 
-pub async fn run_batch_session(default_max_batches: u32) -> Result<(), BoxError> {
+pub async fn run_batch_session() -> Result<u32, BoxError> {
     let timestamp = session_timestamp();
     let mut memory_history = StageHistory::new(["Batch start", "Before prove", "Batch end"]);
     memory_monitor::log_point(
@@ -32,11 +29,13 @@ pub async fn run_batch_session(default_max_batches: u32) -> Result<(), BoxError>
         "Session memory snapshot before batches",
     );
 
-    let max_batches = effective_max_batches(default_max_batches);
     let mut batch_config = config_from_env()?;
-    let requested_out_dir = env::var("OUTPUT_DIR")
-        .unwrap_or_else(|_| format!("profiling/sp1/continuous/{}", timestamp));
-    let out_dir = PathBuf::from(requested_out_dir);
+    let max_batches = batch_config.batch_count;
+    let out_dir = if batch_config.output_dir == PathBuf::from(".") {
+        PathBuf::from(format!("profiling/sp1/continuous/{}", timestamp))
+    } else {
+        batch_config.output_dir.clone()
+    };
 
     tracing::info!(
         "Run started for {} batches of {} headers each",
@@ -50,7 +49,9 @@ pub async fn run_batch_session(default_max_batches: u32) -> Result<(), BoxError>
 
     loop {
         if batch_count >= max_batches {
-            tracing::info!("Reached MAX_BATCHES={max_batches}; stopping continuous prover");
+            tracing::info!(
+                "Reached ZKPOW_BATCH_COUNT={max_batches}; stopping continuous prover"
+            );
             break;
         }
 
@@ -73,7 +74,18 @@ pub async fn run_batch_session(default_max_batches: u32) -> Result<(), BoxError>
         );
         let batch_started = std::time::Instant::now();
 
-        let artifacts = run_single_batch_with_config(&batch_config).await?;
+        let artifacts = match run_single_batch_with_config(&batch_config).await {
+            Ok(artifacts) => artifacts,
+            Err(err) if is_header_exhaustion_error(&err) => {
+                tracing::info!(
+                    "No remaining headers in database; stopping continuous prover after {} batches",
+                    batch_count - 1
+                );
+                batch_count -= 1;
+                break;
+            }
+            Err(err) => return Err(err),
+        };
         let compressed_path = artifacts.compressed_path.clone();
         let first_new_height = artifacts.first_new_height;
         let end_height = artifacts.end_height;
@@ -130,5 +142,84 @@ pub async fn run_batch_session(default_max_batches: u32) -> Result<(), BoxError>
         );
     }
 
-    Ok(())
+    Ok(batch_count)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_test_mutex() -> &'static Mutex<()> {
+        static ENV_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
+        ENV_MUTEX.get_or_init(|| Mutex::new(()))
+    }
+
+    fn set_env(name: &str, value: &str) {
+        // SAFETY: tests hold a global mutex to serialize process-environment mutation.
+        unsafe { std::env::set_var(name, value) };
+    }
+
+    fn remove_env(name: &str) {
+        // SAFETY: tests hold a global mutex to serialize process-environment mutation.
+        unsafe { std::env::remove_var(name) };
+    }
+
+    #[test]
+    fn detects_header_exhaustion_error_prefix() {
+        let err: BoxError = format!(
+            "{NO_HEADERS_REMAINING_PREFIX}: starting at height {}",
+            123u32
+        )
+        .into();
+        assert!(is_header_exhaustion_error(&err));
+    }
+
+    #[test]
+    fn does_not_match_unrelated_errors() {
+        let err: BoxError = "some other error".into();
+        assert!(!is_header_exhaustion_error(&err));
+    }
+
+    #[tokio::test]
+    async fn stops_after_reaching_configured_batch_count() {
+        let _guard = env_test_mutex()
+            .lock()
+            .expect("env test mutex should not be poisoned");
+
+        set_env("ZKPOW_BATCH_COUNT", "0");
+        set_env("ZKPOW_BATCH_SIZE", "1");
+        set_env("ZKPOW_EXECUTE_ONLY", "1");
+
+        let result = run_batch_session().await;
+
+        remove_env("ZKPOW_BATCH_COUNT");
+        remove_env("ZKPOW_BATCH_SIZE");
+        remove_env("ZKPOW_EXECUTE_ONLY");
+
+        let completed_batches = result.expect("session should exit cleanly");
+        assert_eq!(completed_batches, 0);
+    }
+
+    #[tokio::test]
+    async fn stops_after_exhausting_headers_in_database() {
+        let _guard = env_test_mutex()
+            .lock()
+            .expect("env test mutex should not be poisoned");
+
+        set_env("ZKPOW_BATCH_COUNT", "5");
+        set_env("ZKPOW_BATCH_SIZE", "0");
+        set_env("ZKPOW_EXECUTE_ONLY", "1");
+        set_env("ZKPOW_DB_PATH", concat!(env!("CARGO_MANIFEST_DIR"), "/../../headers.db"));
+
+        let result = run_batch_session().await;
+
+        remove_env("ZKPOW_BATCH_COUNT");
+        remove_env("ZKPOW_BATCH_SIZE");
+        remove_env("ZKPOW_EXECUTE_ONLY");
+        remove_env("ZKPOW_DB_PATH");
+
+        let completed_batches = result.expect("session should stop on exhaustion without error");
+        assert_eq!(completed_batches, 0);
+    }
 }

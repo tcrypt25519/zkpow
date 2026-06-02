@@ -23,6 +23,7 @@ pub enum ProverBackend {
 pub struct ProofGenerationConfig {
     pub prev_proof_path: Option<PathBuf>,
     pub num_headers: u32,
+    pub batch_count: u32,
     pub db_path: PathBuf,
     pub output_dir: PathBuf,
     pub generate_groth16: bool,

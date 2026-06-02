@@ -8,6 +8,8 @@ use crate::pipeline::{BoxError, ProofGenerationConfig};
 use crate::util;
 use crate::util::HeaderChainPublicValues;
 
+pub const NO_HEADERS_REMAINING_PREFIX: &str = "no headers remaining in database";
+
 #[derive(Debug)]
 pub struct PreparedBatch {
     pub previous_proof: Option<SP1ProofWithPublicValues>,
@@ -33,6 +35,13 @@ pub fn prepare_batch(
     let current_state = resolve_current_state(config, genesis_hash, previous_proof.as_ref())?;
     let first_new_height = current_state.height + 1;
     let header_records = load_header_records(config, first_new_height)?;
+    if header_records.is_empty() {
+        return Err(format!(
+            "{NO_HEADERS_REMAINING_PREFIX}: starting at height {}",
+            first_new_height
+        )
+        .into());
+    }
     let headers = decode_headers(&header_records)?;
     let median_hints = load_median_time_past_hints(&header_records)?;
     let loaded_count = headers.len() as u32;

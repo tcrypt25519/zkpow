@@ -10,13 +10,13 @@ ENV_FILE="${ENV_FILE:-$ZKPOW_ROOT/.env}"
 OUT_DIR="$ZKPOW_ROOT/profiling/runs/$TIMESTAMP"
 
 # Defaults
-export NUM_HEADERS="${NUM_HEADERS:-100}"
+export ZKPOW_BATCH_SIZE="${ZKPOW_BATCH_SIZE:-100}"
 export RUST_LOG="${RUST_LOG:-info}"
-export GUEST_PROFILING="${GUEST_PROFILING:-0}"
-export MAX_BATCHES="${MAX_BATCHES:-}"
+export ZKPOW_GUEST_PROFILING="${ZKPOW_GUEST_PROFILING:-0}"
+export ZKPOW_BATCH_COUNT="${ZKPOW_BATCH_COUNT:-}"
 
 # Starting state
-PREV_PROOF="${PREV_PROOF:-}"
+ZKPOW_PREV_PROOF="${ZKPOW_PREV_PROOF:-}"
 BATCH_COUNT=0
 
 # Load environment variables from .env file if it exists
@@ -26,8 +26,8 @@ fi
 
 mkdir -p "$OUT_DIR"
 printf "Starting ivc run profiling session at %s\n" "$TIMESTAMP"
-printf "Batch size: %s headers\n" "$NUM_HEADERS"
-printf "Batch count: %s\n" "${MAX_BATCHES:-all}"
+printf "Batch size: %s headers\n" "$ZKPOW_BATCH_SIZE"
+printf "Batch count: %s\n" "${ZKPOW_BATCH_COUNT:-all}"
 printf "Output root: %s\n\n" "$OUT_DIR"
 
 if [[ "${BUILD:=true}" == "true" ]]; then
@@ -38,8 +38,8 @@ if [[ "${BUILD:=true}" == "true" ]]; then
 fi
 
 while true; do
-  if [[ -n "$MAX_BATCHES" && "$BATCH_COUNT" -ge "$MAX_BATCHES" ]]; then
-    printf "Reached MAX_BATCHES=%s. Stopping.\n" "$MAX_BATCHES"
+  if [[ -n "$ZKPOW_BATCH_COUNT" && "$BATCH_COUNT" -ge "$ZKPOW_BATCH_COUNT" ]]; then
+    printf "Reached ZKPOW_BATCH_COUNT=%s. Stopping.\n" "$ZKPOW_BATCH_COUNT"
     break
   fi
 
@@ -50,9 +50,9 @@ while true; do
   printf "=== Starting Batch %d ===\n" "$BATCH_COUNT"
 
   # Run the standard profiling script for one batch
-  # We override OUT_DIR and OUTPUT_DIR to keep batch outputs segregated
+  # We override OUT_DIR and ZKPOW_OUTPUT_DIR to keep batch outputs segregated
   export OUT_DIR="$BATCH_DIR"
-  export OUTPUT_DIR="$BATCH_DIR/proofs"
+  export ZKPOW_OUTPUT_DIR="$BATCH_DIR/proofs"
 
   # Run the script. It exits with the status of the cargo run.
   if ! "$ZKPOW_ROOT/scripts/prove-batch.sh"; then
@@ -63,15 +63,15 @@ while true; do
   # Find the generated proof to pass to the next batch
   # The host script names proofs like proof_height_X_to_Y.bin (compressed)
   # We look for the .bin file (excluding groth16) in the batch's proof directory.
-  NEXT_PROOF=$(find "$OUTPUT_DIR" -name "*.bin" ! -name "*groth16*" | head -n 1)
+  NEXT_PROOF=$(find "$ZKPOW_OUTPUT_DIR" -name "*.bin" ! -name "*groth16*" | head -n 1)
 
   if [[ -z "$NEXT_PROOF" ]]; then
-    printf "\nError: No compressed proof found in %s. Stopping.\n" "$OUTPUT_DIR"
+    printf "\nError: No compressed proof found in %s. Stopping.\n" "$ZKPOW_OUTPUT_DIR"
     exit 1
   fi
 
-  export PREV_PROOF="$NEXT_PROOF"
+  export ZKPOW_PREV_PROOF="$NEXT_PROOF"
   printf "=== Batch %d complete. Next proof: %s ===\n\n" "$BATCH_COUNT"
 done
 
-unset $PREV_PROOF
+unset ZKPOW_PREV_PROOF

@@ -76,7 +76,7 @@ pub fn run_preflight(config: &ProofGenerationConfig) -> Result<CudaPreflightRepo
         .get(selected_device_id as usize)
         .ok_or_else(|| {
             format!(
-                "CUDA_DEVICE_ID={} is out of range; machine only reports {} GPU(s)",
+                "ZKPOW_CUDA_DEVICE_ID={} is out of range; machine only reports {} GPU(s)",
                 selected_device_id,
                 gpus.len()
             )

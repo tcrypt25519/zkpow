@@ -1,5 +1,6 @@
 use sp1_sdk::prelude::*;
 use sp1_sdk::SP1Proof;
+use std::collections::HashMap;
 use std::env::VarError;
 use std::path::PathBuf;
 
@@ -11,6 +12,53 @@ use crate::util::{Input, PublicValuesDigest, RecursiveProof, VerifierKeyDigest};
 pub const GENESIS_HASH_HEX: &str =
     "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f";
 
+pub const ENV_ZKPOW_USE_CUDA: &str = "ZKPOW_USE_CUDA";
+pub const ENV_ZKPOW_CUDA_DEVICE_ID: &str = "ZKPOW_CUDA_DEVICE_ID";
+pub const ENV_ZKPOW_EXECUTE_ONLY: &str = "ZKPOW_EXECUTE_ONLY";
+pub const ENV_ZKPOW_GENERATE_GROTH16: &str = "ZKPOW_GENERATE_GROTH16";
+pub const ENV_ZKPOW_BATCH_SIZE: &str = "ZKPOW_BATCH_SIZE";
+pub const ENV_ZKPOW_BATCH_COUNT: &str = "ZKPOW_BATCH_COUNT";
+pub const ENV_ZKPOW_PREV_PROOF: &str = "ZKPOW_PREV_PROOF";
+pub const ENV_ZKPOW_DB_PATH: &str = "ZKPOW_DB_PATH";
+pub const ENV_ZKPOW_OUTPUT_DIR: &str = "ZKPOW_OUTPUT_DIR";
+pub const ENV_ZKPOW_PROVE_COMPRESSED_SPANS: &str = "ZKPOW_PROVE_COMPRESSED_SPANS";
+
+const DEFAULT_BATCH_SIZE: u32 = 100;
+const DEFAULT_BATCH_COUNT: u32 = 1;
+
+pub trait EnvSource {
+    fn get(&self, var_name: &str) -> Result<String, VarError>;
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ProcessEnv;
+
+impl EnvSource for ProcessEnv {
+    fn get(&self, var_name: &str) -> Result<String, VarError> {
+        std::env::var(var_name)
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct MapEnvSource {
+    values: HashMap<String, String>,
+}
+
+impl MapEnvSource {
+    pub fn new(values: HashMap<String, String>) -> Self {
+        Self { values }
+    }
+}
+
+impl EnvSource for MapEnvSource {
+    fn get(&self, var_name: &str) -> Result<String, VarError> {
+        self.values
+            .get(var_name)
+            .cloned()
+            .ok_or(VarError::NotPresent)
+    }
+}
+
 pub fn parse_genesis_hash() -> Result<util::BlockHash, BoxError> {
     let mut genesis_hash: [u8; 32] = hex::decode(GENESIS_HASH_HEX)?
         .try_into()
@@ -19,11 +67,8 @@ pub fn parse_genesis_hash() -> Result<util::BlockHash, BoxError> {
     Ok(util::BlockHash::new(genesis_hash))
 }
 
-pub fn parse_bool_env_with<F>(var_name: &'static str, mut get_env: F) -> Result<bool, BoxError>
-where
-    F: FnMut(&str) -> Result<String, VarError>,
-{
-    match get_env(var_name) {
+pub fn parse_bool_env(source: &impl EnvSource, var_name: &'static str) -> Result<bool, BoxError> {
+    match source.get(var_name) {
         Ok(value) => match value.to_ascii_lowercase().as_str() {
             "1" | "true" | "yes" | "on" => Ok(true),
             "0" | "false" | "no" | "off" => Ok(false),
@@ -37,44 +82,26 @@ where
     }
 }
 
-pub fn parse_bool_env(var_name: &'static str) -> Result<bool, BoxError> {
-    parse_bool_env_with(var_name, |name| std::env::var(name))
-}
-
-pub fn parse_u32_env_with<F>(
-    var_name: &'static str,
-    mut get_env: F,
-) -> Result<Option<u32>, BoxError>
-where
-    F: FnMut(&str) -> Result<String, VarError>,
-{
-    match get_env(var_name) {
-        Ok(value) => {
-            Ok(Some(value.parse().map_err(|err| {
-                format!("invalid {var_name} value `{value}`: {err}")
-            })?))
-        }
+pub fn parse_u32_env(source: &impl EnvSource, var_name: &'static str) -> Result<Option<u32>, BoxError> {
+    match source.get(var_name) {
+        Ok(value) => Ok(Some(value.parse().map_err(|err| {
+            format!("invalid {var_name} value `{value}`: {err}")
+        })?)),
         Err(VarError::NotPresent) => Ok(None),
         Err(err) => Err(err.into()),
     }
 }
 
-pub fn parse_u32_env(var_name: &'static str) -> Result<Option<u32>, BoxError> {
-    parse_u32_env_with(var_name, |name| std::env::var(name))
-}
-
-fn parse_u32_env_or_default<F>(
+fn parse_u32_env_or_default(
+    source: &impl EnvSource,
     var_name: &'static str,
     default: u32,
-    mut get_env: F,
-) -> Result<u32, BoxError>
-where
-    F: FnMut(&str) -> Result<String, VarError>,
-{
-    Ok(match parse_u32_env_with(var_name, &mut get_env)? {
-        Some(value) => value,
-        None => default,
-    })
+) -> Result<u32, BoxError> {
+    Ok(parse_u32_env(source, var_name)?.unwrap_or(default))
+}
+
+fn parse_path_env(source: &impl EnvSource, var_name: &'static str) -> Option<PathBuf> {
+    source.get(var_name).ok().map(PathBuf::from)
 }
 
 pub fn ensure_cuda_requested_configuration(
@@ -83,7 +110,10 @@ pub fn ensure_cuda_requested_configuration(
 ) -> Result<ProverBackend, BoxError> {
     if !use_cuda {
         if cuda_device_id.is_some() {
-            return Err("CUDA_DEVICE_ID is only valid when CUDA=1".into());
+            return Err(format!(
+                "{ENV_ZKPOW_CUDA_DEVICE_ID} is only valid when {ENV_ZKPOW_USE_CUDA}=1"
+            )
+            .into());
         }
         return Ok(ProverBackend::Cpu);
     }
@@ -96,22 +126,28 @@ pub fn ensure_cuda_requested_configuration(
     #[cfg(not(feature = "CUDA"))]
     let _ = cuda_device_id;
     #[cfg(not(feature = "CUDA"))]
-    Err("CUDA=1 requires building zkpow-host with `--features CUDA`".into())
+    Err(format!(
+        "{ENV_ZKPOW_USE_CUDA}=1 requires building zkpow-host with `--features CUDA`"
+    )
+    .into())
 }
 
-pub fn config_from_env_or_map<F>(mut get_env: F) -> Result<ProofGenerationConfig, BoxError>
-where
-    F: FnMut(&str) -> Result<String, VarError>,
-{
-    let use_cuda = parse_bool_env_with("CUDA", &mut get_env)?;
-    let cuda_device_id = parse_u32_env_with("CUDA_DEVICE_ID", &mut get_env)?;
+pub fn config_from_source(source: &impl EnvSource) -> Result<ProofGenerationConfig, BoxError> {
+    let use_cuda = parse_bool_env(source, ENV_ZKPOW_USE_CUDA)?;
+    let cuda_device_id = parse_u32_env(source, ENV_ZKPOW_CUDA_DEVICE_ID)?;
 
-    let execute_only = parse_bool_env_with("EXECUTE_ONLY", &mut get_env)?;
-    let generate_groth16 = parse_bool_env_with("GENERATE_GROTH16", &mut get_env)?;
+    let execute_only = parse_bool_env(source, ENV_ZKPOW_EXECUTE_ONLY)?;
+    let generate_groth16 = parse_bool_env(source, ENV_ZKPOW_GENERATE_GROTH16)?;
     if execute_only && generate_groth16 {
-        return Err("GENERATE_GROTH16 cannot be enabled when EXECUTE_ONLY=1".into());
+        return Err(format!(
+            "{ENV_ZKPOW_GENERATE_GROTH16} cannot be enabled when {ENV_ZKPOW_EXECUTE_ONLY}=1"
+        )
+        .into());
     }
-    let num_headers = parse_u32_env_or_default("NUM_HEADERS", 100, &mut get_env)?;
+
+    let num_headers = parse_u32_env_or_default(source, ENV_ZKPOW_BATCH_SIZE, DEFAULT_BATCH_SIZE)?;
+    let batch_count =
+        parse_u32_env_or_default(source, ENV_ZKPOW_BATCH_COUNT, DEFAULT_BATCH_COUNT)?;
 
     let configured_backend = ensure_cuda_requested_configuration(use_cuda, cuda_device_id)?;
     let prover_backend = if execute_only && configured_backend == ProverBackend::Cpu {
@@ -121,15 +157,12 @@ where
     };
 
     Ok(ProofGenerationConfig {
-        prev_proof_path: get_env("PREV_PROOF").ok().map(PathBuf::from),
+        prev_proof_path: parse_path_env(source, ENV_ZKPOW_PREV_PROOF),
         num_headers,
-        db_path: get_env("DB_PATH")
-            .ok()
-            .map(PathBuf::from)
+        batch_count,
+        db_path: parse_path_env(source, ENV_ZKPOW_DB_PATH)
             .unwrap_or_else(|| PathBuf::from(db_path())),
-        output_dir: get_env("OUTPUT_DIR")
-            .ok()
-            .map(PathBuf::from)
+        output_dir: parse_path_env(source, ENV_ZKPOW_OUTPUT_DIR)
             .unwrap_or_else(|| PathBuf::from(".")),
         generate_groth16,
         execute_only,
@@ -139,7 +172,7 @@ where
 }
 
 pub fn config_from_env() -> Result<ProofGenerationConfig, BoxError> {
-    config_from_env_or_map(|name| std::env::var(name))
+    config_from_source(&ProcessEnv)
 }
 
 pub fn build_recursive_proof(

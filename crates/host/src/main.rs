@@ -7,16 +7,16 @@
 //!   cargo run --release -p zkpow-host --bin zkpow-host
 //!
 //!   # Subsequent runs: extend from a previous proof
-//!   PREV_PROOF=proof_height_1_to_100.bin cargo run --release -p zkpow-host --bin zkpow-host
+//!   ZKPOW_PREV_PROOF=proof_height_1_to_100.bin cargo run --release -p zkpow-host --bin zkpow-host
 //!
 //!   # Also emit a Groth16-wrapped proof
-//!   GENERATE_GROTH16=1 cargo run --release -p zkpow-host --bin zkpow-host
+//!   ZKPOW_GENERATE_GROTH16=1 cargo run --release -p zkpow-host --bin zkpow-host
 //!
 //!   # Use the CUDA prover (must compile with --features CUDA)
-//!   CUDA=1 cargo run --release -p zkpow-host --features CUDA --bin zkpow-host
+//!   ZKPOW_USE_CUDA=1 cargo run --release -p zkpow-host --features CUDA --bin zkpow-host
 //!
 //!   # Run multiple batches in one process
-//!   MAX_BATCHES=10 cargo run --release -p zkpow-host --bin zkpow-host
+//!   ZKPOW_BATCH_COUNT=10 cargo run --release -p zkpow-host --bin zkpow-host
 
 use zkpow_host::observability;
 use zkpow_host::session_runner::run_batch_session;
@@ -36,7 +36,7 @@ async fn main() {
     println!("Host script started. For detailed tracing, set RUST_LOG=info.");
     observability::init();
 
-    if let Err(e) = run_batch_session(1).await {
+    if let Err(e) = run_batch_session().await {
         tracing::error!("proof generation pipeline failed: {e}");
         std::process::exit(1);
     }

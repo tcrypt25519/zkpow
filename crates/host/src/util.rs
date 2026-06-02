@@ -136,14 +136,6 @@ pub fn load_header_records_from_db(
         records.push(row_result.expect("failed to read header record from database"));
     }
 
-    assert_eq!(
-        records.len() as u64,
-        count,
-        "Expected to load {} headers, but only loaded {} from database",
-        count,
-        records.len(),
-    );
-
     records
 }
 

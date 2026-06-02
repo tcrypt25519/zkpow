@@ -8,7 +8,7 @@
 //!
 //! Environment:
 //!   ITERATIONS      Number of prove loops (default: 5)
-//!   NUM_HEADERS     Headers per batch (default: 1)
+//!   ZKPOW_BATCH_SIZE     Headers per batch (default: 1)
 //!
 //! If RSS ratchets upward across iterations with the prover cached, the leak
 //! is inside SP1. If RSS is flat, the leak is in application-level state
@@ -24,6 +24,9 @@ use std::alloc::System;
 use zkpow_host::config::db_path;
 use zkpow_host::memory_monitor;
 use zkpow_host::observability;
+use zkpow_host::pipeline::input::{
+    ENV_ZKPOW_BATCH_SIZE, ENV_ZKPOW_DB_PATH, ENV_ZKPOW_EXECUTE_ONLY,
+};
 use zkpow_host::proof_pipeline::{generate_and_save_proofs, ProofGenerationConfig, ProverBackend};
 
 #[cfg(feature = "memory-diagnostics")]
@@ -39,7 +42,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(5);
-    let num_headers: u32 = std::env::var("NUM_HEADERS")
+    let num_headers: u32 = std::env::var(ENV_ZKPOW_BATCH_SIZE)
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(1);
@@ -51,7 +54,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .as_secs()
         .to_string();
 
-    let execute_only = std::env::var("EXECUTE_ONLY")
+    let execute_only = std::env::var(ENV_ZKPOW_EXECUTE_ONLY)
         .ok()
         .map(|v| v == "1" || v.to_ascii_lowercase() == "true")
         .unwrap_or(false);
@@ -76,11 +79,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let config = ProofGenerationConfig {
             prev_proof_path: prev_proof_path.clone(),
             num_headers,
-            db_path: std::env::var("DB_PATH")
+            db_path: std::env::var(ENV_ZKPOW_DB_PATH)
                 .ok()
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from(db_path())),
             output_dir: PathBuf::from(format!("profiling/sp1/stress/{}/iter_{}", timestamp, i)),
+            batch_count: 1,
             generate_groth16: false,
             execute_only,
             prover_backend: if execute_only {

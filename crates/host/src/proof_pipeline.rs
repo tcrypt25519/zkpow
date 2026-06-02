@@ -207,7 +207,9 @@ where
         })?;
         (Some(groth16_path), Some(groth16_proof))
     } else {
-        tracing::info!("Skipping Groth16 wrapping; set GENERATE_GROTH16=1 to enable it");
+        tracing::info!(
+            "Skipping Groth16 wrapping; set ZKPOW_GENERATE_GROTH16=1 to enable it"
+        );
         (None, None)
     };
 
@@ -233,22 +235,44 @@ mod tests {
         format_claim_mismatch_with_mode, highlight_with_expected_mode, value_prefix, HighlightMode,
     };
     use crate::pipeline::execution::verify_public_values;
+    use std::collections::HashMap;
+
     use crate::pipeline::input::{
-        config_from_env_or_map, ensure_cuda_requested_configuration, parse_bool_env_with,
-        parse_u32_env_with,
+        config_from_source, ensure_cuda_requested_configuration, parse_bool_env, parse_u32_env,
+        EnvSource, MapEnvSource, ENV_ZKPOW_BATCH_SIZE, ENV_ZKPOW_EXECUTE_ONLY,
+        ENV_ZKPOW_GENERATE_GROTH16, ENV_ZKPOW_USE_CUDA,
     };
     use crate::pipeline::ProverBackend;
     use crate::util;
 
     #[test]
     fn parses_generate_groth16_env() {
-        assert!(parse_bool_env_with("GENERATE_GROTH16", |_| Ok("true".to_string())).unwrap());
-        assert!(!parse_bool_env_with("GENERATE_GROTH16", |_| Ok("false".to_string())).unwrap());
-        assert!(
-            !parse_bool_env_with("GENERATE_GROTH16", |_| Err(std::env::VarError::NotPresent))
-                .unwrap()
+        let mut values = HashMap::new();
+        values.insert(
+            ENV_ZKPOW_GENERATE_GROTH16.to_string(),
+            "true".to_string(),
         );
-        assert!(parse_bool_env_with("GENERATE_GROTH16", |_| Ok("invalid".to_string())).is_err());
+        let source = MapEnvSource::new(values);
+        assert!(parse_bool_env(&source, ENV_ZKPOW_GENERATE_GROTH16).unwrap());
+
+        let mut values = HashMap::new();
+        values.insert(
+            ENV_ZKPOW_GENERATE_GROTH16.to_string(),
+            "false".to_string(),
+        );
+        let source = MapEnvSource::new(values);
+        assert!(!parse_bool_env(&source, ENV_ZKPOW_GENERATE_GROTH16).unwrap());
+
+        let source = MapEnvSource::default();
+        assert!(!parse_bool_env(&source, ENV_ZKPOW_GENERATE_GROTH16).unwrap());
+
+        let mut values = HashMap::new();
+        values.insert(
+            ENV_ZKPOW_GENERATE_GROTH16.to_string(),
+            "invalid".to_string(),
+        );
+        let source = MapEnvSource::new(values);
+        assert!(parse_bool_env(&source, ENV_ZKPOW_GENERATE_GROTH16).is_err());
     }
 
     #[test]
@@ -269,24 +293,51 @@ mod tests {
 
     #[test]
     fn config_validation_matrix_invalid_values() {
+        struct SingleValueEnv {
+            key: &'static str,
+            value: &'static str,
+        }
+
+        impl EnvSource for SingleValueEnv {
+            fn get(&self, var_name: &str) -> Result<String, std::env::VarError> {
+                if var_name == self.key {
+                    Ok(self.value.to_string())
+                } else {
+                    Err(std::env::VarError::NotPresent)
+                }
+            }
+        }
+
         // Invalid CUDA boolean value should error.
-        assert!(parse_bool_env_with("CUDA", |_| Ok("maybe".to_string())).is_err());
+        let source = SingleValueEnv {
+            key: ENV_ZKPOW_USE_CUDA,
+            value: "maybe",
+        };
+        assert!(parse_bool_env(&source, ENV_ZKPOW_USE_CUDA).is_err());
 
         // Invalid CUDA_DEVICE_ID should error when non-numeric.
-        assert!(parse_u32_env_with("CUDA_DEVICE_ID", |_| Ok("abc".to_string())).is_err());
+        let source = SingleValueEnv {
+            key: "ZKPOW_CUDA_DEVICE_ID",
+            value: "abc",
+        };
+        assert!(parse_u32_env(&source, "ZKPOW_CUDA_DEVICE_ID").is_err());
 
         // Invalid GENERATE_GROTH16 boolean should error.
-        assert!(parse_bool_env_with("GENERATE_GROTH16", |_| Ok("yessir".to_string())).is_err());
+        let source = SingleValueEnv {
+            key: ENV_ZKPOW_GENERATE_GROTH16,
+            value: "yessir",
+        };
+        assert!(parse_bool_env(&source, ENV_ZKPOW_GENERATE_GROTH16).is_err());
     }
 
     #[test]
     fn execute_only_defaults_to_mock_backend() {
-        let config = config_from_env_or_map(|name| match name {
-            "EXECUTE_ONLY" => Ok("1".to_string()),
-            "NUM_HEADERS" => Ok("1".to_string()),
-            _ => Err(std::env::VarError::NotPresent),
-        })
-        .unwrap();
+        let mut values = HashMap::new();
+        values.insert(ENV_ZKPOW_EXECUTE_ONLY.to_string(), "1".to_string());
+        values.insert(ENV_ZKPOW_BATCH_SIZE.to_string(), "1".to_string());
+
+        let source = MapEnvSource::new(values);
+        let config = config_from_source(&source).unwrap();
 
         assert_eq!(config.prover_backend, ProverBackend::Mock);
         assert!(config.execute_only);
