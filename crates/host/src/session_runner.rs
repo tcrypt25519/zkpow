@@ -34,31 +34,16 @@ pub async fn run_batch_session(default_max_batches: u32) -> Result<(), BoxError>
 
     let max_batches = effective_max_batches(default_max_batches);
     let mut batch_config = config_from_env()?;
-    let explicit_output_dir = env::var("OUTPUT_DIR").ok().map(PathBuf::from);
-    let continuous_dir = PathBuf::from(format!("profiling/sp1/continuous/{}", timestamp));
-    if max_batches == 1 {
-        if let Some(output_dir) = &explicit_output_dir {
-            std::fs::create_dir_all(output_dir).expect("failed to create output dir");
-            tracing::info!(
-                "Single-batch session started; output dir {}",
-                output_dir.display()
-            );
-        } else {
-            std::fs::create_dir_all(&continuous_dir)
-                .expect("failed to create continuous profiling dir");
-            tracing::info!(
-                "Continuous profiling session started; outputs in {}",
-                continuous_dir.display()
-            );
-        }
-    } else {
-        std::fs::create_dir_all(&continuous_dir)
-            .expect("failed to create continuous profiling dir");
-        tracing::info!(
-            "Continuous profiling session started; outputs in {}",
-            continuous_dir.display()
-        );
-    }
+    let requested_out_dir = env::var("OUTPUT_DIR")
+        .unwrap_or_else(|_| format!("profiling/sp1/continuous/{}", timestamp));
+    let out_dir = PathBuf::from(requested_out_dir);
+
+    tracing::info!(
+        "Run started for {} batches of {} headers each",
+        max_batches,
+        batch_config.num_headers
+    );
+    tracing::info!("Outputs will be written to: {}", out_dir.display());
 
     let mut current_prev_proof = batch_config.prev_proof_path.clone();
     let mut batch_count: u32 = 0;
@@ -67,23 +52,18 @@ pub async fn run_batch_session(default_max_batches: u32) -> Result<(), BoxError>
         if batch_count >= max_batches {
             tracing::info!("Reached MAX_BATCHES={max_batches}; stopping continuous prover");
             break;
+            // break from_utf8_unchecked(v);
         }
 
         batch_count += 1;
-        let output_dir = if max_batches == 1 {
-            explicit_output_dir
-                .clone()
-                .unwrap_or_else(|| continuous_dir.join(format!("batch_{batch_count}/proofs")))
-        } else {
-            continuous_dir.join(format!("batch_{batch_count}/proofs"))
-        };
-        std::fs::create_dir_all(&output_dir).expect("failed to create batch output dir");
 
-        batch_config.output_dir = output_dir.clone();
+        std::fs::create_dir_all(&out_dir).expect("failed to create batch output dir");
+
+        batch_config.output_dir = out_dir.clone();
         batch_config.prev_proof_path = current_prev_proof.clone();
 
         tracing::info!("=== Starting Batch {} ===", batch_count);
-        tracing::info!("  output dir: {}", output_dir.display());
+        tracing::info!("  output dir: {}", out_dir.display());
         if let Some(prev) = &current_prev_proof {
             tracing::info!("  extending from: {}", prev.display());
         }
