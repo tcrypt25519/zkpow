@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # Supervisor launch script for continuous-prover.
 # Sourced environment from /etc/environment and /workspace/.env (via vast-base-image utils).
 

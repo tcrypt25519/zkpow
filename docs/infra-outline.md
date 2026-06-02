@@ -1,3 +1,8 @@
+# Infrastructure Alternatives
+
+> **NOTE:** The current primary production environment uses **Vast.ai** (see `infra/vast/` and `vast_deploy.sh`). 
+> The AWS plan below is maintained as a high-availability alternative for H100 capacity.
+
 ## AWS GPU Spot Infrastructure: Implementation Plan
 
 ---

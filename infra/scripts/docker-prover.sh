@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # zkpow — Docker Helper Script
 #
 # Usage:

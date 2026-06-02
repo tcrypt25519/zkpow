@@ -1,4 +1,5 @@
 #!/bin/bash
+set -uo pipefail
 # entrypoint.sh — container entrypoint for Vast.ai GPU instances.
 #
 # Responsibilities:

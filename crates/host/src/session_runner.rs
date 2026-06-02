@@ -52,7 +52,6 @@ pub async fn run_batch_session(default_max_batches: u32) -> Result<(), BoxError>
         if batch_count >= max_batches {
             tracing::info!("Reached MAX_BATCHES={max_batches}; stopping continuous prover");
             break;
-            // break from_utf8_unchecked(v);
         }
 
         batch_count += 1;

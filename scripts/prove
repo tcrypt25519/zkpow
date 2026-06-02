@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 
-source ./scripts/set-env
+source ./scripts/env
 
-if [ "${BUILD:-true}"]; then
+if [ "${BUILD:-true}" ]; then
   ./scripts/build-prover.sh
 fi
 

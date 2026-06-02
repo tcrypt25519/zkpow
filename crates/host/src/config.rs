@@ -5,5 +5,4 @@ pub fn db_path() -> &'static str {
         Ok(path) => Box::leak(Box::new(path)),
         Err(_) => DB_PATH_DEFAULT,
     }
-    //std::env::var("ZKPOW_DB_PATH").unwrap_(DB_PATH_DEFAULT)
 }
