@@ -6,7 +6,7 @@ if [ "${BUILD:-true}" ]; then
   ./scripts/build-prover.sh
 fi
 
-export LOG="$RUN_DIR/run.log"
+export LOG="$OUT_DIR/run.log"
 mkdir -p "$(dirname $LOG)"
 
 ./target/release/zkpow-host | tee &>"$LOG"

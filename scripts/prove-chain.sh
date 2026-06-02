@@ -4,10 +4,10 @@ set -euo pipefail
 # This script runs batches of a given size continuously by repeatedly invoking
 # the same binary path used for single-batch proving.
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ZKPOW_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
-ENV_FILE="${ENV_FILE:-$ROOT/.env}"
-RUN_DIR="$ROOT/profiling/runs/$TIMESTAMP"
+ENV_FILE="${ENV_FILE:-$ZKPOW_ROOT/.env}"
+OUT_DIR="$ZKPOW_ROOT/profiling/runs/$TIMESTAMP"
 
 # Defaults
 export NUM_HEADERS="${NUM_HEADERS:-100}"
@@ -20,21 +20,21 @@ PREV_PROOF="${PREV_PROOF:-}"
 BATCH_COUNT=0
 
 # Load environment variables from .env file if it exists
-if [[ -f "${ENV_FILE:=$ROOT/.env}" ]]; then
+if [[ -f "${ENV_FILE:=$ZKPOW_ROOT/.env}" ]]; then
   source "$ENV_FILE"
 fi
 
-mkdir -p "$RUN_DIR"
+mkdir -p "$OUT_DIR"
 printf "Starting ivc run profiling session at %s\n" "$TIMESTAMP"
 printf "Batch size: %s headers\n" "$NUM_HEADERS"
 printf "Batch count: %s\n" "${MAX_BATCHES:-all}"
-printf "Output root: %s\n\n" "$RUN_DIR"
+printf "Output root: %s\n\n" "$OUT_DIR"
 
 if [[ "${BUILD:=true}" == "true" ]]; then
   cargo build --release \
-    --manifest-path "$ROOT/crates/host/Cargo.toml" \
+    --manifest-path "$ZKPOW_ROOT/crates/host/Cargo.toml" \
     --bin zkpow-host \
-    2>&1 | tee "$RUN_DIR/build.log" && export BUILD=false;
+    2>&1 | tee "$OUT_DIR/build.log" && export BUILD=false
 fi
 
 while true; do
@@ -44,18 +44,18 @@ while true; do
   fi
 
   BATCH_COUNT=$((BATCH_COUNT + 1))
-  BATCH_DIR="$RUN_DIR/batch_$BATCH_COUNT"
+  BATCH_DIR="$OUT_DIR/batch_$BATCH_COUNT"
   mkdir -p "$BATCH_DIR"
 
   printf "=== Starting Batch %d ===\n" "$BATCH_COUNT"
 
   # Run the standard profiling script for one batch
-  # We override RUN_DIR and OUTPUT_DIR to keep batch outputs segregated
-  export RUN_DIR="$BATCH_DIR"
+  # We override OUT_DIR and OUTPUT_DIR to keep batch outputs segregated
+  export OUT_DIR="$BATCH_DIR"
   export OUTPUT_DIR="$BATCH_DIR/proofs"
 
   # Run the script. It exits with the status of the cargo run.
-  if ! "$ROOT/scripts/prove-batch.sh"; then
+  if ! "$ZKPOW_ROOT/scripts/prove-batch.sh"; then
     printf "\nError: Batch %d failed. Stopping.\n" "$BATCH_COUNT"
     exit 1
   fi
