@@ -4,14 +4,17 @@ target/
 
 # Database
 *.db
+*.db*
 *.sqlite
 
 # Development
-*.bin
-*.log
 logs/
 profiling/
 docs/plans/
+zkpow-host
+*.bin
+*.log
+*.md
 
 # IDE
 .idea/
