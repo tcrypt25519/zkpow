@@ -270,10 +270,7 @@ pub fn state_from_db_at_height(db_path: &str, height: u32, genesis_hash: BlockHa
     }
 
     let current_target = target_from_bits(current.header.compact_target);
-    // Temporary compatibility for the current SQLite snapshot: non-genesis
-    // rows are missing genesis work, so normalize DB state to canonical
-    // Bitcoin chainwork until the database is regenerated.
-    let canonical_chain_work = current.chain_work + work_from_target(GENESIS_TARGET);
+    let canonical_chain_work = current.chain_work;
 
     State {
         header: current.header,
