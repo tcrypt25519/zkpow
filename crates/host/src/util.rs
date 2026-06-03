@@ -45,22 +45,18 @@ pub fn load_headers_from_db(db_path: &str, start_height: u64, count: u64) -> Vec
     let rows = stmt
         .query_map(rusqlite::params![start_height, end_height], |row| {
             let version: i64 = row.get(0)?;
-            let prev: Vec<u8> = row.get(1)?;
-            let merkle_root: Vec<u8> = row.get(2)?;
+            let prev: [u8; 32] = row.get(1)?;
+            let merkle_root: [u8; 32] = row.get(2)?;
             let timestamp: i64 = row.get(3)?;
             let nbits: i64 = row.get(4)?;
             let nonce: i64 = row.get(5)?;
 
             let header = Header {
                 version: version as u32,
-                prev_blockhash: BlockHash::from_raw(
-                    prev.try_into().expect("prev must be 32 bytes"),
-                ),
-                merkle_root: merkle_root
-                    .try_into()
-                    .expect("merkle_root must be 32 bytes"),
+                prev_blockhash: BlockHash::from_raw(prev),
+                merkle_root,
                 timestamp: BlockTimestamp::new(timestamp as u32),
-                compact_target: zkpow_core::CompactTarget::from_consensus(nbits as u32),
+                compact_target: CompactTarget::from_consensus(nbits as u32),
                 nonce: nonce as u32,
             };
             Ok(header.to_bytes())
@@ -71,7 +67,7 @@ pub fn load_headers_from_db(db_path: &str, start_height: u64, count: u64) -> Vec
     let mut loaded = 0u64;
 
     for row_result in rows {
-        let header_bytes: [u8; 80] = row_result.expect("failed to read header from database");
+        let header_bytes = row_result.expect("failed to read header from database");
         all_headers.extend_from_slice(&header_bytes);
         loaded += 1;
     }
@@ -105,22 +101,18 @@ pub fn load_header_records_from_db(
         .query_map(rusqlite::params![start_height, end_height], |row| {
             let height: i64 = row.get(0)?;
             let version: i64 = row.get(1)?;
-            let prev: Vec<u8> = row.get(2)?;
-            let merkle_root: Vec<u8> = row.get(3)?;
+            let prev: [u8; 32] = row.get(2)?;
+            let merkle_root: [u8; 32] = row.get(3)?;
             let timestamp: i64 = row.get(4)?;
             let nbits: i64 = row.get(5)?;
             let nonce: i64 = row.get(6)?;
-            let chainwork: Vec<u8> = row.get(7)?;
+            let chainwork: [u8; 32] = row.get(7)?;
             let median_time_past: i64 = row.get(8)?;
 
             let header = Header {
                 version: version as u32,
-                prev_blockhash: BlockHash::from_raw(
-                    prev.try_into().expect("prev must be 32 bytes"),
-                ),
-                merkle_root: merkle_root
-                    .try_into()
-                    .expect("merkle_root must be 32 bytes"),
+                prev_blockhash: BlockHash::from_raw(prev),
+                merkle_root,
                 timestamp: BlockTimestamp::new(timestamp as u32),
                 compact_target: CompactTarget::from_consensus(nbits as u32),
                 nonce: nonce as u32,
@@ -135,10 +127,9 @@ pub fn load_header_records_from_db(
         })
         .expect("failed to execute query");
 
-    let mut records = Vec::with_capacity(count as usize);
-    for row_result in rows {
-        records.push(row_result.expect("failed to read header record from database"));
-    }
+    let records: Vec<HeaderRecord> = rows
+        .map(|row_result| row_result.expect("failed to read header record from database"))
+        .collect();
 
     assert_eq!(
         records.len() as u64,
