@@ -875,23 +875,26 @@ impl core::ops::Mul<u32> for ChainWork {
     }
 }
 
-/// TODO: Consider, maximum allowed target is < (#2^256)-1.
-/// So adding 1 can't carry into a fifth limb.
-/// Also, we could simply do a wrapping add 1.
-///   Carry if/only if it wraps to 0.
-///   First limb to not wrap stops the carry.
-fn target_plus_one(target: Target) -> [u64; 5] {
+/// Increments the 256-bit target by 1.
+///
+/// Since the maximum allowed target is less than 2^256 - 1,
+/// adding 1 will never carry out of the 4th limb.
+fn target_plus_one(target: Target) -> Result<[u64; 4], ()> {
     cycle_track("pow/work/target_plus_one", || {
-        let limbs = target.as_limbs();
-        let mut out = [0u64; 5];
-        let mut carry = 1u128;
-        for (i, limb_out) in out.iter_mut().enumerate().take(4) {
-            let sum = limbs[i] as u128 + carry;
-            *limb_out = sum as u64;
-            carry = sum >> 64;
+        let mut limbs = *target.as_limbs();
+        for limb in limbs.iter_mut() {
+            if *limb == u64::MAX {
+                // Wrap to 0 and carry
+                *limb = 0;
+            } else {
+                // No more carries
+                *limb += 1;
+                return Ok(limbs);
+            }
         }
-        out[4] = carry as u64;
-        out
+
+        // The target is a max u256 which isn't valid
+        Err(())
     })
 }
 
@@ -941,11 +944,19 @@ fn u320_shl1(value: &mut [u64; 5]) {
 #[must_use]
 pub fn work_from_target(target: Target) -> ChainWork {
     cycle_track("pow/work_from_target", || {
-        let divisor = target_plus_one(target);
-        if divisor == [1, 0, 0, 0, 0] {
-            return ChainWork::default();
-        }
-
+        let divisor = match target_plus_one(target) {
+            Ok(limbs) => {
+                if limbs == [1, 0, 0, 0] {
+                    return ChainWork::default();
+                }
+                [limbs[0], limbs[1], limbs[2], limbs[3], 0]
+            }
+            Err(()) => {
+                // target = 2^256 - 1, divisor = 2^256
+                // work = 2^256 / 2^256 = 1
+                return ChainWork::from_limbs([1, 0, 0, 0]);
+            }
+        };
         let mut remainder = [0u64; 5];
         let mut quotient = [0u64; 4];
         for bit in (0..=256).rev() {
@@ -1659,5 +1670,45 @@ mod tests {
         assert_eq!(bytes.len(), PUBLIC_CHAIN_CLAIM_SIZE);
         let parsed = PublicChainClaim::parse(&bytes).unwrap();
         assert_eq!(parsed, claim);
+    }
+
+    #[test]
+    fn test_target_plus_one() {
+        let t0 = Target::from_limbs([0, 0, 0, 0]);
+        assert_eq!(target_plus_one(t0).unwrap(), [1, 0, 0, 0]);
+
+        let t1 = Target::from_limbs([1, 0, 0, 0]);
+        assert_eq!(target_plus_one(t1).unwrap(), [2, 0, 0, 0]);
+
+        let t_max_64 = Target::from_limbs([u64::MAX, 0, 0, 0]);
+        assert_eq!(target_plus_one(t_max_64).unwrap(), [0, 1, 0, 0]);
+
+        // Note: t_max_256 + 1 overflows [u64; 4], but for valid Bitcoin targets
+        // this case is never hit as target < 2^256 - 1.
+        let t_max_256 = Target::from_limbs([u64::MAX, u64::MAX, u64::MAX, u64::MAX]);
+        assert_eq!(target_plus_one(t_max_256), Err(()));
+    }
+
+    #[test]
+    fn test_work_from_target() {
+        // target = 2^256 - 1, divisor = 2^256
+        // work = 2^256 / 2^256 = 1
+        let t_max_256 = Target::from_limbs([u64::MAX, u64::MAX, u64::MAX, u64::MAX]);
+        assert_eq!(work_from_target(t_max_256).into_limbs(), [1, 0, 0, 0]);
+
+        // target = 2^256 - 2, divisor = 2^256 - 1
+        // work = 2^256 / (2^256 - 1) = 1
+        let t_large = Target::from_limbs([u64::MAX - 1, u64::MAX, u64::MAX, u64::MAX]);
+        assert_eq!(work_from_target(t_large).into_limbs(), [1, 0, 0, 0]);
+
+        // target = 0, divisor = 1
+        // work = 2^256 / 1 = 2^256 (overflows u256)
+        // Current implementation returns 0 for divisor = [1, 0, 0, 0, 0]
+        let t0 = Target::from_limbs([0, 0, 0, 0]);
+        assert_eq!(work_from_target(t0).into_limbs(), [0, 0, 0, 0]);
+
+        // Genesis target
+        let work = work_from_target(GENESIS_TARGET);
+        assert_ne!(work.into_limbs(), [0, 0, 0, 0]);
     }
 }
