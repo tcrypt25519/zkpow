@@ -879,17 +879,22 @@ impl core::ops::Mul<u32> for ChainWork {
 ///
 /// Since the maximum allowed target is less than 2^256 - 1,
 /// adding 1 will never carry out of the 4th limb.
-fn target_plus_one(target: Target) -> [u64; 4] {
+fn target_plus_one(target: Target) -> Result<[u64; 4], ()> {
     cycle_track("pow/work/target_plus_one", || {
-        let mut out = *target.as_limbs();
-        for limb in out.iter_mut() {
-            let (sum, carry) = limb.overflowing_add(1);
-            *limb = sum;
-            if !carry {
-                break;
+        let mut limbs = *target.as_limbs();
+        for limb in limbs.iter_mut() {
+            if *limb == u64::MAX {
+                // Wrap to 0 and carry
+                *limb = 0;
+            } else {
+                // No more carries
+                *limb += 1;
+                return Ok(limbs);
             }
         }
-        out
+
+        // The target is a max u256 which isn't valid
+        Err(())
     })
 }
 
@@ -939,12 +944,19 @@ fn u320_shl1(value: &mut [u64; 5]) {
 #[must_use]
 pub fn work_from_target(target: Target) -> ChainWork {
     cycle_track("pow/work_from_target", || {
-        let limbs = target_plus_one(target);
-        if limbs == [1, 0, 0, 0] {
-            return ChainWork::default();
-        }
-
-        let divisor = [limbs[0], limbs[1], limbs[2], limbs[3], 0];
+        let divisor = match target_plus_one(target) {
+            Ok(limbs) => {
+                if limbs == [1, 0, 0, 0] {
+                    return ChainWork::default();
+                }
+                [limbs[0], limbs[1], limbs[2], limbs[3], 0]
+            }
+            Err(()) => {
+                // target = 2^256 - 1, divisor = 2^256
+                // work = 2^256 / 2^256 = 1
+                return ChainWork::from_limbs([1, 0, 0, 0]);
+            }
+        };
         let mut remainder = [0u64; 5];
         let mut quotient = [0u64; 4];
         for bit in (0..=256).rev() {
@@ -1663,22 +1675,27 @@ mod tests {
     #[test]
     fn test_target_plus_one() {
         let t0 = Target::from_limbs([0, 0, 0, 0]);
-        assert_eq!(target_plus_one(t0), [1, 0, 0, 0]);
+        assert_eq!(target_plus_one(t0).unwrap(), [1, 0, 0, 0]);
 
         let t1 = Target::from_limbs([1, 0, 0, 0]);
-        assert_eq!(target_plus_one(t1), [2, 0, 0, 0]);
+        assert_eq!(target_plus_one(t1).unwrap(), [2, 0, 0, 0]);
 
         let t_max_64 = Target::from_limbs([u64::MAX, 0, 0, 0]);
-        assert_eq!(target_plus_one(t_max_64), [0, 1, 0, 0]);
+        assert_eq!(target_plus_one(t_max_64).unwrap(), [0, 1, 0, 0]);
 
         // Note: t_max_256 + 1 overflows [u64; 4], but for valid Bitcoin targets
         // this case is never hit as target < 2^256 - 1.
         let t_max_256 = Target::from_limbs([u64::MAX, u64::MAX, u64::MAX, u64::MAX]);
-        assert_eq!(target_plus_one(t_max_256), [0, 0, 0, 0]);
+        assert_eq!(target_plus_one(t_max_256), Err(()));
     }
 
     #[test]
     fn test_work_from_target() {
+        // target = 2^256 - 1, divisor = 2^256
+        // work = 2^256 / 2^256 = 1
+        let t_max_256 = Target::from_limbs([u64::MAX, u64::MAX, u64::MAX, u64::MAX]);
+        assert_eq!(work_from_target(t_max_256).into_limbs(), [1, 0, 0, 0]);
+
         // target = 2^256 - 2, divisor = 2^256 - 1
         // work = 2^256 / (2^256 - 1) = 1
         let t_large = Target::from_limbs([u64::MAX - 1, u64::MAX, u64::MAX, u64::MAX]);
