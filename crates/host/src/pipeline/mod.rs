@@ -22,6 +22,7 @@ pub enum ProverBackend {
 #[derive(Debug, Clone)]
 pub struct ProofGenerationConfig {
     pub prev_proof_path: Option<PathBuf>,
+    pub trusted_start_height: Option<u32>,
     pub num_headers: u32,
     pub batch_count: u32,
     pub db_path: PathBuf,

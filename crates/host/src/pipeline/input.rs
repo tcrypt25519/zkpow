@@ -158,6 +158,7 @@ pub(crate) fn config_from_source(source: &impl EnvSource) -> Result<ProofGenerat
 
     Ok(ProofGenerationConfig {
         prev_proof_path: parse_path_env(source, ENV_ZKPOW_PREV_PROOF),
+        trusted_start_height: None,
         num_headers,
         batch_count,
         db_path: parse_path_env(source, ENV_ZKPOW_DB_PATH)

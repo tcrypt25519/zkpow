@@ -89,6 +89,9 @@ fn resolve_current_state(
     timed_sync("resolve_current_state", || -> Result<_, BoxError> {
         let db_path = path_to_str(&config.db_path)?;
         if let Some(prev_proof) = previous_proof {
+            if config.trusted_start_height.is_some() {
+                return Err("trusted start height cannot be combined with a previous proof".into());
+            }
             let prev_public_values =
                 HeaderChainPublicValues::parse(prev_proof.public_values.as_ref())
                     .map_err(|err| err.to_string())?;
@@ -116,6 +119,10 @@ fn resolve_current_state(
                 .into());
             }
             return Ok(state);
+        }
+
+        if let Some(height) = config.trusted_start_height {
+            return Ok(util::state_from_db_at_height(db_path, height, genesis_hash));
         }
 
         Ok(util::state_from_db_at_height(db_path, 0, genesis_hash))
@@ -201,4 +208,45 @@ fn simulate_expected_state(
         format_claim_mismatch(&actual_claim, &expected_claim),
     )
     .into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pipeline::ProverBackend;
+
+    fn test_config(trusted_start_height: Option<u32>) -> ProofGenerationConfig {
+        ProofGenerationConfig {
+            prev_proof_path: None,
+            trusted_start_height,
+            num_headers: 1,
+            batch_count: 1,
+            db_path: concat!(env!("CARGO_MANIFEST_DIR"), "/../../headers.db").into(),
+            output_dir: ".".into(),
+            generate_groth16: false,
+            execute_only: true,
+            prover_backend: ProverBackend::Mock,
+            cuda_device_id: None,
+        }
+    }
+
+    #[test]
+    fn prepare_batch_starts_at_genesis_without_resume_cursor() {
+        let genesis_hash = crate::pipeline::input::parse_genesis_hash().unwrap();
+
+        let batch = prepare_batch(&test_config(None), genesis_hash).unwrap();
+
+        assert_eq!(batch.first_new_height, 1);
+        assert_eq!(batch.end_height, 1);
+    }
+
+    #[test]
+    fn prepare_batch_uses_trusted_start_height_as_resume_cursor() {
+        let genesis_hash = crate::pipeline::input::parse_genesis_hash().unwrap();
+
+        let batch = prepare_batch(&test_config(Some(2016)), genesis_hash).unwrap();
+
+        assert_eq!(batch.first_new_height, 2017);
+        assert_eq!(batch.end_height, 2017);
+    }
 }

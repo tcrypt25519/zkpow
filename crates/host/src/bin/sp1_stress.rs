@@ -78,6 +78,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     for i in 1..=iterations {
         let config = ProofGenerationConfig {
             prev_proof_path: prev_proof_path.clone(),
+            trusted_start_height: None,
             num_headers,
             db_path: std::env::var(ENV_ZKPOW_DB_PATH)
                 .ok()

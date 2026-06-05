@@ -176,13 +176,23 @@ where
     )
     .to_bytes()
     .to_vec();
+    let continuation_digest = util::continuation_digest_from_state(batch.current_state);
+    let prior_public_values = util::MinimalPublicValues::success(
+        &batch.current_state.public_claim(),
+        continuation_digest,
+        verifier_key,
+    );
+    let recursive_proof = util::RecursiveProof {
+        verifier_key,
+        public_values_digest: util::PublicValuesDigest::from_raw(util::compute_pv_digest(
+            &prior_public_values.to_bytes(),
+        )),
+        ..Default::default()
+    };
     let input = timed_sync("build_input", || -> Result<_, BoxError> {
         Ok(Input::new(
             batch.current_state.public_claim(),
-            util::RecursiveProof {
-                verifier_key,
-                ..Default::default()
-            },
+            recursive_proof,
         ))
     })?;
     let stdin = timed_sync("serialize_input", || -> Result<SP1Stdin, BoxError> {

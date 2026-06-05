@@ -45,6 +45,7 @@ pub async fn run_batch_session() -> Result<u32, BoxError> {
     tracing::info!("Outputs will be written to: {}", out_dir.display());
 
     let mut current_prev_proof = batch_config.prev_proof_path.clone();
+    let mut trusted_start_height = None;
     let mut batch_count: u32 = 0;
 
     loop {
@@ -61,6 +62,7 @@ pub async fn run_batch_session() -> Result<u32, BoxError> {
 
         batch_config.output_dir = out_dir.clone();
         batch_config.prev_proof_path = current_prev_proof.clone();
+        batch_config.trusted_start_height = trusted_start_height;
 
         tracing::info!("=== Starting Batch {} ===", batch_count);
         tracing::info!("  output dir: {}", out_dir.display());
@@ -97,7 +99,13 @@ pub async fn run_batch_session() -> Result<u32, BoxError> {
             "batch_memory_after_drop",
             "Batch memory snapshot after dropping proof artifacts",
         );
-        current_prev_proof = compressed_path.clone();
+        if batch_config.execute_only {
+            current_prev_proof = None;
+            trusted_start_height = Some(end_height);
+        } else {
+            current_prev_proof = compressed_path.clone();
+            trusted_start_height = None;
+        }
         if let Some(path) = compressed_path.as_ref() {
             tracing::info!(
                 "=== Batch {} complete. Next proof: {} ===",
