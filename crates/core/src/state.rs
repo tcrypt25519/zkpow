@@ -182,21 +182,15 @@ impl State {
     #[cfg(feature = "host")]
     #[must_use]
     pub fn median_time_past(&self) -> BlockTimestamp {
-        cycle_track("state/host/median_time_past", || {
-            let count = self.timestamp_count();
-            let mut sorted = self.timestamps;
-            if count >= WINDOW_SIZE {
-                cycle_track("state/host/median_time_past/sort", || {
-                    sorted.sort_unstable();
-                });
-                return sorted[WINDOW_SIZE / 2];
-            }
+        let count = self.timestamp_count();
+        let mut sorted = self.timestamps;
+        if count >= WINDOW_SIZE {
+            sorted.sort_unstable();
+            return sorted[WINDOW_SIZE / 2];
+        }
 
-            cycle_track("state/host/median_time_past/sort", || {
-                sorted[..count].sort_unstable();
-            });
-            sorted[count / 2]
-        })
+        sorted[..count].sort_unstable();
+        sorted[count / 2]
     }
 
     pub fn apply_chain_work_run(&mut self, run_work: ChainWork, run_count: u32) {
