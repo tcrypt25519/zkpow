@@ -5,7 +5,6 @@
 extern crate alloc;
 
 use core::{
-    marker::PhantomData,
     mem::{align_of, size_of, MaybeUninit},
     ptr, slice,
 };
@@ -15,15 +14,11 @@ pub mod types;
 
 pub use types::{u256, BlockHash, BlockTimestamp, ChainWork, CompactTarget, Target};
 
-pub mod env;
-pub use env::{cycle_track, cycle_track_report, State};
-
-#[cfg(feature = "host")]
-type DefaultEnvironment = env::HostEnvironment;
-#[cfg(not(feature = "host"))]
-type DefaultEnvironment = env::GuestEnvironment;
+pub mod state;
+pub use state::{cycle_track, cycle_track_report, State};
 
 pub mod input;
+
 pub use input::{
     Input, InputError, InputRef, MedianTimePastHintError, MedianTimePastHints,
     MedianTimePastHintsRef, NewHeaderHintError, NewHeaderHints, NewHeaderHintsRef, RecursiveProof,
@@ -496,7 +491,6 @@ impl ValidationState {
             current_target: self.private.current_target,
             epoch_start_timestamp: self.private.epoch_start_timestamp,
             timestamps: self.private.timestamps,
-            _environment: PhantomData,
         }
     }
 }
@@ -552,8 +546,8 @@ impl TryFrom<u8> for ValidationErrorCode {
 
 /// Failure payload returned by [`State::apply_headers`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ApplyFailure<E: env::Env = DefaultEnvironment> {
-    pub last_valid_state: env::StateInner<E>,
+pub struct ApplyFailure {
+    pub last_valid_state: State,
     pub error_code: ValidationErrorCode,
     /// Absolute chain height of the failed header (last_valid_height + 1).
     pub failure_height: u32,
@@ -1106,7 +1100,7 @@ mod tests {
         }
     }
 
-    fn test_median_time_past(state: &State) -> BlockTimestamp {
+    pub(crate) fn median_time_past(state: &State) -> BlockTimestamp {
         let count = state.timestamp_count();
         let mut sorted = state.timestamps;
         if count >= WINDOW_SIZE {
@@ -1119,7 +1113,7 @@ mod tests {
     }
 
     fn apply_header(state: &mut State, timestamp: u32) {
-        let median_hint = test_median_time_past(state);
+        let median_hint = median_time_past(state);
         state
             .apply_headers(
                 &[NewHeader {
@@ -1141,7 +1135,7 @@ mod tests {
         let mut state = initial_state.clone();
         let mut medians = Vec::with_capacity(headers.len());
         for header in headers {
-            medians.push(test_median_time_past(&state));
+            medians.push(median_time_past(&state));
             let timestamp_slot = (state.height as usize + 1) % WINDOW_SIZE;
             state.timestamps[timestamp_slot] = header.timestamp;
             state.height += 1;
@@ -1468,7 +1462,7 @@ mod tests {
 
         let mut sequential = test_state();
         for header in headers.iter().copied() {
-            let median_hint = test_median_time_past(&sequential);
+            let median_hint = median_time_past(&sequential);
             sequential
                 .apply_headers(&[header], &[median_hint], |_| zero_hash())
                 .expect("sequential validation should succeed");
@@ -1602,12 +1596,12 @@ mod tests {
     fn median_time_past_uses_upper_median_for_heights_zero_through_twelve() {
         let mut state = test_state();
 
-        assert_eq!(test_median_time_past(&state), expected_upper_median(0));
+        assert_eq!(median_time_past(&state), expected_upper_median(0));
 
         for height in 1..=12 {
             apply_header(&mut state, height);
             assert_eq!(state.height, height);
-            assert_eq!(test_median_time_past(&state), expected_upper_median(height));
+            assert_eq!(median_time_past(&state), expected_upper_median(height));
         }
     }
 
@@ -1618,7 +1612,7 @@ mod tests {
         for height in 1..=23 {
             apply_header(&mut state, height);
             assert_eq!(state.height, height);
-            assert_eq!(test_median_time_past(&state), expected_upper_median(height));
+            assert_eq!(median_time_past(&state), expected_upper_median(height));
         }
     }
 
@@ -1646,7 +1640,7 @@ mod tests {
             timestamps: original,
             ..State::default()
         };
-        let median_hint = test_median_time_past(&state);
+        let median_hint = median_time_past(&state);
         state
             .apply_headers(
                 &[NewHeader {
@@ -1682,7 +1676,6 @@ mod tests {
             current_target: GENESIS_TARGET,
             epoch_start_timestamp: BlockTimestamp::new(1000),
             timestamps: [BlockTimestamp::new(100); WINDOW_SIZE],
-            _environment: PhantomData,
         };
 
         let vs = ValidationState::from_state(&state);
@@ -1834,7 +1827,7 @@ mod tests {
         // TimestampTooOld on equality to median (<= median should fail).
         let mut s2 = test_state();
         // First, accept a valid header to seed the window deterministically.
-        let median0 = test_median_time_past(&s2);
+        let median0 = median_time_past(&s2);
         let ok_hdr = NewHeader {
             version: 2,
             merkle_root: [0x33; 32],
@@ -1843,7 +1836,7 @@ mod tests {
         };
         s2.apply_headers(&[ok_hdr], &[median0], |_| zero_hash())
             .unwrap();
-        let median_after_1 = test_median_time_past(&s2);
+        let median_after_1 = median_time_past(&s2);
         let bad_hdr = NewHeader {
             version: 42,
             merkle_root: [0x44; 32],
@@ -1857,7 +1850,7 @@ mod tests {
 
         // Version field is not validated by consensus here; a weird version should still pass if PoW/timestamp do.
         let mut s3 = test_state();
-        let median_start = test_median_time_past(&s3);
+        let median_start = median_time_past(&s3);
         let odd_version_hdr = NewHeader {
             version: 0xFFFF_FFFF,
             merkle_root: [0x55; 32],
@@ -1876,7 +1869,7 @@ mod tests {
         for t in 1..=5 {
             apply_header(&mut state, t);
         }
-        let median = test_median_time_past(&state);
+        let median = median_time_past(&state);
         let hdr = NewHeader {
             version: 1,
             merkle_root: [0x66; 32],

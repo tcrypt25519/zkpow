@@ -7,7 +7,6 @@ use crate::{
     CompactTarget, Header, NewHeader, ParseError, PublicChainClaim, Target, ValidationErrorCode,
     EPOCH_LENGTH, PRIVATE_CONTINUATION_STATE_SIZE, STATE_SIZE, WINDOW_SIZE,
 };
-use core::marker::PhantomData;
 
 /// Execute a closure while emitting stable, report-backed cycle-tracker markers in the guest.
 #[cfg(all(target_os = "zkvm", feature = "profiling"))]
@@ -48,37 +47,10 @@ where
     cycle_track_report(label, f)
 }
 
-mod sealed {
-    pub trait Sealed {}
-}
-
-/// Marker trait for environment-specific state APIs.
-#[doc(hidden)]
-pub trait Env: sealed::Sealed + core::fmt::Debug + Clone + Copy + Default + PartialEq + Eq {}
-
-#[doc(hidden)]
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct GuestEnvironment;
-
-impl sealed::Sealed for GuestEnvironment {}
-impl Env for GuestEnvironment {}
-
-#[cfg(feature = "host")]
-mod host;
-
-#[cfg(feature = "host")]
-pub(crate) use host::HostEnvironment;
-
-#[cfg(not(feature = "host"))]
-type SelectedEnvironment = GuestEnvironment;
-#[cfg(feature = "host")]
-type SelectedEnvironment = HostEnvironment;
-
 /// Complete authenticated validation state, serialized between recursive iterations.
 #[repr(C)]
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[doc(hidden)]
-pub struct StateInner<E: Env> {
+pub struct State {
     pub header: Header,
     pub block_hash: BlockHash,
     pub genesis_hash: BlockHash,
@@ -92,13 +64,9 @@ pub struct StateInner<E: Env> {
     pub current_target: Target,
     pub epoch_start_timestamp: BlockTimestamp,
     pub timestamps: [BlockTimestamp; WINDOW_SIZE],
-    pub _environment: PhantomData<E>,
 }
 
-/// Public state type selected by the `host` feature.
-pub type State = StateInner<SelectedEnvironment>;
-
-impl<E: Env> StateInner<E> {
+impl State {
     /// The number of timestamps currently tracked for median-time-past.
     #[must_use]
     pub fn timestamp_count(&self) -> usize {
@@ -160,7 +128,7 @@ impl<E: Env> StateInner<E> {
     }
 
     /// Compute the difficulty values that become active at a new epoch boundary.
-    fn prepare_new_epoch(
+    pub(crate) fn prepare_new_epoch(
         &self,
         previous_timestamp: BlockTimestamp,
     ) -> (CompactTarget, Target, ChainWork) {
@@ -174,9 +142,7 @@ impl<E: Env> StateInner<E> {
             (current_nbits, current_target, current_work)
         })
     }
-}
 
-impl<E: Env> StateInner<E> {
     #[must_use]
     fn median_time_past_hinted(&self, claimed_median: BlockTimestamp) -> bool {
         cycle_track("state/median_time_past_hinted", || {
@@ -212,6 +178,27 @@ impl<E: Env> StateInner<E> {
         })
     }
 
+    /// Return the upper median time past for the currently tracked timestamps.
+    #[cfg(feature = "host")]
+    #[must_use]
+    pub fn median_time_past(&self) -> BlockTimestamp {
+        cycle_track("state/host/median_time_past", || {
+            let count = self.timestamp_count();
+            let mut sorted = self.timestamps;
+            if count >= WINDOW_SIZE {
+                cycle_track("state/host/median_time_past/sort", || {
+                    sorted.sort_unstable();
+                });
+                return sorted[WINDOW_SIZE / 2];
+            }
+
+            cycle_track("state/host/median_time_past/sort", || {
+                sorted[..count].sort_unstable();
+            });
+            sorted[count / 2]
+        })
+    }
+
     pub fn apply_chain_work_run(&mut self, run_work: ChainWork, run_count: u32) {
         if run_count > 0 {
             cycle_track("state/apply_headers/chain_work_flush", || {
@@ -227,7 +214,7 @@ impl<E: Env> StateInner<E> {
         headers: &[NewHeader],
         median_hints: &[BlockTimestamp],
         mut hash_header: F,
-    ) -> Result<(), ApplyFailure<E>>
+    ) -> Result<(), ApplyFailure>
     where
         F: FnMut(&Header) -> BlockHash,
     {
@@ -242,9 +229,7 @@ impl<E: Env> StateInner<E> {
             let mut pending_run_count: u32 = 0;
 
             let flush_pending_chain_work =
-                |state: &mut StateInner<E>,
-                 run_work: &mut Option<ChainWork>,
-                 run_count: &mut u32| {
+                |state: &mut State, run_work: &mut Option<ChainWork>, run_count: &mut u32| {
                     if let Some(run_work) = run_work.take() {
                         state.apply_chain_work_run(run_work, *run_count);
                     }
@@ -341,7 +326,7 @@ impl<E: Env> StateInner<E> {
     }
 }
 
-impl<E: Env> Default for StateInner<E> {
+impl Default for State {
     fn default() -> Self {
         Self {
             header: Header::default(),
@@ -354,7 +339,6 @@ impl<E: Env> Default for StateInner<E> {
             current_target: Target::default(),
             epoch_start_timestamp: BlockTimestamp::default(),
             timestamps: [BlockTimestamp::default(); WINDOW_SIZE],
-            _environment: PhantomData,
         }
     }
 }

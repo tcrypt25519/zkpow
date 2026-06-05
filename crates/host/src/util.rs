@@ -232,7 +232,6 @@ pub fn genesis_state(genesis_header: Header, genesis_hash: BlockHash) -> State {
         current_target: GENESIS_TARGET,
         epoch_start_timestamp: genesis_header.timestamp,
         timestamps,
-        _environment: core::marker::PhantomData,
     }
 }
 
@@ -275,7 +274,6 @@ pub fn state_from_db_at_height(db_path: &str, height: u32, genesis_hash: BlockHa
         current_target,
         epoch_start_timestamp: epoch_start_record.header.timestamp,
         timestamps,
-        _environment: core::marker::PhantomData,
     }
 }
 
