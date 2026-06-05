@@ -1,0 +1,124 @@
+# Dockerfile.vast — zkpow continuous-prover for Vast.ai GPU instances
+#
+# Three stages:
+#   1. cuda-toolkit  – CUDA 12.4.1 dev headers/libs for the Rust compile step
+#   2. builder       – Rust + SP1 toolchain, builds continuous-prover --features CUDA
+#   3. runtime       – Standard CUDA image + openssh-server (SSH key via Vast's PUBLIC_KEY)
+#
+# First build takes 30-60 min (SP1 dep graph is large). Subsequent builds are fast
+# when using Docker BuildKit cache mounts (enabled by default in Docker 23+).
+#
+# Build:
+#   docker build -f Dockerfile.vast -t <REGISTRY>/<IMAGE>:<TAG> .
+#
+# Assumptions / known rough edges:
+#   - headers.db is NOT included; rsync it to /app/headers.db after instance creation
+#   - rust-toolchain is excluded by .dockerignore; image uses rust:latest
+#   - sp1up downloads the RISC-V toolchain at build time; requires internet access
+#   - CUDA 12.4 build libs, 12.8 runtime libs — compatible within CUDA 12.x
+#   - Vast.ai injects your SSH public key as the PUBLIC_KEY env var; entrypoint writes it
+
+ARG CUDA_BUILD_BASE=nvidia/cuda:12.4.1-devel-ubuntu22.04
+ARG RUNTIME_BASE=nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04
+
+# =============================================================================
+# Stage 1: CUDA dev toolkit snapshot (for the build stage)
+# =============================================================================
+FROM ${CUDA_BUILD_BASE} AS cuda-toolkit
+
+# =============================================================================
+# Stage 2: Rust builder
+# =============================================================================
+FROM rust:latest AS builder
+
+WORKDIR /app
+
+# System build deps:
+#   clang/cmake  – required by several SP1 C/C++ ffi crates
+#   golang-go    – required by sp1-recursion-gnark-ffi (native Groth16)
+#   protobuf     – required by tonic codegen
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    clang \
+    cmake \
+    git \
+    golang-go \
+    protobuf-compiler \
+    libprotobuf-dev \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install SP1 toolchain — provides the RISC-V target needed to compile the guest program
+RUN curl -L https://sp1.succinct.xyz | bash && \
+    /root/.sp1/bin/sp1up
+
+# Pull in CUDA dev toolkit so the CUDA feature can link
+COPY --from=cuda-toolkit /usr/local/cuda /usr/local/cuda
+ENV PATH=/usr/local/cuda/bin:/root/.sp1/bin:$PATH
+ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64
+
+# Copy workspace manifests (no source yet — lets Docker cache the dep fetch layer)
+COPY Cargo.toml Cargo.lock ./
+COPY crates/core/Cargo.toml  crates/core/
+COPY crates/guest/Cargo.toml crates/guest/
+COPY crates/host/Cargo.toml  crates/host/
+
+# Stub sources so `cargo fetch` / dep compilation can proceed without real code
+RUN mkdir -p crates/core/src crates/guest/src crates/host/src/bin && \
+    printf '#![allow(unused)]\npub fn _stub() {}\n' > crates/core/src/lib.rs && \
+    echo 'fn main() {}' > crates/guest/src/main.rs && \
+    echo 'fn main() {}' > crates/host/src/main.rs && \
+    printf '#![allow(unused)]\n' > crates/host/src/lib.rs && \
+    echo 'fn main() {}' > crates/host/src/bin/continuous_prover.rs && \
+    echo 'fn main() {}' > crates/host/src/bin/test_errors.rs && \
+    echo 'fn main() {}' > crates/host/src/bin/inspect_proof.rs
+
+# Pre-build dependencies (cached layer). Ignore errors from stub code.
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/app/target \
+    cargo build --release --features CUDA -p zkpow-host --bin continuous-prover 2>/dev/null || true
+
+# Now copy real sources and do the real build
+COPY crates ./crates
+
+# Touch to bust the cache on any changed source files
+RUN find crates -name '*.rs' -exec touch {} +
+
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/app/target \
+    cargo build --release --features CUDA -p zkpow-host --bin continuous-prover && \
+    # Copy out of the BuildKit cache mount before the stage ends
+    cp /app/target/release/continuous-prover /usr/local/bin/continuous-prover
+
+# =============================================================================
+# Stage 3: Runtime — standard CUDA image with SSH + the prover
+# =============================================================================
+FROM ${RUNTIME_BASE}
+
+# SSH for remote access.  Vast.ai injects the user's registered public key via
+# the PUBLIC_KEY env var; entrypoint.sh writes it to authorized_keys.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    openssh-server \
+    rsync \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /var/run/sshd /root/.ssh /workspace /app \
+    && chmod 700 /root/.ssh
+
+# Copy the prover binary
+COPY --from=builder /usr/local/bin/continuous-prover /usr/local/bin/continuous-prover
+RUN chmod 755 /usr/local/bin/continuous-prover
+
+# Entrypoint: set up SSH key, wait for headers.db, then run the prover
+COPY vast/entrypoint.sh /entrypoint.sh
+RUN chmod 755 /entrypoint.sh
+
+# Prover writes to paths relative to its CWD; use /workspace (persistent disk on Vast)
+WORKDIR /workspace
+
+ENV RUST_LOG=info
+ENV CUDA=1
+ENV CUDA_DEVICE_ID=0
+ENV NUM_HEADERS=2016
+ENV GENERATE_GROTH16=0
+
+ENTRYPOINT ["/entrypoint.sh"]

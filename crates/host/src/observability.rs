@@ -3,6 +3,8 @@ use std::sync::Once;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{fmt::format::FmtSpan, prelude::*, EnvFilter};
 
+use crate::pipeline::input::ENV_ZKPOW_PROVE_COMPRESSED_SPANS;
+
 static INIT: Once = Once::new();
 
 /// Holds the non-blocking file writer guard. Must be kept alive for the duration of the process.
@@ -51,7 +53,7 @@ pub fn init() {
         // SAFETY: written once inside Once::call_once, never read until process exit.
         unsafe { LOG_GUARD = Some(guard) };
 
-        let json_level = if env_truthy("PROVE_COMPRESSED_SPANS") {
+        let json_level = if env_truthy(ENV_ZKPOW_PROVE_COMPRESSED_SPANS) {
             "debug"
         } else {
             "info"

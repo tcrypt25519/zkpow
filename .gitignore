@@ -1,16 +1,20 @@
 # Build artifacts
 target/
+*.svg
 
 # Database
 *.db
+*.db*
 *.sqlite
 
 # Development
-*.bin
-*.log
 logs/
 profiling/
 docs/plans/
+zkpow-host
+*.bin
+*.log
+*.md
 
 # IDE
 .idea/
@@ -20,3 +24,4 @@ docs/plans/
 
 # OS
 .DS_Store
+.todos/

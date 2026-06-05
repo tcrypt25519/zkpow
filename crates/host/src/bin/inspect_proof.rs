@@ -9,7 +9,7 @@ const MAINNET_GENESIS_HEX: &str =
     "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f";
 
 fn reverse_hash_display(hash: util::BlockHash) -> String {
-    let mut hash_be = hash.into_raw();
+    let mut hash_be = hash.into_inner();
     hash_be.reverse();
     encode(hash_be)
 }
@@ -29,8 +29,10 @@ fn main() {
         Ok(HeaderChainPublicValues::Success {
             claim,
             continuation_digest,
+            verifier_key,
         }) => {
             display_claim(&claim);
+            display_verifier_key(verifier_key);
             println!("\n--- Continuation ---");
             println!("Continuation Digest: {}", hex::encode(continuation_digest));
             println!("\nStatus:              ✓ All headers validated");
@@ -39,9 +41,11 @@ fn main() {
             failure,
             last_valid_claim,
             continuation_digest,
+            verifier_key,
         }) => {
             println!("--- Last Valid State ---");
             display_claim(&last_valid_claim);
+            display_verifier_key(verifier_key);
             println!("\n--- Error ---");
             let error_name = match failure.error_code {
                 ValidationErrorCode::HeaderPayloadLengthInvalid => "Header payload length invalid",
@@ -71,6 +75,10 @@ fn main() {
     println!("Public Values Size: {} bytes", pv.len());
 }
 
+fn display_verifier_key(verifier_key: util::VerifierKeyDigest) {
+    println!("Verifier Key:     {}", hex::encode(verifier_key.to_bytes()));
+}
+
 fn display_claim(claim: &util::PublicChainClaim) {
     let mainnet_genesis_raw: [u8; 32] = {
         let mut g: [u8; 32] = hex::decode(MAINNET_GENESIS_HEX)
@@ -85,7 +93,7 @@ fn display_claim(claim: &util::PublicChainClaim) {
         "Genesis Hash:      {}",
         reverse_hash_display(claim.genesis_hash)
     );
-    if claim.genesis_hash == util::BlockHash::from_raw(mainnet_genesis_raw) {
+    if claim.genesis_hash == util::BlockHash::new(mainnet_genesis_raw) {
         println!("                     ↳ mainnet ✓");
     } else {
         println!("                     ↳ NOT mainnet (different chain)");

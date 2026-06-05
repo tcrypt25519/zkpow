@@ -1,35 +1,32 @@
-//! Logic for parsing the prover input and constructing the `Input` struct.
+//! Logic for parsing the public prover input and constructing the `Input` struct.
 
 use alloc::vec::Vec;
 
 use crate::{
-    check_exact_len, copy_from_bytes, copy_to_bytes, cycle_track, mut_from_bytes, slice_from_bytes,
-    BlockHash, BlockTimestamp, Header, NewHeader, ParseError, PublicValuesDigest, State,
-    VerifierKeyDigest, NEW_HEADER_SIZE, RECURSIVE_PROOF_SIZE, STATE_SIZE,
+    check_exact_len, copy_from_bytes, copy_to_bytes, cycle_track, slice_from_bytes, BlockTimestamp,
+    NewHeader, ParseError, PublicChainClaim, PublicValuesDigest, VerifierKeyDigest,
+    NEW_HEADER_SIZE, PUBLIC_CHAIN_CLAIM_SIZE, RECURSIVE_PROOF_SIZE,
 };
 
 // ============================================================================
 // Input & InputError
 // ============================================================================
 
-/// Complete typed prover input.
+/// Complete typed public prover input.
+///
+/// The full validation state is supplied separately as private witness data.
+/// Its public preimage fields must match [`claim`](Self::claim) before the
+/// guest uses it to validate headers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Input {
-    pub state: State,
+    pub claim: PublicChainClaim,
     pub recursive_proof: RecursiveProof,
 }
 
-/// Borrowed view of the prover input wire format.
+/// Borrowed view of the public prover input wire format.
 #[derive(Debug, Clone, Copy)]
 pub struct InputRef<'a> {
-    pub state: &'a State,
-    pub recursive_proof: &'a RecursiveProof,
-}
-
-/// Mutable borrowed view of the prover input wire format.
-#[derive(Debug)]
-pub struct InputMut<'a> {
-    pub state: &'a mut State,
+    pub claim: PublicChainClaim,
     pub recursive_proof: &'a RecursiveProof,
 }
 
@@ -89,8 +86,6 @@ impl Default for RecursiveProof {
 pub enum InputError {
     #[error("input parse error: {0}")]
     Parse(ParseError),
-    #[error("genesis state input must carry an all-zero genesis hash placeholder")]
-    GenesisHashMustBeZero,
 }
 
 /// Parse and validation errors for the new-header private witness batch.
@@ -115,14 +110,6 @@ impl From<ParseError> for InputError {
     fn from(value: ParseError) -> Self {
         Self::Parse(value)
     }
-}
-
-fn validate_genesis_placeholder(state: &State) -> Result<(), InputError> {
-    if state.height == 0 && state.genesis_hash != BlockHash::default() {
-        return Err(InputError::GenesisHashMustBeZero);
-    }
-
-    Ok(())
 }
 
 impl RecursiveProof {
@@ -261,119 +248,62 @@ impl MedianTimePastHints {
     }
 }
 
-/// Split and validate the wire layout, returning `(state_bytes, proof_bytes)`.
+/// Split and validate the wire layout, returning `(claim_bytes, proof_bytes)`.
 ///
-/// Shared by [`InputRef::parse`] and [`InputMut::parse`].  The caller is
-/// responsible for borrowing the state and proof from the returned regions in
-/// the appropriate validation order.
+/// `Input` intentionally carries only the public claim and recursive proof
+/// metadata. The full [`State`](crate::State) is supplied separately as private
+/// witness data and checked against this claim before use.
 fn split_input_wire(bytes: &[u8]) -> Result<(&[u8], &[u8]), InputError> {
-    check_exact_len(bytes, STATE_SIZE + RECURSIVE_PROOF_SIZE)?;
-    Ok((&bytes[..STATE_SIZE], &bytes[STATE_SIZE..]))
+    check_exact_len(bytes, PUBLIC_CHAIN_CLAIM_SIZE + RECURSIVE_PROOF_SIZE)?;
+    Ok((
+        &bytes[..PUBLIC_CHAIN_CLAIM_SIZE],
+        &bytes[PUBLIC_CHAIN_CLAIM_SIZE..],
+    ))
 }
 
 impl<'a> InputRef<'a> {
     /// Parse and validate input from the aligned host/guest wire format.
     pub fn parse(bytes: &'a [u8]) -> Result<Self, InputError> {
         cycle_track("input/parse", || {
-            let (state_bytes, proof_bytes) = split_input_wire(bytes)?;
-            let state = cycle_track("input/parse/state", || {
-                State::ref_from_bytes(state_bytes).map_err(InputError::from)
+            let (claim_bytes, proof_bytes) = split_input_wire(bytes)?;
+            let claim = cycle_track("input/parse/claim", || {
+                PublicChainClaim::parse(claim_bytes).map_err(InputError::from)
             })?;
             let recursive_proof = RecursiveProof::ref_from_bytes(proof_bytes)?;
-            validate_genesis_placeholder(state)?;
             Ok(Self {
-                state,
+                claim,
                 recursive_proof,
             })
         })
     }
 
-    pub fn to_owned<F>(&self, hash_header: F) -> Input
-    where
-        F: FnOnce(&Header) -> BlockHash + Copy,
-    {
+    pub fn to_owned(&self) -> Input {
         Input {
-            state: self.state.with_genesis_hash(hash_header),
+            claim: self.claim,
             recursive_proof: *self.recursive_proof,
         }
     }
 }
 
-impl<'a> InputMut<'a> {
-    /// Parse and validate input from the aligned host/guest wire format.
-    pub fn parse(bytes: &'a mut [u8]) -> Result<Self, InputError> {
-        cycle_track("input/parse_mut", || {
-            check_exact_len(bytes, STATE_SIZE + RECURSIVE_PROOF_SIZE)?;
-            let (state_bytes, proof_bytes) = bytes.split_at_mut(STATE_SIZE);
-            let state = cycle_track("input/parse_mut/state", || {
-                mut_from_bytes::<State>(state_bytes).map_err(InputError::from)
-            })?;
-            let recursive_proof = RecursiveProof::ref_from_bytes(proof_bytes)?;
-            validate_genesis_placeholder(state)?;
-            Ok(Self {
-                state,
-                recursive_proof,
-            })
-        })
-    }
-}
-
-impl<Environment: crate::env::Env> crate::env::StateInner<Environment> {
-    /// Fill in the genesis hash when the wire input leaves it unset.
-    pub fn update_genesis_hash<F>(&mut self, hash_header: F)
-    where
-        F: FnOnce(&Header) -> BlockHash + Copy,
-    {
-        if self.height == 0 && self.genesis_hash == BlockHash::default() {
-            let block_hash = hash_header(&self.header);
-            self.block_hash = block_hash;
-            self.genesis_hash = block_hash;
-        }
-    }
-
-    /// Clone this state and fill in the genesis hash when the wire input leaves it unset.
-    #[must_use]
-    pub fn with_genesis_hash<F>(&self, hash_header: F) -> Self
-    where
-        F: FnOnce(&Header) -> BlockHash + Copy,
-    {
-        let mut state = self.clone();
-        state.update_genesis_hash(hash_header);
-        state
-    }
-}
-
 impl Input {
     /// Constructs a new Input.
-    pub fn new(state: State, recursive_proof: RecursiveProof) -> Self {
+    pub fn new(claim: PublicChainClaim, recursive_proof: RecursiveProof) -> Self {
         Self {
-            state,
+            claim,
             recursive_proof,
         }
     }
-}
 
-impl Input {
     /// Parse and validate input from the host/guest wire format.
-    pub fn parse<F>(bytes: &[u8], hash_header: F) -> Result<Self, InputError>
-    where
-        F: FnOnce(&Header) -> BlockHash + Copy,
-    {
-        InputRef::parse(bytes).map(|input| input.to_owned(hash_header))
+    pub fn parse(bytes: &[u8]) -> Result<Self, InputError> {
+        InputRef::parse(bytes).map(|input| input.to_owned())
     }
-}
 
-impl Input {
     /// Serialize to the host/guest wire format.
     #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut bytes = Vec::with_capacity(STATE_SIZE + RECURSIVE_PROOF_SIZE);
-        let mut state = self.state.clone();
-        // TODO: This genesis_hash setting logic should be somewhere; but not here.
-        if state.height == 0 {
-            state.genesis_hash = BlockHash::default();
-        }
-        bytes.extend_from_slice(&state.to_bytes());
+        let mut bytes = Vec::with_capacity(PUBLIC_CHAIN_CLAIM_SIZE + RECURSIVE_PROOF_SIZE);
+        bytes.extend_from_slice(&self.claim.to_bytes());
         bytes.extend_from_slice(&self.recursive_proof.to_bytes());
         bytes
     }
@@ -388,12 +318,7 @@ mod tests {
     use alloc::vec;
 
     use super::*;
-    use crate::{BlockHash, BlockTimestamp, Header};
-
-    // Dummy hash_header for testing
-    fn dummy_hash_header(_header: &Header) -> BlockHash {
-        BlockHash::default() // All zeros hash
-    }
+    use crate::{BlockHash, BlockTimestamp, State};
 
     #[test]
     fn test_recursive_proof_default_is_zeros() {
@@ -418,13 +343,17 @@ mod tests {
     fn test_parse_from_bytes_genesis_no_proof() {
         let genesis_state: State = State {
             height: 0,
-            genesis_hash: BlockHash::default(), // Should be default for initial parse
+            genesis_hash: BlockHash::new([1; 32]),
+            block_hash: BlockHash::new([2; 32]),
             ..Default::default()
         };
-        let input = Input::new(genesis_state, RecursiveProof::default()).to_bytes();
-        let input = Input::parse(&input, dummy_hash_header).unwrap();
+        let claim = genesis_state.public_claim();
+        let input = Input::new(claim, RecursiveProof::default()).to_bytes();
+        let input = Input::parse(&input).unwrap();
 
-        assert_eq!(input.state.height, 0);
+        assert_eq!(input.claim.height, 0);
+        assert_eq!(input.claim.genesis_hash, BlockHash::new([1; 32]));
+        assert_eq!(input.claim.tip_hash, BlockHash::new([2; 32]));
         assert_eq!(input.recursive_proof, RecursiveProof::default());
     }
 
@@ -435,9 +364,9 @@ mod tests {
             ..Default::default()
         };
         // For height > 0, genesis_hash must be set
-        non_genesis_state.genesis_hash = BlockHash::from_raw([1; 32]);
-        non_genesis_state.block_hash = BlockHash::from_raw([2; 32]);
-        non_genesis_state.header.prev_blockhash = BlockHash::from_raw([3; 32]);
+        non_genesis_state.genesis_hash = BlockHash::new([1; 32]);
+        non_genesis_state.block_hash = BlockHash::new([2; 32]);
+        non_genesis_state.header.prev_blockhash = BlockHash::new([3; 32]);
 
         let expected_verifier_key = VerifierKeyDigest::from_raw([1; 8]);
         let expected_public_values_digest = PublicValuesDigest::from_raw([2; 32]);
@@ -446,10 +375,11 @@ mod tests {
             public_values_digest: expected_public_values_digest,
             ..Default::default()
         };
-        let input = Input::new(non_genesis_state, recursive_proof_data).to_bytes();
-        let input = Input::parse(&input, dummy_hash_header).unwrap();
+        let claim = non_genesis_state.public_claim();
+        let input = Input::new(claim, recursive_proof_data).to_bytes();
+        let input = Input::parse(&input).unwrap();
 
-        assert_eq!(input.state.height, 100);
+        assert_eq!(input.claim.height, 100);
         assert_eq!(input.recursive_proof.verifier_key, expected_verifier_key);
         assert_eq!(
             input.recursive_proof.public_values_digest,
@@ -463,13 +393,13 @@ mod tests {
             NewHeader {
                 version: 1,
                 merkle_root: [4; 32],
-                timestamp: BlockTimestamp::from_consensus(100),
+                timestamp: BlockTimestamp::new(100),
                 nonce: 0,
             },
             NewHeader {
                 version: 2,
                 merkle_root: [5; 32],
-                timestamp: BlockTimestamp::from_consensus(200),
+                timestamp: BlockTimestamp::new(200),
                 nonce: 1,
             },
         ];
@@ -482,13 +412,14 @@ mod tests {
     }
 
     #[test]
-    fn test_input_ref_rejects_misaligned_state() {
+    fn test_input_ref_rejects_misaligned_recursive_proof() {
         let genesis_state: State = State {
             height: 0,
             genesis_hash: BlockHash::default(),
             ..Default::default()
         };
-        let input = Input::new(genesis_state, RecursiveProof::default()).to_bytes();
+        let claim = genesis_state.public_claim();
+        let input = Input::new(claim, RecursiveProof::default()).to_bytes();
 
         let mut misaligned = Vec::with_capacity(input.len() + 1);
         misaligned.push(0);
@@ -498,7 +429,7 @@ mod tests {
         assert_eq!(
             err,
             InputError::Parse(ParseError::Misaligned {
-                required: core::mem::align_of::<State>(),
+                required: core::mem::align_of::<RecursiveProof>(),
             })
         );
     }
@@ -508,7 +439,7 @@ mod tests {
         let headers = NewHeaderHints::new(vec![NewHeader {
             version: 1,
             merkle_root: [4; 32],
-            timestamp: BlockTimestamp::from_consensus(100),
+            timestamp: BlockTimestamp::new(100),
             nonce: 0,
         }]);
         let mut bytes = headers.to_bytes();
@@ -527,9 +458,9 @@ mod tests {
     #[test]
     fn median_time_past_hints_round_trip() {
         let hints = MedianTimePastHints::new(vec![
-            BlockTimestamp::from_consensus(0),
-            BlockTimestamp::from_consensus(123),
-            BlockTimestamp::from_consensus(456),
+            BlockTimestamp::new(0),
+            BlockTimestamp::new(123),
+            BlockTimestamp::new(456),
         ]);
 
         let bytes = hints.to_bytes();
@@ -539,34 +470,35 @@ mod tests {
     }
 
     #[test]
-    fn median_time_past_hints_reject_wrong_count_length() {
-        let bytes = MedianTimePastHints::new(vec![BlockTimestamp::from_consensus(123)]).to_bytes();
+    fn median_time_past_hints_reject_invalid_lengths() {
+        let one_hint = MedianTimePastHints::new(vec![BlockTimestamp::new(123)]).to_bytes();
+        let mut truncated_hint = one_hint.clone();
+        truncated_hint.pop();
 
-        let err = MedianTimePastHintsRef::parse(&bytes, 2).unwrap_err();
+        let cases = [
+            (
+                "wrong hint count",
+                one_hint,
+                2,
+                MedianTimePastHintError::PayloadLengthInvalid {
+                    expected: 8,
+                    actual: 4,
+                },
+            ),
+            (
+                "truncated payload",
+                truncated_hint,
+                1,
+                MedianTimePastHintError::PayloadLengthInvalid {
+                    expected: 4,
+                    actual: 3,
+                },
+            ),
+        ];
 
-        assert_eq!(
-            err,
-            MedianTimePastHintError::PayloadLengthInvalid {
-                expected: 8,
-                actual: 4,
-            }
-        );
-    }
-
-    #[test]
-    fn median_time_past_hints_reject_truncated_payload() {
-        let mut bytes =
-            MedianTimePastHints::new(vec![BlockTimestamp::from_consensus(123)]).to_bytes();
-        bytes.pop();
-
-        let err = MedianTimePastHintsRef::parse(&bytes, 1).unwrap_err();
-
-        assert_eq!(
-            err,
-            MedianTimePastHintError::PayloadLengthInvalid {
-                expected: 4,
-                actual: 3,
-            }
-        );
+        for (name, bytes, expected_count, expected_error) in cases {
+            let err = MedianTimePastHintsRef::parse(&bytes, expected_count).unwrap_err();
+            assert_eq!(err, expected_error, "{name}");
+        }
     }
 }

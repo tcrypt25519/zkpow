@@ -8,10 +8,10 @@ use sha2::{Digest, Sha256};
 use sp1_sdk::SP1PublicValues;
 
 pub use zkpow_core::{
-    u256, work_from_target, ApplyFailure, BlockHash, BlockTimestamp, ChainWork, CompactTarget,
-    Header, HeaderChainPublicValues, Input, InputError, MedianTimePastHints, MinimalPublicValues,
-    NewHeader, NewHeaderHintError, NewHeaderHints, NewHeaderHintsRef, ParseError,
-    PrivateContinuationState, ProofFailure, PublicChainClaim, PublicValuesDigest,
+    target_from_bits, u256, work_from_target, ApplyFailure, BlockHash, BlockTimestamp, ChainWork,
+    CompactTarget, Header, HeaderChainPublicValues, Input, InputError, MedianTimePastHints,
+    MinimalPublicValues, NewHeader, NewHeaderHintError, NewHeaderHints, NewHeaderHintsRef,
+    ParseError, PrivateContinuationState, ProofFailure, PublicChainClaim, PublicValuesDigest,
     PublicValuesParseError, RecursiveProof, State, Target, ValidationErrorCode, ValidationState,
     VerifierKeyDigest, GENESIS_TARGET, MINIMAL_PV_SIZE, NEW_HEADER_SIZE,
     PRIVATE_CONTINUATION_STATE_SIZE, PUBLIC_CHAIN_CLAIM_SIZE, STATE_SIZE,
@@ -53,14 +53,12 @@ pub fn load_headers_from_db(db_path: &str, start_height: u64, count: u64) -> Vec
 
             let header = Header {
                 version: version as u32,
-                prev_blockhash: BlockHash::from_raw(
-                    prev.try_into().expect("prev must be 32 bytes"),
-                ),
+                prev_blockhash: BlockHash::new(prev.try_into().expect("prev must be 32 bytes")),
                 merkle_root: merkle_root
                     .try_into()
                     .expect("merkle_root must be 32 bytes"),
                 timestamp: BlockTimestamp::new(timestamp as u32),
-                compact_target: zkpow_core::CompactTarget::from_consensus(nbits as u32),
+                compact_target: zkpow_core::CompactTarget::new(nbits as u32),
                 nonce: nonce as u32,
             };
             Ok(header.to_bytes())
@@ -115,14 +113,12 @@ pub fn load_header_records_from_db(
 
             let header = Header {
                 version: version as u32,
-                prev_blockhash: BlockHash::from_raw(
-                    prev.try_into().expect("prev must be 32 bytes"),
-                ),
+                prev_blockhash: BlockHash::new(prev.try_into().expect("prev must be 32 bytes")),
                 merkle_root: merkle_root
                     .try_into()
                     .expect("merkle_root must be 32 bytes"),
                 timestamp: BlockTimestamp::new(timestamp as u32),
-                compact_target: CompactTarget::from_consensus(nbits as u32),
+                compact_target: CompactTarget::new(nbits as u32),
                 nonce: nonce as u32,
             };
 
@@ -140,18 +136,10 @@ pub fn load_header_records_from_db(
         records.push(row_result.expect("failed to read header record from database"));
     }
 
-    assert_eq!(
-        records.len() as u64,
-        count,
-        "Expected to load {} headers, but only loaded {} from database",
-        count,
-        records.len(),
-    );
-
     records
 }
 
-pub fn chain_work_from_db_bytes(bytes: &[u8]) -> ChainWork {
+fn chain_work_from_db_bytes(bytes: &[u8]) -> ChainWork {
     let raw: [u8; 32] = bytes.try_into().expect("chainwork must be 32 bytes");
     let mut little_endian = raw;
     little_endian.reverse();
@@ -176,16 +164,6 @@ pub fn raw_headers_to_new_headers(raw_headers: &[u8]) -> Vec<NewHeader> {
     out
 }
 
-/// Load and parse a single header from the SQLite database.
-pub fn load_header_from_db(db_path: &str, height: u64) -> Header {
-    let raw_headers = load_headers_from_db(db_path, height, 1);
-    let raw_header: [u8; 80] = raw_headers
-        .as_slice()
-        .try_into()
-        .expect("exactly one raw header should be returned");
-    Header::parse(&raw_header).expect("raw Bitcoin header should parse")
-}
-
 pub fn load_header_record_from_db(db_path: &str, height: u64) -> HeaderRecord {
     load_header_records_from_db(db_path, height, 1)
         .into_iter()
@@ -205,7 +183,7 @@ pub fn sha256d(data: &[u8]) -> [u8; 32] {
 /// Hash a full Bitcoin header with SHA256d.
 #[must_use]
 pub fn hash_header(header: &Header) -> BlockHash {
-    BlockHash::from_raw(sha256d(&header.to_bytes()))
+    BlockHash::new(sha256d(&header.to_bytes()))
 }
 
 /// Compute SHA-256 digest of public values.
@@ -221,6 +199,12 @@ pub fn continuation_digest(private: &PrivateContinuationState) -> [u8; 32] {
     Sha256::digest(private.to_bytes()).into()
 }
 
+/// Compute the continuation digest directly from a [`State`], avoiding
+/// [`PrivateContinuationState`] construction.
+pub fn continuation_digest_from_state(state: &State) -> [u8; 32] {
+    Sha256::digest(state.continuation_bytes()).into()
+}
+
 // ============================================================================
 // State Computation (host-side simulation of zkVM logic)
 // ============================================================================
@@ -234,18 +218,20 @@ pub fn genesis_state(genesis_header: Header, genesis_hash: BlockHash) -> State {
     );
     let genesis_work = work_from_target(GENESIS_TARGET);
 
+    let mut timestamps = [BlockTimestamp::default(); zkpow_core::WINDOW_SIZE];
+    timestamps[0] = genesis_header.timestamp;
+
     State {
         header: genesis_header,
         block_hash,
         genesis_hash,
-        next_nbits: genesis_header.compact_target,
+        current_nbits: genesis_header.compact_target,
         height: 0,
         chain_work: genesis_work,
-        next_work: genesis_work,
-        next_target: GENESIS_TARGET,
+        current_work: genesis_work,
+        current_target: GENESIS_TARGET,
         epoch_start_timestamp: genesis_header.timestamp,
-        timestamps: [BlockTimestamp::default(); zkpow_core::WINDOW_SIZE],
-        _environment: core::marker::PhantomData,
+        timestamps,
     }
 }
 
@@ -254,6 +240,41 @@ pub fn genesis_state_from_record(genesis: HeaderRecord, genesis_hash: BlockHash)
     state.height = genesis.height as u32;
     state.chain_work = genesis.chain_work;
     state
+}
+
+pub fn state_from_db_at_height(db_path: &str, height: u32, genesis_hash: BlockHash) -> State {
+    if height == 0 {
+        let genesis = load_header_record_from_db(db_path, 0);
+        return genesis_state_from_record(genesis, genesis_hash);
+    }
+
+    let current = load_header_record_from_db(db_path, height as u64);
+    let epoch_start_height = (height / zkpow_core::EPOCH_LENGTH) * zkpow_core::EPOCH_LENGTH;
+    let epoch_start_record = load_header_record_from_db(db_path, epoch_start_height as u64);
+    let window_count = (height as usize + 1).min(zkpow_core::WINDOW_SIZE) as u64;
+    let window_start = height as u64 + 1 - window_count;
+    let window_records = load_header_records_from_db(db_path, window_start, window_count);
+
+    let mut timestamps = [BlockTimestamp::default(); zkpow_core::WINDOW_SIZE];
+    for record in window_records {
+        timestamps[record.height as usize % zkpow_core::WINDOW_SIZE] = record.header.timestamp;
+    }
+
+    let current_target = target_from_bits(current.header.compact_target);
+    let canonical_chain_work = current.chain_work;
+
+    State {
+        header: current.header,
+        block_hash: hash_header(&current.header),
+        genesis_hash,
+        current_nbits: current.header.compact_target,
+        height,
+        chain_work: canonical_chain_work,
+        current_work: work_from_target(current_target),
+        current_target,
+        epoch_start_timestamp: epoch_start_record.header.timestamp,
+        timestamps,
+    }
 }
 
 /// Simulate the zkVM program locally to compute the expected [`State`] after
@@ -276,6 +297,41 @@ pub fn compute_final_state_with_hints(
     state
 }
 
+/// Simulate the zkVM program locally while retaining each intermediate state.
+///
+/// Returns `(final_state, history)` where `history[i]` is the state after
+/// applying `headers[i]`.
+pub fn compute_final_state_with_history(
+    initial_state: &State,
+    headers: &[NewHeader],
+    hints: &MedianTimePastHints,
+) -> (State, Vec<State>) {
+    assert_eq!(
+        headers.len(),
+        hints.medians.len(),
+        "median hint count must match header count"
+    );
+
+    let mut state = initial_state.clone();
+    let mut history = Vec::with_capacity(headers.len());
+
+    for (index, (header, median)) in headers
+        .iter()
+        .copied()
+        .zip(hints.medians.iter().copied())
+        .enumerate()
+    {
+        state
+            .apply_headers(&[header], &[median], hash_header)
+            .unwrap_or_else(|err| {
+                panic!("host state transition should succeed at header index {index}: {err:?}")
+            });
+        history.push(state.clone());
+    }
+
+    (state, history)
+}
+
 pub fn records_to_new_headers(records: &[HeaderRecord]) -> Vec<NewHeader> {
     records
         .iter()
@@ -293,6 +349,18 @@ pub fn median_time_past_hints_from_records(records: &[HeaderRecord]) -> MedianTi
     )
 }
 
+fn median_time_past_for_state(state: &State) -> BlockTimestamp {
+    let count = state.timestamp_count();
+    let mut sorted = state.timestamps;
+    if count >= zkpow_core::WINDOW_SIZE {
+        sorted.sort_unstable();
+        return sorted[zkpow_core::WINDOW_SIZE / 2];
+    }
+
+    sorted[..count].sort_unstable();
+    sorted[count / 2]
+}
+
 /// Build the median-time-past witness hints by sorting on the host.
 ///
 /// This is a host-only fallback for tests/local simulation. Production proof
@@ -306,8 +374,8 @@ pub fn median_time_past_hints_for_headers(
     let mut medians = Vec::with_capacity(headers.len());
 
     for header in headers {
-        medians.push(state.median_time_past());
-        let timestamp_slot = (state.height as usize) % zkpow_core::WINDOW_SIZE;
+        medians.push(median_time_past_for_state(&state));
+        let timestamp_slot = (state.height as usize + 1) % zkpow_core::WINDOW_SIZE;
         state.timestamps[timestamp_slot] = header.timestamp;
         state.height += 1;
     }
@@ -318,15 +386,111 @@ pub fn median_time_past_hints_for_headers(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zkpow_core::{BlockTimestamp, CompactTarget, GENESIS_NBITS, WINDOW_SIZE};
+    use crate::config::db_path;
+    use zkpow_core::{
+        BlockHash, BlockTimestamp, CompactTarget, NewHeader, GENESIS_NBITS, GENESIS_TARGET,
+        WINDOW_SIZE,
+    };
 
     fn make_pcs() -> PrivateContinuationState {
         PrivateContinuationState {
-            next_nbits: CompactTarget::from_consensus(GENESIS_NBITS),
-            next_work: zkpow_core::ChainWork::from_limbs([1, 2, 3, 4]),
-            next_target: zkpow_core::GENESIS_TARGET,
-            epoch_start_timestamp: BlockTimestamp::from_consensus(500),
-            timestamps: [BlockTimestamp::from_consensus(10); WINDOW_SIZE],
+            current_nbits: CompactTarget::new(GENESIS_NBITS),
+            current_work: zkpow_core::ChainWork::from_limbs([1, 2, 3, 4]),
+            current_target: zkpow_core::GENESIS_TARGET,
+            epoch_start_timestamp: BlockTimestamp::new(500),
+            timestamps: [BlockTimestamp::new(10); WINDOW_SIZE],
+        }
+    }
+
+    fn ts(seconds: u32) -> BlockTimestamp {
+        BlockTimestamp::new(seconds)
+    }
+
+    fn median_test_state(timestamps: &[u32]) -> State {
+        assert!(!timestamps.is_empty());
+        assert!(timestamps.len() <= WINDOW_SIZE);
+
+        let mut state = State {
+            height: timestamps.len() as u32 - 1,
+            current_nbits: CompactTarget::new(GENESIS_NBITS),
+            current_work: zkpow_core::work_from_target(GENESIS_TARGET),
+            current_target: GENESIS_TARGET,
+            ..State::default()
+        };
+
+        for (slot, timestamp) in state.timestamps.iter_mut().zip(timestamps.iter().copied()) {
+            *slot = ts(timestamp);
+        }
+
+        state
+    }
+
+    fn candidate_header_after(state: &State) -> NewHeader {
+        let timestamp = state
+            .timestamps
+            .iter()
+            .map(|timestamp| timestamp.into_inner())
+            .max()
+            .unwrap_or_default()
+            .saturating_add(1);
+
+        NewHeader {
+            version: 1,
+            merkle_root: [0x22; 32],
+            timestamp: ts(timestamp),
+            nonce: 7,
+        }
+    }
+
+    #[test]
+    fn host_sorted_median_hints_agree_with_core_rank_check() {
+        let cases: &[&[u32]] = &[
+            &[1],
+            &[1, 2],
+            &[1, 2, 3],
+            &[10, 1, 20, 2, 30],
+            &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+            &[1, 2, 3, 4, 5, 6, 6, 6, 7, 8, 9],
+            &[90, 20, 20, 80, 30, 70, 40, 60, 50, 50, 50],
+        ];
+
+        for timestamps in cases {
+            let state = median_test_state(timestamps);
+            let sorted_median = median_time_past_for_state(&state);
+            let header = candidate_header_after(&state);
+
+            let mut accepted = state.clone();
+            accepted
+                .apply_headers(&[header], &[sorted_median], |_| BlockHash::new([0; 32]))
+                .expect("core rank check should accept host-sorted median");
+
+            if sorted_median.into_inner() > 0 {
+                let lower = ts(sorted_median.into_inner() - 1);
+                let rejected = std::panic::catch_unwind(|| {
+                    let mut state = state.clone();
+                    state
+                        .apply_headers(&[header], &[lower], |_| BlockHash::new([0; 32]))
+                        .unwrap();
+                });
+                assert!(
+                    rejected.is_err(),
+                    "core rank check should reject lower non-median for {timestamps:?}"
+                );
+            }
+
+            let higher = ts(sorted_median.into_inner().saturating_add(1));
+            if higher != sorted_median {
+                let rejected = std::panic::catch_unwind(|| {
+                    let mut state = state.clone();
+                    state
+                        .apply_headers(&[header], &[higher], |_| BlockHash::new([0; 32]))
+                        .unwrap();
+                });
+                assert!(
+                    rejected.is_err(),
+                    "core rank check should reject higher non-median for {timestamps:?}"
+                );
+            }
         }
     }
 
@@ -353,5 +517,133 @@ mod tests {
     fn continuation_digest_is_deterministic() {
         let pcs = make_pcs();
         assert_eq!(continuation_digest(&pcs), continuation_digest(&pcs));
+    }
+
+    #[test]
+    fn db_median_time_hints_match_genesis_seeded_state() {
+        let genesis = load_header_record_from_db(db_path(), 0);
+        let genesis_hash = hash_header(&genesis.header);
+        let genesis_state = genesis_state_from_record(genesis, genesis_hash);
+        let records = load_header_records_from_db(db_path(), 1, 13);
+        let headers = records_to_new_headers(&records);
+        let hints = median_time_past_hints_from_records(&records);
+
+        compute_final_state_with_hints(&genesis_state, &headers, &hints);
+    }
+
+    #[test]
+    fn compute_final_state_with_history_matches_final_state() {
+        let genesis = load_header_record_from_db(db_path(), 0);
+        let genesis_hash = hash_header(&genesis.header);
+        let genesis_state = genesis_state_from_record(genesis, genesis_hash);
+        let records = load_header_records_from_db(db_path(), 1, 128);
+        let headers = records_to_new_headers(&records);
+        let hints = median_time_past_hints_from_records(&records);
+
+        let expected_final = compute_final_state_with_hints(&genesis_state, &headers, &hints);
+        let (history_final, history) =
+            compute_final_state_with_history(&genesis_state, &headers, &hints);
+
+        assert_eq!(history.len(), headers.len());
+        assert_eq!(history_final.public_claim(), expected_final.public_claim());
+        assert_eq!(
+            history
+                .last()
+                .expect("history should not be empty")
+                .public_claim(),
+            expected_final.public_claim()
+        );
+    }
+
+    #[test]
+    fn compute_final_state_with_history_entries_match_db_claims() {
+        let genesis = load_header_record_from_db(db_path(), 0);
+        let genesis_hash = hash_header(&genesis.header);
+        let genesis_state = genesis_state_from_record(genesis, genesis_hash);
+        let records = load_header_records_from_db(db_path(), 1, 64);
+        let headers = records_to_new_headers(&records);
+        let hints = median_time_past_hints_from_records(&records);
+
+        let (_final_state, history) =
+            compute_final_state_with_history(&genesis_state, &headers, &hints);
+
+        for (index, state) in history.iter().enumerate() {
+            let height = (index as u32) + 1;
+            let db_state = state_from_db_at_height(db_path(), height, genesis_hash);
+            assert_eq!(state.public_claim(), db_state.public_claim());
+        }
+    }
+
+    #[test]
+    fn db_retarget_schedule_matches_height_40320() {
+        let genesis = load_header_record_from_db(db_path(), 0);
+        let genesis_hash = hash_header(&genesis.header);
+        let genesis_state = genesis_state_from_record(genesis, genesis_hash);
+        let records = load_header_records_from_db(db_path(), 1, 40319);
+        let headers = records_to_new_headers(&records);
+        let state = compute_final_state(&genesis_state, &headers);
+        let pre_boundary = load_header_record_from_db(db_path(), 40319);
+
+        assert_eq!(state.height, 40319);
+        assert_eq!(state.current_nbits, pre_boundary.header.compact_target);
+
+        let boundary = load_header_record_from_db(db_path(), 40320);
+        let boundary_state =
+            compute_final_state(&state, &[NewHeader::from_header(&boundary.header)]);
+        assert_eq!(boundary_state.height, 40320);
+        assert_eq!(boundary_state.current_nbits, boundary.header.compact_target);
+    }
+
+    #[test]
+    fn db_chainwork_matches_simulated_batches() {
+        enum InitialState {
+            Genesis,
+            DbHeight(u32),
+        }
+
+        let cases = [
+            (
+                "genesis-started batch",
+                InitialState::Genesis,
+                1,
+                4096,
+                4096,
+            ),
+            (
+                "retarget-boundary batch",
+                InitialState::DbHeight(30240),
+                30241,
+                2016,
+                32256,
+            ),
+        ];
+
+        let genesis = load_header_record_from_db(db_path(), 0);
+        let genesis_hash = hash_header(&genesis.header);
+
+        for (name, initial_state, record_start, record_count, expected_height) in cases {
+            let initial_state = match initial_state {
+                InitialState::Genesis => genesis_state_from_record(genesis.clone(), genesis_hash),
+                InitialState::DbHeight(height) => {
+                    state_from_db_at_height(db_path(), height, genesis_hash)
+                }
+            };
+            let records = load_header_records_from_db(db_path(), record_start, record_count);
+            let headers = records_to_new_headers(&records);
+            let hints = median_time_past_hints_from_records(&records);
+            let final_state = compute_final_state_with_hints(&initial_state, &headers, &hints);
+            let db_state = state_from_db_at_height(db_path(), expected_height, genesis_hash);
+
+            assert_eq!(final_state.height, expected_height, "{name}: height");
+            assert_eq!(final_state.block_hash, db_state.block_hash, "{name}: hash");
+            assert_eq!(
+                final_state.current_nbits, db_state.current_nbits,
+                "{name}: nbits"
+            );
+            assert_eq!(
+                final_state.chain_work, db_state.chain_work,
+                "{name}: chainwork"
+            );
+        }
     }
 }

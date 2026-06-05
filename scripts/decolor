@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+
+cat\
+    | sed 's/\x1b\[0m/]/g' \
+    | sed 's/\x1b\[[0-9;]*m/[/g'
+
+# {
+#   if [ "$#" -gt 0 ]; then
+#     printf "%s\n" "$@"
+#   fi
+
+#   if [ ! -t 0 ]; then
+#     cat
+#   fi
+# } | while IFS= read -r line; do
+#   echo -n "$@" \
+#     | sed 's/\x1b\[0m/]/g' \
+#     | sed 's/\x1b\[[0-9;]*m/[/g'
+# done
+

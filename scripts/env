@@ -1,0 +1,31 @@
+#!/usr/bin/env sh
+
+# Runtime
+ZKPOW_ROOT="$(cd "$(dirname "$0")/.." >/dev/null 2>&1 && pwd)"
+export ZKPOW_ROOT
+
+# Load environment variables from .env file if it exists
+if [ -f "${ENV_FILE:=$ZKPOW_ROOT/.env}" ]; then
+  # shellcheck source=../.env
+  . "$ENV_FILE"
+fi
+
+TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+export ZKPOW_OUT_DIR="${ZKPOW_OUT_DIR:-$ZKPOW_ROOT/profiling/runs/$TIMESTAMP}"
+
+# Defaults
+export ZKPOW_BATCH_SIZE="${ZKPOW_BATCH_SIZE:-2016}"
+export ZKPOW_BATCH_COUNT="${ZKPOW_BATCH_COUNT:-1000}"
+export ZKPOW_DB_PATH="${ZKPOW_DB_PATH:-$ZKPOW_ROOT/headers.db}"
+
+# Rust
+export RUST_LOG="${RUST_LOG:-info}"
+export RUST_LOGGER=flat
+export RUST_BACKTRACE="${RUST_BACKTRACE:-1}"
+
+# SP1
+export ZKPOW_GUEST_PROFILING="${ZKPOW_GUEST_PROFILING:-0}"
+export TRACE_FILE="${TRACE_FILE:-trace.json}"
+export TRACE_SAMPLE_RATE="${TRACE_SAMPLE_RATE:-100}"
+export SP1_ENABLE_TOKIO_CONSOLE="${SP1_ENABLE_TOKIO_CONSOLE:-true}"
+export SP1_CORE="${SP1_CORE:-}"
