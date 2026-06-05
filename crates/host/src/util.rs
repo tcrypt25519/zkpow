@@ -349,6 +349,18 @@ pub fn median_time_past_hints_from_records(records: &[HeaderRecord]) -> MedianTi
     )
 }
 
+fn median_time_past_for_state(state: &State) -> BlockTimestamp {
+    let count = state.timestamp_count();
+    let mut sorted = state.timestamps;
+    if count >= zkpow_core::WINDOW_SIZE {
+        sorted.sort_unstable();
+        return sorted[zkpow_core::WINDOW_SIZE / 2];
+    }
+
+    sorted[..count].sort_unstable();
+    sorted[count / 2]
+}
+
 /// Build the median-time-past witness hints by sorting on the host.
 ///
 /// This is a host-only fallback for tests/local simulation. Production proof
@@ -362,7 +374,7 @@ pub fn median_time_past_hints_for_headers(
     let mut medians = Vec::with_capacity(headers.len());
 
     for header in headers {
-        medians.push(state.median_time_past());
+        medians.push(median_time_past_for_state(&state));
         let timestamp_slot = (state.height as usize + 1) % zkpow_core::WINDOW_SIZE;
         state.timestamps[timestamp_slot] = header.timestamp;
         state.height += 1;

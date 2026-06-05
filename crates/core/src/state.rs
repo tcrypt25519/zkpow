@@ -178,21 +178,6 @@ impl State {
         })
     }
 
-    /// Return the upper median time past for the currently tracked timestamps.
-    #[cfg(feature = "host")]
-    #[must_use]
-    pub fn median_time_past(&self) -> BlockTimestamp {
-        let count = self.timestamp_count();
-        let mut sorted = self.timestamps;
-        if count >= WINDOW_SIZE {
-            sorted.sort_unstable();
-            return sorted[WINDOW_SIZE / 2];
-        }
-
-        sorted[..count].sort_unstable();
-        sorted[count / 2]
-    }
-
     pub fn apply_chain_work_run(&mut self, run_work: ChainWork, run_count: u32) {
         if run_count > 0 {
             cycle_track("state/apply_headers/chain_work_flush", || {
