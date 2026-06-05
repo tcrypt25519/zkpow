@@ -1,5 +1,5 @@
-pub mod compressed;
-pub mod groth16;
+pub(crate) mod compressed;
+pub(crate) mod groth16;
 
 use std::sync::OnceLock;
 use tokio::sync::Mutex as AsyncMutex;
@@ -15,13 +15,13 @@ use crate::pipeline::{BoxError, ProofGenerationConfig, ProverBackend};
 use crate::proof_pipeline::ELF;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PreparedProverConfig {
-    pub backend: ProverBackend,
-    pub cuda_device_id: Option<u32>,
+struct PreparedProverConfig {
+    backend: ProverBackend,
+    cuda_device_id: Option<u32>,
 }
 
 #[derive(Clone)]
-pub enum PreparedProver {
+pub(crate) enum PreparedProver {
     Mock {
         prover: MockProver,
         proving_key: SP1ProvingKey,
@@ -40,12 +40,11 @@ pub enum PreparedProver {
 static PREPARED_PROVER: OnceLock<AsyncMutex<Option<(PreparedProverConfig, PreparedProver)>>> =
     OnceLock::new();
 
-pub fn prepared_prover_store() -> &'static AsyncMutex<Option<(PreparedProverConfig, PreparedProver)>>
-{
+fn prepared_prover_store() -> &'static AsyncMutex<Option<(PreparedProverConfig, PreparedProver)>> {
     PREPARED_PROVER.get_or_init(|| AsyncMutex::new(None))
 }
 
-pub async fn get_prepared_prover(
+pub(crate) async fn get_prepared_prover(
     config: &ProofGenerationConfig,
 ) -> Result<PreparedProver, BoxError> {
     let desired = PreparedProverConfig {

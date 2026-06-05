@@ -6,14 +6,14 @@ use crate::pipeline::execution::{execute_batch_with_prover, verify_public_values
 use crate::pipeline::BoxError;
 use crate::util;
 
-pub struct CompressedProofArtifacts {
-    pub vk: sp1_prover::SP1VerifyingKey,
-    pub compressed_proof: SP1ProofWithPublicValues,
-    pub before_prove_sample: memory_usage::StageSample,
-    pub execution_report: sp1_sdk::ExecutionReport,
+pub(crate) struct CompressedProofArtifacts {
+    pub(crate) vk: sp1_prover::SP1VerifyingKey,
+    pub(crate) compressed_proof: SP1ProofWithPublicValues,
+    pub(crate) before_prove_sample: memory_usage::StageSample,
+    pub(crate) execution_report: sp1_sdk::ExecutionReport,
 }
 
-pub async fn generate_compressed_proof_with_prover<P, K>(
+pub(crate) async fn generate_compressed_proof_with_prover<P, K>(
     prover_name: &str,
     prover: &P,
     proving_key: &K,

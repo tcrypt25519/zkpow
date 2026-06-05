@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use crate::pipeline::diagnostics::{timed_async, timed_sync};
 use crate::pipeline::BoxError;
 
-pub async fn generate_groth16_proof(
+pub(crate) async fn generate_groth16_proof(
     compressed_proof: &SP1ProofWithPublicValues,
     vk: &sp1_prover::SP1VerifyingKey,
 ) -> Result<SP1ProofWithPublicValues, BoxError> {

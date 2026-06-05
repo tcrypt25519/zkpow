@@ -4,7 +4,7 @@ use crate::proof_pipeline::{
     config_from_env, generate_and_save_proofs, log_execution_report, BoxError, ProofArtifacts,
 };
 
-pub(crate) fn log_batch_completion(artifacts: &ProofArtifacts) {
+fn log_batch_completion(artifacts: &ProofArtifacts) {
     tracing::info!(
         "Complete: validated headers from height {} to {}",
         artifacts.first_new_height,

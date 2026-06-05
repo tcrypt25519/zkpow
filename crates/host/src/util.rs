@@ -139,7 +139,7 @@ pub fn load_header_records_from_db(
     records
 }
 
-pub fn chain_work_from_db_bytes(bytes: &[u8]) -> ChainWork {
+fn chain_work_from_db_bytes(bytes: &[u8]) -> ChainWork {
     let raw: [u8; 32] = bytes.try_into().expect("chainwork must be 32 bytes");
     let mut little_endian = raw;
     little_endian.reverse();

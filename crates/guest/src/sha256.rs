@@ -51,7 +51,7 @@ const fn be_u64(a: u8, b: u8, c: u8, d: u8) -> u64 {
 /// Produces two blocks:
 /// - Block 1: bytes 0–63 of the input (all data)
 /// - Block 2: bytes 64–79 (16 data bytes) + 0x80 + 47 zeros + 8-byte length (640 bits)
-pub fn sha256_80bytes(data: &[u8; 80]) -> [u8; 32] {
+pub(crate) fn sha256_80bytes(data: &[u8; 80]) -> [u8; 32] {
     let mut state = SHA256_IV;
 
     // ── Block 1: bytes 0–63 ──
@@ -97,7 +97,7 @@ pub fn sha256_80bytes(data: &[u8; 80]) -> [u8; 32] {
 ///
 /// Produces one block:
 /// bytes 0–31 (all data) + 0x80 + 23 zeros + 8-byte length (256 bits)
-pub fn sha256_32bytes(data: &[u8; 32]) -> [u8; 32] {
+pub(crate) fn sha256_32bytes(data: &[u8; 32]) -> [u8; 32] {
     let mut state = SHA256_IV;
 
     // ── Single block: 32 bytes + padding + length ──
@@ -130,7 +130,7 @@ pub fn sha256_32bytes(data: &[u8; 32]) -> [u8; 32] {
 /// - Block 4: bytes 192–255
 /// - Block 5: bytes 256–263 + 0x80 + zeros + 8-byte length (2112 bits)
 #[allow(dead_code)]
-pub fn sha256_264bytes(data: &[u8; 264]) -> [u8; 32] {
+pub(crate) fn sha256_264bytes(data: &[u8; 264]) -> [u8; 32] {
     let mut state = SHA256_IV;
 
     let mut w = [0u64; 64];
@@ -230,7 +230,7 @@ pub fn sha256_264bytes(data: &[u8; 264]) -> [u8; 32] {
 /// - Block 1: bytes 0–63
 /// - Block 2: bytes 64–127
 /// - Block 3: bytes 128–168 (41 data bytes) + 0x80 + zeros + 8-byte length (1352 bits = 0x548)
-pub fn sha256_169bytes(data: &[u8; 169]) -> [u8; 32] {
+pub(crate) fn sha256_169bytes(data: &[u8; 169]) -> [u8; 32] {
     let mut state = SHA256_IV;
 
     // ── Block 1: bytes 0–63 ──
@@ -299,7 +299,7 @@ pub fn sha256_169bytes(data: &[u8; 169]) -> [u8; 32] {
 }
 
 /// Compute SHA256d of exactly 80 bytes: SHA-256(SHA-256(data)).
-pub fn sha256d_80bytes(data: &[u8; 80]) -> [u8; 32] {
+pub(crate) fn sha256d_80bytes(data: &[u8; 80]) -> [u8; 32] {
     let inner = sha256_80bytes(data);
     sha256_32bytes(&inner)
 }
@@ -309,7 +309,7 @@ pub fn sha256d_80bytes(data: &[u8; 80]) -> [u8; 32] {
 /// Produces two blocks:
 /// - Block 1: bytes 0–63
 /// - Block 2: bytes 64–115 (52 data bytes) + 0x80 + zeros + 8-byte length (928 bits = 0x3A0)
-pub fn sha256_116bytes(data: &[u8; 116]) -> [u8; 32] {
+pub(crate) fn sha256_116bytes(data: &[u8; 116]) -> [u8; 32] {
     let mut state = SHA256_IV;
 
     // ── Block 1: bytes 0–63 ──

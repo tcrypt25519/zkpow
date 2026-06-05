@@ -10,22 +10,22 @@ use crate::proof_pipeline::ELF;
 use crate::util;
 use crate::util::{HeaderChainPublicValues, Input, VerifierKeyDigest};
 
-pub struct ExecutedBatchArtifacts {
-    pub stdin: SP1Stdin,
-    pub expected_pv: Vec<u8>,
-    pub before_prove_sample: StageSample,
-    pub execution_report: ExecutionReport,
+pub(crate) struct ExecutedBatchArtifacts {
+    pub(crate) stdin: SP1Stdin,
+    pub(crate) expected_pv: Vec<u8>,
+    pub(crate) before_prove_sample: StageSample,
+    pub(crate) execution_report: ExecutionReport,
 }
 
-pub struct UnprovenBatchInput<'a> {
-    pub current_state: &'a util::State,
-    pub headers: &'a [util::NewHeader],
-    pub median_hints: &'a util::MedianTimePastHints,
-    pub expected_state: &'a util::State,
-    pub expected_continuation_digest: [u8; 32],
+pub(crate) struct UnprovenBatchInput<'a> {
+    pub(crate) current_state: &'a util::State,
+    pub(crate) headers: &'a [util::NewHeader],
+    pub(crate) median_hints: &'a util::MedianTimePastHints,
+    pub(crate) expected_state: &'a util::State,
+    pub(crate) expected_continuation_digest: [u8; 32],
 }
 
-pub fn verify_public_values(pv: &[u8], expected_pv: &[u8], label: &str) -> Result<(), BoxError> {
+pub(crate) fn verify_public_values(pv: &[u8], expected_pv: &[u8], label: &str) -> Result<(), BoxError> {
     let parsed = HeaderChainPublicValues::parse(pv).map_err(|err| err.to_string())?;
     match parsed {
         HeaderChainPublicValues::Success { .. } => {
@@ -47,7 +47,7 @@ pub fn verify_public_values(pv: &[u8], expected_pv: &[u8], label: &str) -> Resul
     }
 }
 
-pub fn find_first_diverging_state_index(
+pub(crate) fn find_first_diverging_state_index(
     states: &[util::State],
     first_new_height: u32,
     db_path: &str,
@@ -76,7 +76,7 @@ pub fn find_first_diverging_state_index(
     lo
 }
 
-pub async fn execute_batch_with_prover<P, K>(
+pub(crate) async fn execute_batch_with_prover<P, K>(
     prover_name: &str,
     prover: &P,
     proving_key: &K,
@@ -159,7 +159,7 @@ where
     })
 }
 
-pub async fn execute_batch_without_proof<P>(
+pub(crate) async fn execute_batch_without_proof<P>(
     prover_name: &str,
     prover: &P,
     batch: UnprovenBatchInput<'_>,

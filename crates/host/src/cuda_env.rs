@@ -2,40 +2,40 @@ use std::process::Command;
 
 use crate::proof_pipeline::{BoxError, ProofGenerationConfig};
 
-pub const MIN_CUDA_COMPUTE_CAPABILITY: ComputeCapability = ComputeCapability { major: 8, minor: 6 };
-pub const RECOMMENDED_MIN_VRAM_MIB: u32 = 24 * 1024;
-pub const MIN_REPORTED_CUDA_VERSION: NumericVersion = NumericVersion {
+const MIN_CUDA_COMPUTE_CAPABILITY: ComputeCapability = ComputeCapability { major: 8, minor: 6 };
+const RECOMMENDED_MIN_VRAM_MIB: u32 = 24 * 1024;
+const MIN_REPORTED_CUDA_VERSION: NumericVersion = NumericVersion {
     major: 12,
     minor: 5,
     patch: 0,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct NumericVersion {
-    pub major: u32,
-    pub minor: u32,
-    pub patch: u32,
+struct NumericVersion {
+    major: u32,
+    minor: u32,
+    patch: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct ComputeCapability {
-    pub major: u32,
-    pub minor: u32,
+struct ComputeCapability {
+    major: u32,
+    minor: u32,
 }
 
 #[derive(Debug, Clone)]
-pub struct CudaGpuInfo {
-    pub name: String,
-    pub compute_capability: ComputeCapability,
-    pub memory_total_mib: u32,
+struct CudaGpuInfo {
+    name: String,
+    compute_capability: ComputeCapability,
+    memory_total_mib: u32,
 }
 
 #[derive(Debug, Clone)]
-pub struct CudaPreflightReport {
-    pub selected_device_id: u32,
-    pub gpu_count: usize,
-    pub selected_gpu: CudaGpuInfo,
-    pub reported_cuda_version: Option<NumericVersion>,
+pub(crate) struct CudaPreflightReport {
+    selected_device_id: u32,
+    gpu_count: usize,
+    selected_gpu: CudaGpuInfo,
+    reported_cuda_version: Option<NumericVersion>,
 }
 
 impl std::fmt::Display for NumericVersion {
@@ -50,7 +50,7 @@ impl std::fmt::Display for ComputeCapability {
     }
 }
 
-pub fn run_preflight(config: &ProofGenerationConfig) -> Result<CudaPreflightReport, BoxError> {
+pub(crate) fn run_preflight(config: &ProofGenerationConfig) -> Result<CudaPreflightReport, BoxError> {
     if std::env::consts::ARCH != "x86_64" {
         return Err(format!(
             "CUDA proving requires an x86_64 machine; detected architecture `{}`",
@@ -118,7 +118,7 @@ pub fn run_preflight(config: &ProofGenerationConfig) -> Result<CudaPreflightRepo
     })
 }
 
-pub fn log_preflight(report: &CudaPreflightReport) {
+pub(crate) fn log_preflight(report: &CudaPreflightReport) {
     tracing::info!(
         "CUDA preflight passed: selected GPU {} of {}: `{}` (compute capability {}, {} MiB VRAM{})",
         report.selected_device_id,

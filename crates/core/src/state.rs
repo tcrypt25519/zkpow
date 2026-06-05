@@ -75,7 +75,7 @@ impl State {
 
     /// The circular-buffer slot containing the current tip timestamp.
     #[must_use]
-    pub(crate) fn current_timestamp_slot(&self) -> usize {
+    fn current_timestamp_slot(&self) -> usize {
         self.height as usize % WINDOW_SIZE
     }
 
@@ -128,7 +128,7 @@ impl State {
     }
 
     /// Compute the difficulty values that become active at a new epoch boundary.
-    pub(crate) fn prepare_new_epoch(
+    fn prepare_new_epoch(
         &self,
         previous_timestamp: BlockTimestamp,
     ) -> (CompactTarget, Target, ChainWork) {
@@ -178,7 +178,7 @@ impl State {
         })
     }
 
-    pub fn apply_chain_work_run(&mut self, run_work: ChainWork, run_count: u32) {
+    fn apply_chain_work_run(&mut self, run_work: ChainWork, run_count: u32) {
         if run_count > 0 {
             cycle_track("state/apply_headers/chain_work_flush", || {
                 let accumulated_work = run_work * run_count;

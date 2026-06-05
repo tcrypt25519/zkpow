@@ -324,7 +324,7 @@ pub(crate) fn clear_phase_timings() {
     }
 }
 
-pub(crate) fn record_phase_timing(label: &'static str, elapsed: Duration) {
+fn record_phase_timing(label: &'static str, elapsed: Duration) {
     if let Ok(mut timings) = phase_timings_store().lock() {
         let entry = timings.entry(label).or_default();
         entry.total += elapsed;

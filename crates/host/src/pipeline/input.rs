@@ -9,24 +9,24 @@ use crate::pipeline::{BoxError, ProofGenerationConfig, ProverBackend};
 use crate::util;
 use crate::util::{Input, PublicValuesDigest, RecursiveProof, VerifierKeyDigest};
 
-pub const GENESIS_HASH_HEX: &str =
+const GENESIS_HASH_HEX: &str =
     "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f";
 
-pub const ENV_ZKPOW_USE_CUDA: &str = "ZKPOW_USE_CUDA";
-pub const ENV_ZKPOW_CUDA_DEVICE_ID: &str = "ZKPOW_CUDA_DEVICE_ID";
+pub(crate) const ENV_ZKPOW_USE_CUDA: &str = "ZKPOW_USE_CUDA";
+pub(crate) const ENV_ZKPOW_CUDA_DEVICE_ID: &str = "ZKPOW_CUDA_DEVICE_ID";
 pub const ENV_ZKPOW_EXECUTE_ONLY: &str = "ZKPOW_EXECUTE_ONLY";
-pub const ENV_ZKPOW_GENERATE_GROTH16: &str = "ZKPOW_GENERATE_GROTH16";
+pub(crate) const ENV_ZKPOW_GENERATE_GROTH16: &str = "ZKPOW_GENERATE_GROTH16";
 pub const ENV_ZKPOW_BATCH_SIZE: &str = "ZKPOW_BATCH_SIZE";
-pub const ENV_ZKPOW_BATCH_COUNT: &str = "ZKPOW_BATCH_COUNT";
-pub const ENV_ZKPOW_PREV_PROOF: &str = "ZKPOW_PREV_PROOF";
+pub(crate) const ENV_ZKPOW_BATCH_COUNT: &str = "ZKPOW_BATCH_COUNT";
+pub(crate) const ENV_ZKPOW_PREV_PROOF: &str = "ZKPOW_PREV_PROOF";
 pub const ENV_ZKPOW_DB_PATH: &str = "ZKPOW_DB_PATH";
-pub const ENV_ZKPOW_OUTPUT_DIR: &str = "ZKPOW_OUTPUT_DIR";
-pub const ENV_ZKPOW_PROVE_COMPRESSED_SPANS: &str = "ZKPOW_PROVE_COMPRESSED_SPANS";
+pub(crate) const ENV_ZKPOW_OUTPUT_DIR: &str = "ZKPOW_OUTPUT_DIR";
+pub(crate) const ENV_ZKPOW_PROVE_COMPRESSED_SPANS: &str = "ZKPOW_PROVE_COMPRESSED_SPANS";
 
 const DEFAULT_BATCH_SIZE: u32 = 100;
 const DEFAULT_BATCH_COUNT: u32 = 1;
 
-pub trait EnvSource {
+pub(crate) trait EnvSource {
     fn get(&self, var_name: &str) -> Result<String, VarError>;
 }
 
@@ -67,7 +67,7 @@ pub fn parse_genesis_hash() -> Result<util::BlockHash, BoxError> {
     Ok(util::BlockHash::new(genesis_hash))
 }
 
-pub fn parse_bool_env(source: &impl EnvSource, var_name: &'static str) -> Result<bool, BoxError> {
+pub(crate) fn parse_bool_env(source: &impl EnvSource, var_name: &'static str) -> Result<bool, BoxError> {
     match source.get(var_name) {
         Ok(value) => match value.to_ascii_lowercase().as_str() {
             "1" | "true" | "yes" | "on" => Ok(true),
@@ -82,7 +82,7 @@ pub fn parse_bool_env(source: &impl EnvSource, var_name: &'static str) -> Result
     }
 }
 
-pub fn parse_u32_env(source: &impl EnvSource, var_name: &'static str) -> Result<Option<u32>, BoxError> {
+pub(crate) fn parse_u32_env(source: &impl EnvSource, var_name: &'static str) -> Result<Option<u32>, BoxError> {
     match source.get(var_name) {
         Ok(value) => Ok(Some(value.parse().map_err(|err| {
             format!("invalid {var_name} value `{value}`: {err}")
@@ -104,7 +104,7 @@ fn parse_path_env(source: &impl EnvSource, var_name: &'static str) -> Option<Pat
     source.get(var_name).ok().map(PathBuf::from)
 }
 
-pub fn ensure_cuda_requested_configuration(
+pub(crate) fn ensure_cuda_requested_configuration(
     use_cuda: bool,
     cuda_device_id: Option<u32>,
 ) -> Result<ProverBackend, BoxError> {
@@ -132,7 +132,7 @@ pub fn ensure_cuda_requested_configuration(
     .into())
 }
 
-pub fn config_from_source(source: &impl EnvSource) -> Result<ProofGenerationConfig, BoxError> {
+pub(crate) fn config_from_source(source: &impl EnvSource) -> Result<ProofGenerationConfig, BoxError> {
     let use_cuda = parse_bool_env(source, ENV_ZKPOW_USE_CUDA)?;
     let cuda_device_id = parse_u32_env(source, ENV_ZKPOW_CUDA_DEVICE_ID)?;
 

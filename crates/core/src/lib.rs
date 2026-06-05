@@ -14,10 +14,10 @@ pub mod types;
 
 pub use types::{u256, BlockHash, BlockTimestamp, ChainWork, CompactTarget, Target};
 
-pub mod state;
+mod state;
 pub use state::{cycle_track, cycle_track_report, State};
 
-pub mod input;
+mod input;
 
 pub use input::{
     Input, InputError, InputRef, MedianTimePastHintError, MedianTimePastHints,

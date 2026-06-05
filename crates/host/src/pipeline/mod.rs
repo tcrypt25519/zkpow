@@ -1,8 +1,8 @@
-pub mod batch;
-pub mod diagnostics;
-pub mod execution;
+pub(crate) mod batch;
+pub(crate) mod diagnostics;
+pub(crate) mod execution;
 pub mod input;
-pub mod proof;
+pub(crate) mod proof;
 
 use memory_usage::StageSample;
 use sp1_sdk::{ExecutionReport, SP1ProofWithPublicValues};
