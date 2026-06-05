@@ -470,33 +470,35 @@ mod tests {
     }
 
     #[test]
-    fn median_time_past_hints_reject_wrong_count_length() {
-        let bytes = MedianTimePastHints::new(vec![BlockTimestamp::new(123)]).to_bytes();
+    fn median_time_past_hints_reject_invalid_lengths() {
+        let one_hint = MedianTimePastHints::new(vec![BlockTimestamp::new(123)]).to_bytes();
+        let mut truncated_hint = one_hint.clone();
+        truncated_hint.pop();
 
-        let err = MedianTimePastHintsRef::parse(&bytes, 2).unwrap_err();
+        let cases = [
+            (
+                "wrong hint count",
+                one_hint,
+                2,
+                MedianTimePastHintError::PayloadLengthInvalid {
+                    expected: 8,
+                    actual: 4,
+                },
+            ),
+            (
+                "truncated payload",
+                truncated_hint,
+                1,
+                MedianTimePastHintError::PayloadLengthInvalid {
+                    expected: 4,
+                    actual: 3,
+                },
+            ),
+        ];
 
-        assert_eq!(
-            err,
-            MedianTimePastHintError::PayloadLengthInvalid {
-                expected: 8,
-                actual: 4,
-            }
-        );
-    }
-
-    #[test]
-    fn median_time_past_hints_reject_truncated_payload() {
-        let mut bytes = MedianTimePastHints::new(vec![BlockTimestamp::new(123)]).to_bytes();
-        bytes.pop();
-
-        let err = MedianTimePastHintsRef::parse(&bytes, 1).unwrap_err();
-
-        assert_eq!(
-            err,
-            MedianTimePastHintError::PayloadLengthInvalid {
-                expected: 4,
-                actual: 3,
-            }
-        );
+        for (name, bytes, expected_count, expected_error) in cases {
+            let err = MedianTimePastHintsRef::parse(&bytes, expected_count).unwrap_err();
+            assert_eq!(err, expected_error, "{name}");
+        }
     }
 }

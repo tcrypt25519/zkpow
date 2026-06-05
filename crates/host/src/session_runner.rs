@@ -166,19 +166,26 @@ mod tests {
     }
 
     #[test]
-    fn detects_header_exhaustion_error_prefix() {
-        let err: BoxError = format!(
-            "{NO_HEADERS_REMAINING_PREFIX}: starting at height {}",
-            123u32
-        )
-        .into();
-        assert!(is_header_exhaustion_error(&err));
-    }
+    fn classifies_header_exhaustion_errors_by_prefix() {
+        let cases = [
+            (
+                format!(
+                    "{NO_HEADERS_REMAINING_PREFIX}: starting at height {}",
+                    123u32
+                ),
+                true,
+            ),
+            ("some other error".to_string(), false),
+        ];
 
-    #[test]
-    fn does_not_match_unrelated_errors() {
-        let err: BoxError = "some other error".into();
-        assert!(!is_header_exhaustion_error(&err));
+        for (message, expected) in cases {
+            let err: BoxError = message.clone().into();
+            assert_eq!(
+                is_header_exhaustion_error(&err),
+                expected,
+                "message={message:?}"
+            );
+        }
     }
 
     #[tokio::test]

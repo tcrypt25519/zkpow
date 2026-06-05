@@ -532,23 +532,6 @@ mod tests {
     }
 
     #[test]
-    fn db_chainwork_matches_genesis_started_batch_4096() {
-        let genesis = load_header_record_from_db(db_path(), 0);
-        let genesis_hash = hash_header(&genesis.header);
-        let genesis_state = genesis_state_from_record(genesis, genesis_hash);
-        let records = load_header_records_from_db(db_path(), 1, 4096);
-        let headers = records_to_new_headers(&records);
-        let hints = median_time_past_hints_from_records(&records);
-        let final_state = compute_final_state_with_hints(&genesis_state, &headers, &hints);
-        let db_state = state_from_db_at_height(db_path(), 4096, genesis_hash);
-
-        assert_eq!(final_state.height, 4096);
-        assert_eq!(final_state.block_hash, db_state.block_hash);
-        assert_eq!(final_state.current_nbits, db_state.current_nbits);
-        assert_eq!(final_state.chain_work, db_state.chain_work);
-    }
-
-    #[test]
     fn compute_final_state_with_history_matches_final_state() {
         let genesis = load_header_record_from_db(db_path(), 0);
         let genesis_hash = hash_header(&genesis.header);
@@ -612,19 +595,55 @@ mod tests {
     }
 
     #[test]
-    fn db_chainwork_matches_retarget_boundary_batch_32256() {
+    fn db_chainwork_matches_simulated_batches() {
+        enum InitialState {
+            Genesis,
+            DbHeight(u32),
+        }
+
+        let cases = [
+            (
+                "genesis-started batch",
+                InitialState::Genesis,
+                1,
+                4096,
+                4096,
+            ),
+            (
+                "retarget-boundary batch",
+                InitialState::DbHeight(30240),
+                30241,
+                2016,
+                32256,
+            ),
+        ];
+
         let genesis = load_header_record_from_db(db_path(), 0);
         let genesis_hash = hash_header(&genesis.header);
-        let initial_state = state_from_db_at_height(db_path(), 30240, genesis_hash);
-        let records = load_header_records_from_db(db_path(), 30241, 2016);
-        let headers = records_to_new_headers(&records);
-        let hints = median_time_past_hints_from_records(&records);
-        let final_state = compute_final_state_with_hints(&initial_state, &headers, &hints);
-        let db_state = state_from_db_at_height(db_path(), 32256, genesis_hash);
 
-        assert_eq!(final_state.height, 32256);
-        assert_eq!(final_state.block_hash, db_state.block_hash);
-        assert_eq!(final_state.current_nbits, db_state.current_nbits);
-        assert_eq!(final_state.chain_work, db_state.chain_work);
+        for (name, initial_state, record_start, record_count, expected_height) in cases {
+            let initial_state = match initial_state {
+                InitialState::Genesis => genesis_state_from_record(genesis.clone(), genesis_hash),
+                InitialState::DbHeight(height) => {
+                    state_from_db_at_height(db_path(), height, genesis_hash)
+                }
+            };
+            let records = load_header_records_from_db(db_path(), record_start, record_count);
+            let headers = records_to_new_headers(&records);
+            let hints = median_time_past_hints_from_records(&records);
+            let final_state = compute_final_state_with_hints(&initial_state, &headers, &hints);
+            let db_state = state_from_db_at_height(db_path(), expected_height, genesis_hash);
+
+            assert_eq!(final_state.height, expected_height, "{name}: height");
+            assert_eq!(final_state.block_hash, db_state.block_hash, "{name}: hash");
+            assert_eq!(
+                final_state.current_nbits, db_state.current_nbits,
+                "{name}: nbits"
+            );
+            assert_eq!(
+                final_state.chain_work, db_state.chain_work,
+                "{name}: chainwork"
+            );
+        }
     }
 }

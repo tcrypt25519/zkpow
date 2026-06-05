@@ -1257,19 +1257,25 @@ mod tests {
     }
 
     #[test]
-    fn u256_add_handles_carry_propagation() {
-        let a = ChainWork::from_limbs([u64::MAX, 0, 0, 0]);
-        let b = ChainWork::from_limbs([1, 0, 0, 0]);
+    fn u256_add_handles_carry_and_wrap_cases() {
+        let cases = [
+            (
+                "carry propagation",
+                ChainWork::from_limbs([u64::MAX, 0, 0, 0]),
+                ChainWork::from_limbs([1, 0, 0, 0]),
+                ChainWork::from_limbs([0, 1, 0, 0]),
+            ),
+            (
+                "wrap at 256 bits",
+                ChainWork::from_limbs([u64::MAX; 4]),
+                ChainWork::from_limbs([1, 0, 0, 0]),
+                ChainWork::default(),
+            ),
+        ];
 
-        assert_eq!(a + b, ChainWork::from_limbs([0, 1, 0, 0]));
-    }
-
-    #[test]
-    fn u256_add_wraps_at_256_bits() {
-        let a = ChainWork::from_limbs([u64::MAX; 4]);
-        let b = ChainWork::from_limbs([1, 0, 0, 0]);
-
-        assert_eq!(a + b, ChainWork::default());
+        for (name, left, right, expected) in cases {
+            assert_eq!(left + right, expected, "{name}");
+        }
     }
 
     #[test]
@@ -1593,26 +1599,31 @@ mod tests {
     }
 
     #[test]
-    fn median_time_past_uses_upper_median_for_heights_zero_through_twelve() {
-        let mut state = test_state();
+    fn median_time_past_uses_upper_median_across_window_sizes() {
+        let cases = [("initial through first wrap", 0, 12), ("two wraps", 1, 23)];
 
-        assert_eq!(median_time_past(&state), expected_upper_median(0));
+        for (name, start_height, end_height) in cases {
+            let mut state = test_state();
 
-        for height in 1..=12 {
-            apply_header(&mut state, height);
-            assert_eq!(state.height, height);
-            assert_eq!(median_time_past(&state), expected_upper_median(height));
-        }
-    }
+            if start_height == 0 {
+                assert_eq!(
+                    median_time_past(&state),
+                    expected_upper_median(0),
+                    "{name}: height 0"
+                );
+            }
 
-    #[test]
-    fn median_time_past_keeps_upper_median_after_two_wraps() {
-        let mut state = test_state();
-
-        for height in 1..=23 {
-            apply_header(&mut state, height);
-            assert_eq!(state.height, height);
-            assert_eq!(median_time_past(&state), expected_upper_median(height));
+            for height in 1..=end_height {
+                apply_header(&mut state, height);
+                assert_eq!(state.height, height, "{name}: state height");
+                if height >= start_height {
+                    assert_eq!(
+                        median_time_past(&state),
+                        expected_upper_median(height),
+                        "{name}: median at height {height}"
+                    );
+                }
+            }
         }
     }
 
@@ -1760,51 +1771,61 @@ mod tests {
     // Difficulty retargeting edge cases using the pure helper. These represent
     // the extremes the state machine will clamp to during epoch transitions.
     #[test]
-    fn retarget_no_change_when_timespan_equals_expected() {
-        let old = GENESIS_TARGET;
-        let (bits, new) = calculate_next_target_required(old, ts(0), ts(EXPECTED_EPOCH_TIMESPAN));
-        assert_eq!(bits, CompactTarget::new(GENESIS_NBITS));
-        assert_eq!(
-            new, old,
-            "target should be unchanged when actual == expected"
-        );
-    }
+    fn retarget_timespan_cases_adjust_target_direction() {
+        enum ExpectedDirection {
+            Equal,
+            NotGreater,
+            NotLess,
+        }
 
-    #[test]
-    fn retarget_stricter_when_timespan_shorter() {
-        let old = GENESIS_TARGET;
-        let (_, new) = calculate_next_target_required(old, ts(0), ts(EXPECTED_EPOCH_TIMESPAN / 4));
-        // Shorter timespan increases difficulty ⇒ numeric target must not be greater than old.
-        assert!(
-            !target_gt(new, old),
-            "new target should be <= old target when timespan shortens"
-        );
-    }
+        let cases = [
+            (
+                "expected timespan",
+                EXPECTED_EPOCH_TIMESPAN,
+                ExpectedDirection::Equal,
+            ),
+            (
+                "shorter timespan",
+                EXPECTED_EPOCH_TIMESPAN / 4,
+                ExpectedDirection::NotGreater,
+            ),
+            (
+                "longer timespan",
+                EXPECTED_EPOCH_TIMESPAN * 4,
+                ExpectedDirection::NotLess,
+            ),
+            (
+                "minimum clamped timespan",
+                MIN_EPOCH_TIMESPAN as u32,
+                ExpectedDirection::NotGreater,
+            ),
+            (
+                "maximum clamped timespan",
+                MAX_EPOCH_TIMESPAN as u32,
+                ExpectedDirection::NotLess,
+            ),
+        ];
 
-    #[test]
-    fn retarget_easier_when_timespan_longer() {
-        let old = GENESIS_TARGET;
-        let (_, new) = calculate_next_target_required(old, ts(0), ts(EXPECTED_EPOCH_TIMESPAN * 4));
-        // Longer timespan lowers difficulty ⇒ target should be >= old.
-        assert!(
-            target_gt(new, old) || new == old,
-            "new target should be >= old when timespan grows"
-        );
-    }
+        for (name, timespan, expected) in cases {
+            let old = GENESIS_TARGET;
+            let (bits, new) = calculate_next_target_required(old, ts(0), ts(timespan));
 
-    #[test]
-    fn retarget_at_min_and_max_timespans() {
-        let old = GENESIS_TARGET;
-        let (_, at_min) = calculate_next_target_required(old, ts(0), ts(MIN_EPOCH_TIMESPAN as u32));
-        let (_, at_max) = calculate_next_target_required(old, ts(0), ts(MAX_EPOCH_TIMESPAN as u32));
-        assert!(
-            !target_gt(at_min, old),
-            "min timespan should not increase target"
-        );
-        assert!(
-            target_gt(at_max, old) || at_max == old,
-            "max timespan should not decrease target"
-        );
+            match expected {
+                ExpectedDirection::Equal => {
+                    assert_eq!(bits, CompactTarget::new(GENESIS_NBITS), "{name}: bits");
+                    assert_eq!(new, old, "{name}: target");
+                }
+                ExpectedDirection::NotGreater => {
+                    assert!(!target_gt(new, old), "{name}: target should be <= old");
+                }
+                ExpectedDirection::NotLess => {
+                    assert!(
+                        target_gt(new, old) || new == old,
+                        "{name}: target should be >= old"
+                    );
+                }
+            }
+        }
     }
 
     // Malformed header scenarios mapped to ValidationErrorCode

@@ -247,32 +247,26 @@ mod tests {
 
     #[test]
     fn parses_generate_groth16_env() {
-        let mut values = HashMap::new();
-        values.insert(
-            ENV_ZKPOW_GENERATE_GROTH16.to_string(),
-            "true".to_string(),
-        );
-        let source = MapEnvSource::new(values);
-        assert!(parse_bool_env(&source, ENV_ZKPOW_GENERATE_GROTH16).unwrap());
+        let cases = [
+            (Some("true"), Ok(true)),
+            (Some("false"), Ok(false)),
+            (None, Ok(false)),
+            (Some("invalid"), Err(())),
+        ];
 
-        let mut values = HashMap::new();
-        values.insert(
-            ENV_ZKPOW_GENERATE_GROTH16.to_string(),
-            "false".to_string(),
-        );
-        let source = MapEnvSource::new(values);
-        assert!(!parse_bool_env(&source, ENV_ZKPOW_GENERATE_GROTH16).unwrap());
+        for (value, expected) in cases {
+            let source = value.map_or_else(MapEnvSource::default, |value| {
+                let mut values = HashMap::new();
+                values.insert(ENV_ZKPOW_GENERATE_GROTH16.to_string(), value.to_string());
+                MapEnvSource::new(values)
+            });
 
-        let source = MapEnvSource::default();
-        assert!(!parse_bool_env(&source, ENV_ZKPOW_GENERATE_GROTH16).unwrap());
-
-        let mut values = HashMap::new();
-        values.insert(
-            ENV_ZKPOW_GENERATE_GROTH16.to_string(),
-            "invalid".to_string(),
-        );
-        let source = MapEnvSource::new(values);
-        assert!(parse_bool_env(&source, ENV_ZKPOW_GENERATE_GROTH16).is_err());
+            let parsed = parse_bool_env(&source, ENV_ZKPOW_GENERATE_GROTH16);
+            match expected {
+                Ok(expected) => assert_eq!(parsed.unwrap(), expected, "value={value:?}"),
+                Err(()) => assert!(parsed.is_err(), "value={value:?} should error"),
+            }
+        }
     }
 
     #[test]
@@ -308,26 +302,26 @@ mod tests {
             }
         }
 
-        // Invalid CUDA boolean value should error.
-        let source = SingleValueEnv {
-            key: ENV_ZKPOW_USE_CUDA,
-            value: "maybe",
-        };
-        assert!(parse_bool_env(&source, ENV_ZKPOW_USE_CUDA).is_err());
+        enum Parser {
+            Bool,
+            U32,
+        }
 
-        // Invalid CUDA_DEVICE_ID should error when non-numeric.
-        let source = SingleValueEnv {
-            key: "ZKPOW_CUDA_DEVICE_ID",
-            value: "abc",
-        };
-        assert!(parse_u32_env(&source, "ZKPOW_CUDA_DEVICE_ID").is_err());
+        let cases = [
+            (ENV_ZKPOW_USE_CUDA, "maybe", Parser::Bool),
+            ("ZKPOW_CUDA_DEVICE_ID", "abc", Parser::U32),
+            (ENV_ZKPOW_GENERATE_GROTH16, "yessir", Parser::Bool),
+        ];
 
-        // Invalid GENERATE_GROTH16 boolean should error.
-        let source = SingleValueEnv {
-            key: ENV_ZKPOW_GENERATE_GROTH16,
-            value: "yessir",
-        };
-        assert!(parse_bool_env(&source, ENV_ZKPOW_GENERATE_GROTH16).is_err());
+        for (key, value, parser) in cases {
+            let source = SingleValueEnv { key, value };
+            let parsed = match parser {
+                Parser::Bool => parse_bool_env(&source, key).map(|_| ()),
+                Parser::U32 => parse_u32_env(&source, key).map(|_| ()),
+            };
+
+            assert!(parsed.is_err(), "{key}={value:?} should be invalid");
+        }
     }
 
     #[test]
@@ -365,30 +359,53 @@ mod tests {
     }
 
     #[test]
-    fn highlight_marks_mismatched_bytes_with_brackets() {
-        let (actual, expected) =
-            highlight_with_expected_mode("00010203", "0001ff04", HighlightMode::Brackets, false);
+    fn highlight_marks_mismatches_and_zero_padding() {
+        let cases = [
+            (
+                "bracket mismatch",
+                "00010203",
+                "0001ff04",
+                HighlightMode::Brackets,
+                false,
+                "0001[ff04]",
+                "    [0203]",
+            ),
+            (
+                "ansi mismatch",
+                "00010203",
+                "0001ff04",
+                HighlightMode::Ansi,
+                false,
+                "0001\x1b[31mff04\x1b[0m",
+                "    \x1b[32m0203\x1b[0m",
+            ),
+            (
+                "bright leading zero bytes",
+                "00000102",
+                "00000002",
+                HighlightMode::Ansi,
+                true,
+                "\x1b[97m0000\x1b[0m\x1b[31m00\x1b[0m02",
+                "    \x1b[32m01\x1b[0m  ",
+            ),
+        ];
 
-        assert_eq!(actual, "0001[ff04]");
-        assert_eq!(expected, "    [0203]");
-    }
+        for (
+            name,
+            expected_value,
+            actual_value,
+            mode,
+            highlight_zeroes,
+            expected_actual_row,
+            expected_expected_row,
+        ) in cases
+        {
+            let (actual_output, expected_output) =
+                highlight_with_expected_mode(expected_value, actual_value, mode, highlight_zeroes);
 
-    #[test]
-    fn highlight_marks_mismatched_bytes_with_color() {
-        let (actual, expected) =
-            highlight_with_expected_mode("00010203", "0001ff04", HighlightMode::Ansi, false);
-
-        assert_eq!(actual, "0001\x1b[31mff04\x1b[0m");
-        assert_eq!(expected, "    \x1b[32m0203\x1b[0m");
-    }
-
-    #[test]
-    fn highlight_marks_matching_leading_zero_bytes_with_bright_white() {
-        let (actual, expected) =
-            highlight_with_expected_mode("00000102", "00000002", HighlightMode::Ansi, true);
-
-        assert_eq!(actual, "\x1b[97m0000\x1b[0m\x1b[31m00\x1b[0m02");
-        assert_eq!(expected, "    \x1b[32m01\x1b[0m  ");
+            assert_eq!(actual_output, expected_actual_row, "{name}: actual row");
+            assert_eq!(expected_output, expected_expected_row, "{name}: expected row");
+        }
     }
 
     #[test]
