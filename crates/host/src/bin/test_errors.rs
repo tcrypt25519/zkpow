@@ -213,10 +213,11 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
         first_epoch_state.height,
         consensus_bits(first_epoch_state.current_nbits),
     );
-    let first_retarget_bits = util::load_header_record_from_db(db_path(), (FIRST_BOUNDARY_TIP_HEIGHT + 1) as u64)
-        .header
-        .compact_target
-        .into_inner();
+    let first_retarget_bits =
+        util::load_header_record_from_db(db_path(), (FIRST_BOUNDARY_TIP_HEIGHT + 1) as u64)
+            .header
+            .compact_target
+            .into_inner();
     if consensus_bits(first_epoch_state.current_nbits) != first_retarget_bits {
         return Err(format!(
             "expected first retarget boundary bits {:#x}, got {:#x}",
@@ -246,8 +247,7 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
 
     println!(
         "retarget-debug: prev_epoch_bits={:#x} next_header_bits={:#x}",
-        previous_epoch_bits,
-        next_header_bits,
+        previous_epoch_bits, next_header_bits,
     );
 
     if state.height != RETARGET_TIP_HEIGHT as u32 {
@@ -289,7 +289,8 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
         ));
     }
 
-    let pre_boundary_records = util::load_header_records_from_db(db_path(), 1, (RETARGET_HEIGHT - 2) as u64);
+    let pre_boundary_records =
+        util::load_header_records_from_db(db_path(), 1, (RETARGET_HEIGHT - 2) as u64);
     let pre_boundary_headers = util::records_to_new_headers(&pre_boundary_records);
     let pre_boundary_state = util::compute_final_state(&genesis_state, &pre_boundary_headers);
 

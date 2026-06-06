@@ -4,8 +4,9 @@ compile_error!("zkpow wire types require a little-endian target");
 use crate::{
     calculate_next_target_required, check_proof_of_work, copy_from_bytes, copy_to_bytes,
     ref_from_bytes, work_from_target, ApplyFailure, BlockHash, BlockTimestamp, ChainWork,
-    CompactTarget, Header, NewHeader, ParseError, PrivateContinuationState, PublicChainClaim, Target, ValidationErrorCode,
-    EPOCH_LENGTH, PRIVATE_CONTINUATION_STATE_SIZE, STATE_SIZE, WINDOW_SIZE,
+    CompactTarget, Header, NewHeader, ParseError, PrivateContinuationState, PublicChainClaim,
+    Target, ValidationErrorCode, EPOCH_LENGTH, PRIVATE_CONTINUATION_STATE_SIZE, STATE_SIZE,
+    WINDOW_SIZE,
 };
 
 /// Execute a closure while emitting stable, report-backed cycle-tracker markers in the guest.

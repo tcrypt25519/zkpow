@@ -18,9 +18,9 @@
 sp1_zkvm::entrypoint!(main);
 
 use zkpow_core::{
-    cycle_track, BlockHash, BlockTimestamp, Header, Input, MinimalPublicValues,
-    NewHeader, PublicChainClaim, RecursiveProof, State, MINIMAL_PV_SIZE,
-    PRIVATE_CONTINUATION_STATE_SIZE, parse_new_headers_ref, parse_median_hints_ref,
+    cycle_track, parse_median_hints_ref, parse_new_headers_ref, BlockHash, BlockTimestamp, Header,
+    Input, MinimalPublicValues, NewHeader, PublicChainClaim, RecursiveProof, State,
+    MINIMAL_PV_SIZE, PRIVATE_CONTINUATION_STATE_SIZE,
 };
 
 mod sha256;
@@ -165,9 +165,7 @@ pub fn main() {
         }
 
         // Apply headers; on failure commit minimal PV and halt.
-        if let Err(failure) =
-            state.apply_headers(header_hints, median_hints, hash_header)
-        {
+        if let Err(failure) = state.apply_headers(header_hints, median_hints, hash_header) {
             let digest = compute_continuation_digest(&failure.last_valid_state);
             let pv = MinimalPublicValues::failure(
                 &failure.last_valid_state.public_claim(),

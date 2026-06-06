@@ -121,8 +121,7 @@ pub fn parse_new_headers_ref(bytes: &[u8]) -> Result<&[NewHeader], NewHeaderHint
             });
         }
 
-        let headers =
-            slice_from_bytes::<NewHeader>(bytes).map_err(NewHeaderHintError::Parse)?;
+        let headers = slice_from_bytes::<NewHeader>(bytes).map_err(NewHeaderHintError::Parse)?;
         Ok(headers)
     })
 }
@@ -138,12 +137,18 @@ pub fn serialize_median_hints(medians: &[BlockTimestamp]) -> Vec<u8> {
 }
 
 /// Parse median hints into a `Vec`.
-pub fn parse_median_hints(bytes: &[u8], expected_count: usize) -> Result<Vec<BlockTimestamp>, MedianTimePastHintError> {
+pub fn parse_median_hints(
+    bytes: &[u8],
+    expected_count: usize,
+) -> Result<Vec<BlockTimestamp>, MedianTimePastHintError> {
     parse_median_hints_ref(bytes, expected_count).map(|medians| medians.to_vec())
 }
 
 /// Parse median hints directly as a zero-copy slice reference.
-pub fn parse_median_hints_ref(bytes: &[u8], expected_count: usize) -> Result<&[BlockTimestamp], MedianTimePastHintError> {
+pub fn parse_median_hints_ref(
+    bytes: &[u8],
+    expected_count: usize,
+) -> Result<&[BlockTimestamp], MedianTimePastHintError> {
     cycle_track("input/parse/median_time_past_hints", || {
         let expected_len = expected_count * core::mem::size_of::<BlockTimestamp>();
         if bytes.len() != expected_len {
@@ -153,8 +158,8 @@ pub fn parse_median_hints_ref(bytes: &[u8], expected_count: usize) -> Result<&[B
             });
         }
 
-        let medians = slice_from_bytes::<BlockTimestamp>(bytes)
-            .map_err(MedianTimePastHintError::Parse)?;
+        let medians =
+            slice_from_bytes::<BlockTimestamp>(bytes).map_err(MedianTimePastHintError::Parse)?;
         Ok(medians)
     })
 }

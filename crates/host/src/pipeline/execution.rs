@@ -3,10 +3,11 @@ use sp1_sdk::prelude::*;
 use sp1_sdk::ExecutionReport;
 
 use crate::memory_monitor;
+use crate::pipeline::batch::PreparedBatch;
 use crate::pipeline::diagnostics::{timed_async, timed_sync};
 use crate::pipeline::input::{build_recursive_proof, build_stdin};
 use crate::pipeline::BoxError;
-use crate::proof_pipeline::ELF;
+use crate::pipeline::ELF;
 use crate::util;
 use crate::util::{HeaderChainPublicValues, Input, VerifierKeyDigest};
 
@@ -80,43 +81,43 @@ pub(crate) fn find_first_diverging_state_index(
     lo
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn execute_batch_with_prover<P, K>(
     prover_name: &str,
     prover: &P,
     proving_key: &K,
-    current_state: &util::State,
-    previous_proof: Option<&SP1ProofWithPublicValues>,
-    headers: &[util::NewHeader],
-    median_hints: &[util::BlockTimestamp],
-    expected_pv_parts: (&util::State, [u8; 32]),
+    batch: &PreparedBatch,
 ) -> Result<ExecutedBatchArtifacts, BoxError>
 where
     P: Prover<ProvingKey = K>,
     K: ProvingKey,
     P::Error: std::fmt::Display + Send + Sync + 'static,
 {
-    let (expected_state, expected_continuation_digest) = expected_pv_parts;
     let expected_pv = util::MinimalPublicValues::success(
-        &expected_state.public_claim(),
-        expected_continuation_digest,
+        &batch.expected_state.public_claim(),
+        batch.expected_continuation_digest,
         VerifierKeyDigest::from_raw(proving_key.verifying_key().hash_u32()),
     )
     .to_bytes()
     .to_vec();
     let recursive_proof = timed_sync("build_recursive_proof", || {
-        build_recursive_proof(proving_key.verifying_key(), previous_proof)
+        build_recursive_proof(proving_key.verifying_key(), batch.previous_proof.as_ref())
     })?;
     let input = timed_sync("build_input", || -> Result<_, BoxError> {
-        Ok(Input::new(current_state.public_claim(), recursive_proof))
+        Ok(Input::new(
+            batch.current_state.public_claim(),
+            recursive_proof,
+        ))
     })?;
     let stdin = timed_sync("serialize_input", || {
         build_stdin(
             &input,
-            current_state,
-            headers,
-            median_hints,
-            previous_proof.map(|p| (p, proving_key.verifying_key())),
+            &batch.current_state,
+            &batch.headers,
+            &batch.median_hints,
+            batch
+                .previous_proof
+                .as_ref()
+                .map(|p| (p, proving_key.verifying_key())),
         )
     })?;
 
@@ -164,7 +165,6 @@ where
 }
 
 pub(crate) async fn execute_batch_without_proof<P>(
-    prover_name: &str,
     prover: &P,
     batch: UnprovenBatchInput<'_>,
 ) -> Result<ExecutedBatchArtifacts, BoxError>
@@ -217,7 +217,6 @@ where
             .map_err(|err| -> BoxError { err.to_string().into() })
     })
     .await?;
-    let _ = prover_name;
 
     let execution_public_values = public_values.to_vec();
     verify_public_values(&execution_public_values, &expected_pv, "execution")?;

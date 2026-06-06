@@ -27,7 +27,7 @@ use zkpow_host::observability;
 use zkpow_host::pipeline::input::{
     ENV_ZKPOW_BATCH_SIZE, ENV_ZKPOW_DB_PATH, ENV_ZKPOW_EXECUTE_ONLY,
 };
-use zkpow_host::proof_pipeline::{generate_and_save_proofs, ProofGenerationConfig, ProverBackend};
+use zkpow_host::pipeline::{generate_and_save_proofs, ProofGenerationConfig, ProverBackend};
 
 #[cfg(feature = "memory-diagnostics")]
 #[global_allocator]

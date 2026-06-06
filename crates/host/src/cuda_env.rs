@@ -1,6 +1,6 @@
 use std::process::Command;
 
-use crate::proof_pipeline::{BoxError, ProofGenerationConfig};
+use crate::pipeline::{BoxError, ProofGenerationConfig};
 
 const MIN_CUDA_COMPUTE_CAPABILITY: ComputeCapability = ComputeCapability { major: 8, minor: 6 };
 const RECOMMENDED_MIN_VRAM_MIB: u32 = 24 * 1024;

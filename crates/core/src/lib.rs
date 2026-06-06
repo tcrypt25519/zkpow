@@ -20,9 +20,9 @@ pub use state::{cycle_track, cycle_track_report, State};
 mod input;
 
 pub use input::{
-    Input, InputError, MedianTimePastHintError, NewHeaderHintError, RecursiveProof,
-    serialize_new_headers, parse_new_headers, parse_new_headers_ref,
-    serialize_median_hints, parse_median_hints, parse_median_hints_ref,
+    parse_median_hints, parse_median_hints_ref, parse_new_headers, parse_new_headers_ref,
+    serialize_median_hints, serialize_new_headers, Input, InputError, MedianTimePastHintError,
+    NewHeaderHintError, RecursiveProof,
 };
 
 /// Size of the serialized [`State`] in bytes.
