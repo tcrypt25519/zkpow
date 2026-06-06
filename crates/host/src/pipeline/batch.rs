@@ -34,24 +34,22 @@ pub fn prepare_batch(
     let previous_proof = load_previous_proof(config)?;
     let current_state = resolve_current_state(config, genesis_hash, previous_proof.as_ref())?;
     let first_new_height = current_state.height + 1;
-    let header_records = load_header_records(config, first_new_height)?;
-    if header_records.is_empty() {
+    let witness = load_header_witness(config, first_new_height)?;
+    if witness.headers.is_empty() {
         return Err(format!(
             "{NO_HEADERS_REMAINING_PREFIX}: starting at height {}",
             first_new_height
         )
         .into());
     }
-    let headers = decode_headers(&header_records)?;
-    let median_hints = load_median_time_past_hints(&header_records)?;
-    let loaded_count = headers.len() as u32;
+    let loaded_count = witness.headers.len() as u32;
     let end_height = current_state.height + loaded_count;
     let expected_state = simulate_expected_state(
         config,
         genesis_hash,
         &current_state,
-        &headers,
-        &median_hints,
+        &witness.headers,
+        &witness.median_time_past_hints,
         first_new_height,
         end_height,
     )?;
@@ -60,8 +58,8 @@ pub fn prepare_batch(
     Ok(PreparedBatch {
         previous_proof,
         current_state,
-        headers,
-        median_hints,
+        headers: witness.headers,
+        median_hints: witness.median_time_past_hints,
         expected_state,
         expected_continuation_digest,
         first_new_height,
@@ -129,30 +127,16 @@ fn resolve_current_state(
     })
 }
 
-fn load_header_records(
+fn load_header_witness(
     config: &ProofGenerationConfig,
     first_new_height: u32,
-) -> Result<Vec<util::HeaderRecord>, BoxError> {
-    timed_sync("load_header_records", || -> Result<_, BoxError> {
-        Ok(util::load_header_records_from_db(
+) -> Result<util::HeaderBatchWitness, BoxError> {
+    timed_sync("load_header_witness", || -> Result<_, BoxError> {
+        Ok(util::load_header_batch_witness_from_db(
             path_to_str(&config.db_path)?,
             first_new_height as u64,
             config.num_headers as u64,
         ))
-    })
-}
-
-fn decode_headers(records: &[util::HeaderRecord]) -> Result<Vec<util::NewHeader>, BoxError> {
-    timed_sync("decode_headers", || -> Result<_, BoxError> {
-        Ok(util::records_to_new_headers(records))
-    })
-}
-
-fn load_median_time_past_hints(
-    records: &[util::HeaderRecord],
-) -> Result<Vec<util::BlockTimestamp>, BoxError> {
-    timed_sync("load_median_time_past_hints", || -> Result<_, BoxError> {
-        Ok(util::median_time_past_hints_from_records(records))
     })
 }
 

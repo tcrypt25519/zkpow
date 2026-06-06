@@ -25,6 +25,12 @@ pub struct HeaderRecord {
     pub median_time_past: BlockTimestamp,
 }
 
+#[derive(Debug, Clone)]
+pub struct HeaderBatchWitness {
+    pub headers: Vec<NewHeader>,
+    pub median_time_past_hints: Vec<BlockTimestamp>,
+}
+
 // ============================================================================
 // Database & I/O
 // ============================================================================
@@ -97,6 +103,59 @@ pub fn load_header_record_from_db(db_path: &str, height: u64) -> HeaderRecord {
         .into_iter()
         .next()
         .expect("exactly one header record should be returned")
+}
+
+pub fn load_header_batch_witness_from_db(
+    db_path: &str,
+    start_height: u64,
+    count: u64,
+) -> HeaderBatchWitness {
+    let conn = rusqlite::Connection::open(db_path).expect("failed to open SQLite database");
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT version, merkle_root, timestamp, nonce, median_time_past FROM headers WHERE height >= ?1 AND height < ?2 ORDER BY height ASC",
+        )
+        .unwrap_or_else(|err| {
+            panic!("failed to prepare batch witness SQL statement for db {}: {}", db_path, err)
+        });
+
+    let end_height = start_height + count;
+    let rows = stmt
+        .query_map(rusqlite::params![start_height, end_height], |row| {
+            let version: i64 = row.get(0)?;
+            let merkle_root: Vec<u8> = row.get(1)?;
+            let timestamp: i64 = row.get(2)?;
+            let nonce: i64 = row.get(3)?;
+            let median_time_past: i64 = row.get(4)?;
+
+            Ok((
+                NewHeader {
+                    version: version as u32,
+                    merkle_root: merkle_root
+                        .try_into()
+                        .expect("merkle_root must be 32 bytes"),
+                    timestamp: BlockTimestamp::new(timestamp as u32),
+                    nonce: nonce as u32,
+                },
+                BlockTimestamp::new(median_time_past as u32),
+            ))
+        })
+        .expect("failed to execute batch witness query");
+
+    let mut headers = Vec::with_capacity(count as usize);
+    let mut median_time_past_hints = Vec::with_capacity(count as usize);
+    for row_result in rows {
+        let (header, median_time_past) =
+            row_result.expect("failed to read header witness row from database");
+        headers.push(header);
+        median_time_past_hints.push(median_time_past);
+    }
+
+    HeaderBatchWitness {
+        headers,
+        median_time_past_hints,
+    }
 }
 
 // ============================================================================
@@ -281,7 +340,7 @@ fn median_time_past_for_state(state: &State) -> BlockTimestamp {
 /// Build the median-time-past witness hints by sorting on the host.
 ///
 /// This is a host-only fallback for tests/local simulation. Production proof
-/// generation should prefer [`median_time_past_hints_from_records`] so the host
+/// generation should prefer [`load_header_batch_witness_from_db`] so the host
 /// uses the database-provided MTP column.
 pub fn median_time_past_hints_for_headers(
     initial_state: &State,
@@ -446,6 +505,18 @@ mod tests {
         let hints = median_time_past_hints_from_records(&records);
 
         compute_final_state_with_hints(&genesis_state, &headers, &hints);
+    }
+
+    #[test]
+    fn batch_witness_loader_matches_record_projection() {
+        let records = load_header_records_from_db(db_path(), 1, 13);
+        let witness = load_header_batch_witness_from_db(db_path(), 1, 13);
+
+        assert_eq!(witness.headers, records_to_new_headers(&records));
+        assert_eq!(
+            witness.median_time_past_hints,
+            median_time_past_hints_from_records(&records)
+        );
     }
 
     #[test]
