@@ -3,7 +3,7 @@ use std::sync::Once;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{fmt::format::FmtSpan, prelude::*, EnvFilter};
 
-use crate::pipeline::input::ENV_ZKPOW_PROVE_COMPRESSED_SPANS;
+use crate::pipeline::input::ENV_ZKPOW_SHOW_COMPRESSED_PROOF_SPANS;
 
 static INIT: Once = Once::new();
 
@@ -28,7 +28,7 @@ fn env_truthy(name: &str) -> bool {
 ///   Agents can query this file directly; see the Debugging section in AGENTS.md.
 pub fn init() {
     INIT.call_once(|| {
-        let show_detailed_spans = env_truthy(ENV_ZKPOW_PROVE_COMPRESSED_SPANS);
+        let show_detailed_spans = env_truthy(ENV_ZKPOW_SHOW_COMPRESSED_PROOF_SPANS);
         let span_events = if show_detailed_spans {
             FmtSpan::CLOSE
         } else {

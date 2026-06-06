@@ -15,7 +15,7 @@ pub struct PreparedBatch {
     pub previous_proof: Option<SP1ProofWithPublicValues>,
     pub current_state: util::State,
     pub headers: Vec<util::NewHeader>,
-    pub median_hints: util::MedianTimePastHints,
+    pub median_hints: Vec<util::BlockTimestamp>,
     pub expected_state: util::State,
     pub expected_continuation_digest: [u8; 32],
     pub first_new_height: u32,
@@ -150,7 +150,7 @@ fn decode_headers(records: &[util::HeaderRecord]) -> Result<Vec<util::NewHeader>
 
 fn load_median_time_past_hints(
     records: &[util::HeaderRecord],
-) -> Result<util::MedianTimePastHints, BoxError> {
+) -> Result<Vec<util::BlockTimestamp>, BoxError> {
     timed_sync("load_median_time_past_hints", || -> Result<_, BoxError> {
         Ok(util::median_time_past_hints_from_records(records))
     })
@@ -161,7 +161,7 @@ fn simulate_expected_state(
     genesis_hash: util::BlockHash,
     current_state: &util::State,
     headers: &[util::NewHeader],
-    median_hints: &util::MedianTimePastHints,
+    median_hints: &[util::BlockTimestamp],
     first_new_height: u32,
     end_height: u32,
 ) -> Result<util::State, BoxError> {

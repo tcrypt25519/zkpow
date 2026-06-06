@@ -13,6 +13,7 @@ pub(crate) struct CompressedProofArtifacts {
     pub(crate) execution_report: sp1_sdk::ExecutionReport,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn generate_compressed_proof_with_prover<P, K>(
     prover_name: &str,
     prover: &P,
@@ -20,7 +21,7 @@ pub(crate) async fn generate_compressed_proof_with_prover<P, K>(
     current_state: &util::State,
     previous_proof: Option<&SP1ProofWithPublicValues>,
     headers: &[util::NewHeader],
-    median_hints: &util::MedianTimePastHints,
+    median_hints: &[util::BlockTimestamp],
     expected_pv_parts: (&util::State, [u8; 32]),
 ) -> Result<CompressedProofArtifacts, BoxError>
 where

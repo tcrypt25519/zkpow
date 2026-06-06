@@ -66,5 +66,4 @@ impl ProofGenerationConfig {
     }
 }
 
-pub type PipelineRequest = ProofGenerationConfig;
-pub type PipelineArtifacts = ProofArtifacts;
+

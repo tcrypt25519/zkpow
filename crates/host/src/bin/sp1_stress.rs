@@ -56,8 +56,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let execute_only = std::env::var(ENV_ZKPOW_EXECUTE_ONLY)
         .ok()
-        .map(|v| v == "1" || v.to_ascii_lowercase() == "true")
-        .unwrap_or(false);
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(true);
 
     tracing::info!(
         iterations,

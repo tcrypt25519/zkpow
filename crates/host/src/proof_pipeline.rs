@@ -209,9 +209,7 @@ where
         })?;
         (Some(groth16_path), Some(groth16_proof))
     } else {
-        tracing::info!(
-            "Skipping Groth16 wrapping; set ZKPOW_GENERATE_GROTH16=1 to enable it"
-        );
+        tracing::info!("Skipping Groth16 wrapping; set ZKPOW_GENERATE_GROTH16=1 to enable it");
         (None, None)
     };
 
@@ -406,7 +404,10 @@ mod tests {
                 highlight_with_expected_mode(expected_value, actual_value, mode, highlight_zeroes);
 
             assert_eq!(actual_output, expected_actual_row, "{name}: actual row");
-            assert_eq!(expected_output, expected_expected_row, "{name}: expected row");
+            assert_eq!(
+                expected_output, expected_expected_row,
+                "{name}: expected row"
+            );
         }
     }
 

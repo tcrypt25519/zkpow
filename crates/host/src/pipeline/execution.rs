@@ -20,12 +20,16 @@ pub(crate) struct ExecutedBatchArtifacts {
 pub(crate) struct UnprovenBatchInput<'a> {
     pub(crate) current_state: &'a util::State,
     pub(crate) headers: &'a [util::NewHeader],
-    pub(crate) median_hints: &'a util::MedianTimePastHints,
+    pub(crate) median_hints: &'a [util::BlockTimestamp],
     pub(crate) expected_state: &'a util::State,
     pub(crate) expected_continuation_digest: [u8; 32],
 }
 
-pub(crate) fn verify_public_values(pv: &[u8], expected_pv: &[u8], label: &str) -> Result<(), BoxError> {
+pub(crate) fn verify_public_values(
+    pv: &[u8],
+    expected_pv: &[u8],
+    label: &str,
+) -> Result<(), BoxError> {
     let parsed = HeaderChainPublicValues::parse(pv).map_err(|err| err.to_string())?;
     match parsed {
         HeaderChainPublicValues::Success { .. } => {
@@ -76,6 +80,7 @@ pub(crate) fn find_first_diverging_state_index(
     lo
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn execute_batch_with_prover<P, K>(
     prover_name: &str,
     prover: &P,
@@ -83,7 +88,7 @@ pub(crate) async fn execute_batch_with_prover<P, K>(
     current_state: &util::State,
     previous_proof: Option<&SP1ProofWithPublicValues>,
     headers: &[util::NewHeader],
-    median_hints: &util::MedianTimePastHints,
+    median_hints: &[util::BlockTimestamp],
     expected_pv_parts: (&util::State, [u8; 32]),
 ) -> Result<ExecutedBatchArtifacts, BoxError>
 where
@@ -112,7 +117,7 @@ where
             headers,
             median_hints,
             previous_proof,
-            proving_key.verifying_key(),
+            Some(proving_key.verifying_key()),
         )
     })?;
 
@@ -195,18 +200,15 @@ where
             recursive_proof,
         ))
     })?;
-    let stdin = timed_sync("serialize_input", || -> Result<SP1Stdin, BoxError> {
-        let mut stdin = SP1Stdin::new();
-        stdin.write_vec(input.to_bytes());
-        stdin.write_vec(batch.current_state.to_bytes().to_vec());
-        stdin.write_vec(
-            util::NewHeaderHintsRef {
-                headers: batch.headers,
-            }
-            .to_bytes(),
-        );
-        stdin.write_vec(batch.median_hints.to_bytes());
-        Ok(stdin)
+    let stdin = timed_sync("serialize_input", || {
+        build_stdin(
+            &input,
+            batch.current_state,
+            batch.headers,
+            batch.median_hints,
+            None,
+            None,
+        )
     })?;
 
     let (public_values, report) = timed_async("execute_program", || async {

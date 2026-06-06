@@ -40,7 +40,7 @@ fn push_claim_field(output: &mut String, name: &str, value: &str) {
     if value.len() == 64 {
         output.push_str(&prefix);
         output.push_str(&value[..32]);
-        output.push_str("\n");
+        output.push('\n');
         output.push_str(&value_prefix(name));
         output.push_str(&value[32..]);
         output.push_str(",\n");

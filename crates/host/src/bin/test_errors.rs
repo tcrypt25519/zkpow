@@ -85,23 +85,6 @@ fn check(name: &str, result: Result<(), String>) {
     }
 }
 
-fn raw_header_bits(raw_headers: &[u8], height: usize) -> Result<u32, String> {
-    let start = height
-        .checked_mul(80)
-        .ok_or_else(|| format!("header offset overflow for height {}", height))?;
-    let end = start + 80;
-    let raw_header = raw_headers
-        .get(start..end)
-        .ok_or_else(|| format!("missing raw header at height {}", height))?;
-    let bits = raw_header
-        .get(72..76)
-        .ok_or_else(|| format!("missing bits field at height {}", height))?;
-    let bits: [u8; 4] = bits
-        .try_into()
-        .map_err(|_| format!("invalid bits field width at height {}", height))?;
-    Ok(u32::from_le_bytes(bits))
-}
-
 fn consensus_bits(bits: util::CompactTarget) -> u32 {
     bits.into_inner()
 }
@@ -124,13 +107,13 @@ fn stdin_for_input(
     input: &Input,
     state: &util::State,
     headers: &[util::NewHeader],
-    hints: &util::MedianTimePastHints,
+    hints: &[util::BlockTimestamp],
 ) -> SP1Stdin {
     let mut stdin = SP1Stdin::new();
     stdin.write_vec(input.to_bytes());
     stdin.write_vec(state.to_bytes().to_vec());
-    stdin.write_vec(util::NewHeaderHintsRef { headers }.to_bytes());
-    stdin.write_vec(hints.to_bytes());
+    stdin.write_vec(util::serialize_new_headers(headers));
+    stdin.write_vec(util::serialize_median_hints(hints));
     // No recursive witnesses for genesis-start inputs (height == 0).
     stdin
 }
@@ -139,13 +122,13 @@ fn stdin_for_recursive_input(
     input: &Input,
     state: &util::State,
     headers: &[util::NewHeader],
-    hints: &util::MedianTimePastHints,
+    hints: &[util::BlockTimestamp],
 ) -> SP1Stdin {
     let mut stdin = SP1Stdin::new();
     stdin.write_vec(input.to_bytes());
     stdin.write_vec(state.to_bytes().to_vec());
-    stdin.write_vec(util::NewHeaderHintsRef { headers }.to_bytes());
-    stdin.write_vec(hints.to_bytes());
+    stdin.write_vec(util::serialize_new_headers(headers));
+    stdin.write_vec(util::serialize_median_hints(hints));
     stdin
 }
 
@@ -220,9 +203,9 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
     const EPOCH_LENGTH: usize = zkpow_core::EPOCH_LENGTH as usize;
     let genesis_state = mainnet_genesis_state();
 
-    let first_epoch_raw =
-        util::load_headers_from_db(db_path(), 1, FIRST_BOUNDARY_TIP_HEIGHT as u64);
-    let first_epoch_headers = util::raw_headers_to_new_headers(&first_epoch_raw);
+    let first_epoch_records =
+        util::load_header_records_from_db(db_path(), 1, FIRST_BOUNDARY_TIP_HEIGHT as u64);
+    let first_epoch_headers = util::records_to_new_headers(&first_epoch_records);
     let first_epoch_state = util::compute_final_state(&genesis_state, &first_epoch_headers);
     println!(
         "retarget-debug: first_epoch loaded={} state.height={} state.current_nbits={:#x}",
@@ -230,10 +213,10 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
         first_epoch_state.height,
         consensus_bits(first_epoch_state.current_nbits),
     );
-    let first_retarget_bits = raw_header_bits(
-        &util::load_headers_from_db(db_path(), (FIRST_BOUNDARY_TIP_HEIGHT + 1) as u64, 1),
-        0,
-    )?;
+    let first_retarget_bits = util::load_header_record_from_db(db_path(), (FIRST_BOUNDARY_TIP_HEIGHT + 1) as u64)
+        .header
+        .compact_target
+        .into_inner();
     if consensus_bits(first_epoch_state.current_nbits) != first_retarget_bits {
         return Err(format!(
             "expected first retarget boundary bits {:#x}, got {:#x}",
@@ -242,8 +225,8 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
         ));
     }
 
-    let raw_headers = util::load_headers_from_db(db_path(), 1, RETARGET_TIP_HEIGHT as u64);
-    let new_headers = util::raw_headers_to_new_headers(&raw_headers);
+    let records = util::load_header_records_from_db(db_path(), 1, RETARGET_TIP_HEIGHT as u64);
+    let new_headers = util::records_to_new_headers(&records);
     let state = util::compute_final_state(&genesis_state, &new_headers);
     println!(
         "retarget-debug: retarget loaded={} state.height={} state.current_nbits={:#x}",
@@ -251,13 +234,20 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
         state.height,
         consensus_bits(state.current_nbits),
     );
+
+    let previous_epoch_bits = records[RETARGET_TIP_HEIGHT - 1]
+        .header
+        .compact_target
+        .into_inner();
+    let next_header_bits = util::load_header_record_from_db(db_path(), RETARGET_HEIGHT as u64)
+        .header
+        .compact_target
+        .into_inner();
+
     println!(
         "retarget-debug: prev_epoch_bits={:#x} next_header_bits={:#x}",
-        raw_header_bits(&raw_headers, RETARGET_TIP_HEIGHT - 1)?,
-        raw_header_bits(
-            &util::load_headers_from_db(db_path(), RETARGET_HEIGHT as u64, 1),
-            0,
-        )?,
+        previous_epoch_bits,
+        next_header_bits,
     );
 
     if state.height != RETARGET_TIP_HEIGHT as u32 {
@@ -266,12 +256,6 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
             RETARGET_TIP_HEIGHT, state.height,
         ));
     }
-
-    let previous_epoch_bits = raw_header_bits(&raw_headers, RETARGET_TIP_HEIGHT - 1)?;
-    let next_header_bits = raw_header_bits(
-        &util::load_headers_from_db(db_path(), RETARGET_HEIGHT as u64, 1),
-        0,
-    )?;
 
     if previous_epoch_bits == next_header_bits {
         return Err(format!(
@@ -288,8 +272,8 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
         ));
     }
 
-    let boundary_raw = util::load_headers_from_db(db_path(), RETARGET_HEIGHT as u64, 1);
-    let boundary_headers = util::raw_headers_to_new_headers(&boundary_raw);
+    let boundary_records = util::load_header_records_from_db(db_path(), RETARGET_HEIGHT as u64, 1);
+    let boundary_headers = util::records_to_new_headers(&boundary_records);
     let boundary_state = util::compute_final_state(&state, &boundary_headers);
     if boundary_state.height != RETARGET_HEIGHT as u32 {
         return Err(format!(
@@ -305,8 +289,8 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
         ));
     }
 
-    let pre_boundary_raw = util::load_headers_from_db(db_path(), 1, (RETARGET_HEIGHT - 2) as u64);
-    let pre_boundary_headers = util::raw_headers_to_new_headers(&pre_boundary_raw);
+    let pre_boundary_records = util::load_header_records_from_db(db_path(), 1, (RETARGET_HEIGHT - 2) as u64);
+    let pre_boundary_headers = util::records_to_new_headers(&pre_boundary_records);
     let pre_boundary_state = util::compute_final_state(&genesis_state, &pre_boundary_headers);
 
     if consensus_bits(pre_boundary_state.current_nbits) != previous_epoch_bits {
@@ -484,7 +468,7 @@ async fn test_error_recursive_on_tampered_state_witness() -> Result<(), String> 
 
     let input = input_for_state(&state_at_5, recursive_proof);
     let empty_headers = [];
-    let empty_hints = util::MedianTimePastHints::new(Vec::new());
+    let empty_hints = Vec::new();
     let stdin = stdin_for_recursive_input(&input, &tampered_state, &empty_headers, &empty_hints);
 
     let client = ProverClient::builder().mock().build().await;

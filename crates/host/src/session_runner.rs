@@ -31,7 +31,7 @@ pub async fn run_batch_session() -> Result<u32, BoxError> {
 
     let mut batch_config = config_from_env()?;
     let max_batches = batch_config.batch_count;
-    let out_dir = if batch_config.output_dir == PathBuf::from(".") {
+    let out_dir = if batch_config.output_dir == std::path::Path::new(".") {
         PathBuf::from(format!("profiling/sp1/continuous/{}", timestamp))
     } else {
         batch_config.output_dir.clone()
@@ -50,9 +50,7 @@ pub async fn run_batch_session() -> Result<u32, BoxError> {
 
     loop {
         if batch_count >= max_batches {
-            tracing::info!(
-                "Reached ZKPOW_BATCH_COUNT={max_batches}; stopping continuous prover"
-            );
+            tracing::info!("Reached ZKPOW_BATCH_COUNT={max_batches}; stopping continuous prover");
             break;
         }
 
@@ -194,6 +192,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
     async fn stops_after_reaching_configured_batch_count() {
         let _guard = env_test_mutex()
             .lock()
@@ -214,6 +213,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
     async fn stops_after_exhausting_headers_in_database() {
         let _guard = env_test_mutex()
             .lock()
@@ -222,7 +222,10 @@ mod tests {
         set_env("ZKPOW_BATCH_COUNT", "5");
         set_env("ZKPOW_BATCH_SIZE", "0");
         set_env("ZKPOW_EXECUTE_ONLY", "1");
-        set_env("ZKPOW_DB_PATH", concat!(env!("CARGO_MANIFEST_DIR"), "/../../headers.db"));
+        set_env(
+            "ZKPOW_DB_PATH",
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../../headers.db"),
+        );
 
         let result = run_batch_session().await;
 
