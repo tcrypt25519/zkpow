@@ -1,0 +1,3 @@
+I'm curious If any of the places in the host, in the proof pipeline, where we load data, like the median time past hints, or the new header values if we could avoid constituting those to a vector in a reasonable way or if it's just necessary or maybe it wouldn't even be worth it.
+
+But I'm wondering if we can have those getters return iterators that get passed around and then ultimately when it comes time to write them out, they just get iterated and each value for each iteration gets written out. But then there never has to be a step where we go allocate a big vector for all of them and copy them in there.
