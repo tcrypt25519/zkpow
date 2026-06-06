@@ -76,13 +76,13 @@ fn verify_state_claim(state: &State, claim: &PublicChainClaim) {
     })
 }
 
-fn parse_header_hints<'a>(hint_bytes: &'a [u8]) -> &'a [NewHeader] {
+fn parse_header_hints(hint_bytes: &[u8]) -> &[NewHeader] {
     cycle_track("input/parse_header_hints", || {
         parse_new_headers_ref(hint_bytes).expect("new header hints should parse")
     })
 }
 
-fn parse_median_hints<'a>(hint_bytes: &'a [u8], header_count: usize) -> &'a [BlockTimestamp] {
+fn parse_median_hints(hint_bytes: &[u8], header_count: usize) -> &[BlockTimestamp] {
     cycle_track("input/parse_median_hints", || {
         parse_median_hints_ref(hint_bytes, header_count)
             .expect("median time past hints should parse")

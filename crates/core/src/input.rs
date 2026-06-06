@@ -344,7 +344,7 @@ mod tests {
 
     #[test]
     fn median_time_past_hints_reject_invalid_lengths() {
-        let one_hint = serialize_median_hints(&vec![BlockTimestamp::new(123)]);
+        let one_hint = serialize_median_hints(&[BlockTimestamp::new(123)]);
         let mut truncated_hint = one_hint.clone();
         truncated_hint.pop();
 

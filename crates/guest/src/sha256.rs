@@ -121,15 +121,6 @@ pub(crate) fn sha256_32bytes(data: &[u8; 32]) -> [u8; 32] {
     state_to_hash(&state)
 }
 
-/// Compute SHA-256 of exactly 264 bytes.
-///
-/// Produces five blocks:
-/// - Block 1: bytes 0–63
-/// - Block 2: bytes 64–127
-/// - Block 3: bytes 128–191
-/// - Block 4: bytes 192–255
-/// - Block 5: bytes 256–263 + 0x80 + zeros + 8-byte length (2112 bits)
-
 
 /// Compute SHA-256 of exactly 169 bytes.
 ///
