@@ -18,9 +18,9 @@
 sp1_zkvm::entrypoint!(main);
 
 use zkpow_core::{
-    cycle_track, BlockHash, Header, InputRef, MedianTimePastHintsRef, MinimalPublicValues,
-    NewHeaderHintsRef, PublicChainClaim, RecursiveProof, State, MINIMAL_PV_SIZE,
-    PRIVATE_CONTINUATION_STATE_SIZE,
+    cycle_track, BlockHash, BlockTimestamp, Header, Input, MinimalPublicValues,
+    NewHeader, PublicChainClaim, RecursiveProof, State, MINIMAL_PV_SIZE,
+    PRIVATE_CONTINUATION_STATE_SIZE, parse_new_headers_ref, parse_median_hints_ref,
 };
 
 mod sha256;
@@ -54,8 +54,8 @@ fn commit_minimal_pv(pv: &MinimalPublicValues) -> ! {
     sp1_zkvm::syscalls::syscall_halt(0)
 }
 
-fn parse_input(input_bytes: &[u8]) -> InputRef<'_> {
-    InputRef::parse(input_bytes).expect("input should parse")
+fn parse_input(input_bytes: &[u8]) -> Input {
+    Input::parse(input_bytes).expect("input should parse")
 }
 
 fn parse_state_witness(state_bytes: &[u8]) -> State {
@@ -76,15 +76,15 @@ fn verify_state_claim(state: &State, claim: &PublicChainClaim) {
     })
 }
 
-fn parse_header_hints<'a>(hint_bytes: &'a [u8]) -> NewHeaderHintsRef<'a> {
+fn parse_header_hints<'a>(hint_bytes: &'a [u8]) -> &'a [NewHeader] {
     cycle_track("input/parse_header_hints", || {
-        NewHeaderHintsRef::parse(hint_bytes).expect("new header hints should parse")
+        parse_new_headers_ref(hint_bytes).expect("new header hints should parse")
     })
 }
 
-fn parse_median_hints<'a>(hint_bytes: &'a [u8], header_count: usize) -> MedianTimePastHintsRef<'a> {
+fn parse_median_hints<'a>(hint_bytes: &'a [u8], header_count: usize) -> &'a [BlockTimestamp] {
     cycle_track("input/parse_median_hints", || {
-        MedianTimePastHintsRef::parse(hint_bytes, header_count)
+        parse_median_hints_ref(hint_bytes, header_count)
             .expect("median time past hints should parse")
     })
 }
@@ -152,13 +152,13 @@ pub fn main() {
         let mut state = parse_state_witness(&state_bytes);
         verify_state_claim(&state, &input.claim);
         let header_hints = parse_header_hints(&header_hint_bytes);
-        let median_hints = parse_median_hints(&median_hint_bytes, header_hints.headers.len());
+        let median_hints = parse_median_hints(&median_hint_bytes, header_hints.len());
 
         if input.claim.height > 0 {
             let prior_continuation_bytes: [u8; PRIVATE_CONTINUATION_STATE_SIZE] =
                 state.continuation_bytes();
             verify_recursive_proof(
-                input.recursive_proof,
+                &input.recursive_proof,
                 &input.claim,
                 &prior_continuation_bytes,
             );
@@ -166,7 +166,7 @@ pub fn main() {
 
         // Apply headers; on failure commit minimal PV and halt.
         if let Err(failure) =
-            state.apply_headers(header_hints.headers, median_hints.medians, hash_header)
+            state.apply_headers(header_hints, median_hints, hash_header)
         {
             let digest = compute_continuation_digest(&failure.last_valid_state);
             let pv = MinimalPublicValues::failure(
