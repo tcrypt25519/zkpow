@@ -116,8 +116,7 @@ where
             current_state,
             headers,
             median_hints,
-            previous_proof,
-            Some(proving_key.verifying_key()),
+            previous_proof.map(|p| (p, proving_key.verifying_key())),
         )
     })?;
 
@@ -206,7 +205,6 @@ where
             batch.current_state,
             batch.headers,
             batch.median_hints,
-            None,
             None,
         )
     })?;

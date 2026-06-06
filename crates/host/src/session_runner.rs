@@ -151,7 +151,8 @@ pub async fn run_batch_session() -> Result<u32, BoxError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, OnceLock};
+    use std::sync::OnceLock;
+    use tokio::sync::Mutex;
 
     fn env_test_mutex() -> &'static Mutex<()> {
         static ENV_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
@@ -192,11 +193,8 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)]
     async fn stops_after_reaching_configured_batch_count() {
-        let _guard = env_test_mutex()
-            .lock()
-            .expect("env test mutex should not be poisoned");
+        let _guard = env_test_mutex().lock().await;
 
         set_env("ZKPOW_BATCH_COUNT", "0");
         set_env("ZKPOW_BATCH_SIZE", "1");
@@ -213,11 +211,8 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)]
     async fn stops_after_exhausting_headers_in_database() {
-        let _guard = env_test_mutex()
-            .lock()
-            .expect("env test mutex should not be poisoned");
+        let _guard = env_test_mutex().lock().await;
 
         set_env("ZKPOW_BATCH_COUNT", "5");
         set_env("ZKPOW_BATCH_SIZE", "0");

@@ -8,15 +8,14 @@ use sha2::{Digest, Sha256};
 use sp1_sdk::SP1PublicValues;
 
 pub use zkpow_core::{
-    target_from_bits, u256, work_from_target, ApplyFailure, BlockHash, BlockTimestamp, ChainWork,
-    CompactTarget, Header, HeaderChainPublicValues, Input, InputError,
-    MinimalPublicValues, NewHeader, NewHeaderHintError,
+    parse_median_hints, parse_median_hints_ref, parse_new_headers, parse_new_headers_ref,
+    serialize_median_hints, serialize_new_headers, target_from_bits, u256, work_from_target,
+    ApplyFailure, BlockHash, BlockTimestamp, ChainWork, CompactTarget, Header,
+    HeaderChainPublicValues, Input, InputError, MinimalPublicValues, NewHeader, NewHeaderHintError,
     ParseError, PrivateContinuationState, ProofFailure, PublicChainClaim, PublicValuesDigest,
-    PublicValuesParseError, RecursiveProof, State, Target, ValidationErrorCode,
-    VerifierKeyDigest, GENESIS_TARGET, MINIMAL_PV_SIZE, NEW_HEADER_SIZE,
-    PRIVATE_CONTINUATION_STATE_SIZE, PUBLIC_CHAIN_CLAIM_SIZE, STATE_SIZE,
-    serialize_new_headers, parse_new_headers, parse_new_headers_ref,
-    serialize_median_hints, parse_median_hints, parse_median_hints_ref,
+    PublicValuesParseError, RecursiveProof, State, Target, ValidationErrorCode, VerifierKeyDigest,
+    GENESIS_TARGET, MINIMAL_PV_SIZE, NEW_HEADER_SIZE, PRIVATE_CONTINUATION_STATE_SIZE,
+    PUBLIC_CHAIN_CLAIM_SIZE, STATE_SIZE,
 };
 
 #[derive(Debug, Clone)]
@@ -314,8 +313,8 @@ mod tests {
     fn make_pcs() -> PrivateContinuationState {
         PrivateContinuationState {
             current_nbits: CompactTarget::new(GENESIS_NBITS),
-            current_work: zkpow_core::ChainWork::from_limbs([1, 2, 3, 4]),
-            current_target: zkpow_core::GENESIS_TARGET,
+            current_work: ChainWork::from_limbs([1, 2, 3, 4]),
+            current_target: GENESIS_TARGET,
             epoch_start_timestamp: BlockTimestamp::new(500),
             timestamps: [BlockTimestamp::new(10); WINDOW_SIZE],
         }
@@ -332,7 +331,7 @@ mod tests {
         let mut state = State {
             height: timestamps.len() as u32 - 1,
             current_nbits: CompactTarget::new(GENESIS_NBITS),
-            current_work: zkpow_core::work_from_target(GENESIS_TARGET),
+            current_work: work_from_target(GENESIS_TARGET),
             current_target: GENESIS_TARGET,
             ..State::default()
         };

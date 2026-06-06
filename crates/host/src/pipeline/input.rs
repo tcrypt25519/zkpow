@@ -3,7 +3,6 @@ use sp1_sdk::SP1Proof;
 use std::collections::HashMap;
 use std::env::VarError;
 use std::path::PathBuf;
-use std::sync::OnceLock;
 
 use crate::config::db_path;
 use crate::pipeline::{BoxError, ProofGenerationConfig, ProverBackend};
@@ -62,16 +61,12 @@ impl EnvSource for MapEnvSource {
 }
 
 pub fn parse_genesis_hash() -> Result<util::BlockHash, BoxError> {
-    static GENESIS_HASH: OnceLock<util::BlockHash> = OnceLock::new();
-    let val = GENESIS_HASH.get_or_init(|| {
-        let mut genesis_hash: [u8; 32] = hex::decode(GENESIS_HASH_HEX)
-            .expect("GENESIS_HASH_HEX must be valid hex")
-            .try_into()
-            .expect("GENESIS_HASH_HEX must be 32 bytes");
-        genesis_hash.reverse();
-        util::BlockHash::new(genesis_hash)
-    });
-    Ok(*val)
+    let mut genesis_hash: [u8; 32] = hex::decode(GENESIS_HASH_HEX)
+        .map_err(|err| format!("invalid genesis hash hex: {}", err))?
+        .try_into()
+        .map_err(|_| "genesis hash should be 32 bytes")?;
+    genesis_hash.reverse();
+    Ok(util::BlockHash::new(genesis_hash))
 }
 
 pub(crate) fn parse_bool_env(
@@ -235,8 +230,7 @@ pub fn build_stdin(
     state: &util::State,
     headers: &[util::NewHeader],
     median_hints: &[util::BlockTimestamp],
-    previous_proof: Option<&SP1ProofWithPublicValues>,
-    vk: Option<&sp1_prover::SP1VerifyingKey>,
+    previous_proof: Option<(&SP1ProofWithPublicValues, &sp1_prover::SP1VerifyingKey)>,
 ) -> Result<SP1Stdin, BoxError> {
     let mut stdin = SP1Stdin::new();
     stdin.write_vec(input.to_bytes());
@@ -244,8 +238,7 @@ pub fn build_stdin(
     stdin.write_vec(zkpow_core::serialize_new_headers(headers));
     stdin.write_vec(zkpow_core::serialize_median_hints(median_hints));
 
-    if let Some(prev_proof) = previous_proof {
-        let vk = vk.ok_or_else(|| -> BoxError { "verifying key required for recursive verification".into() })?;
+    if let Some((prev_proof, vk)) = previous_proof {
         let SP1Proof::Compressed(inner_proof) = &prev_proof.proof else {
             return Err("previous proof is not compressed".into());
         };

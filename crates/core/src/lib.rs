@@ -740,13 +740,30 @@ impl HeaderChainPublicValues {
 }
 
 /// Parse errors for committed public values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PublicValuesParseError {
-    #[error("invalid public values length: expected 169, got {actual}")]
     InvalidLength { actual: usize },
-    #[error("unknown validation error code: {code}")]
     UnknownErrorCode { code: u8 },
 }
+
+impl core::fmt::Display for PublicValuesParseError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::InvalidLength { actual } => {
+                write!(
+                    f,
+                    "invalid public values length: expected {}, got {}",
+                    MINIMAL_PV_SIZE, actual
+                )
+            }
+            Self::UnknownErrorCode { code } => {
+                write!(f, "unknown validation error code: {}", code)
+            }
+        }
+    }
+}
+
+impl core::error::Error for PublicValuesParseError {}
 
 /// Convert a full 256-bit target into compact `bits` encoding.
 #[must_use]
