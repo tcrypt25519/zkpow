@@ -156,7 +156,7 @@ pub(crate) fn config_from_source(
     let use_cuda = parse_bool_env(source, ENV_ZKPOW_USE_CUDA)?;
     let cuda_device_id = parse_u32_env(source, ENV_ZKPOW_CUDA_DEVICE_ID)?;
 
-    let execute_only = parse_bool_env_or(source, ENV_ZKPOW_EXECUTE_ONLY, true)?;
+    let execute_only = parse_bool_env(source, ENV_ZKPOW_EXECUTE_ONLY)?;
     let generate_groth16 = parse_bool_env(source, ENV_ZKPOW_GENERATE_GROTH16)?;
     if execute_only && generate_groth16 {
         return Err(format!(

@@ -17,9 +17,8 @@ RUN_LOG="$ZKPOW_LOG_DIR/run.log"
 mkdir -p "$ZKPOW_LOG_DIR"
 mkdir -p "$ZKPOW_OUT_DIR"
 
-prog="./target/release/zkpow-host"
 if command -v bat >/dev/null  2>&1; then
-  #  ./target/release/zkpow-host | tee "$LOG" | bat --paging=never --filename="zkpow-host log"
-  #else
+  ./target/release/zkpow-host | tee -a "$LOG" "$RUN_LOG"
+else
   ./target/release/zkpow-host > >(tee -a "$LOG" "$RUN_LOG") 2> >(tee -a "$LOG" "$RUN_LOG" >&2)
 fi

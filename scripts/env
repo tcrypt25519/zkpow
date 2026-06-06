@@ -29,7 +29,7 @@ export ZKPOW_BUILD="${ZKPOW_BUILD:-true}"
 
 # Inputs and output
 TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
-export ZKPOW_LOG_DIR="${ZKPOW_OUT_DIR:-$ZKPOW_ROOT/logs}"
+export ZKPOW_LOG_DIR="${ZKPOW_LOG_DIR:-$ZKPOW_ROOT/logs}"
 export ZKPOW_OUT_DIR="${ZKPOW_OUT_DIR:-$ZKPOW_ROOT/profiling/runs/$TIMESTAMP}"
 export ZKPOW_DB_PATH="${ZKPOW_DB_PATH:-$ZKPOW_ROOT/headers.db}"
 
