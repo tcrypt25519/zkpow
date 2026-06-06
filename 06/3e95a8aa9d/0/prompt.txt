@@ -1,0 +1,1 @@
+Yeah I like that. I've wanted to remove the constituting the full header across he the project and doing it now in the host would be a good first step.
