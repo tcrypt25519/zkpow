@@ -18,9 +18,9 @@
 sp1_zkvm::entrypoint!(main);
 
 use zkpow_core::{
-    cycle_track, parse_median_hints_ref, parse_new_headers_ref, BlockHash, BlockTimestamp, Header,
-    Input, MinimalPublicValues, NewHeader, PublicChainClaim, RecursiveProof, State,
-    MINIMAL_PV_SIZE, PRIVATE_CONTINUATION_STATE_SIZE,
+    cycle_track, parse_median_hints, parse_new_headers, BlockHash, BlockTimestamp, Header, Input,
+    MinimalPublicValues, NewHeader, PublicChainClaim, RecursiveProof, State, MINIMAL_PV_SIZE,
+    PRIVATE_CONTINUATION_STATE_SIZE,
 };
 
 mod sha256;
@@ -78,14 +78,13 @@ fn verify_state_claim(state: &State, claim: &PublicChainClaim) {
 
 fn parse_header_hints(hint_bytes: &[u8]) -> &[NewHeader] {
     cycle_track("input/parse_header_hints", || {
-        parse_new_headers_ref(hint_bytes).expect("new header hints should parse")
+        parse_new_headers(hint_bytes).expect("new header hints should parse")
     })
 }
 
-fn parse_median_hints(hint_bytes: &[u8], header_count: usize) -> &[BlockTimestamp] {
+fn parse_mtp_hints(hint_bytes: &[u8], header_count: usize) -> &[BlockTimestamp] {
     cycle_track("input/parse_median_hints", || {
-        parse_median_hints_ref(hint_bytes, header_count)
-            .expect("median time past hints should parse")
+        parse_median_hints(hint_bytes, header_count).expect("median time past hints should parse")
     })
 }
 
@@ -152,7 +151,7 @@ pub fn main() {
         let mut state = parse_state_witness(&state_bytes);
         verify_state_claim(&state, &input.claim);
         let header_hints = parse_header_hints(&header_hint_bytes);
-        let median_hints = parse_median_hints(&median_hint_bytes, header_hints.len());
+        let median_hints = parse_mtp_hints(&median_hint_bytes, header_hints.len());
 
         if input.claim.height > 0 {
             let prior_continuation_bytes: [u8; PRIVATE_CONTINUATION_STATE_SIZE] =

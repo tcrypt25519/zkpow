@@ -106,13 +106,8 @@ pub fn serialize_new_headers(headers: &[NewHeader]) -> Vec<u8> {
     bytes
 }
 
-/// Parse new headers into a `Vec`.
-pub fn parse_new_headers(bytes: &[u8]) -> Result<Vec<NewHeader>, NewHeaderHintError> {
-    parse_new_headers_ref(bytes).map(|headers| headers.to_vec())
-}
-
-/// Parse new headers directly as a zero-copy slice reference.
-pub fn parse_new_headers_ref(bytes: &[u8]) -> Result<&[NewHeader], NewHeaderHintError> {
+/// Parse new headers as a zero-copy slice reference.
+pub fn parse_new_headers(bytes: &[u8]) -> Result<&[NewHeader], NewHeaderHintError> {
     cycle_track("input/parse/new_header_hints", || {
         if !bytes.len().is_multiple_of(NEW_HEADER_SIZE) {
             return Err(NewHeaderHintError::PayloadLengthInvalid {
@@ -136,16 +131,8 @@ pub fn serialize_median_hints(medians: &[BlockTimestamp]) -> Vec<u8> {
     bytes
 }
 
-/// Parse median hints into a `Vec`.
+/// Parse median hints as a zero-copy slice reference.
 pub fn parse_median_hints(
-    bytes: &[u8],
-    expected_count: usize,
-) -> Result<Vec<BlockTimestamp>, MedianTimePastHintError> {
-    parse_median_hints_ref(bytes, expected_count).map(|medians| medians.to_vec())
-}
-
-/// Parse median hints directly as a zero-copy slice reference.
-pub fn parse_median_hints_ref(
     bytes: &[u8],
     expected_count: usize,
 ) -> Result<&[BlockTimestamp], MedianTimePastHintError> {
@@ -309,7 +296,7 @@ mod tests {
         let bytes = serialize_new_headers(&headers);
         let parsed = parse_new_headers(&bytes).unwrap();
 
-        assert_eq!(parsed, headers);
+        assert_eq!(parsed, headers.as_slice());
     }
 
     #[test]
@@ -323,7 +310,7 @@ mod tests {
         let mut bytes = serialize_new_headers(&headers);
         bytes.pop();
 
-        let err = parse_new_headers_ref(&bytes).unwrap_err();
+        let err = parse_new_headers(&bytes).unwrap_err();
         assert_eq!(
             err,
             NewHeaderHintError::PayloadLengthInvalid {
@@ -344,7 +331,7 @@ mod tests {
         let bytes = serialize_median_hints(&hints);
         let parsed = parse_median_hints(&bytes, 3).unwrap();
 
-        assert_eq!(parsed, hints);
+        assert_eq!(parsed, hints.as_slice());
     }
 
     #[test]
@@ -375,7 +362,7 @@ mod tests {
         ];
 
         for (name, bytes, expected_count, expected_error) in cases {
-            let err = parse_median_hints_ref(&bytes, expected_count).unwrap_err();
+            let err = parse_median_hints(&bytes, expected_count).unwrap_err();
             assert_eq!(err, expected_error, "{name}");
         }
     }

@@ -8,14 +8,13 @@ use sha2::{Digest, Sha256};
 use sp1_sdk::SP1PublicValues;
 
 pub use zkpow_core::{
-    parse_median_hints, parse_median_hints_ref, parse_new_headers, parse_new_headers_ref,
-    serialize_median_hints, serialize_new_headers, target_from_bits, u256, work_from_target,
-    ApplyFailure, BlockHash, BlockTimestamp, ChainWork, CompactTarget, Header,
-    HeaderChainPublicValues, Input, InputError, MinimalPublicValues, NewHeader, NewHeaderHintError,
-    ParseError, PrivateContinuationState, ProofFailure, PublicChainClaim, PublicValuesDigest,
-    PublicValuesParseError, RecursiveProof, State, Target, ValidationErrorCode, VerifierKeyDigest,
-    GENESIS_TARGET, MINIMAL_PV_SIZE, NEW_HEADER_SIZE, PRIVATE_CONTINUATION_STATE_SIZE,
-    PUBLIC_CHAIN_CLAIM_SIZE, STATE_SIZE,
+    parse_median_hints, parse_new_headers, serialize_median_hints, serialize_new_headers,
+    target_from_bits, u256, work_from_target, ApplyFailure, BlockHash, BlockTimestamp, ChainWork,
+    CompactTarget, Header, HeaderChainPublicValues, Input, InputError, MinimalPublicValues,
+    NewHeader, NewHeaderHintError, ParseError, PrivateContinuationState, ProofFailure,
+    PublicChainClaim, PublicValuesDigest, PublicValuesParseError, RecursiveProof, State, Target,
+    ValidationErrorCode, VerifierKeyDigest, GENESIS_TARGET, MINIMAL_PV_SIZE, NEW_HEADER_SIZE,
+    PRIVATE_CONTINUATION_STATE_SIZE, PUBLIC_CHAIN_CLAIM_SIZE, STATE_SIZE,
 };
 
 #[derive(Debug, Clone)]

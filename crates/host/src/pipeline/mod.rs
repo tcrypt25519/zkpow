@@ -360,7 +360,7 @@ async fn execute_without_setup(config: &ProofGenerationConfig) -> Result<ProofAr
 
     clear_phase_timings();
     let overall_start = Instant::now();
-    let genesis_hash = timed_sync("parse_genesis_hash", parse_genesis_hash)?;
+    let genesis_hash = parse_genesis_hash()?;
     let batch = prepare_batch(config, genesis_hash)?;
     let prover = timed_async("build_mock_executor", || async {
         Ok::<_, BoxError>(ProverClient::builder().mock().build().await)
@@ -400,7 +400,7 @@ where
     clear_phase_timings();
     let overall_start = Instant::now();
 
-    let genesis_hash = timed_sync("parse_genesis_hash", parse_genesis_hash)?;
+    let genesis_hash = parse_genesis_hash()?;
     let batch = prepare_batch(config, genesis_hash)?;
 
     if config.mode() == PipelineMode::ExecuteOnly {
@@ -414,10 +414,7 @@ where
 
     let compressed = generate_compressed_proof(prover_name, prover, proving_key, &batch).await?;
 
-    timed_sync("create_output_dir", || -> Result<(), BoxError> {
-        std::fs::create_dir_all(&config.output_dir)?;
-        Ok(())
-    })?;
+    std::fs::create_dir_all(&config.output_dir)?;
     let compressed_path = config.output_dir.join(format!(
         "proof_height_{}_to_{}.bin",
         batch.first_new_height, batch.end_height,

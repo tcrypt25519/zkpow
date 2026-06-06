@@ -102,12 +102,7 @@ where
     let recursive_proof = timed_sync("build_recursive_proof", || {
         build_recursive_proof(proving_key.verifying_key(), batch.previous_proof.as_ref())
     })?;
-    let input = timed_sync("build_input", || -> Result<_, BoxError> {
-        Ok(Input::new(
-            batch.current_state.public_claim(),
-            recursive_proof,
-        ))
-    })?;
+    let input = Input::new(batch.current_state.public_claim(), recursive_proof);
     let stdin = timed_sync("serialize_input", || {
         build_stdin(
             &input,
@@ -193,12 +188,7 @@ where
         )),
         ..Default::default()
     };
-    let input = timed_sync("build_input", || -> Result<_, BoxError> {
-        Ok(Input::new(
-            batch.current_state.public_claim(),
-            recursive_proof,
-        ))
-    })?;
+    let input = Input::new(batch.current_state.public_claim(), recursive_proof);
     let stdin = timed_sync("serialize_input", || {
         build_stdin(
             &input,

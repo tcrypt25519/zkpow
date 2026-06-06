@@ -15,10 +15,10 @@ fi
 # Set batch parameters from command line arguments if present, falling back to
 # pre-set env vars, and then default value if nothing else.
 if [ -n "$1" ]; then
-  ZKPOW_BATCH_SIZE="$1"
+  ZKPOW_BATCH_SIZE="${1:-}"
 
   if [ -n "$2" ]; then
-    ZKPOW_BATCH_COUNT="$2"
+    ZKPOW_BATCH_COUNT="${2:-}"
   fi
 fi
 export ZKPOW_BATCH_SIZE="${ZKPOW_BATCH_SIZE:-2016}"
