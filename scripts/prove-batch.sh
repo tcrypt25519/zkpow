@@ -64,7 +64,6 @@ if [[ "$BUILD" == "true" ]]; then
 fi
 
 ZKPOW_BATCH_COUNT=1 "$ZKPOW_ROOT/target/release/zkpow-host" > >(tee -a "$OUT_DIR/run.log") 2> >(tee -a "$OUT_DIR/run.log" >&2)
-
 status=${PIPESTATUS[0]}
 set -e
 

@@ -1,12 +1,25 @@
 #!/usr/bin/env bash
 
-source ./scripts/env
+source ./scripts/env "$@"
+./scripts/print-env
 
-if [ "${BUILD:-true}" ]; then
-  ./scripts/build-prover.sh
+if [ -z "${ZKPOW_OUT_DIR}" ]; then
+  echo "ZKPOW_OUT_DIR is not set"
+  exit 1
 fi
 
-export LOG="$OUT_DIR/run.log"
-mkdir -p "$(dirname $LOG)"
+if [ "${ZKPOW_BUILD:-true}" ]; then
+  ./scripts/build.sh
+fi
 
-./target/release/zkpow-host | tee &>"$LOG"
+LOG="$ZKPOW_OUT_DIR/run.log"
+RUN_LOG="$ZKPOW_LOG_DIR/run.log"
+mkdir -p "$ZKPOW_LOG_DIR"
+mkdir -p "$ZKPOW_OUT_DIR"
+
+prog="./target/release/zkpow-host"
+if command -v bat >/dev/null  2>&1; then
+  #  ./target/release/zkpow-host | tee "$LOG" | bat --paging=never --filename="zkpow-host log"
+  #else
+  ./target/release/zkpow-host > >(tee -a "$LOG" "$RUN_LOG") 2> >(tee -a "$LOG" "$RUN_LOG" >&2)
+fi

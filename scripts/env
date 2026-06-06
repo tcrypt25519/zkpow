@@ -1,7 +1,9 @@
 #!/usr/bin/env sh
 
-# Runtime
-ZKPOW_ROOT="$(cd "$(dirname "$0")/.." >/dev/null 2>&1 && pwd)"
+# Set root directory if not already set
+if [ -z "${ZKPOW_ROOT}" ]; then
+  ZKPOW_ROOT="$(cd "$(dirname "$0")/.." >/dev/null 2>&1 && pwd)"
+fi
 export ZKPOW_ROOT
 
 # Load environment variables from .env file if it exists
@@ -10,22 +12,38 @@ if [ -f "${ENV_FILE:=$ZKPOW_ROOT/.env}" ]; then
   . "$ENV_FILE"
 fi
 
-TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
-export ZKPOW_OUT_DIR="${ZKPOW_OUT_DIR:-$ZKPOW_ROOT/profiling/runs/$TIMESTAMP}"
+# Set batch parameters from command line arguments if present, falling back to
+# pre-set env vars, and then default value if nothing else.
+if [ -n "$1" ]; then
+  ZKPOW_BATCH_SIZE="$1"
 
-# Defaults
+  if [ -n "$2" ]; then
+    ZKPOW_BATCH_COUNT="$2"
+  fi
+fi
 export ZKPOW_BATCH_SIZE="${ZKPOW_BATCH_SIZE:-2016}"
 export ZKPOW_BATCH_COUNT="${ZKPOW_BATCH_COUNT:-1000}"
+
+# Build
+export ZKPOW_BUILD="${ZKPOW_BUILD:-true}"
+
+# Inputs and output
+TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+export ZKPOW_LOG_DIR="${ZKPOW_OUT_DIR:-$ZKPOW_ROOT/logs}"
+export ZKPOW_OUT_DIR="${ZKPOW_OUT_DIR:-$ZKPOW_ROOT/profiling/runs/$TIMESTAMP}"
 export ZKPOW_DB_PATH="${ZKPOW_DB_PATH:-$ZKPOW_ROOT/headers.db}"
 
 # Rust
 export RUST_LOG="${RUST_LOG:-info}"
 export RUST_LOGGER=flat
-export RUST_BACKTRACE="${RUST_BACKTRACE:-1}"
+export RUST_BACKTRACE="${RUST_BACKTRACE:-full}"
 
 # SP1
-export ZKPOW_GUEST_PROFILING="${ZKPOW_GUEST_PROFILING:-0}"
-export TRACE_FILE="${TRACE_FILE:-trace.json}"
-export TRACE_SAMPLE_RATE="${TRACE_SAMPLE_RATE:-100}"
-export SP1_ENABLE_TOKIO_CONSOLE="${SP1_ENABLE_TOKIO_CONSOLE:-true}"
-export SP1_CORE="${SP1_CORE:-}"
+ZKPOW_GUEST_PROFILING="${ZKPOW_GUEST_PROFILING:-}"
+if [ -n "${ZKPOW_GUEST_PROFILING}" ]; then
+  export ZKPOW_GUEST_PROFILING
+  export TRACE_FILE="${TRACE_FILE:-trace.json}"
+  export TRACE_SAMPLE_RATE="${TRACE_SAMPLE_RATE:-100}"
+  export SP1_ENABLE_TOKIO_CONSOLE="${SP1_ENABLE_TOKIO_CONSOLE:-true}"
+  export SP1_CORE="${SP1_CORE:-debug}"
+fi

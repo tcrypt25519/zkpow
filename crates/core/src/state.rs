@@ -4,7 +4,7 @@ compile_error!("zkpow wire types require a little-endian target");
 use crate::{
     calculate_next_target_required, check_proof_of_work, copy_from_bytes, copy_to_bytes,
     ref_from_bytes, work_from_target, ApplyFailure, BlockHash, BlockTimestamp, ChainWork,
-    CompactTarget, Header, NewHeader, ParseError, PublicChainClaim, Target, ValidationErrorCode,
+    CompactTarget, Header, NewHeader, ParseError, PrivateContinuationState, PublicChainClaim, Target, ValidationErrorCode,
     EPOCH_LENGTH, PRIVATE_CONTINUATION_STATE_SIZE, STATE_SIZE, WINDOW_SIZE,
 };
 
@@ -106,25 +106,10 @@ impl State {
         }
     }
 
-    /// Serialize the private continuation fields directly to bytes,
-    /// bypassing [`PrivateContinuationState`](crate::PrivateContinuationState) construction.
+    /// Serialize the private continuation fields directly to bytes.
     #[must_use]
     pub fn continuation_bytes(&self) -> [u8; PRIVATE_CONTINUATION_STATE_SIZE] {
-        let mut out = [0u8; PRIVATE_CONTINUATION_STATE_SIZE];
-        out[0..4].copy_from_slice(self.current_nbits.to_le_bytes_slice());
-        out[4..36].copy_from_slice(self.current_work.to_le_bytes_slice());
-        out[36..68].copy_from_slice(self.current_target.to_le_bytes_slice());
-        out[68..72].copy_from_slice(self.epoch_start_timestamp.to_le_bytes_slice());
-        for (i, ts) in self.timestamps.iter().enumerate() {
-            out[72 + i * 4..72 + (i + 1) * 4].copy_from_slice(ts.to_le_bytes_slice());
-        }
-        out
-    }
-
-    /// The expanded proof-of-work target active at the current height.
-    #[must_use]
-    pub fn current_target(&self) -> Target {
-        self.current_target
+        PrivateContinuationState::from_state(self).to_bytes()
     }
 
     /// Compute the difficulty values that become active at a new epoch boundary.

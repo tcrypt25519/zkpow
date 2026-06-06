@@ -20,8 +20,9 @@ pub use state::{cycle_track, cycle_track_report, State};
 mod input;
 
 pub use input::{
-    Input, InputError, InputRef, MedianTimePastHintError, MedianTimePastHints,
-    MedianTimePastHintsRef, NewHeaderHintError, NewHeaderHints, NewHeaderHintsRef, RecursiveProof,
+    Input, InputError, MedianTimePastHintError, NewHeaderHintError, RecursiveProof,
+    serialize_new_headers, parse_new_headers, parse_new_headers_ref,
+    serialize_median_hints, parse_median_hints, parse_median_hints_ref,
 };
 
 /// Size of the serialized [`State`] in bytes.
@@ -32,8 +33,6 @@ pub const RECURSIVE_PROOF_SIZE: usize = size_of::<RecursiveProof>();
 
 /// Size of each [`NewHeader`] input from the prover.
 pub const NEW_HEADER_SIZE: usize = size_of::<NewHeader>();
-
-pub const PROOF_CARRYING_STATE_SIZE: usize = PUBLIC_CHAIN_CLAIM_SIZE + RECURSIVE_PROOF_SIZE;
 
 /// Size of a serialized Bitcoin block header in bytes.
 pub const BLOCK_HEADER_SIZE: usize = size_of::<Header>();
@@ -411,6 +410,17 @@ pub const PRIVATE_CONTINUATION_STATE_SIZE: usize = 4 + 32 + 32 + 4 + 4 * WINDOW_
 
 impl PrivateContinuationState {
     #[must_use]
+    pub fn from_state(state: &State) -> Self {
+        Self {
+            current_nbits: state.current_nbits,
+            current_work: state.current_work,
+            current_target: state.current_target,
+            epoch_start_timestamp: state.epoch_start_timestamp,
+            timestamps: state.timestamps,
+        }
+    }
+
+    #[must_use]
     pub fn to_bytes(&self) -> [u8; PRIVATE_CONTINUATION_STATE_SIZE] {
         let mut out = [0u8; PRIVATE_CONTINUATION_STATE_SIZE];
         out[0..4].copy_from_slice(self.current_nbits.to_le_bytes_slice());
@@ -446,54 +456,7 @@ impl PrivateContinuationState {
     }
 }
 
-/// Combined public + private validation state.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ValidationState {
-    pub public: PublicChainClaim,
-    pub private: PrivateContinuationState,
-}
-
-impl ValidationState {
-    /// Split a [`State`] into its public claim and private continuation.
-    #[must_use]
-    pub fn from_state(state: &State) -> Self {
-        Self {
-            public: PublicChainClaim {
-                genesis_hash: state.genesis_hash,
-                tip_hash: state.block_hash,
-                chain_work: state.chain_work,
-                height: state.height,
-            },
-            private: PrivateContinuationState {
-                current_nbits: state.current_nbits,
-                current_work: state.current_work,
-                current_target: state.current_target,
-                epoch_start_timestamp: state.epoch_start_timestamp,
-                timestamps: state.timestamps,
-            },
-        }
-    }
-
-    /// Reconstruct a [`State`] from the split representation.
-    ///
-    /// The `header` and `block_hash` fields of [`State`] are set from the
-    /// public claim's `tip_hash`; the full raw header is not available here.
-    #[must_use]
-    pub fn into_state(self) -> State {
-        State {
-            header: Header::default(),
-            block_hash: self.public.tip_hash,
-            genesis_hash: self.public.genesis_hash,
-            current_nbits: self.private.current_nbits,
-            height: self.public.height,
-            chain_work: self.public.chain_work,
-            current_work: self.private.current_work,
-            current_target: self.private.current_target,
-            epoch_start_timestamp: self.private.epoch_start_timestamp,
-            timestamps: self.private.timestamps,
-        }
-    }
-}
+// ValidationState has been removed as it was only used in tests.
 
 /// Validation status emitted by the program on failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -777,27 +740,12 @@ impl HeaderChainPublicValues {
 }
 
 /// Parse errors for committed public values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum PublicValuesParseError {
+    #[error("invalid public values length: expected 169, got {actual}")]
     InvalidLength { actual: usize },
+    #[error("unknown validation error code: {code}")]
     UnknownErrorCode { code: u8 },
-}
-
-impl core::fmt::Display for PublicValuesParseError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::InvalidLength { actual } => {
-                write!(
-                    f,
-                    "invalid public values length: expected {}, got {}",
-                    MINIMAL_PV_SIZE, actual
-                )
-            }
-            Self::UnknownErrorCode { code } => {
-                write!(f, "unknown validation error code: {}", code)
-            }
-        }
-    }
 }
 
 /// Convert a full 256-bit target into compact `bits` encoding.
@@ -1168,7 +1116,6 @@ mod tests {
         assert_eq!(RECURSIVE_PROOF_SIZE, 68);
         assert_eq!(STATE_SIZE, 296);
         assert_eq!(PUBLIC_CHAIN_CLAIM_SIZE, 100);
-        assert_eq!(PROOF_CARRYING_STATE_SIZE, 168);
         assert_eq!(PRIVATE_CONTINUATION_STATE_SIZE, 116);
         assert_eq!(MINIMAL_PV_SIZE, 169);
         assert_eq!(core::mem::align_of::<Header>(), 4);
@@ -1674,47 +1621,7 @@ mod tests {
     // Step 3: Public claim and continuation type tests
     // =========================================================================
 
-    #[test]
-    fn state_round_trips_through_validation_state() {
-        let state: State = State {
-            header: Header::default(),
-            block_hash: BlockHash::new([0xAB; 32]),
-            genesis_hash: BlockHash::new([0xCD; 32]),
-            current_nbits: CompactTarget::new(GENESIS_NBITS),
-            height: 42,
-            chain_work: ChainWork::from_limbs([1, 2, 3, 4]),
-            current_work: ChainWork::from_limbs([5, 6, 7, 8]),
-            current_target: GENESIS_TARGET,
-            epoch_start_timestamp: BlockTimestamp::new(1000),
-            timestamps: [BlockTimestamp::new(100); WINDOW_SIZE],
-        };
-
-        let vs = ValidationState::from_state(&state);
-        assert_eq!(vs.public.genesis_hash, state.genesis_hash);
-        assert_eq!(vs.public.tip_hash, state.block_hash);
-        assert_eq!(vs.public.chain_work, state.chain_work);
-        assert_eq!(vs.public.height, state.height);
-        assert_eq!(vs.private.current_nbits, state.current_nbits);
-        assert_eq!(vs.private.current_work, state.current_work);
-        assert_eq!(vs.private.current_target, state.current_target);
-        assert_eq!(
-            vs.private.epoch_start_timestamp,
-            state.epoch_start_timestamp
-        );
-        assert_eq!(vs.private.timestamps, state.timestamps);
-
-        let recovered: State = vs.into_state();
-        // header is zeroed in round-trip (not stored in split form)
-        assert_eq!(recovered.block_hash, state.block_hash);
-        assert_eq!(recovered.genesis_hash, state.genesis_hash);
-        assert_eq!(recovered.current_nbits, state.current_nbits);
-        assert_eq!(recovered.height, state.height);
-        assert_eq!(recovered.chain_work, state.chain_work);
-        assert_eq!(recovered.current_work, state.current_work);
-        assert_eq!(recovered.current_target, state.current_target);
-        assert_eq!(recovered.epoch_start_timestamp, state.epoch_start_timestamp);
-        assert_eq!(recovered.timestamps, state.timestamps);
-    }
+    // state_round_trips_through_validation_state has been removed since ValidationState is deleted.
 
     #[test]
     fn private_continuation_state_serializes_to_fixed_width() {
@@ -1741,8 +1648,8 @@ mod tests {
             timestamps: [BlockTimestamp::new(10); WINDOW_SIZE],
             ..Default::default()
         };
-        let vs = ValidationState::from_state(&state);
-        assert_eq!(state.continuation_bytes(), vs.private.to_bytes());
+        let pcs = PrivateContinuationState::from_state(&state);
+        assert_eq!(state.continuation_bytes(), pcs.to_bytes());
     }
 
     #[test]
