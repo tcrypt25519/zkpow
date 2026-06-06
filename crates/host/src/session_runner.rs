@@ -23,7 +23,7 @@ fn is_header_exhaustion_error(err: &BoxError) -> bool {
 
 pub async fn run_batch_session() -> Result<u32, BoxError> {
     let timestamp = session_timestamp();
-    let mut memory_history = StageHistory::new(["Batch start", "Before prove", "Batch end"]);
+    let mut memory_history = StageHistory::new(["Batch start", "Before work", "Batch end"]);
     memory_monitor::log_point(
         "session_memory_start",
         "Session memory snapshot before batches",
@@ -72,7 +72,7 @@ pub async fn run_batch_session() -> Result<u32, BoxError> {
 
         let start_memory = memory_monitor::log_point(
             "batch_memory_start",
-            "Batch memory snapshot before proof generation",
+            "Batch memory snapshot before batch work",
         );
         let batch_started = std::time::Instant::now();
 
@@ -97,7 +97,7 @@ pub async fn run_batch_session() -> Result<u32, BoxError> {
 
         let end_memory = memory_monitor::log_point(
             "batch_memory_after_drop",
-            "Batch memory snapshot after dropping proof artifacts",
+            "Batch memory snapshot after dropping batch artifacts",
         );
         if batch_config.execute_only {
             current_prev_proof = None;
@@ -112,26 +112,23 @@ pub async fn run_batch_session() -> Result<u32, BoxError> {
                 batch_count,
                 path.display()
             );
-        } else {
+        }
+        if memory_monitor::logging_enabled() {
             tracing::info!(
-                "=== Batch {} complete. Execute-only mode produced no chained proof ===",
-                batch_count
+                batch = batch_count,
+                first_new_height,
+                end_height,
+                elapsed_secs = batch_elapsed_secs,
+                "Batch memory summary after dropping batch artifacts"
+            );
+            memory_monitor::log_delta(
+                "batch_memory_after_drop",
+                start_memory,
+                end_memory,
+                batch_started.elapsed(),
+                "Batch memory summary after dropping batch artifacts",
             );
         }
-        tracing::info!(
-            batch = batch_count,
-            first_new_height,
-            end_height,
-            elapsed_secs = batch_elapsed_secs,
-            "Batch memory summary after dropping proof artifacts"
-        );
-        memory_monitor::log_delta(
-            "batch_memory_after_drop",
-            start_memory,
-            end_memory,
-            batch_started.elapsed(),
-            "Batch memory summary after dropping proof artifacts",
-        );
         memory_history.push_iteration([start_memory, before_prove_memory, end_memory])?;
     }
 

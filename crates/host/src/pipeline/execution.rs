@@ -217,7 +217,7 @@ where
             .map_err(|err| -> BoxError { err.to_string().into() })
     })
     .await?;
-    tracing::info!(prover = prover_name, "Execution completed");
+    let _ = prover_name;
 
     let execution_public_values = public_values.to_vec();
     verify_public_values(&execution_public_values, &expected_pv, "execution")?;

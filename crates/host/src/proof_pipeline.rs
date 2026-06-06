@@ -48,7 +48,9 @@ fn log_prover_backend_selection(config: &ProofGenerationConfig) {
 pub async fn generate_and_save_proofs(
     config: &ProofGenerationConfig,
 ) -> Result<ProofArtifacts, BoxError> {
-    log_prover_backend_selection(config);
+    if !config.execute_only {
+        log_prover_backend_selection(config);
+    }
     if config.execute_only && config.prover_backend == ProverBackend::Mock {
         return generate_execute_only_without_setup(config).await;
     }
