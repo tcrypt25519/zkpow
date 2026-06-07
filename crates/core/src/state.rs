@@ -5,8 +5,8 @@ use crate::{
     calculate_next_target_required, check_proof_of_work, copy_from_bytes, copy_to_bytes,
     ref_from_bytes, work_from_target, ApplyFailure, BlockHash, BlockTimestamp, ChainWork,
     CompactTarget, Header, NewHeader, ParseError, PrivateContinuationState, PublicChainClaim,
-    Target, ValidationErrorCode, EPOCH_LENGTH, PRIVATE_CONTINUATION_STATE_SIZE, STATE_SIZE,
-    WINDOW_SIZE,
+    Target, TargetError, ValidationErrorCode, EPOCH_LENGTH, PRIVATE_CONTINUATION_STATE_SIZE,
+    STATE_SIZE, WINDOW_SIZE,
 };
 
 /// Execute a closure while emitting stable, report-backed cycle-tracker markers in the guest.
@@ -117,15 +117,15 @@ impl State {
     fn prepare_new_epoch(
         &self,
         previous_timestamp: BlockTimestamp,
-    ) -> (CompactTarget, Target, ChainWork) {
+    ) -> Result<(CompactTarget, Target, ChainWork), TargetError> {
         cycle_track("state/prepare_new_epoch", || {
             let (current_nbits, current_target) = calculate_next_target_required(
                 self.current_target,
                 self.epoch_start_timestamp,
                 previous_timestamp,
             );
-            let current_work = work_from_target(current_target);
-            (current_nbits, current_target, current_work)
+            let current_work = work_from_target(current_target)?;
+            Ok((current_nbits, current_target, current_work))
         })
     }
 
@@ -241,7 +241,9 @@ impl State {
                     candidate_height.is_multiple_of(EPOCH_LENGTH)
                 }) {
                     flush_pending_chain_work(self, &mut pending_run_work, &mut pending_run_count);
-                    let prepared = self.prepare_new_epoch(previous_timestamp);
+                    let prepared = self
+                        .prepare_new_epoch(previous_timestamp)
+                        .expect("epoch target must not be u256::MAX — invalid blockchain data");
                     active_nbits = prepared.0;
                     active_target = prepared.1;
                     active_work = prepared.2;

@@ -201,7 +201,7 @@ pub fn genesis_state_from_record(genesis: HeaderRecord, genesis_hash: BlockHash)
         block_hash, genesis_hash,
         "configured genesis hash must match the supplied genesis header",
     );
-    let genesis_work = work_from_target(GENESIS_TARGET);
+    let genesis_work = work_from_target(GENESIS_TARGET).expect("GENESIS_TARGET is a valid target");
 
     let mut timestamps = [BlockTimestamp::default(); zkpow_core::WINDOW_SIZE];
     timestamps[0] = genesis.header.timestamp;
@@ -248,7 +248,7 @@ pub fn state_from_db_at_height(db_path: &str, height: u32, genesis_hash: BlockHa
         current_nbits: current.header.compact_target,
         height,
         chain_work: canonical_chain_work,
-        current_work: work_from_target(current_target),
+        current_work: work_from_target(current_target).expect("DB target must be a valid target"),
         current_target,
         epoch_start_timestamp: epoch_start_record.header.timestamp,
         timestamps,
@@ -389,7 +389,8 @@ mod tests {
         let mut state = State {
             height: timestamps.len() as u32 - 1,
             current_nbits: CompactTarget::new(GENESIS_NBITS),
-            current_work: work_from_target(GENESIS_TARGET),
+            current_work: work_from_target(GENESIS_TARGET)
+                .expect("GENESIS_TARGET is a valid target"),
             current_target: GENESIS_TARGET,
             ..State::default()
         };

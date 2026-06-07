@@ -197,6 +197,13 @@ pub enum ParseError {
     },
 }
 
+/// Target errors that occur during arithmetic
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum TargetError {
+    #[error("invalid target: can not be max u256")]
+    TargetTooLarge,
+}
+
 pub(crate) fn check_exact_len(bytes: &[u8], expected: usize) -> Result<(), ParseError> {
     cycle_track("util/check_exact_len", || {
         if bytes.len() != expected {
@@ -900,116 +907,89 @@ impl core::ops::Mul<u32> for ChainWork {
     }
 }
 
-/// TODO: Consider, maximum allowed target is < (#2^256)-1.
-/// So adding 1 can't carry into a fifth limb.
-/// Also, we could simply do a wrapping add 1.
-///   Carry if/only if it wraps to 0.
-///   First limb to not wrap stops the carry.
-fn target_plus_one(target: Target) -> [u64; 5] {
+/// Add one to a target, modifying the limbs in place.
+///
+/// A valid target can not be a max u256, so:
+///   - It can't carry over into a 5th limb
+///   - A carry can only start if the first limb is max u64
+///   - A carry can only continue if the next limb is a max u64
+///   - A max u64 with a carry-over of 1 becomes 0
+///
+/// We can iterate until we find a limb < max u64, add 1 to it, and we're done. As long as we find max u64 limbs we
+/// just set them to 0 and move forward. Iterating fully without hitting a non-max u64 indicates that we have bad
+/// data; the target is invalid and we return an error.
+fn increment_target(target_limbs: &mut [u64; 4]) -> Result<(), TargetError> {
     cycle_track("pow/work/target_plus_one", || {
-        let limbs = target.as_limbs();
-        let mut out = [0u64; 5];
-        let mut carry = 1u128;
-        for (i, limb_out) in out.iter_mut().enumerate().take(4) {
-            let sum = limbs[i] as u128 + carry;
-            *limb_out = sum as u64;
-            carry = sum >> 64;
+        for (i, limb) in target_limbs.iter_mut().enumerate().take(4) {
+            // This limb isn't saturated so it can't carry; add 1 and we're done.
+            if *limb < u64::max_value() {
+                *limb += 1;
+                break;
+            }
+
+            // If we're here at the last index then all limbs are saturated and the target is invalid.
+            if i == 3 {
+                return Err(TargetError::TargetTooLarge);
+            }
+
+            // This limb is saturated but not the final limb, so roll it over to 0 and proceed with the carry
+            *limb = 0;
         }
-        out[4] = carry as u64;
-        out
+        Ok(())
     })
 }
 
-fn u320_gte(lhs: &[u64; 5], rhs: &[u64; 5]) -> bool {
-    cycle_track("pow/work/u320_gte", || {
-        for i in (0..5).rev() {
-            if lhs[i] > rhs[i] {
-                return true;
-            }
-            if lhs[i] < rhs[i] {
-                return false;
-            }
-        }
-        true
-    })
-}
-
-fn u320_sub_assign(lhs: &mut [u64; 5], rhs: &[u64; 5]) {
-    cycle_track("pow/work/u320_sub_assign", || {
-        let mut borrow = 0u128;
-        for i in 0..5 {
-            let rhs = rhs[i] as u128 + borrow;
-            let lhs_limb = lhs[i] as u128;
-            if lhs_limb >= rhs {
-                lhs[i] = (lhs_limb - rhs) as u64;
-                borrow = 0;
-            } else {
-                lhs[i] = ((1u128 << 64) + lhs_limb - rhs) as u64;
-                borrow = 1;
-            }
-        }
-    })
-}
-
-fn u320_shl1(value: &mut [u64; 5]) {
-    cycle_track("pow/work/u320_shl1", || {
+/// Shift `value` left by one bit in place, returning the carry (the evicted MSB).
+fn shl1_with_carry(value: &mut u256) -> bool {
+    cycle_track("pow/work/shl1_with_carry", || {
+        let mut limbs = value.into_limbs();
         let mut carry = 0u64;
-        for limb in value.iter_mut() {
+        for limb in limbs.iter_mut() {
             let next_carry = *limb >> 63;
             *limb = (*limb << 1) | carry;
             carry = next_carry;
         }
+        *value = u256::from_limbs(limbs);
+        carry > 0
     })
 }
 
 /// Compute one-block cumulative-work units from the expanded target.
+///
+/// Uses non-restoring binary long division to compute `floor(2^256 / (target + 1))`.
+/// The loop processes 257 bits (indices 256 down to 0): at `bit == 256` we introduce
+/// the implicit leading 1 of the dividend `2^256`; for `bit < 256` we set the
+/// corresponding quotient bit when the remainder meets the divisor.
 #[must_use]
-pub fn work_from_target(target: Target) -> ChainWork {
+pub fn work_from_target(target: Target) -> Result<ChainWork, TargetError> {
     cycle_track("pow/work_from_target", || {
-        let divisor = target_plus_one(target);
-        if divisor == [1, 0, 0, 0, 0] {
-            return ChainWork::default();
-        }
+        let mut limbs = *target.as_limbs();
+        increment_target(&mut limbs)?;
+        let divisor = u256::from_limbs(limbs);
 
-        let mut remainder = [0u64; 5];
+        let mut remainder = u256::from_limbs([0u64; 4]);
         let mut quotient = [0u64; 4];
-        for bit in (0..=256).rev() {
-            u320_shl1(&mut remainder);
+        for bit in (0..=256u32).rev() {
+            // Shift remainder left, absorbing the next dividend bit.
+            // At bit == 256 the dividend is 2^256, so its MSB is 1; all lower bits are 0.
+            let carry = shl1_with_carry(&mut remainder);
             if bit == 256 {
-                remainder[0] |= 1;
+                // Inject the implicit leading 1 of 2^256 into the LSB of the shifted remainder.
+                let mut lims = remainder.into_limbs();
+                lims[0] |= 1;
+                remainder = u256::from_limbs(lims);
             }
-            if u320_gte(&remainder, &divisor) {
-                u320_sub_assign(&mut remainder, &divisor);
+            // If carry is set the remainder is effectively > 2^256, which is always >= divisor.
+            if carry || remainder.gte(divisor) {
+                let _ = remainder.sub_assign(divisor);
                 if bit < 256 {
                     quotient[(bit / 64) as usize] |= 1u64 << (bit % 64);
                 }
             }
         }
 
-        ChainWork::from_limbs(quotient)
+        Ok(ChainWork::from_limbs(quotient))
     })
-}
-
-fn retarget_target(old_target: Target, actual_timespan: u32, expected_timespan: u32) -> Target {
-    let old_u64 = old_target.as_limbs();
-
-    let mut product = [0u64; 4];
-    let mut carry = 0u128;
-    for i in 0..4 {
-        let prod = (old_u64[i] as u128) * (actual_timespan as u128) + carry;
-        product[i] = prod as u64;
-        carry = prod >> 64;
-    }
-
-    let mut result = [0u64; 4];
-    let mut remainder = 0u128;
-    for i in (0..4).rev() {
-        let val = (remainder << 64) | (product[i] as u128);
-        result[i] = (val / (expected_timespan as u128)) as u64;
-        remainder = val % (expected_timespan as u128);
-    }
-
-    Target::from_limbs(result)
 }
 
 /// Compute the compact and normalized full target required at a difficulty boundary.
@@ -1020,16 +1000,37 @@ pub fn calculate_next_target_required(
     previous_timestamp: BlockTimestamp,
 ) -> (CompactTarget, Target) {
     cycle_track("pow/calculate_next_target_required", || {
+        // Normalize the timespan to ensure it's within the min/max bounds allowed.
         let actual_timespan = i64::from(*previous_timestamp) - i64::from(*epoch_start_timestamp);
         let clamped_timespan = actual_timespan.clamp(MIN_EPOCH_TIMESPAN, MAX_EPOCH_TIMESPAN) as u32;
-        let mut calculated_target =
-            retarget_target(old_target, clamped_timespan, EXPECTED_EPOCH_TIMESPAN);
+
+        // Calculate the raw target value from the normalized previous target and the timespan.
+        let mut target_limbs = old_target.into_inner().into_limbs();
+        let mut carry = 0u128;
+        for limb in &mut target_limbs {
+            let product = (*limb as u128) * (clamped_timespan as u128) + carry;
+            *limb = product as u64;
+            carry = product >> 64;
+        }
+
+        let mut remainder = 0u128;
+        for limb in target_limbs.iter_mut().rev() {
+            let value = (remainder << 64) | (*limb as u128);
+            *limb = (value / (EXPECTED_EPOCH_TIMESPAN as u128)) as u64;
+            remainder = value % (EXPECTED_EPOCH_TIMESPAN as u128);
+        }
+
+        let mut calculated_target = Target::from_limbs(target_limbs);
+
+        // Normalize the new target to ensure an upper-bound (a minimum difficulty) and to handle the implicit
+        // truncation that occurs when round-tripping through the nbits format.
         if target_gt(calculated_target, GENESIS_TARGET) {
             calculated_target = GENESIS_TARGET;
         }
-
         let compact_target = target_to_bits(calculated_target);
         let normalized_target = target_from_bits(compact_target);
+
+        // The target is capped above and truncated below; return it and the compact form we calculated along the way.
         (compact_target, normalized_target)
     })
 }
@@ -1052,7 +1053,7 @@ mod tests {
     /// Convert compact `bits` into cumulative-work units using the genesis constant.
     #[must_use]
     pub fn genesis_work() -> ChainWork {
-        work_from_target(GENESIS_TARGET)
+        work_from_target(GENESIS_TARGET).expect("GENESIS_TARGET is a valid target")
     }
 
     fn test_state() -> State {
