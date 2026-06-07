@@ -1,0 +1,22 @@
+#!/usr/bin/env sh
+
+vars=$(env | grep -E "ZKPOW_|SP1_|RUST_LOG|RUST_BACKTRACE|TRACE_FILE|TRACE_SAMPLE_RATE")
+
+vars=$(
+  env | grep -E "^ZKPOW_|SP1_|RUST_LOG|RUST_BACKTRACE|TRACE_FILE|TRACE_SAMPLE_RATE" |
+    sed -E '
+    s/^ZKPOW_/1-&/
+    s/^RUST_/2-&/
+    s/^SP1_/3-&/
+    s/^TRACE_/4-&/
+  ' |
+    sort |
+    sed -E 's/^[0-9]-//'
+)
+
+if [ -z "$vars" ]; then
+  echo "No ZKPOW env vars"
+else
+  echo "ZKPOW env vars:"
+  echo "$vars"
+fi

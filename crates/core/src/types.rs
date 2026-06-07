@@ -19,6 +19,12 @@ impl u256 {
         &self.0
     }
 
+    /// Borrow the little-endian limbs mutably.
+    #[must_use]
+    pub const fn as_limbs_mut(&mut self) -> &mut [u64; 4] {
+        &mut self.0
+    }
+
     /// Consume into little-endian limbs.
     #[must_use]
     pub const fn into_limbs(self) -> [u64; 4] {

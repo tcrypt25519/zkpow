@@ -15,7 +15,7 @@ pub struct PreparedBatch {
     pub previous_proof: Option<SP1ProofWithPublicValues>,
     pub current_state: util::State,
     pub headers: Vec<util::NewHeader>,
-    pub median_hints: util::MedianTimePastHints,
+    pub median_hints: Vec<util::BlockTimestamp>,
     pub expected_state: util::State,
     pub expected_continuation_digest: [u8; 32],
     pub first_new_height: u32,
@@ -34,24 +34,22 @@ pub fn prepare_batch(
     let previous_proof = load_previous_proof(config)?;
     let current_state = resolve_current_state(config, genesis_hash, previous_proof.as_ref())?;
     let first_new_height = current_state.height + 1;
-    let header_records = load_header_records(config, first_new_height)?;
-    if header_records.is_empty() {
+    let witness = load_header_witness(config, first_new_height)?;
+    if witness.headers.is_empty() {
         return Err(format!(
             "{NO_HEADERS_REMAINING_PREFIX}: starting at height {}",
             first_new_height
         )
         .into());
     }
-    let headers = decode_headers(&header_records)?;
-    let median_hints = load_median_time_past_hints(&header_records)?;
-    let loaded_count = headers.len() as u32;
+    let loaded_count = witness.headers.len() as u32;
     let end_height = current_state.height + loaded_count;
     let expected_state = simulate_expected_state(
         config,
         genesis_hash,
         &current_state,
-        &headers,
-        &median_hints,
+        &witness.headers,
+        &witness.median_time_past_hints,
         first_new_height,
         end_height,
     )?;
@@ -60,8 +58,8 @@ pub fn prepare_batch(
     Ok(PreparedBatch {
         previous_proof,
         current_state,
-        headers,
-        median_hints,
+        headers: witness.headers,
+        median_hints: witness.median_time_past_hints,
         expected_state,
         expected_continuation_digest,
         first_new_height,
@@ -89,6 +87,9 @@ fn resolve_current_state(
     timed_sync("resolve_current_state", || -> Result<_, BoxError> {
         let db_path = path_to_str(&config.db_path)?;
         if let Some(prev_proof) = previous_proof {
+            if config.trusted_start_height.is_some() {
+                return Err("trusted start height cannot be combined with a previous proof".into());
+            }
             let prev_public_values =
                 HeaderChainPublicValues::parse(prev_proof.public_values.as_ref())
                     .map_err(|err| err.to_string())?;
@@ -118,34 +119,24 @@ fn resolve_current_state(
             return Ok(state);
         }
 
+        if let Some(height) = config.trusted_start_height {
+            return Ok(util::state_from_db_at_height(db_path, height, genesis_hash));
+        }
+
         Ok(util::state_from_db_at_height(db_path, 0, genesis_hash))
     })
 }
 
-fn load_header_records(
+fn load_header_witness(
     config: &ProofGenerationConfig,
     first_new_height: u32,
-) -> Result<Vec<util::HeaderRecord>, BoxError> {
-    timed_sync("load_header_records", || -> Result<_, BoxError> {
-        Ok(util::load_header_records_from_db(
+) -> Result<util::HeaderBatchWitness, BoxError> {
+    timed_sync("load_header_witness", || -> Result<_, BoxError> {
+        Ok(util::load_header_batch_witness_from_db(
             path_to_str(&config.db_path)?,
             first_new_height as u64,
             config.num_headers as u64,
         ))
-    })
-}
-
-fn decode_headers(records: &[util::HeaderRecord]) -> Result<Vec<util::NewHeader>, BoxError> {
-    timed_sync("decode_headers", || -> Result<_, BoxError> {
-        Ok(util::records_to_new_headers(records))
-    })
-}
-
-fn load_median_time_past_hints(
-    records: &[util::HeaderRecord],
-) -> Result<util::MedianTimePastHints, BoxError> {
-    timed_sync("load_median_time_past_hints", || -> Result<_, BoxError> {
-        Ok(util::median_time_past_hints_from_records(records))
     })
 }
 
@@ -154,7 +145,7 @@ fn simulate_expected_state(
     genesis_hash: util::BlockHash,
     current_state: &util::State,
     headers: &[util::NewHeader],
-    median_hints: &util::MedianTimePastHints,
+    median_hints: &[util::BlockTimestamp],
     first_new_height: u32,
     end_height: u32,
 ) -> Result<util::State, BoxError> {
@@ -201,4 +192,45 @@ fn simulate_expected_state(
         format_claim_mismatch(&actual_claim, &expected_claim),
     )
     .into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pipeline::ProverBackend;
+
+    fn test_config(trusted_start_height: Option<u32>) -> ProofGenerationConfig {
+        ProofGenerationConfig {
+            prev_proof_path: None,
+            trusted_start_height,
+            num_headers: 1,
+            batch_count: 1,
+            db_path: concat!(env!("CARGO_MANIFEST_DIR"), "/../../headers.db").into(),
+            output_dir: ".".into(),
+            generate_groth16: false,
+            execute_only: true,
+            prover_backend: ProverBackend::Mock,
+            cuda_device_id: None,
+        }
+    }
+
+    #[test]
+    fn prepare_batch_starts_at_genesis_without_resume_cursor() {
+        let genesis_hash = crate::pipeline::input::parse_genesis_hash().unwrap();
+
+        let batch = prepare_batch(&test_config(None), genesis_hash).unwrap();
+
+        assert_eq!(batch.first_new_height, 1);
+        assert_eq!(batch.end_height, 1);
+    }
+
+    #[test]
+    fn prepare_batch_uses_trusted_start_height_as_resume_cursor() {
+        let genesis_hash = crate::pipeline::input::parse_genesis_hash().unwrap();
+
+        let batch = prepare_batch(&test_config(Some(2016)), genesis_hash).unwrap();
+
+        assert_eq!(batch.first_new_height, 2017);
+        assert_eq!(batch.end_height, 2017);
+    }
 }

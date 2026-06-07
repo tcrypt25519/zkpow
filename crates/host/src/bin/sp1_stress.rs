@@ -27,7 +27,7 @@ use zkpow_host::observability;
 use zkpow_host::pipeline::input::{
     ENV_ZKPOW_BATCH_SIZE, ENV_ZKPOW_DB_PATH, ENV_ZKPOW_EXECUTE_ONLY,
 };
-use zkpow_host::proof_pipeline::{generate_and_save_proofs, ProofGenerationConfig, ProverBackend};
+use zkpow_host::pipeline::{generate_and_save_proofs, ProofGenerationConfig, ProverBackend};
 
 #[cfg(feature = "memory-diagnostics")]
 #[global_allocator]
@@ -56,8 +56,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let execute_only = std::env::var(ENV_ZKPOW_EXECUTE_ONLY)
         .ok()
-        .map(|v| v == "1" || v.to_ascii_lowercase() == "true")
-        .unwrap_or(false);
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(true);
 
     tracing::info!(
         iterations,
@@ -78,6 +78,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     for i in 1..=iterations {
         let config = ProofGenerationConfig {
             prev_proof_path: prev_proof_path.clone(),
+            trusted_start_height: None,
             num_headers,
             db_path: std::env::var(ENV_ZKPOW_DB_PATH)
                 .ok()

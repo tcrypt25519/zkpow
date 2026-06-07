@@ -5,6 +5,7 @@
 extern crate alloc;
 
 use core::{
+    cmp::Ordering,
     mem::{align_of, size_of, MaybeUninit},
     ptr, slice,
 };
@@ -20,8 +21,8 @@ pub use state::{cycle_track, cycle_track_report, State};
 mod input;
 
 pub use input::{
-    Input, InputError, InputRef, MedianTimePastHintError, MedianTimePastHints,
-    MedianTimePastHintsRef, NewHeaderHintError, NewHeaderHints, NewHeaderHintsRef, RecursiveProof,
+    parse_median_hints, parse_new_headers, serialize_median_hints, serialize_new_headers, Input,
+    InputError, MedianTimePastHintError, NewHeaderHintError, RecursiveProof,
 };
 
 /// Size of the serialized [`State`] in bytes.
@@ -32,8 +33,6 @@ pub const RECURSIVE_PROOF_SIZE: usize = size_of::<RecursiveProof>();
 
 /// Size of each [`NewHeader`] input from the prover.
 pub const NEW_HEADER_SIZE: usize = size_of::<NewHeader>();
-
-pub const PROOF_CARRYING_STATE_SIZE: usize = PUBLIC_CHAIN_CLAIM_SIZE + RECURSIVE_PROOF_SIZE;
 
 /// Size of a serialized Bitcoin block header in bytes.
 pub const BLOCK_HEADER_SIZE: usize = size_of::<Header>();
@@ -197,6 +196,13 @@ pub enum ParseError {
         needed: usize,
         actual: usize,
     },
+}
+
+/// Target errors that occur during arithmetic
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum TargetError {
+    #[error("invalid target: can not be max u256")]
+    TargetTooLarge,
 }
 
 pub(crate) fn check_exact_len(bytes: &[u8], expected: usize) -> Result<(), ParseError> {
@@ -411,6 +417,17 @@ pub const PRIVATE_CONTINUATION_STATE_SIZE: usize = 4 + 32 + 32 + 4 + 4 * WINDOW_
 
 impl PrivateContinuationState {
     #[must_use]
+    pub fn from_state(state: &State) -> Self {
+        Self {
+            current_nbits: state.current_nbits,
+            current_work: state.current_work,
+            current_target: state.current_target,
+            epoch_start_timestamp: state.epoch_start_timestamp,
+            timestamps: state.timestamps,
+        }
+    }
+
+    #[must_use]
     pub fn to_bytes(&self) -> [u8; PRIVATE_CONTINUATION_STATE_SIZE] {
         let mut out = [0u8; PRIVATE_CONTINUATION_STATE_SIZE];
         out[0..4].copy_from_slice(self.current_nbits.to_le_bytes_slice());
@@ -446,54 +463,7 @@ impl PrivateContinuationState {
     }
 }
 
-/// Combined public + private validation state.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ValidationState {
-    pub public: PublicChainClaim,
-    pub private: PrivateContinuationState,
-}
-
-impl ValidationState {
-    /// Split a [`State`] into its public claim and private continuation.
-    #[must_use]
-    pub fn from_state(state: &State) -> Self {
-        Self {
-            public: PublicChainClaim {
-                genesis_hash: state.genesis_hash,
-                tip_hash: state.block_hash,
-                chain_work: state.chain_work,
-                height: state.height,
-            },
-            private: PrivateContinuationState {
-                current_nbits: state.current_nbits,
-                current_work: state.current_work,
-                current_target: state.current_target,
-                epoch_start_timestamp: state.epoch_start_timestamp,
-                timestamps: state.timestamps,
-            },
-        }
-    }
-
-    /// Reconstruct a [`State`] from the split representation.
-    ///
-    /// The `header` and `block_hash` fields of [`State`] are set from the
-    /// public claim's `tip_hash`; the full raw header is not available here.
-    #[must_use]
-    pub fn into_state(self) -> State {
-        State {
-            header: Header::default(),
-            block_hash: self.public.tip_hash,
-            genesis_hash: self.public.genesis_hash,
-            current_nbits: self.private.current_nbits,
-            height: self.public.height,
-            chain_work: self.public.chain_work,
-            current_work: self.private.current_work,
-            current_target: self.private.current_target,
-            epoch_start_timestamp: self.private.epoch_start_timestamp,
-            timestamps: self.private.timestamps,
-        }
-    }
-}
+// ValidationState has been removed as it was only used in tests.
 
 /// Validation status emitted by the program on failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -800,6 +770,8 @@ impl core::fmt::Display for PublicValuesParseError {
     }
 }
 
+impl core::error::Error for PublicValuesParseError {}
+
 /// Convert a full 256-bit target into compact `bits` encoding.
 #[must_use]
 pub fn target_to_bits(target: Target) -> CompactTarget {
@@ -936,116 +908,123 @@ impl core::ops::Mul<u32> for ChainWork {
     }
 }
 
-/// TODO: Consider, maximum allowed target is < (#2^256)-1.
-/// So adding 1 can't carry into a fifth limb.
-/// Also, we could simply do a wrapping add 1.
-///   Carry if/only if it wraps to 0.
-///   First limb to not wrap stops the carry.
-fn target_plus_one(target: Target) -> [u64; 5] {
+/// Subtract `rhs` from `self` in place. Returns `true` if there was an underflow (borrow out).
+#[must_use]
+fn sub_assign(lhs: &mut u256, rhs: u256) -> bool {
+    let mut borrow = false;
+
+    let lhs_limbs: &mut [u64; 4] = lhs.as_limbs_mut();
+    let rhs_limbs = rhs.as_limbs();
+
+    let (a, b1) = lhs_limbs[0].overflowing_sub(rhs_limbs[0]);
+    let (a, b2) = a.overflowing_sub(borrow as u64);
+    lhs_limbs[0] = a;
+    borrow = b1 || b2;
+
+    let (a, b1) = lhs_limbs[1].overflowing_sub(rhs_limbs[1]);
+    let (a, b2) = a.overflowing_sub(borrow as u64);
+    lhs_limbs[1] = a;
+    borrow = b1 || b2;
+
+    let (a, b1) = lhs_limbs[2].overflowing_sub(rhs_limbs[2]);
+    let (a, b2) = a.overflowing_sub(borrow as u64);
+    lhs_limbs[2] = a;
+    borrow = b1 || b2;
+
+    let (a, b1) = lhs_limbs[3].overflowing_sub(rhs_limbs[3]);
+    let (a, b2) = a.overflowing_sub(borrow as u64);
+    lhs_limbs[3] = a;
+    borrow = b1 || b2;
+
+    borrow
+}
+
+/// Add one to a target, modifying the limbs in place.
+///
+/// A valid target can not be a max u256, so:
+///   - It can't carry over into a 5th limb
+///   - A carry can only start if the first limb is max u64
+///   - A carry can only continue if the next limb is a max u64
+///   - A max u64 with a carry-over of 1 becomes 0
+///
+/// We can iterate until we find a limb < max u64, add 1 to it, and we're done. As long as we find max u64 limbs we
+/// just set them to 0 and move forward. Iterating fully without hitting a non-max u64 indicates that we have bad
+/// data; the target is invalid and we return an error.
+#[must_use]
+fn increment_target(target_limbs: &mut [u64; 4]) -> Result<(), TargetError> {
     cycle_track("pow/work/target_plus_one", || {
-        let limbs = target.as_limbs();
-        let mut out = [0u64; 5];
-        let mut carry = 1u128;
-        for (i, limb_out) in out.iter_mut().enumerate().take(4) {
-            let sum = limbs[i] as u128 + carry;
-            *limb_out = sum as u64;
-            carry = sum >> 64;
+        for (i, limb) in target_limbs.iter_mut().enumerate().take(4) {
+            // This limb isn't saturated so it can't carry; add 1 and we're done.
+            if *limb < u64::max_value() {
+                *limb += 1;
+                break;
+            }
+
+            // If we're here at the last index then all limbs are saturated and the target is invalid.
+            if i == 3 {
+                return Err(TargetError::TargetTooLarge);
+            }
+
+            // This limb is saturated but not the final limb, so roll it over to 0 and proceed with the carry
+            *limb = 0;
         }
-        out[4] = carry as u64;
-        out
+        Ok(())
     })
 }
 
-fn u320_gte(lhs: &[u64; 5], rhs: &[u64; 5]) -> bool {
-    cycle_track("pow/work/u320_gte", || {
-        for i in (0..5).rev() {
-            if lhs[i] > rhs[i] {
-                return true;
-            }
-            if lhs[i] < rhs[i] {
-                return false;
-            }
-        }
-        true
-    })
-}
-
-fn u320_sub_assign(lhs: &mut [u64; 5], rhs: &[u64; 5]) {
-    cycle_track("pow/work/u320_sub_assign", || {
-        let mut borrow = 0u128;
-        for i in 0..5 {
-            let rhs = rhs[i] as u128 + borrow;
-            let lhs_limb = lhs[i] as u128;
-            if lhs_limb >= rhs {
-                lhs[i] = (lhs_limb - rhs) as u64;
-                borrow = 0;
-            } else {
-                lhs[i] = ((1u128 << 64) + lhs_limb - rhs) as u64;
-                borrow = 1;
-            }
-        }
-    })
-}
-
-fn u320_shl1(value: &mut [u64; 5]) {
-    cycle_track("pow/work/u320_shl1", || {
+/// Shift `value` left by one bit in place, returning the carry (the evicted MSB).
+#[must_use]
+fn shl1_with_carry(value: &mut u256) -> bool {
+    cycle_track("pow/work/shl1_with_carry", || {
+        let mut limbs = value.into_limbs();
         let mut carry = 0u64;
-        for limb in value.iter_mut() {
+        for limb in limbs.iter_mut() {
             let next_carry = *limb >> 63;
             *limb = (*limb << 1) | carry;
             carry = next_carry;
         }
+        *value = u256::from_limbs(limbs);
+        carry > 0
     })
 }
 
 /// Compute one-block cumulative-work units from the expanded target.
+///
+/// Uses non-restoring binary long division to compute `floor(2^256 / (target + 1))`.
+/// The loop processes 257 bits (indices 256 down to 0): at `bit == 256` we introduce
+/// the implicit leading 1 of the dividend `2^256`; for `bit < 256` we set the
+/// corresponding quotient bit when the remainder meets the divisor.
 #[must_use]
-pub fn work_from_target(target: Target) -> ChainWork {
+pub fn work_from_target(target: Target) -> Result<ChainWork, TargetError> {
     cycle_track("pow/work_from_target", || {
-        let divisor = target_plus_one(target);
-        if divisor == [1, 0, 0, 0, 0] {
-            return ChainWork::default();
-        }
+        let mut limbs = *target.as_limbs();
+        increment_target(&mut limbs)?;
+        let divisor = u256::from_limbs(limbs);
 
-        let mut remainder = [0u64; 5];
+        let mut remainder = u256::from_limbs([0u64; 4]);
         let mut quotient = [0u64; 4];
-        for bit in (0..=256).rev() {
-            u320_shl1(&mut remainder);
+        for bit in (0..=256u32).rev() {
+            // Shift remainder left, absorbing the next dividend bit.
+            // At bit == 256 the dividend is 2^256, so its MSB is 1; all lower bits are 0.
+            let carry = shl1_with_carry(&mut remainder);
             if bit == 256 {
-                remainder[0] |= 1;
+                // Inject the implicit leading 1 of 2^256 into the LSB of the shifted remainder.
+                let mut limbs = remainder.into_limbs();
+                limbs[0] |= 1;
+                remainder = u256::from_limbs(limbs);
             }
-            if u320_gte(&remainder, &divisor) {
-                u320_sub_assign(&mut remainder, &divisor);
+            // If carry is set the remainder is effectively > 2^256, which is always >= divisor.
+
+            if carry || u256_cmp(&remainder, &divisor) != Ordering::Less {
+                let _ = sub_assign(&mut remainder, divisor);
                 if bit < 256 {
                     quotient[(bit / 64) as usize] |= 1u64 << (bit % 64);
                 }
             }
         }
 
-        ChainWork::from_limbs(quotient)
+        Ok(ChainWork::from_limbs(quotient))
     })
-}
-
-fn retarget_target(old_target: Target, actual_timespan: u32, expected_timespan: u32) -> Target {
-    let old_u64 = old_target.as_limbs();
-
-    let mut product = [0u64; 4];
-    let mut carry = 0u128;
-    for i in 0..4 {
-        let prod = (old_u64[i] as u128) * (actual_timespan as u128) + carry;
-        product[i] = prod as u64;
-        carry = prod >> 64;
-    }
-
-    let mut result = [0u64; 4];
-    let mut remainder = 0u128;
-    for i in (0..4).rev() {
-        let val = (remainder << 64) | (product[i] as u128);
-        result[i] = (val / (expected_timespan as u128)) as u64;
-        remainder = val % (expected_timespan as u128);
-    }
-
-    Target::from_limbs(result)
 }
 
 /// Compute the compact and normalized full target required at a difficulty boundary.
@@ -1056,16 +1035,37 @@ pub fn calculate_next_target_required(
     previous_timestamp: BlockTimestamp,
 ) -> (CompactTarget, Target) {
     cycle_track("pow/calculate_next_target_required", || {
+        // Normalize the timespan to ensure it's within the min/max bounds allowed.
         let actual_timespan = i64::from(*previous_timestamp) - i64::from(*epoch_start_timestamp);
         let clamped_timespan = actual_timespan.clamp(MIN_EPOCH_TIMESPAN, MAX_EPOCH_TIMESPAN) as u32;
-        let mut calculated_target =
-            retarget_target(old_target, clamped_timespan, EXPECTED_EPOCH_TIMESPAN);
+
+        // Calculate the raw target value from the normalized previous target and the timespan.
+        let mut target_limbs = old_target.into_inner().into_limbs();
+        let mut carry = 0u128;
+        for limb in &mut target_limbs {
+            let product = (*limb as u128) * (clamped_timespan as u128) + carry;
+            *limb = product as u64;
+            carry = product >> 64;
+        }
+
+        let mut remainder = 0u128;
+        for limb in target_limbs.iter_mut().rev() {
+            let value = (remainder << 64) | (*limb as u128);
+            *limb = (value / (EXPECTED_EPOCH_TIMESPAN as u128)) as u64;
+            remainder = value % (EXPECTED_EPOCH_TIMESPAN as u128);
+        }
+
+        let mut calculated_target = Target::from_limbs(target_limbs);
+
+        // Normalize the new target to ensure an upper-bound (a minimum difficulty) and to handle the implicit
+        // truncation that occurs when round-tripping through the nbits format.
         if target_gt(calculated_target, GENESIS_TARGET) {
             calculated_target = GENESIS_TARGET;
         }
-
         let compact_target = target_to_bits(calculated_target);
         let normalized_target = target_from_bits(compact_target);
+
+        // The target is capped above and truncated below; return it and the compact form we calculated along the way.
         (compact_target, normalized_target)
     })
 }
@@ -1088,7 +1088,7 @@ mod tests {
     /// Convert compact `bits` into cumulative-work units using the genesis constant.
     #[must_use]
     pub fn genesis_work() -> ChainWork {
-        work_from_target(GENESIS_TARGET)
+        work_from_target(GENESIS_TARGET).expect("GENESIS_TARGET is a valid target")
     }
 
     fn test_state() -> State {
@@ -1168,7 +1168,6 @@ mod tests {
         assert_eq!(RECURSIVE_PROOF_SIZE, 68);
         assert_eq!(STATE_SIZE, 296);
         assert_eq!(PUBLIC_CHAIN_CLAIM_SIZE, 100);
-        assert_eq!(PROOF_CARRYING_STATE_SIZE, 168);
         assert_eq!(PRIVATE_CONTINUATION_STATE_SIZE, 116);
         assert_eq!(MINIMAL_PV_SIZE, 169);
         assert_eq!(core::mem::align_of::<Header>(), 4);
@@ -1674,47 +1673,7 @@ mod tests {
     // Step 3: Public claim and continuation type tests
     // =========================================================================
 
-    #[test]
-    fn state_round_trips_through_validation_state() {
-        let state: State = State {
-            header: Header::default(),
-            block_hash: BlockHash::new([0xAB; 32]),
-            genesis_hash: BlockHash::new([0xCD; 32]),
-            current_nbits: CompactTarget::new(GENESIS_NBITS),
-            height: 42,
-            chain_work: ChainWork::from_limbs([1, 2, 3, 4]),
-            current_work: ChainWork::from_limbs([5, 6, 7, 8]),
-            current_target: GENESIS_TARGET,
-            epoch_start_timestamp: BlockTimestamp::new(1000),
-            timestamps: [BlockTimestamp::new(100); WINDOW_SIZE],
-        };
-
-        let vs = ValidationState::from_state(&state);
-        assert_eq!(vs.public.genesis_hash, state.genesis_hash);
-        assert_eq!(vs.public.tip_hash, state.block_hash);
-        assert_eq!(vs.public.chain_work, state.chain_work);
-        assert_eq!(vs.public.height, state.height);
-        assert_eq!(vs.private.current_nbits, state.current_nbits);
-        assert_eq!(vs.private.current_work, state.current_work);
-        assert_eq!(vs.private.current_target, state.current_target);
-        assert_eq!(
-            vs.private.epoch_start_timestamp,
-            state.epoch_start_timestamp
-        );
-        assert_eq!(vs.private.timestamps, state.timestamps);
-
-        let recovered: State = vs.into_state();
-        // header is zeroed in round-trip (not stored in split form)
-        assert_eq!(recovered.block_hash, state.block_hash);
-        assert_eq!(recovered.genesis_hash, state.genesis_hash);
-        assert_eq!(recovered.current_nbits, state.current_nbits);
-        assert_eq!(recovered.height, state.height);
-        assert_eq!(recovered.chain_work, state.chain_work);
-        assert_eq!(recovered.current_work, state.current_work);
-        assert_eq!(recovered.current_target, state.current_target);
-        assert_eq!(recovered.epoch_start_timestamp, state.epoch_start_timestamp);
-        assert_eq!(recovered.timestamps, state.timestamps);
-    }
+    // state_round_trips_through_validation_state has been removed since ValidationState is deleted.
 
     #[test]
     fn private_continuation_state_serializes_to_fixed_width() {
@@ -1741,8 +1700,8 @@ mod tests {
             timestamps: [BlockTimestamp::new(10); WINDOW_SIZE],
             ..Default::default()
         };
-        let vs = ValidationState::from_state(&state);
-        assert_eq!(state.continuation_bytes(), vs.private.to_bytes());
+        let pcs = PrivateContinuationState::from_state(&state);
+        assert_eq!(state.continuation_bytes(), pcs.to_bytes());
     }
 
     #[test]

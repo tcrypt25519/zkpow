@@ -3,10 +3,11 @@ use sp1_sdk::prelude::*;
 use sp1_sdk::ExecutionReport;
 
 use crate::memory_monitor;
+use crate::pipeline::batch::PreparedBatch;
 use crate::pipeline::diagnostics::{timed_async, timed_sync};
 use crate::pipeline::input::{build_recursive_proof, build_stdin};
 use crate::pipeline::BoxError;
-use crate::proof_pipeline::ELF;
+use crate::pipeline::ELF;
 use crate::util;
 use crate::util::{HeaderChainPublicValues, Input, VerifierKeyDigest};
 
@@ -20,12 +21,16 @@ pub(crate) struct ExecutedBatchArtifacts {
 pub(crate) struct UnprovenBatchInput<'a> {
     pub(crate) current_state: &'a util::State,
     pub(crate) headers: &'a [util::NewHeader],
-    pub(crate) median_hints: &'a util::MedianTimePastHints,
+    pub(crate) median_hints: &'a [util::BlockTimestamp],
     pub(crate) expected_state: &'a util::State,
     pub(crate) expected_continuation_digest: [u8; 32],
 }
 
-pub(crate) fn verify_public_values(pv: &[u8], expected_pv: &[u8], label: &str) -> Result<(), BoxError> {
+pub(crate) fn verify_public_values(
+    pv: &[u8],
+    expected_pv: &[u8],
+    label: &str,
+) -> Result<(), BoxError> {
     let parsed = HeaderChainPublicValues::parse(pv).map_err(|err| err.to_string())?;
     match parsed {
         HeaderChainPublicValues::Success { .. } => {
@@ -80,39 +85,34 @@ pub(crate) async fn execute_batch_with_prover<P, K>(
     prover_name: &str,
     prover: &P,
     proving_key: &K,
-    current_state: &util::State,
-    previous_proof: Option<&SP1ProofWithPublicValues>,
-    headers: &[util::NewHeader],
-    median_hints: &util::MedianTimePastHints,
-    expected_pv_parts: (&util::State, [u8; 32]),
+    batch: &PreparedBatch,
 ) -> Result<ExecutedBatchArtifacts, BoxError>
 where
     P: Prover<ProvingKey = K>,
     K: ProvingKey,
     P::Error: std::fmt::Display + Send + Sync + 'static,
 {
-    let (expected_state, expected_continuation_digest) = expected_pv_parts;
     let expected_pv = util::MinimalPublicValues::success(
-        &expected_state.public_claim(),
-        expected_continuation_digest,
+        &batch.expected_state.public_claim(),
+        batch.expected_continuation_digest,
         VerifierKeyDigest::from_raw(proving_key.verifying_key().hash_u32()),
     )
     .to_bytes()
     .to_vec();
     let recursive_proof = timed_sync("build_recursive_proof", || {
-        build_recursive_proof(proving_key.verifying_key(), previous_proof)
+        build_recursive_proof(proving_key.verifying_key(), batch.previous_proof.as_ref())
     })?;
-    let input = timed_sync("build_input", || -> Result<_, BoxError> {
-        Ok(Input::new(current_state.public_claim(), recursive_proof))
-    })?;
+    let input = Input::new(batch.current_state.public_claim(), recursive_proof);
     let stdin = timed_sync("serialize_input", || {
         build_stdin(
             &input,
-            current_state,
-            headers,
-            median_hints,
-            previous_proof,
-            proving_key.verifying_key(),
+            &batch.current_state,
+            &batch.headers,
+            &batch.median_hints,
+            batch
+                .previous_proof
+                .as_ref()
+                .map(|p| (p, proving_key.verifying_key())),
         )
     })?;
 
@@ -160,7 +160,6 @@ where
 }
 
 pub(crate) async fn execute_batch_without_proof<P>(
-    prover_name: &str,
     prover: &P,
     batch: UnprovenBatchInput<'_>,
 ) -> Result<ExecutedBatchArtifacts, BoxError>
@@ -176,27 +175,28 @@ where
     )
     .to_bytes()
     .to_vec();
-    let input = timed_sync("build_input", || -> Result<_, BoxError> {
-        Ok(Input::new(
-            batch.current_state.public_claim(),
-            util::RecursiveProof {
-                verifier_key,
-                ..Default::default()
-            },
-        ))
-    })?;
-    let stdin = timed_sync("serialize_input", || -> Result<SP1Stdin, BoxError> {
-        let mut stdin = SP1Stdin::new();
-        stdin.write_vec(input.to_bytes());
-        stdin.write_vec(batch.current_state.to_bytes().to_vec());
-        stdin.write_vec(
-            util::NewHeaderHintsRef {
-                headers: batch.headers,
-            }
-            .to_bytes(),
-        );
-        stdin.write_vec(batch.median_hints.to_bytes());
-        Ok(stdin)
+    let continuation_digest = util::continuation_digest_from_state(batch.current_state);
+    let prior_public_values = util::MinimalPublicValues::success(
+        &batch.current_state.public_claim(),
+        continuation_digest,
+        verifier_key,
+    );
+    let recursive_proof = util::RecursiveProof {
+        verifier_key,
+        public_values_digest: util::PublicValuesDigest::from_raw(util::compute_pv_digest(
+            &prior_public_values.to_bytes(),
+        )),
+        ..Default::default()
+    };
+    let input = Input::new(batch.current_state.public_claim(), recursive_proof);
+    let stdin = timed_sync("serialize_input", || {
+        build_stdin(
+            &input,
+            batch.current_state,
+            batch.headers,
+            batch.median_hints,
+            None,
+        )
     })?;
 
     let (public_values, report) = timed_async("execute_program", || async {
@@ -207,7 +207,6 @@ where
             .map_err(|err| -> BoxError { err.to_string().into() })
     })
     .await?;
-    tracing::info!(prover = prover_name, "Execution completed");
 
     let execution_public_values = public_values.to_vec();
     verify_public_values(&execution_public_values, &expected_pv, "execution")?;

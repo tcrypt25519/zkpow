@@ -23,38 +23,7 @@ pub struct Input {
     pub recursive_proof: RecursiveProof,
 }
 
-/// Borrowed view of the public prover input wire format.
-#[derive(Debug, Clone, Copy)]
-pub struct InputRef<'a> {
-    pub claim: PublicChainClaim,
-    pub recursive_proof: &'a RecursiveProof,
-}
-
-/// Owned private witness payload containing the batch of new headers.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NewHeaderHints {
-    pub headers: Vec<NewHeader>,
-}
-
-/// Borrowed private witness payload containing the batch of new headers.
-#[derive(Debug, Clone, Copy)]
-pub struct NewHeaderHintsRef<'a> {
-    pub headers: &'a [NewHeader],
-}
-
-/// Owned private witness payload containing one claimed MTP value per header.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MedianTimePastHints {
-    pub medians: Vec<BlockTimestamp>,
-}
-
-/// Borrowed private witness payload containing one claimed MTP value per header.
-#[derive(Debug, Clone, Copy)]
-pub struct MedianTimePastHintsRef<'a> {
-    pub medians: &'a [BlockTimestamp],
-}
-
-/// Recursive proof metadata that authenticates the current [`State`].
+/// Recursive proof metadata that authenticates the current [`State`](crate::State).
 ///
 /// `previous_return_code` must be 0 (success) for the guest to accept the
 /// recursive continuation.  A nonzero value means the prior proof committed a
@@ -116,7 +85,6 @@ impl RecursiveProof {
     /// Parse and validate a RecursiveProof from exactly [`RECURSIVE_PROOF_SIZE`] bytes.
     pub fn parse(bytes: &[u8]) -> Result<Self, InputError> {
         cycle_track("input/recursive_proof", || {
-            check_exact_len(bytes, RECURSIVE_PROOF_SIZE).map_err(InputError::from)?;
             copy_from_bytes(bytes).map_err(InputError::from)
         })
     }
@@ -126,126 +94,61 @@ impl RecursiveProof {
     pub fn to_bytes(&self) -> [u8; RECURSIVE_PROOF_SIZE] {
         copy_to_bytes(self)
     }
-
-    /// Borrow a [`RecursiveProof`] directly from aligned protocol bytes.
-    pub fn ref_from_bytes(bytes: &[u8]) -> Result<&Self, InputError> {
-        crate::ref_from_bytes(bytes).map_err(InputError::from)
-    }
 }
 
-impl<'a> NewHeaderHintsRef<'a> {
-    /// Parse private witness headers. The format is:
-    ///
-    /// ```text
-    /// headers: [NewHeader]
-    /// ```
-    pub fn parse(bytes: &'a [u8]) -> Result<Self, NewHeaderHintError> {
-        cycle_track("input/parse/new_header_hints", || {
-            if !bytes.len().is_multiple_of(NEW_HEADER_SIZE) {
-                return Err(NewHeaderHintError::PayloadLengthInvalid {
-                    expected: bytes.len().div_ceil(NEW_HEADER_SIZE) * NEW_HEADER_SIZE,
-                    actual: bytes.len(),
-                });
-            }
-
-            let headers =
-                slice_from_bytes::<NewHeader>(bytes).map_err(NewHeaderHintError::Parse)?;
-            Ok(Self { headers })
-        })
+/// Serialize new headers.
+#[must_use]
+pub fn serialize_new_headers(headers: &[NewHeader]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(headers.len() * NEW_HEADER_SIZE);
+    for header in headers {
+        bytes.extend_from_slice(&header.to_bytes());
     }
-
-    #[must_use]
-    pub fn to_owned(&self) -> NewHeaderHints {
-        NewHeaderHints {
-            headers: self.headers.to_vec(),
-        }
-    }
-
-    #[must_use]
-    pub fn to_bytes(&self) -> Vec<u8> {
-        let mut bytes = Vec::with_capacity(self.headers.len() * NEW_HEADER_SIZE);
-        for header in self.headers {
-            bytes.extend_from_slice(&header.to_bytes());
-        }
-        bytes
-    }
+    bytes
 }
 
-impl NewHeaderHints {
-    #[must_use]
-    pub fn new(headers: Vec<NewHeader>) -> Self {
-        Self { headers }
-    }
-
-    pub fn parse(bytes: &[u8]) -> Result<Self, NewHeaderHintError> {
-        NewHeaderHintsRef::parse(bytes).map(|hints| hints.to_owned())
-    }
-
-    #[must_use]
-    pub fn to_bytes(&self) -> Vec<u8> {
-        NewHeaderHintsRef {
-            headers: &self.headers,
+/// Parse new headers as a zero-copy slice reference.
+pub fn parse_new_headers(bytes: &[u8]) -> Result<&[NewHeader], NewHeaderHintError> {
+    cycle_track("input/parse/new_header_hints", || {
+        if !bytes.len().is_multiple_of(NEW_HEADER_SIZE) {
+            return Err(NewHeaderHintError::PayloadLengthInvalid {
+                expected: bytes.len().div_ceil(NEW_HEADER_SIZE) * NEW_HEADER_SIZE,
+                actual: bytes.len(),
+            });
         }
-        .to_bytes()
-    }
+
+        let headers = slice_from_bytes::<NewHeader>(bytes).map_err(NewHeaderHintError::Parse)?;
+        Ok(headers)
+    })
 }
 
-impl<'a> MedianTimePastHintsRef<'a> {
-    /// Parse private witness MTP hints. The format is:
-    ///
-    /// ```text
-    /// medians: [BlockTimestamp]
-    /// ```
-    pub fn parse(bytes: &'a [u8], expected_count: usize) -> Result<Self, MedianTimePastHintError> {
-        cycle_track("input/parse/median_time_past_hints", || {
-            let expected_len = expected_count * core::mem::size_of::<BlockTimestamp>();
-            if bytes.len() != expected_len {
-                return Err(MedianTimePastHintError::PayloadLengthInvalid {
-                    expected: expected_len,
-                    actual: bytes.len(),
-                });
-            }
-
-            let medians = slice_from_bytes::<BlockTimestamp>(bytes)
-                .map_err(MedianTimePastHintError::Parse)?;
-            Ok(Self { medians })
-        })
+/// Serialize median hints.
+#[must_use]
+pub fn serialize_median_hints(medians: &[BlockTimestamp]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(medians.len() * 4);
+    for median in medians {
+        bytes.extend_from_slice(&median.to_le_bytes());
     }
-
-    #[must_use]
-    pub fn to_owned(&self) -> MedianTimePastHints {
-        MedianTimePastHints {
-            medians: self.medians.to_vec(),
-        }
-    }
-
-    #[must_use]
-    pub fn to_bytes(&self) -> Vec<u8> {
-        let mut bytes = Vec::with_capacity(self.medians.len() * 4);
-        for median in self.medians {
-            bytes.extend_from_slice(&median.to_le_bytes());
-        }
-        bytes
-    }
+    bytes
 }
 
-impl MedianTimePastHints {
-    #[must_use]
-    pub fn new(medians: Vec<BlockTimestamp>) -> Self {
-        Self { medians }
-    }
-
-    pub fn parse(bytes: &[u8], expected_count: usize) -> Result<Self, MedianTimePastHintError> {
-        MedianTimePastHintsRef::parse(bytes, expected_count).map(|hints| hints.to_owned())
-    }
-
-    #[must_use]
-    pub fn to_bytes(&self) -> Vec<u8> {
-        MedianTimePastHintsRef {
-            medians: &self.medians,
+/// Parse median hints as a zero-copy slice reference.
+pub fn parse_median_hints(
+    bytes: &[u8],
+    expected_count: usize,
+) -> Result<&[BlockTimestamp], MedianTimePastHintError> {
+    cycle_track("input/parse/median_time_past_hints", || {
+        let expected_len = expected_count * core::mem::size_of::<BlockTimestamp>();
+        if bytes.len() != expected_len {
+            return Err(MedianTimePastHintError::PayloadLengthInvalid {
+                expected: expected_len,
+                actual: bytes.len(),
+            });
         }
-        .to_bytes()
-    }
+
+        let medians =
+            slice_from_bytes::<BlockTimestamp>(bytes).map_err(MedianTimePastHintError::Parse)?;
+        Ok(medians)
+    })
 }
 
 /// Split and validate the wire layout, returning `(claim_bytes, proof_bytes)`.
@@ -261,30 +164,6 @@ fn split_input_wire(bytes: &[u8]) -> Result<(&[u8], &[u8]), InputError> {
     ))
 }
 
-impl<'a> InputRef<'a> {
-    /// Parse and validate input from the aligned host/guest wire format.
-    pub fn parse(bytes: &'a [u8]) -> Result<Self, InputError> {
-        cycle_track("input/parse", || {
-            let (claim_bytes, proof_bytes) = split_input_wire(bytes)?;
-            let claim = cycle_track("input/parse/claim", || {
-                PublicChainClaim::parse(claim_bytes).map_err(InputError::from)
-            })?;
-            let recursive_proof = RecursiveProof::ref_from_bytes(proof_bytes)?;
-            Ok(Self {
-                claim,
-                recursive_proof,
-            })
-        })
-    }
-
-    pub fn to_owned(&self) -> Input {
-        Input {
-            claim: self.claim,
-            recursive_proof: *self.recursive_proof,
-        }
-    }
-}
-
 impl Input {
     /// Constructs a new Input.
     pub fn new(claim: PublicChainClaim, recursive_proof: RecursiveProof) -> Self {
@@ -296,7 +175,17 @@ impl Input {
 
     /// Parse and validate input from the host/guest wire format.
     pub fn parse(bytes: &[u8]) -> Result<Self, InputError> {
-        InputRef::parse(bytes).map(|input| input.to_owned())
+        cycle_track("input/parse", || {
+            let (claim_bytes, proof_bytes) = split_input_wire(bytes)?;
+            let claim = cycle_track("input/parse/claim", || {
+                PublicChainClaim::parse(claim_bytes).map_err(InputError::from)
+            })?;
+            let recursive_proof = RecursiveProof::parse(proof_bytes)?;
+            Ok(Self {
+                claim,
+                recursive_proof,
+            })
+        })
     }
 
     /// Serialize to the host/guest wire format.
@@ -404,48 +293,24 @@ mod tests {
             },
         ];
 
-        let hints = NewHeaderHints::new(headers.clone());
-        let bytes = hints.to_bytes();
-        let parsed = NewHeaderHints::parse(&bytes).unwrap();
+        let bytes = serialize_new_headers(&headers);
+        let parsed = parse_new_headers(&bytes).unwrap();
 
-        assert_eq!(parsed, hints);
-    }
-
-    #[test]
-    fn test_input_ref_rejects_misaligned_recursive_proof() {
-        let genesis_state: State = State {
-            height: 0,
-            genesis_hash: BlockHash::default(),
-            ..Default::default()
-        };
-        let claim = genesis_state.public_claim();
-        let input = Input::new(claim, RecursiveProof::default()).to_bytes();
-
-        let mut misaligned = Vec::with_capacity(input.len() + 1);
-        misaligned.push(0);
-        misaligned.extend_from_slice(&input);
-
-        let err = InputRef::parse(&misaligned[1..]).unwrap_err();
-        assert_eq!(
-            err,
-            InputError::Parse(ParseError::Misaligned {
-                required: core::mem::align_of::<RecursiveProof>(),
-            })
-        );
+        assert_eq!(parsed, headers.as_slice());
     }
 
     #[test]
     fn test_new_header_hints_reject_truncated_payload() {
-        let headers = NewHeaderHints::new(vec![NewHeader {
+        let headers = vec![NewHeader {
             version: 1,
             merkle_root: [4; 32],
             timestamp: BlockTimestamp::new(100),
             nonce: 0,
-        }]);
-        let mut bytes = headers.to_bytes();
+        }];
+        let mut bytes = serialize_new_headers(&headers);
         bytes.pop();
 
-        let err = NewHeaderHintsRef::parse(&bytes).unwrap_err();
+        let err = parse_new_headers(&bytes).unwrap_err();
         assert_eq!(
             err,
             NewHeaderHintError::PayloadLengthInvalid {
@@ -457,21 +322,21 @@ mod tests {
 
     #[test]
     fn median_time_past_hints_round_trip() {
-        let hints = MedianTimePastHints::new(vec![
+        let hints = vec![
             BlockTimestamp::new(0),
             BlockTimestamp::new(123),
             BlockTimestamp::new(456),
-        ]);
+        ];
 
-        let bytes = hints.to_bytes();
-        let parsed = MedianTimePastHints::parse(&bytes, 3).unwrap();
+        let bytes = serialize_median_hints(&hints);
+        let parsed = parse_median_hints(&bytes, 3).unwrap();
 
-        assert_eq!(parsed, hints);
+        assert_eq!(parsed, hints.as_slice());
     }
 
     #[test]
     fn median_time_past_hints_reject_invalid_lengths() {
-        let one_hint = MedianTimePastHints::new(vec![BlockTimestamp::new(123)]).to_bytes();
+        let one_hint = serialize_median_hints(&[BlockTimestamp::new(123)]);
         let mut truncated_hint = one_hint.clone();
         truncated_hint.pop();
 
@@ -497,7 +362,7 @@ mod tests {
         ];
 
         for (name, bytes, expected_count, expected_error) in cases {
-            let err = MedianTimePastHintsRef::parse(&bytes, expected_count).unwrap_err();
+            let err = parse_median_hints(&bytes, expected_count).unwrap_err();
             assert_eq!(err, expected_error, "{name}");
         }
     }

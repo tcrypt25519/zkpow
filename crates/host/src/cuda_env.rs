@@ -1,6 +1,6 @@
 use std::process::Command;
 
-use crate::proof_pipeline::{BoxError, ProofGenerationConfig};
+use crate::pipeline::{BoxError, ProofGenerationConfig};
 
 const MIN_CUDA_COMPUTE_CAPABILITY: ComputeCapability = ComputeCapability { major: 8, minor: 6 };
 const RECOMMENDED_MIN_VRAM_MIB: u32 = 24 * 1024;
@@ -50,7 +50,9 @@ impl std::fmt::Display for ComputeCapability {
     }
 }
 
-pub(crate) fn run_preflight(config: &ProofGenerationConfig) -> Result<CudaPreflightReport, BoxError> {
+pub(crate) fn run_preflight(
+    config: &ProofGenerationConfig,
+) -> Result<CudaPreflightReport, BoxError> {
     if std::env::consts::ARCH != "x86_64" {
         return Err(format!(
             "CUDA proving requires an x86_64 machine; detected architecture `{}`",

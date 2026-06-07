@@ -1,10 +1,10 @@
 use sp1_sdk::prelude::*;
 use tracing::Instrument;
 
+use crate::pipeline::batch::PreparedBatch;
 use crate::pipeline::diagnostics::{timed_async, timed_sync};
 use crate::pipeline::execution::{execute_batch_with_prover, verify_public_values};
 use crate::pipeline::BoxError;
-use crate::util;
 
 pub(crate) struct CompressedProofArtifacts {
     pub(crate) vk: sp1_prover::SP1VerifyingKey,
@@ -13,32 +13,18 @@ pub(crate) struct CompressedProofArtifacts {
     pub(crate) execution_report: sp1_sdk::ExecutionReport,
 }
 
-pub(crate) async fn generate_compressed_proof_with_prover<P, K>(
+pub(crate) async fn generate_compressed_proof<P, K>(
     prover_name: &str,
     prover: &P,
     proving_key: &K,
-    current_state: &util::State,
-    previous_proof: Option<&SP1ProofWithPublicValues>,
-    headers: &[util::NewHeader],
-    median_hints: &util::MedianTimePastHints,
-    expected_pv_parts: (&util::State, [u8; 32]),
+    batch: &PreparedBatch,
 ) -> Result<CompressedProofArtifacts, BoxError>
 where
     P: Prover<ProvingKey = K>,
     K: ProvingKey,
     P::Error: std::fmt::Display + Send + Sync + 'static,
 {
-    let executed = execute_batch_with_prover(
-        prover_name,
-        prover,
-        proving_key,
-        current_state,
-        previous_proof,
-        headers,
-        median_hints,
-        expected_pv_parts,
-    )
-    .await?;
+    let executed = execute_batch_with_prover(prover_name, prover, proving_key, batch).await?;
 
     let compressed_proof = timed_async("prove_compressed", || async {
         async { prover.prove(proving_key, executed.stdin).compressed().await }

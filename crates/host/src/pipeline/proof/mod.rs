@@ -11,8 +11,8 @@ use sp1_sdk::{CpuProver, MockProver, Prover, ProverClient, SP1ProvingKey};
 use crate::pipeline::diagnostics::timed_async;
 #[cfg(feature = "CUDA")]
 use crate::pipeline::diagnostics::timed_sync;
+use crate::pipeline::ELF;
 use crate::pipeline::{BoxError, ProofGenerationConfig, ProverBackend};
-use crate::proof_pipeline::ELF;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct PreparedProverConfig {
