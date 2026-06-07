@@ -5,7 +5,6 @@
 extern crate alloc;
 
 use core::{
-    cmp::Ordering,
     mem::{align_of, size_of, MaybeUninit},
     ptr, slice,
 };
@@ -835,36 +834,11 @@ pub fn target_from_bits(compact_target: CompactTarget) -> Target {
     })
 }
 
-/// Compare two u256 values. Returns `Greater` if `lhs > rhs`.
-#[must_use]
-fn u256_cmp(lhs: &u256, rhs: &u256) -> core::cmp::Ordering {
-    cycle_track("difficulty/u256_cmp", || {
-        let a = lhs.as_limbs();
-        let b = rhs.as_limbs();
-        for i in (0..4).rev() {
-            match a[i].cmp(&b[i]) {
-                core::cmp::Ordering::Equal => continue,
-                other => return other,
-            }
-        }
-        core::cmp::Ordering::Equal
-    })
-}
-
-/// Return `true` when `lhs` is strictly greater than `rhs` as unsigned 256-bit integers.
-#[must_use]
-pub fn target_gt(lhs: Target, rhs: Target) -> bool {
-    cycle_track("difficulty/target_gt", || {
-        u256_cmp(&lhs, &rhs) == core::cmp::Ordering::Greater
-    })
-}
-
 /// Check whether a header hash satisfies a target.
 #[must_use]
 pub fn check_proof_of_work(hash: BlockHash, target: Target) -> bool {
     cycle_track("pow/check_proof_of_work", || {
-        let hash_u256 = u256::from_le_bytes(*hash.as_inner());
-        u256_cmp(&hash_u256, &target) != core::cmp::Ordering::Greater
+        u256::from_le_bytes(*hash.as_inner()) <= *target.as_inner()
     })
 }
 
@@ -950,9 +924,9 @@ fn sub_assign(lhs: &mut u256, rhs: u256) -> bool {
 /// We can iterate until we find a limb < max u64, add 1 to it, and we're done. As long as we find max u64 limbs we
 /// just set them to 0 and move forward. Iterating fully without hitting a non-max u64 indicates that we have bad
 /// data; the target is invalid and we return an error.
-fn increment_target(target_limbs: &mut [u64; 4]) -> Result<(), TargetError> {
+fn increment_target(target: &mut u256) -> Result<(), TargetError> {
     cycle_track("pow/work/target_plus_one", || {
-        for (i, limb) in target_limbs.iter_mut().enumerate().take(4) {
+        for (i, limb) in target.as_limbs_mut().iter_mut().enumerate() {
             // This limb isn't saturated so it can't carry; add 1 and we're done.
             if *limb < u64::MAX {
                 *limb += 1;
@@ -975,14 +949,13 @@ fn increment_target(target_limbs: &mut [u64; 4]) -> Result<(), TargetError> {
 #[must_use]
 fn shl1_with_carry(value: &mut u256) -> bool {
     cycle_track("pow/work/shl1_with_carry", || {
-        let mut limbs = value.into_limbs();
+        let limbs = value.as_limbs_mut();
         let mut carry = 0u64;
         for limb in limbs.iter_mut() {
             let next_carry = *limb >> 63;
             *limb = (*limb << 1) | carry;
             carry = next_carry;
         }
-        *value = u256::from_limbs(limbs);
         carry > 0
     })
 }
@@ -995,9 +968,8 @@ fn shl1_with_carry(value: &mut u256) -> bool {
 /// corresponding quotient bit when the remainder meets the divisor.
 pub fn work_from_target(target: Target) -> Result<ChainWork, TargetError> {
     cycle_track("pow/work_from_target", || {
-        let mut limbs = *target.as_limbs();
-        increment_target(&mut limbs)?;
-        let divisor = u256::from_limbs(limbs);
+        let mut divisor = *target.as_inner();
+        increment_target(&mut divisor)?;
 
         let mut remainder = u256::from_limbs([0u64; 4]);
         let mut quotient = [0u64; 4];
@@ -1007,13 +979,11 @@ pub fn work_from_target(target: Target) -> Result<ChainWork, TargetError> {
             let carry = shl1_with_carry(&mut remainder);
             if bit == 256 {
                 // Inject the implicit leading 1 of 2^256 into the LSB of the shifted remainder.
-                let mut limbs = remainder.into_limbs();
-                limbs[0] |= 1;
-                remainder = u256::from_limbs(limbs);
+                remainder.as_limbs_mut()[0] |= 1;
             }
             // If carry is set the remainder is effectively > 2^256, which is always >= divisor.
 
-            if carry || u256_cmp(&remainder, &divisor) != Ordering::Less {
+            if carry || remainder >= divisor {
                 let _ = sub_assign(&mut remainder, divisor);
                 if bit < 256 {
                     quotient[(bit / 64) as usize] |= 1u64 << (bit % 64);
@@ -1053,14 +1023,11 @@ pub fn calculate_next_target_required(
             remainder = value % (EXPECTED_EPOCH_TIMESPAN as u128);
         }
 
-        let mut calculated_target = Target::from_limbs(target_limbs);
-
         // Normalize the new target to ensure an upper-bound (a minimum difficulty) and to handle the implicit
         // truncation that occurs when round-tripping through the nbits format.
-        if target_gt(calculated_target, GENESIS_TARGET) {
-            calculated_target = GENESIS_TARGET;
-        }
-        let compact_target = target_to_bits(calculated_target);
+        let calculated_target = Target::from_limbs(target_limbs);
+        let clamped_target = calculated_target.min(GENESIS_TARGET);
+        let compact_target = target_to_bits(clamped_target);
         let normalized_target = target_from_bits(compact_target);
 
         // The target is capped above and truncated below; return it and the compact form we calculated along the way.
@@ -1773,13 +1740,10 @@ mod tests {
                     assert_eq!(new, old, "{name}: target");
                 }
                 ExpectedDirection::NotGreater => {
-                    assert!(!target_gt(new, old), "{name}: target should be <= old");
+                    assert!(new <= old, "{name}: target should be <= old");
                 }
                 ExpectedDirection::NotLess => {
-                    assert!(
-                        target_gt(new, old) || new == old,
-                        "{name}: target should be >= old"
-                    );
+                    assert!(new >= old, "{name}: target should be >= old");
                 }
             }
         }

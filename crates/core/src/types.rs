@@ -54,6 +54,27 @@ impl u256 {
     }
 }
 
+impl PartialOrd for u256 {
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// Magnitude-correct ordering: compare from most-significant limb (index 3) down.
+impl Ord for u256 {
+    #[inline]
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        for i in (0..4).rev() {
+            match self.0[i].cmp(&other.0[i]) {
+                core::cmp::Ordering::Equal => continue,
+                ord => return ord,
+            }
+        }
+        core::cmp::Ordering::Equal
+    }
+}
+
 //
 // Define our Branded newtypes
 //
