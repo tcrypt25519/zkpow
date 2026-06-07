@@ -3,7 +3,6 @@ use std::path::Path;
 use sp1_sdk::SP1ProofWithPublicValues;
 
 use crate::pipeline::diagnostics::{format_claim_mismatch, timed_sync};
-use crate::pipeline::execution::find_first_diverging_state_index;
 use crate::pipeline::{BoxError, ProofGenerationConfig};
 use crate::util;
 use crate::util::HeaderChainPublicValues;
@@ -149,14 +148,13 @@ fn simulate_expected_state(
     first_new_height: u32,
     end_height: u32,
 ) -> Result<util::State, BoxError> {
-    let (expected_state, intermediate_states) =
-        timed_sync("simulate_expected_state", || -> Result<_, BoxError> {
-            Ok(util::compute_final_state_with_history(
-                current_state,
-                headers,
-                median_hints,
-            ))
-        })?;
+    let expected_state = timed_sync("simulate_expected_state", || -> Result<_, BoxError> {
+        Ok(util::compute_final_state_with_hints(
+            current_state,
+            headers,
+            median_hints,
+        ))
+    })?;
 
     let db_end_state = timed_sync("load_db_end_state", || -> Result<_, BoxError> {
         Ok(util::state_from_db_at_height(
@@ -170,9 +168,11 @@ fn simulate_expected_state(
         return Ok(expected_state);
     }
 
-    let bad_index = timed_sync("bisect_divergence", || -> Result<_, BoxError> {
-        Ok(find_first_diverging_state_index(
-            &intermediate_states,
+    let (bad_index, actual_state) = timed_sync("bisect_divergence", || -> Result<_, BoxError> {
+        Ok(find_first_diverging_state(
+            current_state,
+            headers,
+            median_hints,
             first_new_height,
             path_to_str(&config.db_path)?,
             genesis_hash,
@@ -183,7 +183,7 @@ fn simulate_expected_state(
     let expected_claim =
         util::state_from_db_at_height(path_to_str(&config.db_path)?, bad_height, genesis_hash)
             .public_claim();
-    let actual_claim = intermediate_states[bad_index].public_claim();
+    let actual_claim = actual_state.public_claim();
 
     Err(format!(
         "host simulation diverges from database\n  first bad header index in batch: {}\n  bad height: {}\n{}",
@@ -192,6 +192,77 @@ fn simulate_expected_state(
         format_claim_mismatch(&actual_claim, &expected_claim),
     )
     .into())
+}
+
+fn find_first_diverging_state(
+    current_state: &util::State,
+    headers: &[util::NewHeader],
+    median_hints: &[util::BlockTimestamp],
+    first_new_height: u32,
+    db_path: &str,
+    genesis_hash: util::BlockHash,
+) -> (usize, util::State) {
+    assert!(
+        !headers.is_empty(),
+        "find_first_diverging_state requires at least one header"
+    );
+    assert_eq!(
+        headers.len(),
+        median_hints.len(),
+        "median hint count must match header count"
+    );
+
+    let mut replay_state = current_state.clone();
+    let mut replayed_states = Vec::new();
+    let mut lo = 0usize;
+    let mut hi = headers.len() - 1;
+
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        replay_states_through(
+            &mut replay_state,
+            &mut replayed_states,
+            headers,
+            median_hints,
+            mid,
+        );
+
+        let height = first_new_height + (mid as u32);
+        let db_state = util::state_from_db_at_height(db_path, height, genesis_hash);
+        if replayed_states[mid].public_claim() == db_state.public_claim() {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+
+    replay_states_through(
+        &mut replay_state,
+        &mut replayed_states,
+        headers,
+        median_hints,
+        lo,
+    );
+
+    (lo, replayed_states[lo].clone())
+}
+
+fn replay_states_through(
+    state: &mut util::State,
+    replayed_states: &mut Vec<util::State>,
+    headers: &[util::NewHeader],
+    median_hints: &[util::BlockTimestamp],
+    target_index: usize,
+) {
+    while replayed_states.len() <= target_index {
+        let index = replayed_states.len();
+        state
+            .apply_headers(&[headers[index]], &[median_hints[index]], util::hash_header)
+            .unwrap_or_else(|err| {
+                panic!("host state transition should succeed at header index {index}: {err:?}")
+            });
+        replayed_states.push(state.clone());
+    }
 }
 
 #[cfg(test)]

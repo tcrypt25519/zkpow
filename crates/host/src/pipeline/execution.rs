@@ -52,35 +52,6 @@ pub(crate) fn verify_public_values(
     }
 }
 
-pub(crate) fn find_first_diverging_state_index(
-    states: &[util::State],
-    first_new_height: u32,
-    db_path: &str,
-    genesis_hash: util::BlockHash,
-) -> usize {
-    assert!(
-        !states.is_empty(),
-        "find_first_diverging_state_index requires at least one state"
-    );
-
-    let mut lo: usize = 0;
-    let mut hi: usize = states.len() - 1;
-
-    while lo < hi {
-        let mid = lo + (hi - lo) / 2;
-        let height = first_new_height + (mid as u32);
-        let db_state = util::state_from_db_at_height(db_path, height, genesis_hash);
-
-        if states[mid].public_claim() == db_state.public_claim() {
-            lo = mid + 1;
-        } else {
-            hi = mid;
-        }
-    }
-
-    lo
-}
-
 pub(crate) async fn execute_batch_with_prover<P, K>(
     prover_name: &str,
     prover: &P,

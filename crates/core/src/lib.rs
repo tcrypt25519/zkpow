@@ -950,12 +950,11 @@ fn sub_assign(lhs: &mut u256, rhs: u256) -> bool {
 /// We can iterate until we find a limb < max u64, add 1 to it, and we're done. As long as we find max u64 limbs we
 /// just set them to 0 and move forward. Iterating fully without hitting a non-max u64 indicates that we have bad
 /// data; the target is invalid and we return an error.
-#[must_use]
 fn increment_target(target_limbs: &mut [u64; 4]) -> Result<(), TargetError> {
     cycle_track("pow/work/target_plus_one", || {
         for (i, limb) in target_limbs.iter_mut().enumerate().take(4) {
             // This limb isn't saturated so it can't carry; add 1 and we're done.
-            if *limb < u64::max_value() {
+            if *limb < u64::MAX {
                 *limb += 1;
                 break;
             }
@@ -994,7 +993,6 @@ fn shl1_with_carry(value: &mut u256) -> bool {
 /// The loop processes 257 bits (indices 256 down to 0): at `bit == 256` we introduce
 /// the implicit leading 1 of the dividend `2^256`; for `bit < 256` we set the
 /// corresponding quotient bit when the remainder meets the divisor.
-#[must_use]
 pub fn work_from_target(target: Target) -> Result<ChainWork, TargetError> {
     cycle_track("pow/work_from_target", || {
         let mut limbs = *target.as_limbs();

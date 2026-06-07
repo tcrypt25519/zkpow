@@ -158,6 +158,10 @@ pub fn load_header_batch_witness_from_db(
     }
 }
 
+pub fn load_new_headers_from_db(db_path: &str, start_height: u64, count: u64) -> Vec<NewHeader> {
+    load_header_batch_witness_from_db(db_path, start_height, count).headers
+}
+
 // ============================================================================
 // SHA-256 (host-side)
 // ============================================================================
@@ -273,41 +277,6 @@ pub fn compute_final_state_with_hints(
         .apply_headers(headers, hints, hash_header)
         .expect("host state transition should succeed");
     state
-}
-
-/// Simulate the zkVM program locally while retaining each intermediate state.
-///
-/// Returns `(final_state, history)` where `history[i]` is the state after
-/// applying `headers[i]`.
-pub fn compute_final_state_with_history(
-    initial_state: &State,
-    headers: &[NewHeader],
-    hints: &[BlockTimestamp],
-) -> (State, Vec<State>) {
-    assert_eq!(
-        headers.len(),
-        hints.len(),
-        "median hint count must match header count"
-    );
-
-    let mut state = initial_state.clone();
-    let mut history = Vec::with_capacity(headers.len());
-
-    for (index, (header, median)) in headers
-        .iter()
-        .copied()
-        .zip(hints.iter().copied())
-        .enumerate()
-    {
-        state
-            .apply_headers(&[header], &[median], hash_header)
-            .unwrap_or_else(|err| {
-                panic!("host state transition should succeed at header index {index}: {err:?}")
-            });
-        history.push(state.clone());
-    }
-
-    (state, history)
 }
 
 pub fn records_to_new_headers(records: &[HeaderRecord]) -> Vec<NewHeader> {
@@ -521,42 +490,38 @@ mod tests {
     }
 
     #[test]
-    fn compute_final_state_with_history_matches_final_state() {
+    fn compute_final_state_with_hints_reaches_expected_height() {
         let genesis = load_header_record_from_db(db_path(), 0);
         let genesis_hash = hash_header(&genesis.header);
         let genesis_state = genesis_state_from_record(genesis, genesis_hash);
-        let records = load_header_records_from_db(db_path(), 1, 128);
-        let headers = records_to_new_headers(&records);
-        let hints = median_time_past_hints_from_records(&records);
+        let witness = load_header_batch_witness_from_db(db_path(), 1, 128);
 
-        let expected_final = compute_final_state_with_hints(&genesis_state, &headers, &hints);
-        let (history_final, history) =
-            compute_final_state_with_history(&genesis_state, &headers, &hints);
-
-        assert_eq!(history.len(), headers.len());
-        assert_eq!(history_final.public_claim(), expected_final.public_claim());
-        assert_eq!(
-            history
-                .last()
-                .expect("history should not be empty")
-                .public_claim(),
-            expected_final.public_claim()
+        let final_state = compute_final_state_with_hints(
+            &genesis_state,
+            &witness.headers,
+            &witness.median_time_past_hints,
         );
+
+        assert_eq!(final_state.height, 128);
     }
 
     #[test]
-    fn compute_final_state_with_history_entries_match_db_claims() {
+    fn applying_headers_one_at_a_time_matches_db_claims() {
         let genesis = load_header_record_from_db(db_path(), 0);
         let genesis_hash = hash_header(&genesis.header);
-        let genesis_state = genesis_state_from_record(genesis, genesis_hash);
-        let records = load_header_records_from_db(db_path(), 1, 64);
-        let headers = records_to_new_headers(&records);
-        let hints = median_time_past_hints_from_records(&records);
+        let mut state = genesis_state_from_record(genesis, genesis_hash);
+        let witness = load_header_batch_witness_from_db(db_path(), 1, 64);
 
-        let (_final_state, history) =
-            compute_final_state_with_history(&genesis_state, &headers, &hints);
-
-        for (index, state) in history.iter().enumerate() {
+        for (index, (header, median_time_past)) in witness
+            .headers
+            .iter()
+            .copied()
+            .zip(witness.median_time_past_hints.iter().copied())
+            .enumerate()
+        {
+            state
+                .apply_headers(&[header], &[median_time_past], hash_header)
+                .expect("header should apply");
             let height = (index as u32) + 1;
             let db_state = state_from_db_at_height(db_path(), height, genesis_hash);
             assert_eq!(state.public_claim(), db_state.public_claim());

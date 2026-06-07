@@ -103,6 +103,10 @@ fn mainnet_genesis_state() -> util::State {
     util::genesis_state_from_record(genesis, mainnet_genesis_hash())
 }
 
+fn load_headers(start_height: u64, count: u64) -> Vec<util::NewHeader> {
+    util::load_new_headers_from_db(db_path(), start_height, count)
+}
+
 fn stdin_for_input(
     input: &Input,
     state: &util::State,
@@ -186,8 +190,7 @@ async fn main() {
 
 async fn test_success_100_headers() -> Result<(), String> {
     let genesis_state = mainnet_genesis_state();
-    let records = util::load_header_records_from_db(db_path(), 1, 100);
-    let headers = util::records_to_new_headers(&records);
+    let headers = load_headers(1, 100);
     let hints = util::median_time_past_hints_for_headers(&genesis_state, &headers);
     let input = input_for_state(&genesis_state, RecursiveProof::default());
     let stdin = stdin_for_input(&input, &genesis_state, &headers, &hints);
@@ -203,9 +206,7 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
     const EPOCH_LENGTH: usize = zkpow_core::EPOCH_LENGTH as usize;
     let genesis_state = mainnet_genesis_state();
 
-    let first_epoch_records =
-        util::load_header_records_from_db(db_path(), 1, FIRST_BOUNDARY_TIP_HEIGHT as u64);
-    let first_epoch_headers = util::records_to_new_headers(&first_epoch_records);
+    let first_epoch_headers = load_headers(1, FIRST_BOUNDARY_TIP_HEIGHT as u64);
     let first_epoch_state = util::compute_final_state(&genesis_state, &first_epoch_headers);
     println!(
         "retarget-debug: first_epoch loaded={} state.height={} state.current_nbits={:#x}",
@@ -226,8 +227,7 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
         ));
     }
 
-    let records = util::load_header_records_from_db(db_path(), 1, RETARGET_TIP_HEIGHT as u64);
-    let new_headers = util::records_to_new_headers(&records);
+    let new_headers = load_headers(1, RETARGET_TIP_HEIGHT as u64);
     let state = util::compute_final_state(&genesis_state, &new_headers);
     println!(
         "retarget-debug: retarget loaded={} state.height={} state.current_nbits={:#x}",
@@ -236,10 +236,11 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
         consensus_bits(state.current_nbits),
     );
 
-    let previous_epoch_bits = records[RETARGET_TIP_HEIGHT - 1]
-        .header
-        .compact_target
-        .into_inner();
+    let previous_epoch_bits =
+        util::load_header_record_from_db(db_path(), RETARGET_TIP_HEIGHT as u64)
+            .header
+            .compact_target
+            .into_inner();
     let next_header_bits = util::load_header_record_from_db(db_path(), RETARGET_HEIGHT as u64)
         .header
         .compact_target
@@ -272,8 +273,7 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
         ));
     }
 
-    let boundary_records = util::load_header_records_from_db(db_path(), RETARGET_HEIGHT as u64, 1);
-    let boundary_headers = util::records_to_new_headers(&boundary_records);
+    let boundary_headers = load_headers(RETARGET_HEIGHT as u64, 1);
     let boundary_state = util::compute_final_state(&state, &boundary_headers);
     if boundary_state.height != RETARGET_HEIGHT as u32 {
         return Err(format!(
@@ -289,9 +289,7 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
         ));
     }
 
-    let pre_boundary_records =
-        util::load_header_records_from_db(db_path(), 1, (RETARGET_HEIGHT - 2) as u64);
-    let pre_boundary_headers = util::records_to_new_headers(&pre_boundary_records);
+    let pre_boundary_headers = load_headers(1, (RETARGET_HEIGHT - 2) as u64);
     let pre_boundary_state = util::compute_final_state(&genesis_state, &pre_boundary_headers);
 
     if consensus_bits(pre_boundary_state.current_nbits) != previous_epoch_bits {
@@ -311,8 +309,7 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
 
 async fn test_error_timestamp_too_old() -> Result<(), String> {
     let genesis_state = mainnet_genesis_state();
-    let records = util::load_header_records_from_db(db_path(), 1, 13);
-    let mut headers = util::records_to_new_headers(&records);
+    let mut headers = load_headers(1, 13);
     let hints = util::median_time_past_hints_for_headers(&genesis_state, &headers);
     headers[11].timestamp = util::BlockTimestamp::new(1231006505);
     let input = input_for_state(&genesis_state, RecursiveProof::default());
@@ -324,8 +321,7 @@ async fn test_error_timestamp_too_old() -> Result<(), String> {
 
 async fn test_error_pow_insufficient() -> Result<(), String> {
     let genesis_state = mainnet_genesis_state();
-    let records = util::load_header_records_from_db(db_path(), 1, 2);
-    let mut headers = util::records_to_new_headers(&records);
+    let mut headers = load_headers(1, 2);
     let hints = util::median_time_past_hints_for_headers(&genesis_state, &headers);
     headers[0].nonce ^= 0xFF;
     let input = input_for_state(&genesis_state, RecursiveProof::default());
@@ -345,8 +341,7 @@ async fn test_recursive_chain_success() -> Result<(), String> {
 
     // === Run 1: genesis state → block 10 ===
     let genesis_state = mainnet_genesis_state();
-    let records1 = util::load_header_records_from_db(db_path(), 1, 10);
-    let headers1 = util::records_to_new_headers(&records1);
+    let headers1 = load_headers(1, 10);
     let hints1 = util::median_time_past_hints_for_headers(&genesis_state, &headers1);
     let verifier_key = VerifierKeyDigest::from_raw(vk.hash_u32());
     let input1 = input_for_state(
@@ -374,12 +369,10 @@ async fn test_recursive_chain_success() -> Result<(), String> {
     // === Run 2: Extend from Run 1 (blocks 11-20) ===
     // Reconstruct the full state at height 10 from DB (needed for continuation witness).
     let genesis_state2 = mainnet_genesis_state();
-    let records_to_10 = util::load_header_records_from_db(db_path(), 1, 10);
-    let headers_to_10 = util::records_to_new_headers(&records_to_10);
+    let headers_to_10 = load_headers(1, 10);
     let state1 = util::compute_final_state(&genesis_state2, &headers_to_10);
 
-    let records2 = util::load_header_records_from_db(db_path(), 11, 10);
-    let headers2 = util::records_to_new_headers(&records2);
+    let headers2 = load_headers(11, 10);
     let hints2 = util::median_time_past_hints_for_headers(&state1, &headers2);
     let input2 = input_for_state(
         &state1,
@@ -407,8 +400,7 @@ async fn test_recursive_chain_success() -> Result<(), String> {
 /// Verify that the guest panics when asked to extend a failed prior proof.
 async fn test_error_recursive_on_failed_proof() -> Result<(), String> {
     let genesis_state = mainnet_genesis_state();
-    let records = util::load_header_records_from_db(db_path(), 1, 5);
-    let headers = util::records_to_new_headers(&records);
+    let headers = load_headers(1, 5);
     let hints = util::median_time_past_hints_for_headers(&genesis_state, &headers);
 
     let state_at_5 = util::compute_final_state(&genesis_state, &headers);
@@ -447,8 +439,7 @@ async fn test_error_recursive_on_failed_proof() -> Result<(), String> {
 /// chain claim.
 async fn test_error_recursive_on_tampered_state_witness() -> Result<(), String> {
     let genesis_state = mainnet_genesis_state();
-    let records = util::load_header_records_from_db(db_path(), 1, 5);
-    let headers_to_5 = util::records_to_new_headers(&records);
+    let headers_to_5 = load_headers(1, 5);
     let state_at_5 = util::compute_final_state(&genesis_state, &headers_to_5);
 
     let original_digest = util::continuation_digest_from_state(&state_at_5);
@@ -495,8 +486,7 @@ async fn test_pv_minimal_format() -> Result<(), String> {
     use zkpow_core::MINIMAL_PV_SIZE;
 
     let genesis_state = mainnet_genesis_state();
-    let records = util::load_header_records_from_db(db_path(), 1, 10);
-    let headers = util::records_to_new_headers(&records);
+    let headers = load_headers(1, 10);
     let hints = util::median_time_past_hints_for_headers(&genesis_state, &headers);
     let input = input_for_state(&genesis_state, RecursiveProof::default());
     let stdin = stdin_for_input(&input, &genesis_state, &headers, &hints);
@@ -528,8 +518,7 @@ async fn test_pv_minimal_format() -> Result<(), String> {
 
     // Host-computed continuation digest must match.
     let genesis_state2 = mainnet_genesis_state();
-    let records2 = util::load_header_records_from_db(db_path(), 1, 10);
-    let headers2 = util::records_to_new_headers(&records2);
+    let headers2 = load_headers(1, 10);
     let final_state = util::compute_final_state(&genesis_state2, &headers2);
     let host_digest = util::continuation_digest_from_state(&final_state);
     if host_digest != mpv.continuation_digest {
