@@ -5,6 +5,7 @@
 extern crate alloc;
 
 use core::{
+    cmp::Ordering,
     mem::{align_of, size_of, MaybeUninit},
     ptr, slice,
 };
@@ -907,6 +908,37 @@ impl core::ops::Mul<u32> for ChainWork {
     }
 }
 
+/// Subtract `rhs` from `self` in place. Returns `true` if there was an underflow (borrow out).
+#[must_use]
+fn sub_assign(lhs: &mut u256, rhs: u256) -> bool {
+    let mut borrow = false;
+
+    let lhs_limbs: &mut [u64; 4] = lhs.as_limbs_mut();
+    let rhs_limbs = rhs.as_limbs();
+
+    let (a, b1) = lhs_limbs[0].overflowing_sub(rhs_limbs[0]);
+    let (a, b2) = a.overflowing_sub(borrow as u64);
+    lhs_limbs[0] = a;
+    borrow = b1 || b2;
+
+    let (a, b1) = lhs_limbs[1].overflowing_sub(rhs_limbs[1]);
+    let (a, b2) = a.overflowing_sub(borrow as u64);
+    lhs_limbs[1] = a;
+    borrow = b1 || b2;
+
+    let (a, b1) = lhs_limbs[2].overflowing_sub(rhs_limbs[2]);
+    let (a, b2) = a.overflowing_sub(borrow as u64);
+    lhs_limbs[2] = a;
+    borrow = b1 || b2;
+
+    let (a, b1) = lhs_limbs[3].overflowing_sub(rhs_limbs[3]);
+    let (a, b2) = a.overflowing_sub(borrow as u64);
+    lhs_limbs[3] = a;
+    borrow = b1 || b2;
+
+    borrow
+}
+
 /// Add one to a target, modifying the limbs in place.
 ///
 /// A valid target can not be a max u256, so:
@@ -918,6 +950,7 @@ impl core::ops::Mul<u32> for ChainWork {
 /// We can iterate until we find a limb < max u64, add 1 to it, and we're done. As long as we find max u64 limbs we
 /// just set them to 0 and move forward. Iterating fully without hitting a non-max u64 indicates that we have bad
 /// data; the target is invalid and we return an error.
+#[must_use]
 fn increment_target(target_limbs: &mut [u64; 4]) -> Result<(), TargetError> {
     cycle_track("pow/work/target_plus_one", || {
         for (i, limb) in target_limbs.iter_mut().enumerate().take(4) {
@@ -940,6 +973,7 @@ fn increment_target(target_limbs: &mut [u64; 4]) -> Result<(), TargetError> {
 }
 
 /// Shift `value` left by one bit in place, returning the carry (the evicted MSB).
+#[must_use]
 fn shl1_with_carry(value: &mut u256) -> bool {
     cycle_track("pow/work/shl1_with_carry", || {
         let mut limbs = value.into_limbs();
@@ -975,13 +1009,14 @@ pub fn work_from_target(target: Target) -> Result<ChainWork, TargetError> {
             let carry = shl1_with_carry(&mut remainder);
             if bit == 256 {
                 // Inject the implicit leading 1 of 2^256 into the LSB of the shifted remainder.
-                let mut lims = remainder.into_limbs();
-                lims[0] |= 1;
-                remainder = u256::from_limbs(lims);
+                let mut limbs = remainder.into_limbs();
+                limbs[0] |= 1;
+                remainder = u256::from_limbs(limbs);
             }
             // If carry is set the remainder is effectively > 2^256, which is always >= divisor.
-            if carry || remainder.gte(divisor) {
-                let _ = remainder.sub_assign(divisor);
+
+            if carry || u256_cmp(&remainder, &divisor) != Ordering::Less {
+                let _ = sub_assign(&mut remainder, divisor);
                 if bit < 256 {
                     quotient[(bit / 64) as usize] |= 1u64 << (bit % 64);
                 }
