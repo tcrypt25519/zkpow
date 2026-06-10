@@ -18,9 +18,10 @@ services:
     environment:
       - RUST_LOG=${RUST_LOG:-info}
       - RUST_BACKTRACE=1
-      - CUDA=${CUDA:-1}
+      - ZKPOW_DB_PATH=/input/headers.db
+      - ZKPOW_USE_CUDA=${ZKPOW_USE_CUDA:-1}
       # Optional: specify CUDA device ID for multi-GPU servers
-      # - CUDA_DEVICE_ID=${CUDA_DEVICE_ID:-0}
+      # - ZKPOW_CUDA_DEVICE_ID=${ZKPOW_CUDA_DEVICE_ID:-0}
     volumes:
       # Named volume for input SQLite database
       - header-input:/input

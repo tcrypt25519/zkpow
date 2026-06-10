@@ -3,6 +3,7 @@ members = [
     "crates/core",
     "crates/guest",
     "crates/host",
+    "crates/memory-usage",
 ]
 resolver = "2"
 
@@ -24,7 +25,7 @@ tracing = "0.1"
 rusqlite = { version = "0.32", features = ["bundled"] }
 humantime = "2.3"
 num-bigint = "0.4.6"
-memory-usage = { path = "../memory-usage" }
+memory-usage = { path = "crates/memory-usage" }
 
 [profile.release]
 debug = true          # Keeps debug symbols for your code

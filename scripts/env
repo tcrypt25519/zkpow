@@ -26,7 +26,6 @@ export ZKPOW_BATCH_COUNT="${ZKPOW_BATCH_COUNT:-1000}"
 
 # Build
 export ZKPOW_BUILD="${ZKPOW_BUILD:-true}"
-
 # Inputs and output
 TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 export ZKPOW_LOG_DIR="${ZKPOW_LOG_DIR:-$ZKPOW_ROOT/logs}"
