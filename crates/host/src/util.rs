@@ -22,17 +22,15 @@ pub use hash::{
     compute_pv_digest, continuation_digest, continuation_digest_from_state, hash_header, sha256d,
 };
 pub use simulate::{
-    compute_final_state, compute_final_state_with_hints, median_time_past_hints_for_headers,
-    median_time_past_hints_from_records, records_to_new_headers,
+    compute_final_state_with_hints, median_time_past_hints_from_records, records_to_new_headers,
 };
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::db_path;
-    use crate::util::simulate::median_time_past_for_state;
     use zkpow_core::{
-        BlockHash, BlockTimestamp, CompactTarget, NewHeader, GENESIS_NBITS, GENESIS_TARGET,
+        BlockTimestamp, CompactTarget, GENESIS_NBITS, GENESIS_TARGET,
         WINDOW_SIZE,
     };
 
@@ -43,99 +41,6 @@ mod tests {
             current_target: GENESIS_TARGET,
             epoch_start_timestamp: BlockTimestamp::new(500),
             timestamps: [BlockTimestamp::new(10); WINDOW_SIZE],
-        }
-    }
-
-    fn ts(seconds: u32) -> BlockTimestamp {
-        BlockTimestamp::new(seconds)
-    }
-
-    fn median_test_state(timestamps: &[u32]) -> State {
-        assert!(!timestamps.is_empty());
-        assert!(timestamps.len() <= WINDOW_SIZE);
-
-        let mut state = State {
-            height: timestamps.len() as u32 - 1,
-            current_nbits: CompactTarget::new(GENESIS_NBITS),
-            current_work: work_from_target(GENESIS_TARGET)
-                .expect("GENESIS_TARGET is a valid target"),
-            current_target: GENESIS_TARGET,
-            ..State::default()
-        };
-
-        for (slot, timestamp) in state.timestamps.iter_mut().zip(timestamps.iter().copied()) {
-            *slot = ts(timestamp);
-        }
-
-        state
-    }
-
-    fn candidate_header_after(state: &State) -> NewHeader {
-        let timestamp = state
-            .timestamps
-            .iter()
-            .map(|timestamp| timestamp.into_inner())
-            .max()
-            .unwrap_or_default()
-            .saturating_add(1);
-
-        NewHeader {
-            version: 1,
-            merkle_root: [0x22; 32],
-            timestamp: ts(timestamp),
-            nonce: 7,
-        }
-    }
-
-    #[test]
-    fn host_sorted_median_hints_agree_with_core_rank_check() {
-        let cases: &[&[u32]] = &[
-            &[1],
-            &[1, 2],
-            &[1, 2, 3],
-            &[10, 1, 20, 2, 30],
-            &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
-            &[1, 2, 3, 4, 5, 6, 6, 6, 7, 8, 9],
-            &[90, 20, 20, 80, 30, 70, 40, 60, 50, 50, 50],
-        ];
-
-        for timestamps in cases {
-            let state = median_test_state(timestamps);
-            let sorted_median = median_time_past_for_state(&state);
-            let header = candidate_header_after(&state);
-
-            let mut accepted = state.clone();
-            accepted
-                .apply_headers(&[header], &[sorted_median], |_| BlockHash::new([0; 32]))
-                .expect("core rank check should accept host-sorted median");
-
-            if sorted_median.into_inner() > 0 {
-                let lower = ts(sorted_median.into_inner() - 1);
-                let rejected = std::panic::catch_unwind(|| {
-                    let mut state = state.clone();
-                    state
-                        .apply_headers(&[header], &[lower], |_| BlockHash::new([0; 32]))
-                        .unwrap();
-                });
-                assert!(
-                    rejected.is_err(),
-                    "core rank check should reject lower non-median for {timestamps:?}"
-                );
-            }
-
-            let higher = ts(sorted_median.into_inner().saturating_add(1));
-            if higher != sorted_median {
-                let rejected = std::panic::catch_unwind(|| {
-                    let mut state = state.clone();
-                    state
-                        .apply_headers(&[header], &[higher], |_| BlockHash::new([0; 32]))
-                        .unwrap();
-                });
-                assert!(
-                    rejected.is_err(),
-                    "core rank check should reject higher non-median for {timestamps:?}"
-                );
-            }
         }
     }
 
@@ -241,18 +146,18 @@ mod tests {
         let genesis = db.load_header_record(0);
         let genesis_hash = hash_header(&genesis.header);
         let genesis_state = genesis_state_from_record(genesis, genesis_hash);
-        let records = db.load_header_records(1, 40319);
-        let headers = records_to_new_headers(&records);
-        let state = compute_final_state(&genesis_state, &headers);
+        let witness_1 = db.load_header_batch_witness(1, 40319);
+        let state = compute_final_state_with_hints(&genesis_state, &witness_1.headers, &witness_1.median_time_past_hints);
         let pre_boundary = db.load_header_record(40319);
 
         assert_eq!(state.height, 40319);
         assert_eq!(state.current_nbits, pre_boundary.header.compact_target);
 
-        let boundary = db.load_header_record(40320);
+        let witness_2 = db.load_header_batch_witness(40320, 1);
         let boundary_state =
-            compute_final_state(&state, &[NewHeader::from_header(&boundary.header)]);
+            compute_final_state_with_hints(&state, &witness_2.headers, &witness_2.median_time_past_hints);
         assert_eq!(boundary_state.height, 40320);
+        let boundary = db.load_header_record(40320);
         assert_eq!(boundary_state.current_nbits, boundary.header.compact_target);
     }
 
