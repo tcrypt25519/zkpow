@@ -15,9 +15,8 @@ pub use zkpow_core::{
 };
 
 pub use db::{
-    genesis_state_from_record, load_header_batch_witness_from_db, load_header_record_from_db,
-    load_header_records_from_db, load_new_headers_from_db, state_from_db_at_height,
-    HeaderBatchWitness, HeaderRecord,
+    genesis_state_from_record, state_from_db_at_height, DbConfig, DbConn, HeaderBatchWitness,
+    HeaderRecord,
 };
 pub use hash::{
     compute_pv_digest, continuation_digest, continuation_digest_from_state, hash_header, sha256d,
@@ -165,12 +164,17 @@ mod tests {
         assert_eq!(continuation_digest(&pcs), continuation_digest(&pcs));
     }
 
+    fn open_db() -> DbConn {
+        DbConfig::new(db_path()).connect().expect("failed to open test database")
+    }
+
     #[test]
     fn db_median_time_hints_match_genesis_seeded_state() {
-        let genesis = load_header_record_from_db(db_path(), 0);
+        let db = open_db();
+        let genesis = db.load_header_record(0);
         let genesis_hash = hash_header(&genesis.header);
         let genesis_state = genesis_state_from_record(genesis, genesis_hash);
-        let records = load_header_records_from_db(db_path(), 1, 13);
+        let records = db.load_header_records(1, 13);
         let headers = records_to_new_headers(&records);
         let hints = median_time_past_hints_from_records(&records);
 
@@ -179,8 +183,9 @@ mod tests {
 
     #[test]
     fn batch_witness_loader_matches_record_projection() {
-        let records = load_header_records_from_db(db_path(), 1, 13);
-        let witness = load_header_batch_witness_from_db(db_path(), 1, 13);
+        let db = open_db();
+        let records = db.load_header_records(1, 13);
+        let witness = db.load_header_batch_witness(1, 13);
 
         assert_eq!(witness.headers, records_to_new_headers(&records));
         assert_eq!(
@@ -191,10 +196,11 @@ mod tests {
 
     #[test]
     fn compute_final_state_with_hints_reaches_expected_height() {
-        let genesis = load_header_record_from_db(db_path(), 0);
+        let db = open_db();
+        let genesis = db.load_header_record(0);
         let genesis_hash = hash_header(&genesis.header);
         let genesis_state = genesis_state_from_record(genesis, genesis_hash);
-        let witness = load_header_batch_witness_from_db(db_path(), 1, 128);
+        let witness = db.load_header_batch_witness(1, 128);
 
         let final_state = compute_final_state_with_hints(
             &genesis_state,
@@ -207,10 +213,11 @@ mod tests {
 
     #[test]
     fn applying_headers_one_at_a_time_matches_db_claims() {
-        let genesis = load_header_record_from_db(db_path(), 0);
+        let db = open_db();
+        let genesis = db.load_header_record(0);
         let genesis_hash = hash_header(&genesis.header);
         let mut state = genesis_state_from_record(genesis, genesis_hash);
-        let witness = load_header_batch_witness_from_db(db_path(), 1, 64);
+        let witness = db.load_header_batch_witness(1, 64);
 
         for (index, (header, median_time_past)) in witness
             .headers
@@ -223,25 +230,26 @@ mod tests {
                 .apply_headers(&[header], &[median_time_past], hash_header)
                 .expect("header should apply");
             let height = (index as u32) + 1;
-            let db_state = state_from_db_at_height(db_path(), height, genesis_hash);
+            let db_state = state_from_db_at_height(&db, height, genesis_hash);
             assert_eq!(state.public_claim(), db_state.public_claim());
         }
     }
 
     #[test]
     fn db_retarget_schedule_matches_height_40320() {
-        let genesis = load_header_record_from_db(db_path(), 0);
+        let db = open_db();
+        let genesis = db.load_header_record(0);
         let genesis_hash = hash_header(&genesis.header);
         let genesis_state = genesis_state_from_record(genesis, genesis_hash);
-        let records = load_header_records_from_db(db_path(), 1, 40319);
+        let records = db.load_header_records(1, 40319);
         let headers = records_to_new_headers(&records);
         let state = compute_final_state(&genesis_state, &headers);
-        let pre_boundary = load_header_record_from_db(db_path(), 40319);
+        let pre_boundary = db.load_header_record(40319);
 
         assert_eq!(state.height, 40319);
         assert_eq!(state.current_nbits, pre_boundary.header.compact_target);
 
-        let boundary = load_header_record_from_db(db_path(), 40320);
+        let boundary = db.load_header_record(40320);
         let boundary_state =
             compute_final_state(&state, &[NewHeader::from_header(&boundary.header)]);
         assert_eq!(boundary_state.height, 40320);
@@ -272,21 +280,22 @@ mod tests {
             ),
         ];
 
-        let genesis = load_header_record_from_db(db_path(), 0);
+        let db = open_db();
+        let genesis = db.load_header_record(0);
         let genesis_hash = hash_header(&genesis.header);
 
         for (name, initial_state, record_start, record_count, expected_height) in cases {
             let initial_state = match initial_state {
                 InitialState::Genesis => genesis_state_from_record(genesis.clone(), genesis_hash),
                 InitialState::DbHeight(height) => {
-                    state_from_db_at_height(db_path(), height, genesis_hash)
+                    state_from_db_at_height(&db, height, genesis_hash)
                 }
             };
-            let records = load_header_records_from_db(db_path(), record_start, record_count);
+            let records = db.load_header_records(record_start, record_count);
             let headers = records_to_new_headers(&records);
             let hints = median_time_past_hints_from_records(&records);
             let final_state = compute_final_state_with_hints(&initial_state, &headers, &hints);
-            let db_state = state_from_db_at_height(db_path(), expected_height, genesis_hash);
+            let db_state = state_from_db_at_height(&db, expected_height, genesis_hash);
 
             assert_eq!(final_state.height, expected_height, "{name}: height");
             assert_eq!(final_state.block_hash, db_state.block_hash, "{name}: hash");

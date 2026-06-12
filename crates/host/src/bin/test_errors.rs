@@ -98,13 +98,20 @@ fn mainnet_genesis_hash() -> util::BlockHash {
     util::BlockHash::new(bytes)
 }
 
+fn open_db() -> util::DbConn {
+    util::DbConfig::new(db_path())
+        .connect()
+        .expect("failed to open database")
+}
+
 fn mainnet_genesis_state() -> util::State {
-    let genesis = util::load_header_record_from_db(db_path(), 0);
+    let db = open_db();
+    let genesis = db.load_header_record(0);
     util::genesis_state_from_record(genesis, mainnet_genesis_hash())
 }
 
 fn load_headers(start_height: u64, count: u64) -> Vec<util::NewHeader> {
-    util::load_new_headers_from_db(db_path(), start_height, count)
+    open_db().load_new_headers(start_height, count)
 }
 
 fn stdin_for_input(
@@ -215,7 +222,7 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
         consensus_bits(first_epoch_state.current_nbits),
     );
     let first_retarget_bits =
-        util::load_header_record_from_db(db_path(), (FIRST_BOUNDARY_TIP_HEIGHT + 1) as u64)
+        open_db().load_header_record((FIRST_BOUNDARY_TIP_HEIGHT + 1) as u64)
             .header
             .compact_target
             .into_inner();
@@ -236,12 +243,12 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
         consensus_bits(state.current_nbits),
     );
 
-    let previous_epoch_bits =
-        util::load_header_record_from_db(db_path(), RETARGET_TIP_HEIGHT as u64)
-            .header
-            .compact_target
-            .into_inner();
-    let next_header_bits = util::load_header_record_from_db(db_path(), RETARGET_HEIGHT as u64)
+    let db = open_db();
+    let previous_epoch_bits = db.load_header_record(RETARGET_TIP_HEIGHT as u64)
+        .header
+        .compact_target
+        .into_inner();
+    let next_header_bits = db.load_header_record(RETARGET_HEIGHT as u64)
         .header
         .compact_target
         .into_inner();

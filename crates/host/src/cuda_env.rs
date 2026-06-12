@@ -51,7 +51,7 @@ impl std::fmt::Display for ComputeCapability {
 }
 
 pub(crate) fn run_preflight(
-    config: &ProofGenerationConfig,
+    cuda_device_id: Option<u32>,
 ) -> Result<CudaPreflightReport, BoxError> {
     if std::env::consts::ARCH != "x86_64" {
         return Err(format!(
@@ -73,7 +73,7 @@ pub(crate) fn run_preflight(
         return Err("`nvidia-smi` reported no NVIDIA GPUs".into());
     }
 
-    let selected_device_id = config.cuda_device_id.unwrap_or(0);
+    let selected_device_id = cuda_device_id.unwrap_or(0);
     let selected_gpu = gpus
         .get(selected_device_id as usize)
         .ok_or_else(|| {

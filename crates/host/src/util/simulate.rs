@@ -50,7 +50,7 @@ pub(super) fn median_time_past_for_state(state: &State) -> BlockTimestamp {
 /// Build the median-time-past witness hints by sorting on the host.
 ///
 /// This is a host-only fallback for tests/local simulation. Production proof
-/// generation should prefer [`super::load_header_batch_witness_from_db`] so the host
+/// generation should prefer [`super::DbConn::load_header_batch_witness`] so the host
 /// uses the database-provided MTP column.
 pub fn median_time_past_hints_for_headers(
     initial_state: &State,

@@ -28,6 +28,7 @@ use zkpow_host::pipeline::input::{
     ENV_ZKPOW_BATCH_SIZE, ENV_ZKPOW_DB_PATH, ENV_ZKPOW_EXECUTE_ONLY,
 };
 use zkpow_host::pipeline::{generate_and_save_proofs, ProofGenerationConfig, ProverBackend};
+use zkpow_host::util::DbConfig;
 
 #[cfg(feature = "memory-diagnostics")]
 #[global_allocator]
@@ -67,6 +68,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     );
     memory_monitor::log_point("stress_session_start", "Stress session memory snapshot");
 
+    let db_path_buf = std::env::var(ENV_ZKPOW_DB_PATH)
+        .ok()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(db_path()));
+    let db = DbConfig::new(&db_path_buf)
+        .connect()
+        .map_err(|e| format!("failed to open database: {e}"))?;
+
     let mut prev_proof_path: Option<PathBuf> = None;
     let mut baseline_rss_kb: Option<u64> = None;
     let mut history = StageHistory::new([
@@ -101,7 +110,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let start_mem = memory_monitor::log_point("stress_iter_start", "Stress iteration start");
 
         let iter_start = std::time::Instant::now();
-        let artifacts = generate_and_save_proofs(&config).await?;
+        let artifacts = generate_and_save_proofs(&config, &db).await?;
         let compressed_path = artifacts.compressed_path.clone();
         if !execute_only && compressed_path.is_none() {
             return Err("sp1_stress expected compressed proof but got none".into());
