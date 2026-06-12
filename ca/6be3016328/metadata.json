@@ -1,0 +1,29 @@
+{
+  "cli_version": "0.7.6-nightly.202606110752.e3838b8c",
+  "checkpoint_id": "ca6be3016328",
+  "strategy": "manual-commit",
+  "branch": "dry-refactor",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "crates/host/src/bin/test_errors.rs",
+    "crates/host/src/pipeline/batch.rs",
+    "crates/host/src/pipeline/mod.rs",
+    "crates/host/src/util.rs",
+    "crates/host/src/util/db.rs"
+  ],
+  "sessions": [
+    {
+      "metadata": "/ca/6be3016328/0/metadata.json",
+      "transcript": "/ca/6be3016328/0/full.jsonl",
+      "content_hash": "/ca/6be3016328/0/content_hash.txt",
+      "prompt": "/ca/6be3016328/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 73489,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 939776,
+    "output_tokens": 7474,
+    "api_call_count": 18
+  }
+}
