@@ -154,11 +154,12 @@ fn simulate_expected_state(
         ))
     })?;
 
-    let db_end_state = timed_sync("load_db_end_state", || -> Result<_, BoxError> {
-        Ok(util::state_from_db_at_height(db, end_height, genesis_hash))
+    let db_end_claim = timed_sync("load_db_end_claim", || -> Result<_, BoxError> {
+        let record = db.load_header_record(end_height as u64);
+        Ok(record.public_claim(genesis_hash))
     })?;
 
-    if expected_state.public_claim() == db_end_state.public_claim() {
+    if expected_state.public_claim() == db_end_claim {
         return Ok(expected_state);
     }
 
@@ -174,7 +175,7 @@ fn simulate_expected_state(
     })?;
 
     let bad_height = first_new_height + (bad_index as u32);
-    let expected_claim = util::state_from_db_at_height(db, bad_height, genesis_hash).public_claim();
+    let expected_claim = db.load_header_record(bad_height as u64).public_claim(genesis_hash);
     let actual_claim = actual_state.public_claim();
 
     Err(format!(
@@ -220,8 +221,8 @@ fn find_first_diverging_state(
         );
 
         let height = first_new_height + (mid as u32);
-        let db_state = util::state_from_db_at_height(db, height, genesis_hash);
-        if replayed_states[mid].public_claim() == db_state.public_claim() {
+        let db_claim = db.load_header_record(height as u64).public_claim(genesis_hash);
+        if replayed_states[mid].public_claim() == db_claim {
             lo = mid + 1;
         } else {
             hi = mid;

@@ -2,7 +2,7 @@ use std::path::Path;
 
 use super::{
     hash_header, target_from_bits, work_from_target, BlockHash, BlockTimestamp, ChainWork,
-    CompactTarget, Header, NewHeader, State, Target, GENESIS_TARGET,
+    CompactTarget, Header, NewHeader, PublicChainClaim, State, Target, GENESIS_TARGET,
 };
 
 // =============================================================================
@@ -15,6 +15,17 @@ pub struct HeaderRecord {
     pub header: Header,
     pub chain_work: ChainWork,
     pub median_time_past: BlockTimestamp,
+}
+
+impl HeaderRecord {
+    pub fn public_claim(&self, genesis_hash: BlockHash) -> PublicChainClaim {
+        PublicChainClaim {
+            genesis_hash,
+            tip_hash: hash_header(&self.header),
+            chain_work: self.chain_work,
+            height: self.height as u32,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
