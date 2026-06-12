@@ -243,7 +243,7 @@ pub async fn run_single_batch(config: &ProofGenerationConfig, db: &DbConn) -> Re
             .unwrap_or_default(),
     );
 
-    let artifacts = generate_and_save_proofs(config, &db).await?;
+    let artifacts = generate_and_save_proofs(config, db).await?;
     log_batch_completion(config.execute_only, &artifacts);
     Ok(artifacts)
 }

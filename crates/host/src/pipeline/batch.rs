@@ -155,8 +155,7 @@ fn simulate_expected_state(
     })?;
 
     let db_end_claim = timed_sync("load_db_end_claim", || -> Result<_, BoxError> {
-        let record = db.load_header_record(end_height as u64);
-        Ok(record.public_claim(genesis_hash))
+        Ok(db.load_public_claim(end_height as u64, genesis_hash))
     })?;
 
     if expected_state.public_claim() == db_end_claim {
@@ -175,7 +174,7 @@ fn simulate_expected_state(
     })?;
 
     let bad_height = first_new_height + (bad_index as u32);
-    let expected_claim = db.load_header_record(bad_height as u64).public_claim(genesis_hash);
+    let expected_claim = db.load_public_claim(bad_height as u64, genesis_hash);
     let actual_claim = actual_state.public_claim();
 
     Err(format!(
@@ -221,7 +220,7 @@ fn find_first_diverging_state(
         );
 
         let height = first_new_height + (mid as u32);
-        let db_claim = db.load_header_record(height as u64).public_claim(genesis_hash);
+        let db_claim = db.load_public_claim(height as u64, genesis_hash);
         if replayed_states[mid].public_claim() == db_claim {
             lo = mid + 1;
         } else {
@@ -261,7 +260,7 @@ fn replay_states_through(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pipeline::{ProverBackend, ProofGenerationConfig};
+    use crate::pipeline::{ProofGenerationConfig, ProverBackend};
 
     fn test_config(trusted_start_height: Option<u32>) -> ProofGenerationConfig {
         ProofGenerationConfig {

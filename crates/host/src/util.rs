@@ -29,10 +29,7 @@ pub use simulate::{
 mod tests {
     use super::*;
     use crate::config::db_path;
-    use zkpow_core::{
-        BlockTimestamp, CompactTarget, GENESIS_NBITS, GENESIS_TARGET,
-        WINDOW_SIZE,
-    };
+    use zkpow_core::{BlockTimestamp, CompactTarget, GENESIS_NBITS, GENESIS_TARGET, WINDOW_SIZE};
 
     fn make_pcs() -> PrivateContinuationState {
         PrivateContinuationState {
@@ -70,7 +67,9 @@ mod tests {
     }
 
     fn open_db() -> DbConn {
-        DbConfig::new(db_path()).connect().expect("failed to open test database")
+        DbConfig::new(db_path())
+            .connect()
+            .expect("failed to open test database")
     }
 
     #[test]
@@ -135,8 +134,8 @@ mod tests {
                 .apply_headers(&[header], &[median_time_past], hash_header)
                 .expect("header should apply");
             let height = (index as u32) + 1;
-            let db_state = state_from_db_at_height(&db, height, genesis_hash);
-            assert_eq!(state.public_claim(), db_state.public_claim());
+            let db_claim = db.load_public_claim(height as u64, genesis_hash);
+            assert_eq!(state.public_claim(), db_claim);
         }
     }
 
@@ -147,18 +146,25 @@ mod tests {
         let genesis_hash = hash_header(&genesis.header);
         let genesis_state = genesis_state_from_record(genesis, genesis_hash);
         let witness_1 = db.load_header_batch_witness(1, 40319);
-        let state = compute_final_state_with_hints(&genesis_state, &witness_1.headers, &witness_1.median_time_past_hints);
-        let pre_boundary = db.load_header_record(40319);
+        let state = compute_final_state_with_hints(
+            &genesis_state,
+            &witness_1.headers,
+            &witness_1.median_time_past_hints,
+        );
+        let pre_boundary_nbits = db.load_compact_target(40319);
 
         assert_eq!(state.height, 40319);
-        assert_eq!(state.current_nbits, pre_boundary.header.compact_target);
+        assert_eq!(state.current_nbits, pre_boundary_nbits);
 
         let witness_2 = db.load_header_batch_witness(40320, 1);
-        let boundary_state =
-            compute_final_state_with_hints(&state, &witness_2.headers, &witness_2.median_time_past_hints);
+        let boundary_state = compute_final_state_with_hints(
+            &state,
+            &witness_2.headers,
+            &witness_2.median_time_past_hints,
+        );
         assert_eq!(boundary_state.height, 40320);
-        let boundary = db.load_header_record(40320);
-        assert_eq!(boundary_state.current_nbits, boundary.header.compact_target);
+        let boundary_nbits = db.load_compact_target(40320);
+        assert_eq!(boundary_state.current_nbits, boundary_nbits);
     }
 
     #[test]
@@ -196,20 +202,20 @@ mod tests {
                     state_from_db_at_height(&db, height, genesis_hash)
                 }
             };
-            let records = db.load_header_records(record_start, record_count);
-            let headers = records_to_new_headers(&records);
-            let hints = median_time_past_hints_from_records(&records);
-            let final_state = compute_final_state_with_hints(&initial_state, &headers, &hints);
-            let db_state = state_from_db_at_height(&db, expected_height, genesis_hash);
+            let witness = db.load_header_batch_witness(record_start, record_count);
+            let final_state = compute_final_state_with_hints(
+                &initial_state,
+                &witness.headers,
+                &witness.median_time_past_hints,
+            );
+            let db_claim = db.load_public_claim(expected_height as u64, genesis_hash);
+            let db_nbits = db.load_compact_target(expected_height as u64);
 
             assert_eq!(final_state.height, expected_height, "{name}: height");
-            assert_eq!(final_state.block_hash, db_state.block_hash, "{name}: hash");
+            assert_eq!(final_state.public_claim(), db_claim, "{name}: claim");
+            assert_eq!(final_state.current_nbits, db_nbits, "{name}: nbits");
             assert_eq!(
-                final_state.current_nbits, db_state.current_nbits,
-                "{name}: nbits"
-            );
-            assert_eq!(
-                final_state.chain_work, db_state.chain_work,
+                final_state.chain_work, db_claim.chain_work,
                 "{name}: chainwork"
             );
         }

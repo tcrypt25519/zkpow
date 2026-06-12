@@ -46,7 +46,9 @@ pub struct DbConfig {
 
 impl DbConfig {
     pub fn new(path: impl AsRef<Path>) -> Self {
-        Self { path: path.as_ref().to_path_buf() }
+        Self {
+            path: path.as_ref().to_path_buf(),
+        }
     }
 
     pub fn connect(&self) -> Result<DbConn, rusqlite::Error> {
@@ -61,13 +63,53 @@ pub struct DbConn {
 }
 
 impl DbConn {
+    pub fn load_public_claim(&self, height: u64, genesis_hash: BlockHash) -> PublicChainClaim {
+        const SQL: &str = "SELECT block_hash, chainwork FROM headers WHERE height = ?1";
+
+        let mut stmt = self
+            .conn
+            .prepare_cached(SQL)
+            .expect("failed to prepare statement");
+        stmt.query_row(rusqlite::params![height], |row| {
+            let block_hash: Vec<u8> = row.get(0)?;
+            let chainwork: Vec<u8> = row.get(1)?;
+
+            Ok(PublicChainClaim {
+                genesis_hash,
+                tip_hash: BlockHash::new(
+                    block_hash.try_into().expect("block_hash must be 32 bytes"),
+                ),
+                chain_work: chain_work_from_db_bytes(&chainwork),
+                height: height as u32,
+            })
+        })
+        .expect("failed to read public claim from database")
+    }
+
+    pub fn load_compact_target(&self, height: u64) -> CompactTarget {
+        const SQL: &str = "SELECT n_bits FROM headers WHERE height = ?1";
+
+        let mut stmt = self
+            .conn
+            .prepare_cached(SQL)
+            .expect("failed to prepare statement");
+        stmt.query_row(rusqlite::params![height], |row| {
+            let nbits: i64 = row.get(0)?;
+            Ok(CompactTarget::new(nbits as u32))
+        })
+        .expect("failed to read compact target from database")
+    }
+
     pub fn load_header_records(&self, start_height: u64, count: u64) -> Vec<HeaderRecord> {
         const SQL: &str =
             "SELECT height, version, prev, merkle_root, timestamp, n_bits, nonce, chainwork, \
              median_time_past FROM headers \
              WHERE height >= ?1 AND height < ?2 ORDER BY height ASC";
 
-        let mut stmt = self.conn.prepare_cached(SQL).expect("failed to prepare statement");
+        let mut stmt = self
+            .conn
+            .prepare_cached(SQL)
+            .expect("failed to prepare statement");
         let end_height = start_height + count;
         let rows = stmt
             .query_map(rusqlite::params![start_height, end_height], |row| {
@@ -83,9 +125,7 @@ impl DbConn {
 
                 let header = Header {
                     version: version as u32,
-                    prev_blockhash: BlockHash::new(
-                        prev.try_into().expect("prev must be 32 bytes"),
-                    ),
+                    prev_blockhash: BlockHash::new(prev.try_into().expect("prev must be 32 bytes")),
                     merkle_root: merkle_root
                         .try_into()
                         .expect("merkle_root must be 32 bytes"),
@@ -126,7 +166,10 @@ impl DbConn {
             "SELECT version, merkle_root, timestamp, nonce, median_time_past FROM headers \
              WHERE height >= ?1 AND height < ?2 ORDER BY height ASC";
 
-        let mut stmt = self.conn.prepare_cached(SQL).expect("failed to prepare statement");
+        let mut stmt = self
+            .conn
+            .prepare_cached(SQL)
+            .expect("failed to prepare statement");
         let end_height = start_height + count;
         let rows = stmt
             .query_map(rusqlite::params![start_height, end_height], |row| {
@@ -159,7 +202,10 @@ impl DbConn {
             median_time_past_hints.push(median_time_past);
         }
 
-        HeaderBatchWitness { headers, median_time_past_hints }
+        HeaderBatchWitness {
+            headers,
+            median_time_past_hints,
+        }
     }
 }
 
@@ -226,8 +272,7 @@ pub fn state_from_db_at_height(db: &DbConn, height: u32, genesis_hash: BlockHash
         current_nbits: current.header.compact_target,
         height,
         chain_work: current.chain_work,
-        current_work: work_from_target(current_target)
-            .expect("DB target must be a valid target"),
+        current_work: work_from_target(current_target).expect("DB target must be a valid target"),
         current_target,
         epoch_start_timestamp: epoch_start_record.header.timestamp,
         timestamps,

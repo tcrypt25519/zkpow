@@ -221,11 +221,9 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
         first_epoch_state.height,
         consensus_bits(first_epoch_state.current_nbits),
     );
-    let first_retarget_bits =
-        db.load_header_record((FIRST_BOUNDARY_TIP_HEIGHT + 1) as u64)
-            .header
-            .compact_target
-            .into_inner();
+    let first_retarget_bits = db
+        .load_compact_target((FIRST_BOUNDARY_TIP_HEIGHT + 1) as u64)
+        .into_inner();
     if consensus_bits(first_epoch_state.current_nbits) != first_retarget_bits {
         return Err(format!(
             "expected first retarget boundary bits {:#x}, got {:#x}",
@@ -247,14 +245,10 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
         consensus_bits(state.current_nbits),
     );
 
-    let previous_epoch_bits = db.load_header_record(RETARGET_TIP_HEIGHT as u64)
-        .header
-        .compact_target
+    let previous_epoch_bits = db
+        .load_compact_target(RETARGET_TIP_HEIGHT as u64)
         .into_inner();
-    let next_header_bits = db.load_header_record(RETARGET_HEIGHT as u64)
-        .header
-        .compact_target
-        .into_inner();
+    let next_header_bits = db.load_compact_target(RETARGET_HEIGHT as u64).into_inner();
 
     println!(
         "retarget-debug: prev_epoch_bits={:#x} next_header_bits={:#x}",
