@@ -6,11 +6,11 @@
 //! authenticated state, then hashes and validates.
 //!
 //! Input protocol:
-//!   1. encoded_input: Vec<u8>  (ProofCarryingState bytes)
-//!   2. state_witness: Vec<u8>  (State bytes)
+//!   1. pcs: Vec<u8>                  (ProofCarryingState bytes)
+//!   2. state_witness: Vec<u8>        (State bytes)
 //!   3. header_hints: Vec<u8>
 //!   4. median_time_past_hints: Vec<u8>
-//!   5. If `claim.height > 0`, recursive proof witness (via write_proof)
+//!   5. If `claim.height > 0`, compressed SP1 proof witness (via write_proof)
 //!
 //! Output: MinimalPublicValues (169 bytes) on success or failure.
 
@@ -35,7 +35,7 @@ fn hash_header(header: &Header) -> zkpow_core::BlockHash {
     })
 }
 
-/// Compute the continuation digest: SHA-256 of the serialized private continuation fields.
+/// Compute the continuation digest: SHA-256 of the serialized continuation data.
 fn compute_continuation_digest(state: &State) -> [u8; 32] {
     cycle_track("crypto/continuation_digest", || {
         let cd_bytes: [u8; CONTINUATION_DATA_SIZE] = state.continuation_bytes();
@@ -51,26 +51,25 @@ fn commit_minimal_pv(pv: &MinimalPublicValues) -> ! {
 }
 
 // ============================================================================
-// Recursive proof verification
+// Prior proof verification
 // ============================================================================
 
-fn verify_recursive_proof(
+fn verify_prior_proof(
     proof: &Proof,
     verifier_key: &VerifierKeyDigest,
     prior_claim: &Claim,
     prior_continuation_bytes: &[u8; CONTINUATION_DATA_SIZE],
 ) {
-    cycle_track("recursive/verify_proof", || {
-        // Reject continuation from a failed prior proof.
+    cycle_track("proof/verify", || {
         if proof.exit_code != 0 {
             panic!(
-                "recursive continuation rejected: prior proof has exit code {}",
+                "continuation rejected: prior proof has exit code {}",
                 proof.exit_code
             );
         }
 
-        // 1. Hash the supplied continuation state.
-        let continuation_digest = cycle_track("recursive/continuation_digest", || {
+        // 1. Hash the prior continuation data.
+        let continuation_digest = cycle_track("proof/continuation_digest", || {
             sha256_116bytes(prior_continuation_bytes)
         });
 
@@ -81,16 +80,16 @@ fn verify_recursive_proof(
             *verifier_key,
         );
         let prior_pv_bytes: [u8; MINIMAL_PV_SIZE] = prior_pv.to_bytes();
-        let actual_pv_hash = cycle_track("recursive/public_values_digest", || {
+        let actual_pv_hash = cycle_track("proof/public_values_digest", || {
             sha256_169bytes(&prior_pv_bytes)
         });
 
         if actual_pv_hash != proof.public_values_digest.into_raw() {
-            panic!("recursive proof public values digest mismatch");
+            panic!("proof public values digest mismatch");
         }
 
         // 3. Verify the SP1 proof.
-        cycle_track("recursive/sp1_verify", || {
+        cycle_track("proof/sp1_verify", || {
             sp1_zkvm::lib::verify::verify_sp1_proof(
                 verifier_key.as_raw(),
                 proof.public_values_digest.as_raw(),
@@ -130,7 +129,7 @@ pub fn main() {
         if pcs.claim.height > 0 {
             let prior_continuation_bytes: [u8; CONTINUATION_DATA_SIZE] =
                 state.continuation_bytes();
-            verify_recursive_proof(
+            verify_prior_proof(
                 &pcs.proof,
                 &pcs.verifier_key,
                 &pcs.claim,

@@ -318,7 +318,7 @@ impl NewHeader {
 }
 
 // ============================================================================
-// Public claim and private continuation types (Step 3)
+// Claim and ContinuationData types
 // ============================================================================
 
 /// The verifier-visible portion of a validated chain segment.
@@ -360,10 +360,10 @@ impl Claim {
     }
 }
 
-/// The private continuation state carried between recursive proof iterations.
+/// Continuation data carried forward at each proof step.
 ///
-/// This is committed only as a digest in the public values; the raw bytes are
-/// supplied as a private witness when extending a proof.
+/// Committed only as a digest in the public values; the raw bytes are
+/// supplied as a private witness when extending to the next step.
 ///
 /// Serialized without struct padding (116 bytes):
 /// ```text

@@ -90,7 +90,7 @@ impl State {
         }
     }
 
-    /// Serialize the private continuation fields directly to bytes.
+    /// Serialize the continuation data directly to bytes.
     #[must_use]
     pub fn continuation_bytes(&self) -> [u8; CONTINUATION_DATA_SIZE] {
         ContinuationData::from_state(self).to_bytes()

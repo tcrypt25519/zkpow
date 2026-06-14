@@ -5,7 +5,7 @@
 //! - `sha256_80bytes`: hashes exactly 80 bytes (Bitcoin block header)
 //! - `sha256_32bytes`: hashes exactly 32 bytes (intermediate hash output)
 //! - `sha256_169bytes`: hashes exactly 169 bytes (minimal public values)
-//! - `sha256_116bytes`: hashes exactly 116 bytes (private continuation state)
+//! - `sha256_116bytes`: hashes exactly 116 bytes (continuation data)
 //! - `sha256d_80bytes`: hashes exactly 80 bytes with SHA256d
 //!
 //! No loops, no branching on block count — the padding and block layout
