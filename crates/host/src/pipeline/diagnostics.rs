@@ -20,9 +20,9 @@ pub(crate) enum HighlightMode {
     Brackets,
 }
 
-fn format_claim_pretty(claim: &util::PublicChainClaim) -> String {
+fn format_claim_pretty(claim: &util::Claim) -> String {
     let mut output = String::new();
-    output.push_str("    PublicChainClaim {\n");
+    output.push_str("    Claim {\n");
     push_claim_field(
         &mut output,
         "genesis_hash",
@@ -52,20 +52,20 @@ fn push_claim_field(output: &mut String, name: &str, value: &str) {
 }
 
 pub(crate) fn format_claim_mismatch(
-    actual: &util::PublicChainClaim,
-    expected: &util::PublicChainClaim,
+    actual: &util::Claim,
+    expected: &util::Claim,
 ) -> String {
     format_claim_mismatch_with_mode(actual, expected, highlight_mode_from_env())
 }
 
 pub(crate) fn format_claim_mismatch_with_mode(
-    actual: &util::PublicChainClaim,
-    expected: &util::PublicChainClaim,
+    actual: &util::Claim,
+    expected: &util::Claim,
     mode: HighlightMode,
 ) -> String {
     let mut output = String::new();
     output.push_str("  actual claim:\n");
-    output.push_str("    PublicChainClaim {\n");
+    output.push_str("    Claim {\n");
     push_claim_mismatch_field(
         &mut output,
         "genesis_hash",
@@ -276,7 +276,7 @@ trait ClaimHex {
     fn height_display_hex(&self) -> String;
 }
 
-impl ClaimHex for util::PublicChainClaim {
+impl ClaimHex for util::Claim {
     fn genesis_hash_display_hex(&self) -> String {
         display_hex_32(self.genesis_hash.to_le_bytes())
     }

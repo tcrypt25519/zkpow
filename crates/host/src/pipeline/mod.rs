@@ -695,13 +695,13 @@ mod tests {
 
     #[test]
     fn claim_mismatch_splits_32_byte_fields_and_pairs_corrections() {
-        let actual = util::PublicChainClaim {
+        let actual = util::Claim {
             genesis_hash: util::BlockHash::from_le_bytes([0x11; 32]),
             tip_hash: util::BlockHash::from_le_bytes([0x22; 32]),
             chain_work: util::ChainWork::from_le_bytes([0x33; 32]),
             height: 1,
         };
-        let expected = util::PublicChainClaim {
+        let expected = util::Claim {
             tip_hash: util::BlockHash::from_le_bytes([0x44; 32]),
             height: 2,
             ..actual
@@ -726,7 +726,7 @@ mod tests {
 
     #[test]
     fn claim_mismatch_keeps_matching_32_byte_fields_to_two_lines() {
-        let claim = util::PublicChainClaim {
+        let claim = util::Claim {
             genesis_hash: util::BlockHash::from_le_bytes([0x11; 32]),
             tip_hash: util::BlockHash::from_le_bytes([0x22; 32]),
             chain_work: util::ChainWork::from_le_bytes([0x33; 32]),

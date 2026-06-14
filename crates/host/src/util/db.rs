@@ -2,7 +2,7 @@ use std::path::Path;
 
 use super::{
     hash_header, target_from_bits, work_from_target, BlockHash, BlockTimestamp, ChainWork,
-    CompactTarget, Header, NewHeader, PublicChainClaim, State, Target, GENESIS_TARGET,
+    CompactTarget, Header, NewHeader, Claim, State, Target, GENESIS_TARGET,
 };
 
 // =============================================================================
@@ -18,8 +18,8 @@ pub struct HeaderRecord {
 }
 
 impl HeaderRecord {
-    pub fn public_claim(&self, genesis_hash: BlockHash) -> PublicChainClaim {
-        PublicChainClaim {
+    pub fn public_claim(&self, genesis_hash: BlockHash) -> Claim {
+        Claim {
             genesis_hash,
             tip_hash: hash_header(&self.header),
             chain_work: self.chain_work,
@@ -63,7 +63,7 @@ pub struct DbConn {
 }
 
 impl DbConn {
-    pub fn load_public_claim(&self, height: u64, genesis_hash: BlockHash) -> PublicChainClaim {
+    pub fn load_public_claim(&self, height: u64, genesis_hash: BlockHash) -> Claim {
         const SQL: &str = "SELECT block_hash, chainwork FROM headers WHERE height = ?1";
 
         let mut stmt = self
@@ -74,7 +74,7 @@ impl DbConn {
             let block_hash: Vec<u8> = row.get(0)?;
             let chainwork: Vec<u8> = row.get(1)?;
 
-            Ok(PublicChainClaim {
+            Ok(Claim {
                 genesis_hash,
                 tip_hash: BlockHash::new(
                     block_hash.try_into().expect("block_hash must be 32 bytes"),

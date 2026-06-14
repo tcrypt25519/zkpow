@@ -79,7 +79,7 @@ fn display_verifier_key(verifier_key: util::VerifierKeyDigest) {
     println!("Verifier Key:     {}", hex::encode(verifier_key.to_bytes()));
 }
 
-fn display_claim(claim: &util::PublicChainClaim) {
+fn display_claim(claim: &util::Claim) {
     let mainnet_genesis_raw: [u8; 32] = {
         let mut g: [u8; 32] = hex::decode(MAINNET_GENESIS_HEX)
             .unwrap()

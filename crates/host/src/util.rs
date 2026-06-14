@@ -7,11 +7,11 @@ mod simulate;
 pub use zkpow_core::{
     parse_median_hints, parse_new_headers, serialize_median_hints, serialize_new_headers,
     target_from_bits, u256, work_from_target, ApplyFailure, BlockHash, BlockTimestamp, ChainWork,
-    CompactTarget, Header, HeaderChainPublicValues, Input, InputError, MinimalPublicValues,
-    NewHeader, NewHeaderHintError, ParseError, PrivateContinuationState, ProofFailure,
-    PublicChainClaim, PublicValuesDigest, PublicValuesParseError, RecursiveProof, State, Target,
-    ValidationErrorCode, VerifierKeyDigest, GENESIS_TARGET, MINIMAL_PV_SIZE, NEW_HEADER_SIZE,
-    PRIVATE_CONTINUATION_STATE_SIZE, PUBLIC_CHAIN_CLAIM_SIZE, STATE_SIZE,
+    Claim, CompactTarget, ContinuationData, Header, HeaderChainPublicValues, InputError,
+    MinimalPublicValues, NewHeader, NewHeaderHintError, ParseError, Proof, ProofCarryingState,
+    ProofFailure, PublicValuesDigest, PublicValuesParseError, State, Target, ValidationErrorCode,
+    VerifierKeyDigest, CLAIM_SIZE, CONTINUATION_DATA_SIZE, GENESIS_TARGET, MINIMAL_PV_SIZE,
+    NEW_HEADER_SIZE, PROOF_SIZE, STATE_SIZE,
 };
 
 pub use db::{
@@ -31,8 +31,8 @@ mod tests {
     use crate::config::db_path;
     use zkpow_core::{BlockTimestamp, CompactTarget, GENESIS_NBITS, GENESIS_TARGET, WINDOW_SIZE};
 
-    fn make_pcs() -> PrivateContinuationState {
-        PrivateContinuationState {
+    fn make_pcs() -> ContinuationData {
+        ContinuationData {
             current_nbits: CompactTarget::new(GENESIS_NBITS),
             current_work: ChainWork::from_limbs([1, 2, 3, 4]),
             current_target: GENESIS_TARGET,
@@ -50,7 +50,7 @@ mod tests {
         for i in 0..bytes.len() {
             let mut mutated = bytes;
             mutated[i] ^= 0xFF;
-            if let Ok(pcs2) = PrivateContinuationState::parse(&mutated) {
+            if let Ok(pcs2) = ContinuationData::parse(&mutated) {
                 let digest2 = continuation_digest(&pcs2);
                 assert_ne!(
                     base_digest, digest2,

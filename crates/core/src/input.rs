@@ -1,56 +1,54 @@
-//! Logic for parsing the public prover input and constructing the `Input` struct.
+//! Logic for parsing the proof-carrying state and header batch inputs to the guest.
 
 use alloc::vec::Vec;
 
 use crate::{
     check_exact_len, copy_from_bytes, copy_to_bytes, cycle_track, slice_from_bytes, BlockTimestamp,
-    NewHeader, ParseError, PublicChainClaim, PublicValuesDigest, VerifierKeyDigest,
-    NEW_HEADER_SIZE, PUBLIC_CHAIN_CLAIM_SIZE, RECURSIVE_PROOF_SIZE,
+    Claim, NewHeader, ParseError, PublicValuesDigest, VerifierKeyDigest,
+    CLAIM_SIZE, NEW_HEADER_SIZE, PROOF_SIZE,
 };
 
 // ============================================================================
-// Input & InputError
+// ProofCarryingState & Proof
 // ============================================================================
 
-/// Complete typed public prover input.
+/// The complete output of the prior execution: the proven chain state plus its SP1 proof.
 ///
-/// The full validation state is supplied separately as private witness data.
+/// The full private chain [`State`](crate::State) is supplied separately as private witness data.
 /// Its public preimage fields must match [`claim`](Self::claim) before the
 /// guest uses it to validate headers.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Input {
-    pub claim: PublicChainClaim,
-    pub recursive_proof: RecursiveProof,
+pub struct ProofCarryingState {
+    pub claim: Claim,
+    pub verifier_key: VerifierKeyDigest,
+    pub proof: Proof,
 }
 
-/// Recursive proof metadata that authenticates the current [`State`](crate::State).
+/// SP1 proof authentication data for the prior execution.
 ///
-/// `previous_return_code` must be 0 (success) for the guest to accept the
-/// recursive continuation.  A nonzero value means the prior proof committed a
-/// validation failure, and extending from it is rejected.
+/// `exit_code` must be 0 (success) for the guest to accept the recursive
+/// continuation.  A nonzero value means the prior proof committed a validation
+/// failure, and extending from it is rejected.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RecursiveProof {
-    pub verifier_key: VerifierKeyDigest,
+pub struct Proof {
     pub public_values_digest: PublicValuesDigest,
-    /// Return code from the previous proof (0 = success, nonzero = failure).
-    pub previous_return_code: u8,
-    /// Padding to maintain 4-byte alignment.
+    /// Exit code from the previous proof (0 = success, nonzero = failure).
+    pub exit_code: u8,
     pub _pad: [u8; 3],
 }
 
-impl Default for RecursiveProof {
+impl Default for Proof {
     fn default() -> Self {
         Self {
-            verifier_key: VerifierKeyDigest::from_raw([0u32; 8]),
             public_values_digest: PublicValuesDigest::from_raw([0u8; 32]),
-            previous_return_code: 0,
+            exit_code: 0,
             _pad: [0u8; 3],
         }
     }
 }
 
-/// Parse and validation errors for [`Input`].
+/// Parse and validation errors for [`ProofCarryingState`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum InputError {
     #[error("input parse error: {0}")]
@@ -81,17 +79,17 @@ impl From<ParseError> for InputError {
     }
 }
 
-impl RecursiveProof {
-    /// Parse and validate a RecursiveProof from exactly [`RECURSIVE_PROOF_SIZE`] bytes.
+impl Proof {
+    /// Parse and validate a Proof from exactly [`PROOF_SIZE`] bytes.
     pub fn parse(bytes: &[u8]) -> Result<Self, InputError> {
-        cycle_track("input/recursive_proof", || {
+        cycle_track("input/proof", || {
             copy_from_bytes(bytes).map_err(InputError::from)
         })
     }
 
-    /// Serialize to exactly [`RECURSIVE_PROOF_SIZE`] bytes.
+    /// Serialize to exactly [`PROOF_SIZE`] bytes.
     #[must_use]
-    pub fn to_bytes(&self) -> [u8; RECURSIVE_PROOF_SIZE] {
+    pub fn to_bytes(&self) -> [u8; PROOF_SIZE] {
         copy_to_bytes(self)
     }
 }
@@ -151,39 +149,50 @@ pub fn parse_median_hints(
     })
 }
 
-/// Split and validate the wire layout, returning `(claim_bytes, proof_bytes)`.
+/// Wire size of the verifier key field in [`ProofCarryingState`]: `VerifierKeyDigest` → `[u32; 8]` → 32 bytes LE.
+const VK_WIRE_SIZE: usize = 32;
+
+/// Split and validate the wire layout, returning `(claim_bytes, vk_bytes, proof_bytes)`.
 ///
-/// `Input` intentionally carries only the public claim and recursive proof
-/// metadata. The full [`State`](crate::State) is supplied separately as private
-/// witness data and checked against this claim before use.
-fn split_input_wire(bytes: &[u8]) -> Result<(&[u8], &[u8]), InputError> {
-    check_exact_len(bytes, PUBLIC_CHAIN_CLAIM_SIZE + RECURSIVE_PROOF_SIZE)?;
+/// The full [`State`](crate::State) is supplied separately as private witness data
+/// and checked against the claim before use.
+#[allow(clippy::type_complexity)]
+fn split_pcs_wire(bytes: &[u8]) -> Result<(&[u8], &[u8], &[u8]), InputError> {
+    check_exact_len(bytes, CLAIM_SIZE + VK_WIRE_SIZE + PROOF_SIZE)?;
     Ok((
-        &bytes[..PUBLIC_CHAIN_CLAIM_SIZE],
-        &bytes[PUBLIC_CHAIN_CLAIM_SIZE..],
+        &bytes[..CLAIM_SIZE],
+        &bytes[CLAIM_SIZE..CLAIM_SIZE + VK_WIRE_SIZE],
+        &bytes[CLAIM_SIZE + VK_WIRE_SIZE..],
     ))
 }
 
-impl Input {
-    /// Constructs a new Input.
-    pub fn new(claim: PublicChainClaim, recursive_proof: RecursiveProof) -> Self {
+impl ProofCarryingState {
+    /// Constructs a new ProofCarryingState.
+    pub fn new(claim: Claim, verifier_key: VerifierKeyDigest, proof: Proof) -> Self {
         Self {
             claim,
-            recursive_proof,
+            verifier_key,
+            proof,
         }
     }
 
-    /// Parse and validate input from the host/guest wire format.
+    /// Parse and validate from the host/guest wire format.
     pub fn parse(bytes: &[u8]) -> Result<Self, InputError> {
         cycle_track("input/parse", || {
-            let (claim_bytes, proof_bytes) = split_input_wire(bytes)?;
+            let (claim_bytes, vk_bytes, proof_bytes) = split_pcs_wire(bytes)?;
             let claim = cycle_track("input/parse/claim", || {
-                PublicChainClaim::parse(claim_bytes).map_err(InputError::from)
+                Claim::parse(claim_bytes).map_err(InputError::from)
             })?;
-            let recursive_proof = RecursiveProof::parse(proof_bytes)?;
+            let verifier_key = cycle_track("input/parse/verifier_key", || {
+                Ok::<_, InputError>(VerifierKeyDigest::from_bytes(
+                    vk_bytes.try_into().expect("vk_bytes is exactly 32 bytes"),
+                ))
+            })?;
+            let proof = cycle_track("input/parse/proof", || Proof::parse(proof_bytes))?;
             Ok(Self {
                 claim,
-                recursive_proof,
+                verifier_key,
+                proof,
             })
         })
     }
@@ -191,9 +200,10 @@ impl Input {
     /// Serialize to the host/guest wire format.
     #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut bytes = Vec::with_capacity(PUBLIC_CHAIN_CLAIM_SIZE + RECURSIVE_PROOF_SIZE);
+        let mut bytes = Vec::with_capacity(CLAIM_SIZE + VK_WIRE_SIZE + PROOF_SIZE);
         bytes.extend_from_slice(&self.claim.to_bytes());
-        bytes.extend_from_slice(&self.recursive_proof.to_bytes());
+        bytes.extend_from_slice(&self.verifier_key.to_bytes());
+        bytes.extend_from_slice(&self.proof.to_bytes());
         bytes
     }
 }
@@ -210,22 +220,21 @@ mod tests {
     use crate::{BlockHash, BlockTimestamp, State};
 
     #[test]
-    fn test_recursive_proof_default_is_zeros() {
-        let proof = RecursiveProof::default();
-        assert_eq!(proof.verifier_key.as_raw(), &[0u32; 8]);
+    fn test_proof_default_is_zeros() {
+        let proof = Proof::default();
         assert_eq!(proof.public_values_digest.as_raw(), &[0u8; 32]);
-        assert_eq!(proof.previous_return_code, 0);
+        assert_eq!(proof.exit_code, 0);
     }
 
     #[test]
-    fn test_recursive_proof_previous_return_code_round_trips() {
-        let proof = RecursiveProof {
-            previous_return_code: 3,
+    fn test_proof_exit_code_round_trips() {
+        let proof = Proof {
+            exit_code: 3,
             ..Default::default()
         };
         let bytes = proof.to_bytes();
-        let parsed = RecursiveProof::parse(&bytes).unwrap();
-        assert_eq!(parsed.previous_return_code, 3);
+        let parsed = Proof::parse(&bytes).unwrap();
+        assert_eq!(parsed.exit_code, 3);
     }
 
     #[test]
@@ -237,13 +246,15 @@ mod tests {
             ..Default::default()
         };
         let claim = genesis_state.public_claim();
-        let input = Input::new(claim, RecursiveProof::default()).to_bytes();
-        let input = Input::parse(&input).unwrap();
+        let vk = VerifierKeyDigest::from_raw([0; 8]);
+        let bytes = ProofCarryingState::new(claim, vk, Proof::default()).to_bytes();
+        let pcs = ProofCarryingState::parse(&bytes).unwrap();
 
-        assert_eq!(input.claim.height, 0);
-        assert_eq!(input.claim.genesis_hash, BlockHash::new([1; 32]));
-        assert_eq!(input.claim.tip_hash, BlockHash::new([2; 32]));
-        assert_eq!(input.recursive_proof, RecursiveProof::default());
+        assert_eq!(pcs.claim.height, 0);
+        assert_eq!(pcs.claim.genesis_hash, BlockHash::new([1; 32]));
+        assert_eq!(pcs.claim.tip_hash, BlockHash::new([2; 32]));
+        assert_eq!(pcs.proof, Proof::default());
+        assert_eq!(pcs.verifier_key, vk);
     }
 
     #[test]
@@ -252,28 +263,23 @@ mod tests {
             height: 100,
             ..Default::default()
         };
-        // For height > 0, genesis_hash must be set
         non_genesis_state.genesis_hash = BlockHash::new([1; 32]);
         non_genesis_state.block_hash = BlockHash::new([2; 32]);
         non_genesis_state.header.prev_blockhash = BlockHash::new([3; 32]);
 
         let expected_verifier_key = VerifierKeyDigest::from_raw([1; 8]);
-        let expected_public_values_digest = PublicValuesDigest::from_raw([2; 32]);
-        let recursive_proof_data = RecursiveProof {
-            verifier_key: expected_verifier_key,
-            public_values_digest: expected_public_values_digest,
+        let expected_pvd = PublicValuesDigest::from_raw([2; 32]);
+        let proof_data = Proof {
+            public_values_digest: expected_pvd,
             ..Default::default()
         };
         let claim = non_genesis_state.public_claim();
-        let input = Input::new(claim, recursive_proof_data).to_bytes();
-        let input = Input::parse(&input).unwrap();
+        let bytes = ProofCarryingState::new(claim, expected_verifier_key, proof_data).to_bytes();
+        let pcs = ProofCarryingState::parse(&bytes).unwrap();
 
-        assert_eq!(input.claim.height, 100);
-        assert_eq!(input.recursive_proof.verifier_key, expected_verifier_key);
-        assert_eq!(
-            input.recursive_proof.public_values_digest,
-            expected_public_values_digest
-        );
+        assert_eq!(pcs.claim.height, 100);
+        assert_eq!(pcs.verifier_key, expected_verifier_key);
+        assert_eq!(pcs.proof.public_values_digest, expected_pvd);
     }
 
     #[test]

@@ -1,7 +1,7 @@
 use sha2::{Digest, Sha256};
 use sp1_sdk::SP1PublicValues;
 
-use super::{BlockHash, Header, PrivateContinuationState, State};
+use super::{BlockHash, ContinuationData, Header, State};
 
 /// Compute SHA256d of the given data.
 pub fn sha256d(data: &[u8]) -> [u8; 32] {
@@ -22,12 +22,12 @@ pub fn compute_pv_digest(committed_bytes: &[u8]) -> [u8; 32] {
         .expect("SP1 public values hash must be 32 bytes")
 }
 
-/// Compute the continuation digest: SHA-256 of the serialized private continuation state.
-pub fn continuation_digest(private: &PrivateContinuationState) -> [u8; 32] {
-    Sha256::digest(private.to_bytes()).into()
+/// Compute the continuation digest: SHA-256 of the serialized continuation data.
+pub fn continuation_digest(data: &ContinuationData) -> [u8; 32] {
+    Sha256::digest(data.to_bytes()).into()
 }
 
 /// Compute the continuation digest directly from a [`State`].
 pub fn continuation_digest_from_state(state: &State) -> [u8; 32] {
-    continuation_digest(&PrivateContinuationState::from_state(state))
+    continuation_digest(&ContinuationData::from_state(state))
 }
