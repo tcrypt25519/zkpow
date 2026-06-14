@@ -1,0 +1,1 @@
+/ruthless-refactorer Look into absolutely minimizing the code needed in the core and guest crates. Every single character left should have a hard-fought necessary purpose.
