@@ -5,11 +5,11 @@ use sp1_sdk::ExecutionReport;
 use crate::memory_monitor;
 use crate::pipeline::batch::PreparedBatch;
 use crate::pipeline::diagnostics::{timed_async, timed_sync};
-use crate::pipeline::input::{build_recursive_proof, build_stdin};
+use crate::pipeline::input::{build_proof, build_stdin};
 use crate::pipeline::BoxError;
 use crate::pipeline::ELF;
 use crate::util;
-use crate::util::{HeaderChainPublicValues, Input, VerifierKeyDigest};
+use crate::util::{HeaderChainPublicValues, ProofCarryingState, VerifierKeyDigest};
 
 pub(crate) struct ExecutedBatchArtifacts {
     pub(crate) stdin: SP1Stdin,
@@ -52,35 +52,6 @@ pub(crate) fn verify_public_values(
     }
 }
 
-pub(crate) fn find_first_diverging_state_index(
-    states: &[util::State],
-    first_new_height: u32,
-    db_path: &str,
-    genesis_hash: util::BlockHash,
-) -> usize {
-    assert!(
-        !states.is_empty(),
-        "find_first_diverging_state_index requires at least one state"
-    );
-
-    let mut lo: usize = 0;
-    let mut hi: usize = states.len() - 1;
-
-    while lo < hi {
-        let mid = lo + (hi - lo) / 2;
-        let height = first_new_height + (mid as u32);
-        let db_state = util::state_from_db_at_height(db_path, height, genesis_hash);
-
-        if states[mid].public_claim() == db_state.public_claim() {
-            lo = mid + 1;
-        } else {
-            hi = mid;
-        }
-    }
-
-    lo
-}
-
 pub(crate) async fn execute_batch_with_prover<P, K>(
     prover_name: &str,
     prover: &P,
@@ -99,13 +70,13 @@ where
     )
     .to_bytes()
     .to_vec();
-    let recursive_proof = timed_sync("build_recursive_proof", || {
-        build_recursive_proof(proving_key.verifying_key(), batch.previous_proof.as_ref())
+    let (verifier_key, proof) = timed_sync("build_proof", || {
+        build_proof(proving_key.verifying_key(), batch.previous_proof.as_ref())
     })?;
-    let input = Input::new(batch.current_state.public_claim(), recursive_proof);
+    let pcs = ProofCarryingState::new(batch.current_state.public_claim(), verifier_key, proof);
     let stdin = timed_sync("serialize_input", || {
         build_stdin(
-            &input,
+            &pcs,
             &batch.current_state,
             &batch.headers,
             &batch.median_hints,
@@ -181,17 +152,16 @@ where
         continuation_digest,
         verifier_key,
     );
-    let recursive_proof = util::RecursiveProof {
-        verifier_key,
+    let proof = util::Proof {
         public_values_digest: util::PublicValuesDigest::from_raw(util::compute_pv_digest(
             &prior_public_values.to_bytes(),
         )),
         ..Default::default()
     };
-    let input = Input::new(batch.current_state.public_claim(), recursive_proof);
+    let pcs = util::ProofCarryingState::new(batch.current_state.public_claim(), verifier_key, proof);
     let stdin = timed_sync("serialize_input", || {
         build_stdin(
-            &input,
+            &pcs,
             batch.current_state,
             batch.headers,
             batch.median_hints,

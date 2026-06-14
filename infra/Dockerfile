@@ -3,11 +3,12 @@
 # Optimized for Intel servers with AVX + GPU (CUDA) support
 #
 # Usage:
-#   docker build -t bitcoin-header-chain:latest .
+#   docker build -t bitcoin-header-chain:latest -f infra/Dockerfile .
 #   docker run --gpus all --rm \
 #     -v header-input:/input \
 #     -v header-output:/output \
-#     -e CUDA=1 \
+#     -e ZKPOW_USE_CUDA=1 \
+#     -e ZKPOW_DB_PATH=/input/headers.db \
 #     bitcoin-header-chain:latest
 
 # =============================================================================
@@ -47,18 +48,22 @@ ENV LD_LIBRARY_PATH="/usr/local/cuda/lib64:${LD_LIBRARY_PATH:-''}"
 ENV RUSTFLAGS="-C target-cpu=native -C target-feature=+avx2,+fma"
 
 # Copy workspace manifests for dependency caching
-COPY Cargo.toml ./
+COPY Cargo.toml Cargo.lock ./
 COPY .cargo ./
 COPY crates/core/Cargo.toml ./crates/core/
 COPY crates/guest/Cargo.toml ./crates/guest/
 COPY crates/host/Cargo.toml ./crates/host/
+COPY crates/memory-usage/ ./crates/memory-usage/
 
 # Build dependencies first (layer caching)
-RUN mkdir -p /app/crates/core/src /app/crates/guest/src /app/crates/host/src && \
-    echo 'fn main() {}' > /app/crates/core/src/lib.rs && \
+RUN mkdir -p /app/crates/core/src /app/crates/guest/src /app/crates/host/src/bin && \
+    printf '#![allow(unused)]\npub fn _stub() {}\n' > /app/crates/core/src/lib.rs && \
     echo 'fn main() {}' > /app/crates/guest/src/main.rs && \
     echo 'fn main() {}' > /app/crates/host/src/main.rs && \
-    echo 'fn main() {}' > /app/crates/host/src/lib.rs
+    printf '#![allow(unused)]\n' > /app/crates/host/src/lib.rs && \
+    echo 'fn main() {}' > /app/crates/host/src/bin/test_errors.rs && \
+    echo 'fn main() {}' > /app/crates/host/src/bin/inspect_proof.rs && \
+    echo 'fn main() {}' > /app/crates/host/src/bin/sp1_stress.rs
 
 # Copy source code
 COPY crates ./crates
@@ -99,6 +104,7 @@ VOLUME ["/input", "/output"]
 # Environment variables
 ENV RUST_LOG=info
 ENV RUST_BACKTRACE=1
+ENV ZKPOW_DB_PATH=/input/headers.db
 ENV AWS_SHARED_CREDENTIALS_FILE=/input/.aws/credentials
 ENV AWS_CONFIG_FILE=/input/.aws/config
 

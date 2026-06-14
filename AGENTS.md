@@ -104,7 +104,7 @@ verify it built the same public values the program committed.
 | -------- | ----- | ----------- |
 | `STATE_SIZE` | 296 | Full `State` (public + private, serialized for recursive chaining) |
 | `PRIVATE_CONTINUATION_STATE_SIZE` | 116 | `PrivateContinuationState` (next_nbits=4, next_work=32, next_target=32, epoch_ts=4, timestamps=44) |
-| `PUBLIC_CHAIN_CLAIM_SIZE` | 72 | `PublicChainClaim` (genesis_hash=32, tip_hash=32, chain_work=32, height=4) |
+| `PUBLIC_CHAIN_CLAIM_SIZE` | 100 | `PublicChainClaim` (genesis_hash=32, tip_hash=32, chain_work=32, height=4) |
 
 ## Error Codes
 
@@ -117,6 +117,7 @@ verify it built the same public values the program committed.
 | 4 | Genesis hash mismatch | At height 0, first validated header hash ≠ expected genesis hash |
 
 Notes:
+
 - Prev-blockhash and bits-mismatch checks are not separate error codes in this design.
   They are derived from authenticated state when materializing `Header` from `NewHeader`.
 - Not used (reserved): 5, 6, 7, 8, 9, 10.

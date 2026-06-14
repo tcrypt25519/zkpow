@@ -36,27 +36,38 @@ SSHD_PID=$!
 echo "[entrypoint] sshd started (PID ${SSHD_PID})"
 
 # ---- 3. Wait for headers.db -------------------------------------------------
-DB_PATH="${DB_PATH:-/app/headers.db}"
-echo "[entrypoint] Waiting for headers database at ${DB_PATH} ..."
+# The binary reads ZKPOW_DB_PATH; we honour the same variable here so a single
+# override applies to both the wait loop and the prover itself.
+ZKPOW_DB_PATH="${ZKPOW_DB_PATH:-/app/headers.db}"
+export ZKPOW_DB_PATH
+echo "[entrypoint] Waiting for headers database at ${ZKPOW_DB_PATH} ..."
 waited=0
-while [[ ! -f "${DB_PATH}" ]]; do
+while [[ ! -f "${ZKPOW_DB_PATH}" ]]; do
     sleep 10
     waited=$((waited + 10))
     echo "[entrypoint]   still waiting (${waited}s) — rsync it with vast_deploy.sh"
     if [[ $waited -ge 1800 ]]; then
-        echo "[entrypoint] ERROR: ${DB_PATH} not found after 30 min. Prover will not start."
+        echo "[entrypoint] ERROR: ${ZKPOW_DB_PATH} not found after 30 min. Prover will not start."
         echo "[entrypoint] Container remains alive; SSH in and rsync the DB manually, then:"
-        echo "[entrypoint]   /usr/local/bin/continuous-prover"
+        echo "[entrypoint]   /usr/local/bin/zkpow-host"
         # Don't exit — keep sshd alive so you can fix it over SSH
         wait $SSHD_PID
         exit 1
     fi
 done
-echo "[entrypoint] Headers DB ready ($(du -sh "${DB_PATH}" 2>/dev/null | cut -f1 || echo '?'))"
+echo "[entrypoint] Headers DB ready ($(du -sh "${ZKPOW_DB_PATH}" 2>/dev/null | cut -f1 || echo '?'))"
+
+# Map legacy Vast.ai template env vars to the names the binary expects.
+# These are set via --env at instance create time; we translate them here so
+# the same Vast template works without change.
+export ZKPOW_USE_CUDA="${ZKPOW_USE_CUDA:-${CUDA:-1}}"
+export ZKPOW_CUDA_DEVICE_ID="${ZKPOW_CUDA_DEVICE_ID:-${CUDA_DEVICE_ID:-0}}"
+export ZKPOW_BATCH_SIZE="${ZKPOW_BATCH_SIZE:-${NUM_HEADERS:-2016}}"
+export ZKPOW_GENERATE_GROTH16="${ZKPOW_GENERATE_GROTH16:-${GENERATE_GROTH16:-0}}"
 
 # ---- 4. Prover restart loop (runs in background) ----------------------------
 (
-    cd /workspace
+    cd /workspace || exit 1
     RUN=0
     while true; do
         RUN=$((RUN + 1))
@@ -65,22 +76,22 @@ echo "[entrypoint] Headers DB ready ($(du -sh "${DB_PATH}" 2>/dev/null | cut -f1
         # This means a crash mid-batch loses only that batch, not all prior work.
         LATEST=$(find /workspace/profiling -name "*.bin" ! -name "*groth16*" 2>/dev/null | sort | tail -1)
         if [[ -n "$LATEST" ]]; then
-            export PREV_PROOF="$LATEST"
-            echo "[entrypoint] Run #${RUN}: resuming from ${PREV_PROOF}"
+            export ZKPOW_PREV_PROOF="$LATEST"
+            echo "[entrypoint] Run #${RUN}: resuming from ${ZKPOW_PREV_PROOF}"
         else
-            unset PREV_PROOF
+            unset ZKPOW_PREV_PROOF
             echo "[entrypoint] Run #${RUN}: starting from genesis (no prior proof found)"
         fi
 
-        echo "[entrypoint]   CUDA=${CUDA:-0}  CUDA_DEVICE_ID=${CUDA_DEVICE_ID:-0}  NUM_HEADERS=${NUM_HEADERS:-100}"
+        echo "[entrypoint]   ZKPOW_USE_CUDA=${ZKPOW_USE_CUDA}  ZKPOW_CUDA_DEVICE_ID=${ZKPOW_CUDA_DEVICE_ID}  ZKPOW_BATCH_SIZE=${ZKPOW_BATCH_SIZE}"
         echo "[entrypoint]   Outputs → /workspace/profiling/   Logs → /workspace/logs/run.jsonl"
 
-        /usr/local/bin/continuous-prover
+        /usr/local/bin/zkpow-host
         CODE=$?
 
         echo "[entrypoint] Run #${RUN} exited with code=${CODE} at $(date)"
         echo "[entrypoint] Check /workspace/logs/run.jsonl for details."
-        echo "[entrypoint] SSH in and run 'kill \$(pgrep -f continuous-prover)' to stop the loop."
+        echo "[entrypoint] SSH in and run 'kill \$(pgrep -f zkpow-host)' to stop the loop."
         echo "[entrypoint] Restarting in 60s ..."
         sleep 60
     done

@@ -92,7 +92,7 @@ CREATE_RESULT=$(vastai create instance "${OFFER_ID}" \
   --disk "${DISK_GB}" \
   --ssh \
   --direct \
-  --env "-e CUDA=1 -e CUDA_DEVICE_ID=${CUDA_DEVICE_ID} -e NUM_HEADERS=${NUM_HEADERS} -e RUST_LOG=${RUST_LOG} -e GENERATE_GROTH16=0" \
+  --env "-e ZKPOW_USE_CUDA=1 -e ZKPOW_CUDA_DEVICE_ID=${CUDA_DEVICE_ID} -e ZKPOW_BATCH_SIZE=${NUM_HEADERS} -e RUST_LOG=${RUST_LOG} -e ZKPOW_GENERATE_GROTH16=${GENERATE_GROTH16}" \
   --raw)
 
 INSTANCE_ID=$(echo "${CREATE_RESULT}" | jq -r '.new_contract // empty')

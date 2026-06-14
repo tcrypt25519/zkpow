@@ -5,7 +5,6 @@
 extern crate alloc;
 
 use core::{
-    cmp::Ordering,
     mem::{align_of, size_of, MaybeUninit},
     ptr, slice,
 };
@@ -16,20 +15,20 @@ pub mod types;
 pub use types::{u256, BlockHash, BlockTimestamp, ChainWork, CompactTarget, Target};
 
 mod state;
-pub use state::{cycle_track, cycle_track_report, State};
+pub use state::{cycle_track, State};
 
 mod input;
 
 pub use input::{
-    parse_median_hints, parse_new_headers, serialize_median_hints, serialize_new_headers, Input,
-    InputError, MedianTimePastHintError, NewHeaderHintError, RecursiveProof,
+    parse_median_hints, parse_new_headers, serialize_median_hints, serialize_new_headers,
+    InputError, MedianTimePastHintError, NewHeaderHintError, Proof, ProofCarryingState,
 };
 
 /// Size of the serialized [`State`] in bytes.
 pub const STATE_SIZE: usize = size_of::<State>();
 
-/// Size of a serialized [`RecursiveProof`] in bytes.
-pub const RECURSIVE_PROOF_SIZE: usize = size_of::<RecursiveProof>();
+/// Wire size of a serialized [`Proof`] in bytes (excludes the separate [`VerifierKeyDigest`]).
+pub const PROOF_SIZE: usize = size_of::<Proof>();
 
 /// Size of each [`NewHeader`] input from the prover.
 pub const NEW_HEADER_SIZE: usize = size_of::<NewHeader>();
@@ -92,6 +91,7 @@ impl Header {
     }
 
     /// Deserialize from exactly [`BLOCK_HEADER_SIZE`] bytes.
+    #[cfg(test)]
     pub fn parse(bytes: &[u8]) -> Result<Self, ParseError> {
         cycle_track("parse/header", || copy_from_bytes(bytes))
     }
@@ -254,14 +254,6 @@ pub(crate) fn copy_to_bytes<const N: usize, T>(value: &T) -> [u8; N] {
     })
 }
 
-pub(crate) fn ref_from_bytes<T>(bytes: &[u8]) -> Result<&T, ParseError> {
-    cycle_track("util/ref_from_bytes", || {
-        check_exact_len(bytes, size_of::<T>())?;
-        check_aligned::<T>(bytes)?;
-        Ok(unsafe { &*(bytes.as_ptr() as *const T) })
-    })
-}
-
 pub(crate) fn slice_from_bytes<T>(bytes: &[u8]) -> Result<&[T], ParseError> {
     cycle_track("util/slice_from_bytes", || {
         if !bytes.len().is_multiple_of(size_of::<T>()) {
@@ -299,31 +291,10 @@ impl NewHeader {
         }
     }
 
-    /// Parse a [`NewHeader`] from the flat input buffer at `offset`.
-    pub fn parse_at(data: &[u8], offset: usize) -> Result<Self, ParseError> {
-        let end = offset
-            .checked_add(NEW_HEADER_SIZE)
-            .ok_or(ParseError::Truncated {
-                offset,
-                needed: NEW_HEADER_SIZE,
-                actual: data.len().saturating_sub(offset),
-            })?;
-        let bytes = data.get(offset..end).ok_or(ParseError::Truncated {
-            offset,
-            needed: NEW_HEADER_SIZE,
-            actual: data.len().saturating_sub(offset),
-        })?;
-        Self::parse(bytes)
-    }
-
     /// Parse a [`NewHeader`] from exactly [`NEW_HEADER_SIZE`] bytes.
+    #[cfg(test)]
     pub fn parse(bytes: &[u8]) -> Result<Self, ParseError> {
         cycle_track("parse/new_header", || copy_from_bytes(bytes))
-    }
-
-    /// Borrow a slice of [`NewHeader`] records directly from aligned protocol bytes.
-    pub fn slice_from_bytes(bytes: &[u8]) -> Result<&[Self], ParseError> {
-        cycle_track("parse/new_header_slice", || slice_from_bytes(bytes))
     }
 
     /// Serialize to exactly [`NEW_HEADER_SIZE`] bytes.
@@ -347,26 +318,26 @@ impl NewHeader {
 }
 
 // ============================================================================
-// Public claim and private continuation types (Step 3)
+// Claim and ContinuationData types
 // ============================================================================
 
 /// The verifier-visible portion of a validated chain segment.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct PublicChainClaim {
+pub struct Claim {
     pub genesis_hash: BlockHash,
     pub tip_hash: BlockHash,
     pub chain_work: ChainWork,
     pub height: u32,
 }
 
-/// Size of a serialized [`PublicChainClaim`] in bytes.
-pub const PUBLIC_CHAIN_CLAIM_SIZE: usize = 32 + 32 + 32 + 4;
+/// Size of a serialized [`Claim`] in bytes.
+pub const CLAIM_SIZE: usize = 32 + 32 + 32 + 4;
 
-impl PublicChainClaim {
+impl Claim {
     #[must_use]
-    pub fn to_bytes(&self) -> [u8; PUBLIC_CHAIN_CLAIM_SIZE] {
-        let mut out = [0u8; PUBLIC_CHAIN_CLAIM_SIZE];
+    pub fn to_bytes(&self) -> [u8; CLAIM_SIZE] {
+        let mut out = [0u8; CLAIM_SIZE];
         out[0..32].copy_from_slice(self.genesis_hash.to_le_bytes_slice());
         out[32..64].copy_from_slice(self.tip_hash.to_le_bytes_slice());
         out[64..96].copy_from_slice(self.chain_work.to_le_bytes_slice());
@@ -375,7 +346,7 @@ impl PublicChainClaim {
     }
 
     pub fn parse(bytes: &[u8]) -> Result<Self, ParseError> {
-        check_exact_len(bytes, PUBLIC_CHAIN_CLAIM_SIZE)?;
+        check_exact_len(bytes, CLAIM_SIZE)?;
         let genesis_hash = BlockHash::new(bytes[0..32].try_into().unwrap());
         let tip_hash = BlockHash::new(bytes[32..64].try_into().unwrap());
         let chain_work = ChainWork::from_le_bytes(bytes[64..96].try_into().unwrap());
@@ -389,10 +360,10 @@ impl PublicChainClaim {
     }
 }
 
-/// The private continuation state carried between recursive proof iterations.
+/// Continuation data carried forward at each proof step.
 ///
-/// This is committed only as a digest in the public values; the raw bytes are
-/// supplied as a private witness when extending a proof.
+/// Committed only as a digest in the public values; the raw bytes are
+/// supplied as a private witness when extending to the next step.
 ///
 /// Serialized without struct padding (116 bytes):
 /// ```text
@@ -404,7 +375,7 @@ impl PublicChainClaim {
 /// ```
 #[repr(C)]
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PrivateContinuationState {
+pub struct ContinuationData {
     pub current_nbits: CompactTarget,
     pub current_work: ChainWork,
     pub current_target: Target,
@@ -412,10 +383,10 @@ pub struct PrivateContinuationState {
     pub timestamps: [BlockTimestamp; WINDOW_SIZE],
 }
 
-/// Size of the serialized [`PrivateContinuationState`] in bytes (no padding).
-pub const PRIVATE_CONTINUATION_STATE_SIZE: usize = 4 + 32 + 32 + 4 + 4 * WINDOW_SIZE;
+/// Size of the serialized [`ContinuationData`] in bytes (no padding).
+pub const CONTINUATION_DATA_SIZE: usize = 4 + 32 + 32 + 4 + 4 * WINDOW_SIZE;
 
-impl PrivateContinuationState {
+impl ContinuationData {
     #[must_use]
     pub fn from_state(state: &State) -> Self {
         Self {
@@ -428,8 +399,8 @@ impl PrivateContinuationState {
     }
 
     #[must_use]
-    pub fn to_bytes(&self) -> [u8; PRIVATE_CONTINUATION_STATE_SIZE] {
-        let mut out = [0u8; PRIVATE_CONTINUATION_STATE_SIZE];
+    pub fn to_bytes(&self) -> [u8; CONTINUATION_DATA_SIZE] {
+        let mut out = [0u8; CONTINUATION_DATA_SIZE];
         out[0..4].copy_from_slice(self.current_nbits.to_le_bytes_slice());
         out[4..36].copy_from_slice(self.current_work.to_le_bytes_slice());
         out[36..68].copy_from_slice(self.current_target.to_le_bytes_slice());
@@ -441,7 +412,7 @@ impl PrivateContinuationState {
     }
 
     pub fn parse(bytes: &[u8]) -> Result<Self, ParseError> {
-        check_exact_len(bytes, PRIVATE_CONTINUATION_STATE_SIZE)?;
+        check_exact_len(bytes, CONTINUATION_DATA_SIZE)?;
         let current_nbits = CompactTarget::new(u32::from_le_bytes(bytes[0..4].try_into().unwrap()));
         let current_work = ChainWork::from_le_bytes(bytes[4..36].try_into().unwrap());
         let current_target = Target::from_le_bytes(bytes[36..68].try_into().unwrap());
@@ -481,22 +452,16 @@ impl ValidationErrorCode {
     pub const fn as_byte(self) -> u8 {
         self as u8
     }
-
-    /// Return a human-readable description for the code.
-    #[must_use]
-    pub const fn description(self) -> &'static str {
-        match self {
-            Self::HeaderPayloadLengthInvalid => "Header payload length invalid",
-            Self::PowInsufficient => "PoW insufficient",
-            Self::TimestampTooOld => "Timestamp too old",
-            Self::GenesisHashMismatch => "Genesis hash mismatch",
-        }
-    }
 }
 
 impl core::fmt::Display for ValidationErrorCode {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str(self.description())
+        f.write_str(match self {
+            Self::HeaderPayloadLengthInvalid => "Header payload length invalid",
+            Self::PowInsufficient => "PoW insufficient",
+            Self::TimestampTooOld => "Timestamp too old",
+            Self::GenesisHashMismatch => "Genesis hash mismatch",
+        })
     }
 }
 
@@ -570,7 +535,7 @@ impl MinimalPublicValues {
     /// Build success public values from a public claim and continuation digest.
     #[must_use]
     pub fn success(
-        claim: &PublicChainClaim,
+        claim: &Claim,
         continuation_digest: [u8; 32],
         verifier_key: VerifierKeyDigest,
     ) -> Self {
@@ -589,7 +554,7 @@ impl MinimalPublicValues {
     /// Build failure public values from a public claim, error, and continuation digest.
     #[must_use]
     pub fn failure(
-        claim: &PublicChainClaim,
+        claim: &Claim,
         error_code: ValidationErrorCode,
         failure_height: u32,
         continuation_digest: [u8; 32],
@@ -669,13 +634,13 @@ impl MinimalPublicValues {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HeaderChainPublicValues {
     Success {
-        claim: PublicChainClaim,
+        claim: Claim,
         continuation_digest: [u8; 32],
         verifier_key: VerifierKeyDigest,
     },
     Failure {
         failure: ProofFailure,
-        last_valid_claim: PublicChainClaim,
+        last_valid_claim: Claim,
         continuation_digest: [u8; 32],
         verifier_key: VerifierKeyDigest,
     },
@@ -685,7 +650,7 @@ impl HeaderChainPublicValues {
     /// Parse committed public values from the minimal 169-byte format.
     pub fn parse(bytes: &[u8]) -> Result<Self, PublicValuesParseError> {
         let pv = MinimalPublicValues::parse(bytes)?;
-        let claim = PublicChainClaim {
+        let claim = Claim {
             genesis_hash: pv.genesis_hash,
             tip_hash: pv.tip_hash,
             chain_work: pv.chain_work(),
@@ -713,7 +678,7 @@ impl HeaderChainPublicValues {
 
     /// Borrow the public claim regardless of success or failure.
     #[must_use]
-    pub fn claim(&self) -> &PublicChainClaim {
+    pub fn claim(&self) -> &Claim {
         match self {
             Self::Success { claim, .. } => claim,
             Self::Failure {
@@ -835,36 +800,11 @@ pub fn target_from_bits(compact_target: CompactTarget) -> Target {
     })
 }
 
-/// Compare two u256 values. Returns `Greater` if `lhs > rhs`.
-#[must_use]
-fn u256_cmp(lhs: &u256, rhs: &u256) -> core::cmp::Ordering {
-    cycle_track("difficulty/u256_cmp", || {
-        let a = lhs.as_limbs();
-        let b = rhs.as_limbs();
-        for i in (0..4).rev() {
-            match a[i].cmp(&b[i]) {
-                core::cmp::Ordering::Equal => continue,
-                other => return other,
-            }
-        }
-        core::cmp::Ordering::Equal
-    })
-}
-
-/// Return `true` when `lhs` is strictly greater than `rhs` as unsigned 256-bit integers.
-#[must_use]
-pub fn target_gt(lhs: Target, rhs: Target) -> bool {
-    cycle_track("difficulty/target_gt", || {
-        u256_cmp(&lhs, &rhs) == core::cmp::Ordering::Greater
-    })
-}
-
 /// Check whether a header hash satisfies a target.
 #[must_use]
 pub fn check_proof_of_work(hash: BlockHash, target: Target) -> bool {
     cycle_track("pow/check_proof_of_work", || {
-        let hash_u256 = u256::from_le_bytes(*hash.as_inner());
-        u256_cmp(&hash_u256, &target) != core::cmp::Ordering::Greater
+        u256::from_le_bytes(*hash.as_inner()) <= *target.as_inner()
     })
 }
 
@@ -950,12 +890,11 @@ fn sub_assign(lhs: &mut u256, rhs: u256) -> bool {
 /// We can iterate until we find a limb < max u64, add 1 to it, and we're done. As long as we find max u64 limbs we
 /// just set them to 0 and move forward. Iterating fully without hitting a non-max u64 indicates that we have bad
 /// data; the target is invalid and we return an error.
-#[must_use]
-fn increment_target(target_limbs: &mut [u64; 4]) -> Result<(), TargetError> {
+fn increment_target(target: &mut u256) -> Result<(), TargetError> {
     cycle_track("pow/work/target_plus_one", || {
-        for (i, limb) in target_limbs.iter_mut().enumerate().take(4) {
+        for (i, limb) in target.as_limbs_mut().iter_mut().enumerate() {
             // This limb isn't saturated so it can't carry; add 1 and we're done.
-            if *limb < u64::max_value() {
+            if *limb < u64::MAX {
                 *limb += 1;
                 break;
             }
@@ -976,14 +915,13 @@ fn increment_target(target_limbs: &mut [u64; 4]) -> Result<(), TargetError> {
 #[must_use]
 fn shl1_with_carry(value: &mut u256) -> bool {
     cycle_track("pow/work/shl1_with_carry", || {
-        let mut limbs = value.into_limbs();
+        let limbs = value.as_limbs_mut();
         let mut carry = 0u64;
         for limb in limbs.iter_mut() {
             let next_carry = *limb >> 63;
             *limb = (*limb << 1) | carry;
             carry = next_carry;
         }
-        *value = u256::from_limbs(limbs);
         carry > 0
     })
 }
@@ -994,12 +932,10 @@ fn shl1_with_carry(value: &mut u256) -> bool {
 /// The loop processes 257 bits (indices 256 down to 0): at `bit == 256` we introduce
 /// the implicit leading 1 of the dividend `2^256`; for `bit < 256` we set the
 /// corresponding quotient bit when the remainder meets the divisor.
-#[must_use]
 pub fn work_from_target(target: Target) -> Result<ChainWork, TargetError> {
     cycle_track("pow/work_from_target", || {
-        let mut limbs = *target.as_limbs();
-        increment_target(&mut limbs)?;
-        let divisor = u256::from_limbs(limbs);
+        let mut divisor = *target.as_inner();
+        increment_target(&mut divisor)?;
 
         let mut remainder = u256::from_limbs([0u64; 4]);
         let mut quotient = [0u64; 4];
@@ -1009,13 +945,11 @@ pub fn work_from_target(target: Target) -> Result<ChainWork, TargetError> {
             let carry = shl1_with_carry(&mut remainder);
             if bit == 256 {
                 // Inject the implicit leading 1 of 2^256 into the LSB of the shifted remainder.
-                let mut limbs = remainder.into_limbs();
-                limbs[0] |= 1;
-                remainder = u256::from_limbs(limbs);
+                remainder.as_limbs_mut()[0] |= 1;
             }
             // If carry is set the remainder is effectively > 2^256, which is always >= divisor.
 
-            if carry || u256_cmp(&remainder, &divisor) != Ordering::Less {
+            if carry || remainder >= divisor {
                 let _ = sub_assign(&mut remainder, divisor);
                 if bit < 256 {
                     quotient[(bit / 64) as usize] |= 1u64 << (bit % 64);
@@ -1055,14 +989,11 @@ pub fn calculate_next_target_required(
             remainder = value % (EXPECTED_EPOCH_TIMESPAN as u128);
         }
 
-        let mut calculated_target = Target::from_limbs(target_limbs);
-
         // Normalize the new target to ensure an upper-bound (a minimum difficulty) and to handle the implicit
         // truncation that occurs when round-tripping through the nbits format.
-        if target_gt(calculated_target, GENESIS_TARGET) {
-            calculated_target = GENESIS_TARGET;
-        }
-        let compact_target = target_to_bits(calculated_target);
+        let calculated_target = Target::from_limbs(target_limbs);
+        let clamped_target = calculated_target.min(GENESIS_TARGET);
+        let compact_target = target_to_bits(clamped_target);
         let normalized_target = target_from_bits(compact_target);
 
         // The target is capped above and truncated below; return it and the compact form we calculated along the way.
@@ -1165,14 +1096,14 @@ mod tests {
     #[test]
     fn fixed_width_wire_sizes_match_protocol() {
         assert_eq!(NEW_HEADER_SIZE, 44);
-        assert_eq!(RECURSIVE_PROOF_SIZE, 68);
+        assert_eq!(PROOF_SIZE, 36);
         assert_eq!(STATE_SIZE, 296);
-        assert_eq!(PUBLIC_CHAIN_CLAIM_SIZE, 100);
-        assert_eq!(PRIVATE_CONTINUATION_STATE_SIZE, 116);
+        assert_eq!(CLAIM_SIZE, 100);
+        assert_eq!(CONTINUATION_DATA_SIZE, 116);
         assert_eq!(MINIMAL_PV_SIZE, 169);
         assert_eq!(core::mem::align_of::<Header>(), 4);
         assert_eq!(core::mem::align_of::<NewHeader>(), 4);
-        assert_eq!(core::mem::align_of::<RecursiveProof>(), 4);
+        assert_eq!(core::mem::align_of::<Proof>(), 1);
         assert_eq!(core::mem::align_of::<State>(), 8);
     }
 
@@ -1676,8 +1607,8 @@ mod tests {
     // state_round_trips_through_validation_state has been removed since ValidationState is deleted.
 
     #[test]
-    fn private_continuation_state_serializes_to_fixed_width() {
-        let pcs = PrivateContinuationState {
+    fn continuation_data_serializes_to_fixed_width() {
+        let pcs = ContinuationData {
             current_nbits: CompactTarget::new(GENESIS_NBITS),
             current_work: ChainWork::from_limbs([1, 2, 3, 4]),
             current_target: GENESIS_TARGET,
@@ -1685,13 +1616,13 @@ mod tests {
             timestamps: [BlockTimestamp::new(10); WINDOW_SIZE],
         };
         let bytes = pcs.to_bytes();
-        assert_eq!(bytes.len(), PRIVATE_CONTINUATION_STATE_SIZE);
-        let parsed = PrivateContinuationState::parse(&bytes).unwrap();
+        assert_eq!(bytes.len(), CONTINUATION_DATA_SIZE);
+        let parsed = ContinuationData::parse(&bytes).unwrap();
         assert_eq!(parsed, pcs);
     }
 
     #[test]
-    fn state_continuation_bytes_matches_pcs_to_bytes() {
+    fn state_continuation_bytes_matches_continuation_data_to_bytes() {
         let state = State {
             current_nbits: CompactTarget::new(GENESIS_NBITS),
             current_work: ChainWork::from_limbs([1, 2, 3, 4]),
@@ -1700,26 +1631,26 @@ mod tests {
             timestamps: [BlockTimestamp::new(10); WINDOW_SIZE],
             ..Default::default()
         };
-        let pcs = PrivateContinuationState::from_state(&state);
+        let pcs = ContinuationData::from_state(&state);
         assert_eq!(state.continuation_bytes(), pcs.to_bytes());
     }
 
     #[test]
-    fn public_chain_claim_serializes_to_fixed_width() {
-        let claim = PublicChainClaim {
+    fn claim_serializes_to_fixed_width() {
+        let claim = Claim {
             genesis_hash: BlockHash::new([1; 32]),
             tip_hash: BlockHash::new([2; 32]),
             chain_work: ChainWork::from_limbs([3, 4, 5, 6]),
             height: 99,
         };
         let bytes = claim.to_bytes();
-        assert_eq!(bytes.len(), PUBLIC_CHAIN_CLAIM_SIZE);
+        assert_eq!(bytes.len(), CLAIM_SIZE);
         assert_eq!(bytes[64..72], 3u64.to_le_bytes());
         assert_eq!(bytes[72..80], 4u64.to_le_bytes());
         assert_eq!(bytes[80..88], 5u64.to_le_bytes());
         assert_eq!(bytes[88..96], 6u64.to_le_bytes());
         assert_eq!(bytes[96..100], 99u32.to_le_bytes());
-        let parsed = PublicChainClaim::parse(&bytes).unwrap();
+        let parsed = Claim::parse(&bytes).unwrap();
         assert_eq!(parsed, claim);
     }
 
@@ -1775,13 +1706,10 @@ mod tests {
                     assert_eq!(new, old, "{name}: target");
                 }
                 ExpectedDirection::NotGreater => {
-                    assert!(!target_gt(new, old), "{name}: target should be <= old");
+                    assert!(new <= old, "{name}: target should be <= old");
                 }
                 ExpectedDirection::NotLess => {
-                    assert!(
-                        target_gt(new, old) || new == old,
-                        "{name}: target should be >= old"
-                    );
+                    assert!(new >= old, "{name}: target should be >= old");
                 }
             }
         }

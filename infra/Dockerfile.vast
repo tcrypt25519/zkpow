@@ -62,6 +62,7 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates/core/Cargo.toml  crates/core/
 COPY crates/guest/Cargo.toml crates/guest/
 COPY crates/host/Cargo.toml  crates/host/
+COPY crates/memory-usage/    crates/memory-usage/
 
 # Stub sources so `cargo fetch` / dep compilation can proceed without real code
 RUN mkdir -p crates/core/src crates/guest/src crates/host/src/bin && \
@@ -69,14 +70,14 @@ RUN mkdir -p crates/core/src crates/guest/src crates/host/src/bin && \
     echo 'fn main() {}' > crates/guest/src/main.rs && \
     echo 'fn main() {}' > crates/host/src/main.rs && \
     printf '#![allow(unused)]\n' > crates/host/src/lib.rs && \
-    echo 'fn main() {}' > crates/host/src/bin/continuous_prover.rs && \
     echo 'fn main() {}' > crates/host/src/bin/test_errors.rs && \
-    echo 'fn main() {}' > crates/host/src/bin/inspect_proof.rs
+    echo 'fn main() {}' > crates/host/src/bin/inspect_proof.rs && \
+    echo 'fn main() {}' > crates/host/src/bin/sp1_stress.rs
 
 # Pre-build dependencies (cached layer). Ignore errors from stub code.
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/app/target \
-    cargo build --release --features CUDA -p zkpow-host --bin continuous-prover 2>/dev/null || true
+    cargo build --release --features CUDA -p zkpow-host --bin zkpow-host 2>/dev/null || true
 
 # Now copy real sources and do the real build
 COPY crates ./crates
@@ -86,9 +87,9 @@ RUN find crates -name '*.rs' -exec touch {} +
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/app/target \
-    cargo build --release --features CUDA -p zkpow-host --bin continuous-prover && \
+    cargo build --release --features CUDA -p zkpow-host --bin zkpow-host && \
     # Copy out of the BuildKit cache mount before the stage ends
-    cp /app/target/release/continuous-prover /usr/local/bin/continuous-prover
+    cp /app/target/release/zkpow-host /usr/local/bin/zkpow-host
 
 # =============================================================================
 # Stage 3: Runtime — standard CUDA image with SSH + the prover
@@ -105,20 +106,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && chmod 700 /root/.ssh
 
 # Copy the prover binary
-COPY --from=builder /usr/local/bin/continuous-prover /usr/local/bin/continuous-prover
-RUN chmod 755 /usr/local/bin/continuous-prover
+COPY --from=builder /usr/local/bin/zkpow-host /usr/local/bin/zkpow-host
+RUN chmod 755 /usr/local/bin/zkpow-host
 
 # Entrypoint: set up SSH key, wait for headers.db, then run the prover
-COPY vast/entrypoint.sh /entrypoint.sh
+COPY infra/vast/entrypoint.sh /entrypoint.sh
 RUN chmod 755 /entrypoint.sh
 
 # Prover writes to paths relative to its CWD; use /workspace (persistent disk on Vast)
 WORKDIR /workspace
 
 ENV RUST_LOG=info
-ENV CUDA=1
-ENV CUDA_DEVICE_ID=0
-ENV NUM_HEADERS=2016
-ENV GENERATE_GROTH16=0
+ENV ZKPOW_USE_CUDA=1
+ENV ZKPOW_CUDA_DEVICE_ID=0
+ENV ZKPOW_BATCH_SIZE=2016
+ENV ZKPOW_GENERATE_GROTH16=0
 
 ENTRYPOINT ["/entrypoint.sh"]

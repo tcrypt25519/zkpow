@@ -22,6 +22,8 @@ use proof::compressed::generate_compressed_proof;
 use proof::groth16::generate_groth16_proof;
 use proof::{get_prepared_prover, PreparedProver};
 
+use crate::util::{DbConfig, DbConn};
+
 pub use diagnostics::log_execution_report;
 pub use diagnostics::PhaseTiming;
 
@@ -105,6 +107,9 @@ pub async fn run_batch_session() -> Result<u32, BoxError> {
 
     let mut batch_config = config_from_env()?;
     let max_batches = batch_config.batch_count;
+    let db = DbConfig::new(&batch_config.db_path)
+        .connect()
+        .map_err(|e| format!("failed to open database: {e}"))?;
     let out_dir = if batch_config.output_dir == std::path::Path::new(".") {
         PathBuf::from(format!("profiling/sp1/continuous/{timestamp}"))
     } else {
@@ -147,7 +152,7 @@ pub async fn run_batch_session() -> Result<u32, BoxError> {
         );
         let batch_started = Instant::now();
 
-        let artifacts = match run_single_batch(&batch_config).await {
+        let artifacts = match run_single_batch(&batch_config, &db).await {
             Ok(artifacts) => artifacts,
             Err(err) if is_header_exhaustion_error(&err) => {
                 tracing::info!(
@@ -222,7 +227,7 @@ pub async fn run_batch_session() -> Result<u32, BoxError> {
     Ok(batch_count)
 }
 
-pub async fn run_single_batch(config: &ProofGenerationConfig) -> Result<ProofArtifacts, BoxError> {
+pub async fn run_single_batch(config: &ProofGenerationConfig, db: &DbConn) -> Result<ProofArtifacts, BoxError> {
     let action = if config.execute_only {
         "Starting execution"
     } else {
@@ -238,18 +243,18 @@ pub async fn run_single_batch(config: &ProofGenerationConfig) -> Result<ProofArt
             .unwrap_or_default(),
     );
 
-    let artifacts = generate_and_save_proofs(config).await?;
-    log_batch_completion(config, &artifacts);
+    let artifacts = generate_and_save_proofs(config, db).await?;
+    log_batch_completion(config.execute_only, &artifacts);
     Ok(artifacts)
 }
 
-fn log_batch_completion(config: &ProofGenerationConfig, artifacts: &ProofArtifacts) {
+fn log_batch_completion(execute_only: bool, artifacts: &ProofArtifacts) {
     tracing::info!(
         "Complete: validated headers from height {} to {}",
         artifacts.first_new_height,
         artifacts.end_height,
     );
-    if config.execute_only {
+    if execute_only {
         tracing::info!(
             "Execution completed in {:.2} seconds",
             artifacts.total_duration_secs
@@ -295,8 +300,8 @@ fn log_batch_completion(config: &ProofGenerationConfig, artifacts: &ProofArtifac
     log_execution_report(&artifacts.execution_report, artifacts.total_duration_secs);
 }
 
-fn log_prover_backend_selection(config: &ProofGenerationConfig) {
-    match config.prover_backend {
+fn log_prover_backend_selection(prover_backend: ProverBackend, cuda_device_id: Option<u32>) {
+    match prover_backend {
         ProverBackend::Mock => tracing::info!("Using the Mock prover for instant execution"),
         ProverBackend::Cpu => {
             if cfg!(feature = "CUDA") {
@@ -310,8 +315,7 @@ fn log_prover_backend_selection(config: &ProofGenerationConfig) {
         ProverBackend::Cuda => {
             tracing::info!(
                 "CUDA=1 requested; preparing the GPU prover{}",
-                config
-                    .cuda_device_id
+                cuda_device_id
                     .map(|id| format!(" on device {id}"))
                     .unwrap_or_else(|| " on device 0".to_owned()),
             );
@@ -321,39 +325,40 @@ fn log_prover_backend_selection(config: &ProofGenerationConfig) {
 
 pub async fn generate_and_save_proofs(
     config: &ProofGenerationConfig,
+    db: &DbConn,
 ) -> Result<ProofArtifacts, BoxError> {
     if config.mode() != PipelineMode::ExecuteOnly {
-        log_prover_backend_selection(config);
+        log_prover_backend_selection(config.prover_backend, config.cuda_device_id);
     }
     if config.mode() == PipelineMode::ExecuteOnly && config.prover_backend == ProverBackend::Mock {
-        return execute_without_setup(config).await;
+        return execute_without_setup(config, db).await;
     }
 
-    match get_prepared_prover(config).await? {
+    match get_prepared_prover(config.prover_backend, config.cuda_device_id).await? {
         PreparedProver::Mock {
             prover,
             proving_key,
-        } => run_with_prover(config, "mock", &prover, &proving_key).await,
+        } => run_with_prover(config, db, "mock", &prover, &proving_key).await,
         PreparedProver::Cpu {
             prover,
             proving_key,
-        } => run_with_prover(config, "cpu", &prover, &proving_key).await,
+        } => run_with_prover(config, db, "cpu", &prover, &proving_key).await,
         #[cfg(feature = "CUDA")]
         PreparedProver::Cuda {
             prover,
             proving_key,
-        } => run_with_prover(config, "cuda", &prover, &proving_key).await,
+        } => run_with_prover(config, db, "cuda", &prover, &proving_key).await,
     }
 }
 
-async fn execute_without_setup(config: &ProofGenerationConfig) -> Result<ProofArtifacts, BoxError> {
+async fn execute_without_setup(config: &ProofGenerationConfig, db: &DbConn) -> Result<ProofArtifacts, BoxError> {
     if config.prev_proof_path.is_some() {
         tracing::info!("Execute-only resume needs a previous proof witness; preparing prover");
-        match get_prepared_prover(config).await? {
+        match get_prepared_prover(config.prover_backend, config.cuda_device_id).await? {
             PreparedProver::Mock {
                 prover,
                 proving_key,
-            } => return run_with_prover(config, "mock", &prover, &proving_key).await,
+            } => return run_with_prover(config, db, "mock", &prover, &proving_key).await,
             _ => unreachable!("mock backend should prepare a mock prover"),
         }
     }
@@ -361,7 +366,13 @@ async fn execute_without_setup(config: &ProofGenerationConfig) -> Result<ProofAr
     clear_phase_timings();
     let overall_start = Instant::now();
     let genesis_hash = parse_genesis_hash()?;
-    let batch = prepare_batch(config, genesis_hash)?;
+    let batch = prepare_batch(
+        config.prev_proof_path.as_ref(),
+        config.trusted_start_height,
+        config.num_headers,
+        db,
+        genesis_hash,
+    )?;
     let prover = timed_async("build_mock_executor", || async {
         Ok::<_, BoxError>(ProverClient::builder().mock().build().await)
     })
@@ -388,6 +399,7 @@ async fn execute_without_setup(config: &ProofGenerationConfig) -> Result<ProofAr
 
 async fn run_with_prover<P, K>(
     config: &ProofGenerationConfig,
+    db: &DbConn,
     prover_name: &str,
     prover: &P,
     proving_key: &K,
@@ -401,7 +413,13 @@ where
     let overall_start = Instant::now();
 
     let genesis_hash = parse_genesis_hash()?;
-    let batch = prepare_batch(config, genesis_hash)?;
+    let batch = prepare_batch(
+        config.prev_proof_path.as_ref(),
+        config.trusted_start_height,
+        config.num_headers,
+        db,
+        genesis_hash,
+    )?;
 
     if config.mode() == PipelineMode::ExecuteOnly {
         let executed = execute_batch_with_prover(prover_name, prover, proving_key, &batch).await?;
@@ -677,13 +695,13 @@ mod tests {
 
     #[test]
     fn claim_mismatch_splits_32_byte_fields_and_pairs_corrections() {
-        let actual = util::PublicChainClaim {
+        let actual = util::Claim {
             genesis_hash: util::BlockHash::from_le_bytes([0x11; 32]),
             tip_hash: util::BlockHash::from_le_bytes([0x22; 32]),
             chain_work: util::ChainWork::from_le_bytes([0x33; 32]),
             height: 1,
         };
-        let expected = util::PublicChainClaim {
+        let expected = util::Claim {
             tip_hash: util::BlockHash::from_le_bytes([0x44; 32]),
             height: 2,
             ..actual
@@ -708,7 +726,7 @@ mod tests {
 
     #[test]
     fn claim_mismatch_keeps_matching_32_byte_fields_to_two_lines() {
-        let claim = util::PublicChainClaim {
+        let claim = util::Claim {
             genesis_hash: util::BlockHash::from_le_bytes([0x11; 32]),
             tip_hash: util::BlockHash::from_le_bytes([0x22; 32]),
             chain_work: util::ChainWork::from_le_bytes([0x33; 32]),

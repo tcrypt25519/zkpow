@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use crate::config::db_path;
 use crate::pipeline::{BoxError, ProofGenerationConfig, ProverBackend};
 use crate::util;
-use crate::util::{Input, PublicValuesDigest, RecursiveProof, VerifierKeyDigest};
+use crate::util::{Proof, ProofCarryingState, PublicValuesDigest, VerifierKeyDigest};
 
 const GENESIS_HASH_HEX: &str = "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f";
 
@@ -195,14 +195,14 @@ pub fn config_from_env() -> Result<ProofGenerationConfig, BoxError> {
     config_from_source(&ProcessEnv)
 }
 
-pub fn build_recursive_proof(
+pub fn build_proof(
     vk: &sp1_prover::SP1VerifyingKey,
     previous_proof: Option<&SP1ProofWithPublicValues>,
-) -> Result<RecursiveProof, BoxError> {
+) -> Result<(VerifierKeyDigest, Proof), BoxError> {
     let verifier_key = VerifierKeyDigest::from_raw(vk.hash_u32());
-    Ok(if let Some(prev_proof_val) = previous_proof {
+    let proof = if let Some(prev_proof_val) = previous_proof {
         let pv_bytes = prev_proof_val.public_values.to_vec();
-        let previous_return_code = match zkpow_core::HeaderChainPublicValues::parse(&pv_bytes) {
+        let exit_code = match zkpow_core::HeaderChainPublicValues::parse(&pv_bytes) {
             Ok(zkpow_core::HeaderChainPublicValues::Success { .. }) => 0u8,
             Ok(zkpow_core::HeaderChainPublicValues::Failure { failure, .. }) => {
                 failure.error_code.as_byte()
@@ -211,29 +211,26 @@ pub fn build_recursive_proof(
                 return Err(format!("failed to parse previous proof public values: {}", e).into())
             }
         };
-        RecursiveProof {
-            verifier_key,
+        Proof {
             public_values_digest: PublicValuesDigest::from_raw(util::compute_pv_digest(&pv_bytes)),
-            previous_return_code,
+            exit_code,
             ..Default::default()
         }
     } else {
-        RecursiveProof {
-            verifier_key,
-            ..Default::default()
-        }
-    })
+        Proof::default()
+    };
+    Ok((verifier_key, proof))
 }
 
 pub fn build_stdin(
-    input: &Input,
+    pcs: &ProofCarryingState,
     state: &util::State,
     headers: &[util::NewHeader],
     median_hints: &[util::BlockTimestamp],
     previous_proof: Option<(&SP1ProofWithPublicValues, &sp1_prover::SP1VerifyingKey)>,
 ) -> Result<SP1Stdin, BoxError> {
     let mut stdin = SP1Stdin::new();
-    stdin.write_vec(input.to_bytes());
+    stdin.write_vec(pcs.to_bytes());
     stdin.write_vec(state.to_bytes().to_vec());
     stdin.write_vec(zkpow_core::serialize_new_headers(headers));
     stdin.write_vec(zkpow_core::serialize_median_hints(median_hints));

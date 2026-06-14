@@ -31,6 +31,7 @@ run)
     --restart unless-stopped \
     -v "$INPUT_VOLUME:/input" \
     -v "$OUTPUT_VOLUME:/output" \
+    -e ZKPOW_DB_PATH=/input/headers.db \
     -e RUST_LOG="${RUST_LOG:-info}" \
     "$IMAGE_NAME"
   echo "Container started. View logs with: docker logs -f $CONTAINER_NAME"
@@ -44,8 +45,9 @@ run-cuda)
     --restart unless-stopped \
     -v "$INPUT_VOLUME:/input" \
     -v "$OUTPUT_VOLUME:/output" \
-    -e CUDA=1 \
-    -e CUDA_DEVICE_ID="${CUDA_DEVICE_ID:-0}" \
+    -e ZKPOW_USE_CUDA=1 \
+    -e ZKPOW_CUDA_DEVICE_ID="${CUDA_DEVICE_ID:-0}" \
+    -e ZKPOW_DB_PATH=/input/headers.db \
     -e RUST_LOG="${RUST_LOG:-info}" \
     "$IMAGE_NAME"
   echo "Container started. View logs with: docker logs -f $CONTAINER_NAME"

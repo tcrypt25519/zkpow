@@ -4,9 +4,9 @@
 //! then runs the zkVM program via `client.execute()` and checks the public values.
 //!
 //! Input protocol:
-//!   stdin: encoded_input(Vec<u8>) + state witness(Vec<u8>) + header witness(Vec<u8>)
+//!   stdin: ProofCarryingState(Vec<u8>) + state witness(Vec<u8>) + header witness(Vec<u8>)
 //!          + median-time-past witness(Vec<u8>)
-//!          → [recursive proof witness when claim.height > 0]
+//!          → [compressed SP1 proof witness when claim.height > 0]
 //!   output: MinimalPublicValues (169 bytes)
 
 use sp1_sdk::prelude::*;
@@ -16,7 +16,7 @@ use zkpow_host::config::db_path;
 use zkpow_host::{observability, util};
 
 use zkpow_host::util::{
-    HeaderChainPublicValues, Input, MinimalPublicValues, PublicValuesDigest, RecursiveProof,
+    HeaderChainPublicValues, MinimalPublicValues, Proof, ProofCarryingState, PublicValuesDigest,
     ValidationErrorCode, VerifierKeyDigest,
 };
 
@@ -35,7 +35,7 @@ async fn run_and_get_pv(stdin: SP1Stdin) -> Result<Vec<u8>, String> {
     Ok(public_values.to_vec())
 }
 
-fn expect_success(pv: &[u8]) -> Result<util::PublicChainClaim, String> {
+fn expect_success(pv: &[u8]) -> Result<util::Claim, String> {
     let parsed =
         HeaderChainPublicValues::parse(pv).map_err(|err| format!("failed to parse PV: {err}"))?;
     match parsed {
@@ -98,42 +98,34 @@ fn mainnet_genesis_hash() -> util::BlockHash {
     util::BlockHash::new(bytes)
 }
 
+fn open_db() -> util::DbConn {
+    util::DbConfig::new(db_path())
+        .connect()
+        .expect("failed to open database")
+}
+
 fn mainnet_genesis_state() -> util::State {
-    let genesis = util::load_header_record_from_db(db_path(), 0);
+    let db = open_db();
+    let genesis = db.load_header_record(0);
     util::genesis_state_from_record(genesis, mainnet_genesis_hash())
 }
 
-fn stdin_for_input(
-    input: &Input,
+fn build_stdin(
+    pcs: &ProofCarryingState,
     state: &util::State,
     headers: &[util::NewHeader],
     hints: &[util::BlockTimestamp],
 ) -> SP1Stdin {
     let mut stdin = SP1Stdin::new();
-    stdin.write_vec(input.to_bytes());
-    stdin.write_vec(state.to_bytes().to_vec());
-    stdin.write_vec(util::serialize_new_headers(headers));
-    stdin.write_vec(util::serialize_median_hints(hints));
-    // No recursive witnesses for genesis-start inputs (height == 0).
-    stdin
-}
-
-fn stdin_for_recursive_input(
-    input: &Input,
-    state: &util::State,
-    headers: &[util::NewHeader],
-    hints: &[util::BlockTimestamp],
-) -> SP1Stdin {
-    let mut stdin = SP1Stdin::new();
-    stdin.write_vec(input.to_bytes());
+    stdin.write_vec(pcs.to_bytes());
     stdin.write_vec(state.to_bytes().to_vec());
     stdin.write_vec(util::serialize_new_headers(headers));
     stdin.write_vec(util::serialize_median_hints(hints));
     stdin
 }
 
-fn input_for_state(state: &util::State, recursive_proof: RecursiveProof) -> Input {
-    Input::new(state.public_claim(), recursive_proof)
+fn pcs_for_state(state: &util::State, verifier_key: VerifierKeyDigest, proof: Proof) -> ProofCarryingState {
+    ProofCarryingState::new(state.public_claim(), verifier_key, proof)
 }
 
 #[tokio::main]
@@ -186,11 +178,9 @@ async fn main() {
 
 async fn test_success_100_headers() -> Result<(), String> {
     let genesis_state = mainnet_genesis_state();
-    let records = util::load_header_records_from_db(db_path(), 1, 100);
-    let headers = util::records_to_new_headers(&records);
-    let hints = util::median_time_past_hints_for_headers(&genesis_state, &headers);
-    let input = input_for_state(&genesis_state, RecursiveProof::default());
-    let stdin = stdin_for_input(&input, &genesis_state, &headers, &hints);
+    let witness = open_db().load_header_batch_witness(1, 100);
+    let pcs = pcs_for_state(&genesis_state, VerifierKeyDigest::default(), Proof::default());
+    let stdin = build_stdin(&pcs, &genesis_state, &witness.headers, &witness.median_time_past_hints);
 
     let pv = run_and_get_pv(stdin).await?;
     expect_success(&pv).map(|_| ())
@@ -201,23 +191,24 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
     const RETARGET_HEIGHT: usize = 32256;
     const RETARGET_TIP_HEIGHT: usize = RETARGET_HEIGHT - 1;
     const EPOCH_LENGTH: usize = zkpow_core::EPOCH_LENGTH as usize;
+    let db = open_db();
     let genesis_state = mainnet_genesis_state();
 
-    let first_epoch_records =
-        util::load_header_records_from_db(db_path(), 1, FIRST_BOUNDARY_TIP_HEIGHT as u64);
-    let first_epoch_headers = util::records_to_new_headers(&first_epoch_records);
-    let first_epoch_state = util::compute_final_state(&genesis_state, &first_epoch_headers);
+    let witness_first_epoch = db.load_header_batch_witness(1, FIRST_BOUNDARY_TIP_HEIGHT as u64);
+    let first_epoch_state = util::compute_final_state_with_hints(
+        &genesis_state,
+        &witness_first_epoch.headers,
+        &witness_first_epoch.median_time_past_hints,
+    );
     println!(
         "retarget-debug: first_epoch loaded={} state.height={} state.current_nbits={:#x}",
-        first_epoch_headers.len(),
+        witness_first_epoch.headers.len(),
         first_epoch_state.height,
         consensus_bits(first_epoch_state.current_nbits),
     );
-    let first_retarget_bits =
-        util::load_header_record_from_db(db_path(), (FIRST_BOUNDARY_TIP_HEIGHT + 1) as u64)
-            .header
-            .compact_target
-            .into_inner();
+    let first_retarget_bits = db
+        .load_compact_target((FIRST_BOUNDARY_TIP_HEIGHT + 1) as u64)
+        .into_inner();
     if consensus_bits(first_epoch_state.current_nbits) != first_retarget_bits {
         return Err(format!(
             "expected first retarget boundary bits {:#x}, got {:#x}",
@@ -226,24 +217,23 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
         ));
     }
 
-    let records = util::load_header_records_from_db(db_path(), 1, RETARGET_TIP_HEIGHT as u64);
-    let new_headers = util::records_to_new_headers(&records);
-    let state = util::compute_final_state(&genesis_state, &new_headers);
+    let witness_retarget = db.load_header_batch_witness(1, RETARGET_TIP_HEIGHT as u64);
+    let state = util::compute_final_state_with_hints(
+        &genesis_state,
+        &witness_retarget.headers,
+        &witness_retarget.median_time_past_hints,
+    );
     println!(
         "retarget-debug: retarget loaded={} state.height={} state.current_nbits={:#x}",
-        new_headers.len(),
+        witness_retarget.headers.len(),
         state.height,
         consensus_bits(state.current_nbits),
     );
 
-    let previous_epoch_bits = records[RETARGET_TIP_HEIGHT - 1]
-        .header
-        .compact_target
+    let previous_epoch_bits = db
+        .load_compact_target(RETARGET_TIP_HEIGHT as u64)
         .into_inner();
-    let next_header_bits = util::load_header_record_from_db(db_path(), RETARGET_HEIGHT as u64)
-        .header
-        .compact_target
-        .into_inner();
+    let next_header_bits = db.load_compact_target(RETARGET_HEIGHT as u64).into_inner();
 
     println!(
         "retarget-debug: prev_epoch_bits={:#x} next_header_bits={:#x}",
@@ -272,9 +262,12 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
         ));
     }
 
-    let boundary_records = util::load_header_records_from_db(db_path(), RETARGET_HEIGHT as u64, 1);
-    let boundary_headers = util::records_to_new_headers(&boundary_records);
-    let boundary_state = util::compute_final_state(&state, &boundary_headers);
+    let witness_boundary = db.load_header_batch_witness(RETARGET_HEIGHT as u64, 1);
+    let boundary_state = util::compute_final_state_with_hints(
+        &state,
+        &witness_boundary.headers,
+        &witness_boundary.median_time_past_hints,
+    );
     if boundary_state.height != RETARGET_HEIGHT as u32 {
         return Err(format!(
             "expected boundary height {}, got {}",
@@ -289,10 +282,12 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
         ));
     }
 
-    let pre_boundary_records =
-        util::load_header_records_from_db(db_path(), 1, (RETARGET_HEIGHT - 2) as u64);
-    let pre_boundary_headers = util::records_to_new_headers(&pre_boundary_records);
-    let pre_boundary_state = util::compute_final_state(&genesis_state, &pre_boundary_headers);
+    let witness_pre_boundary = db.load_header_batch_witness(1, (RETARGET_HEIGHT - 2) as u64);
+    let pre_boundary_state = util::compute_final_state_with_hints(
+        &genesis_state,
+        &witness_pre_boundary.headers,
+        &witness_pre_boundary.median_time_past_hints,
+    );
 
     if consensus_bits(pre_boundary_state.current_nbits) != previous_epoch_bits {
         return Err(format!(
@@ -311,12 +306,11 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
 
 async fn test_error_timestamp_too_old() -> Result<(), String> {
     let genesis_state = mainnet_genesis_state();
-    let records = util::load_header_records_from_db(db_path(), 1, 13);
-    let mut headers = util::records_to_new_headers(&records);
-    let hints = util::median_time_past_hints_for_headers(&genesis_state, &headers);
+    let witness = open_db().load_header_batch_witness(1, 13);
+    let mut headers = witness.headers;
     headers[11].timestamp = util::BlockTimestamp::new(1231006505);
-    let input = input_for_state(&genesis_state, RecursiveProof::default());
-    let stdin = stdin_for_input(&input, &genesis_state, &headers, &hints);
+    let pcs = pcs_for_state(&genesis_state, VerifierKeyDigest::default(), Proof::default());
+    let stdin = build_stdin(&pcs, &genesis_state, &headers, &witness.median_time_past_hints);
 
     let pv = run_and_get_pv(stdin).await?;
     expect_failure(&pv, ValidationErrorCode::TimestampTooOld, 12)
@@ -324,12 +318,11 @@ async fn test_error_timestamp_too_old() -> Result<(), String> {
 
 async fn test_error_pow_insufficient() -> Result<(), String> {
     let genesis_state = mainnet_genesis_state();
-    let records = util::load_header_records_from_db(db_path(), 1, 2);
-    let mut headers = util::records_to_new_headers(&records);
-    let hints = util::median_time_past_hints_for_headers(&genesis_state, &headers);
+    let witness = open_db().load_header_batch_witness(1, 2);
+    let mut headers = witness.headers;
     headers[0].nonce ^= 0xFF;
-    let input = input_for_state(&genesis_state, RecursiveProof::default());
-    let stdin = stdin_for_input(&input, &genesis_state, &headers, &hints);
+    let pcs = pcs_for_state(&genesis_state, VerifierKeyDigest::default(), Proof::default());
+    let stdin = build_stdin(&pcs, &genesis_state, &headers, &witness.median_time_past_hints);
 
     let pv = run_and_get_pv(stdin).await?;
     expect_failure(&pv, ValidationErrorCode::PowInsufficient, 1)
@@ -342,21 +335,14 @@ async fn test_recursive_chain_success() -> Result<(), String> {
         .await
         .map_err(|e| format!("setup: {}", e))?;
     let vk = pk.verifying_key();
+    let db = open_db();
 
     // === Run 1: genesis state → block 10 ===
     let genesis_state = mainnet_genesis_state();
-    let records1 = util::load_header_records_from_db(db_path(), 1, 10);
-    let headers1 = util::records_to_new_headers(&records1);
-    let hints1 = util::median_time_past_hints_for_headers(&genesis_state, &headers1);
+    let witness1 = db.load_header_batch_witness(1, 10);
     let verifier_key = VerifierKeyDigest::from_raw(vk.hash_u32());
-    let input1 = input_for_state(
-        &genesis_state,
-        RecursiveProof {
-            verifier_key,
-            ..Default::default()
-        },
-    );
-    let stdin1 = stdin_for_input(&input1, &genesis_state, &headers1, &hints1);
+    let pcs1 = pcs_for_state(&genesis_state, verifier_key, Proof::default());
+    let stdin1 = build_stdin(&pcs1, &genesis_state, &witness1.headers, &witness1.median_time_past_hints);
 
     let proof1 = client
         .prove(&pk, stdin1)
@@ -374,23 +360,24 @@ async fn test_recursive_chain_success() -> Result<(), String> {
     // === Run 2: Extend from Run 1 (blocks 11-20) ===
     // Reconstruct the full state at height 10 from DB (needed for continuation witness).
     let genesis_state2 = mainnet_genesis_state();
-    let records_to_10 = util::load_header_records_from_db(db_path(), 1, 10);
-    let headers_to_10 = util::records_to_new_headers(&records_to_10);
-    let state1 = util::compute_final_state(&genesis_state2, &headers_to_10);
+    let witness_to_10 = db.load_header_batch_witness(1, 10);
+    let state1 = util::compute_final_state_with_hints(
+        &genesis_state2,
+        &witness_to_10.headers,
+        &witness_to_10.median_time_past_hints,
+    );
 
-    let records2 = util::load_header_records_from_db(db_path(), 11, 10);
-    let headers2 = util::records_to_new_headers(&records2);
-    let hints2 = util::median_time_past_hints_for_headers(&state1, &headers2);
-    let input2 = input_for_state(
+    let witness2 = db.load_header_batch_witness(11, 10);
+    let pcs2 = pcs_for_state(
         &state1,
-        RecursiveProof {
-            verifier_key,
+        verifier_key,
+        Proof {
             public_values_digest: PublicValuesDigest::from_raw(util::compute_pv_digest(&pv1_bytes)),
-            previous_return_code: 0,
+            exit_code: 0,
             ..Default::default()
         },
     );
-    let mut stdin2 = stdin_for_recursive_input(&input2, &state1, &headers2, &hints2);
+    let mut stdin2 = build_stdin(&pcs2, &state1, &witness2.headers, &witness2.median_time_past_hints);
     let sp1_sdk::SP1Proof::Compressed(inner_proof) = &proof1.proof else {
         return Err("Run 1 proof is not compressed".to_string());
     };
@@ -407,22 +394,23 @@ async fn test_recursive_chain_success() -> Result<(), String> {
 /// Verify that the guest panics when asked to extend a failed prior proof.
 async fn test_error_recursive_on_failed_proof() -> Result<(), String> {
     let genesis_state = mainnet_genesis_state();
-    let records = util::load_header_records_from_db(db_path(), 1, 5);
-    let headers = util::records_to_new_headers(&records);
-    let hints = util::median_time_past_hints_for_headers(&genesis_state, &headers);
+    let witness = open_db().load_header_batch_witness(1, 5);
 
-    let state_at_5 = util::compute_final_state(&genesis_state, &headers);
+    let state_at_5 = util::compute_final_state_with_hints(
+        &genesis_state,
+        &witness.headers,
+        &witness.median_time_past_hints,
+    );
 
-    // Craft a RecursiveProof that claims the prior proof had a failure (return code 2).
-    let bad_recursive_proof = RecursiveProof {
-        verifier_key: VerifierKeyDigest::from_raw([0u32; 8]),
+    // Craft a Proof that claims the prior proof had a failure (exit code 2).
+    let bad_proof = Proof {
         public_values_digest: PublicValuesDigest::from_raw([0u8; 32]),
-        previous_return_code: 2,
+        exit_code: 2,
         ..Default::default()
     };
 
-    let input = input_for_state(&state_at_5, bad_recursive_proof);
-    let stdin = stdin_for_recursive_input(&input, &state_at_5, &headers, &hints);
+    let pcs = pcs_for_state(&state_at_5, VerifierKeyDigest::from_raw([0u32; 8]), bad_proof);
+    let stdin = build_stdin(&pcs, &state_at_5, &witness.headers, &witness.median_time_past_hints);
 
     let client = ProverClient::builder().mock().build().await;
     let result = client.execute(ELF, stdin).await;
@@ -447,30 +435,32 @@ async fn test_error_recursive_on_failed_proof() -> Result<(), String> {
 /// chain claim.
 async fn test_error_recursive_on_tampered_state_witness() -> Result<(), String> {
     let genesis_state = mainnet_genesis_state();
-    let records = util::load_header_records_from_db(db_path(), 1, 5);
-    let headers_to_5 = util::records_to_new_headers(&records);
-    let state_at_5 = util::compute_final_state(&genesis_state, &headers_to_5);
+    let witness = open_db().load_header_batch_witness(1, 5);
+    let state_at_5 = util::compute_final_state_with_hints(
+        &genesis_state,
+        &witness.headers,
+        &witness.median_time_past_hints,
+    );
 
     let original_digest = util::continuation_digest_from_state(&state_at_5);
     let verifier_key = VerifierKeyDigest::from_raw([0u32; 8]);
     let original_pv =
         MinimalPublicValues::success(&state_at_5.public_claim(), original_digest, verifier_key);
-    let recursive_proof = RecursiveProof {
-        verifier_key,
+    let proof = Proof {
         public_values_digest: PublicValuesDigest::from_raw(util::compute_pv_digest(
             &original_pv.to_bytes(),
         )),
-        previous_return_code: 0,
+        exit_code: 0,
         ..Default::default()
     };
 
     let mut tampered_state = state_at_5.clone();
     tampered_state.current_work = util::ChainWork::default();
 
-    let input = input_for_state(&state_at_5, recursive_proof);
+    let pcs = pcs_for_state(&state_at_5, verifier_key, proof);
     let empty_headers = [];
     let empty_hints = Vec::new();
-    let stdin = stdin_for_recursive_input(&input, &tampered_state, &empty_headers, &empty_hints);
+    let stdin = build_stdin(&pcs, &tampered_state, &empty_headers, &empty_hints);
 
     let client = ProverClient::builder().mock().build().await;
     let result = client.execute(ELF, stdin).await;
@@ -495,11 +485,9 @@ async fn test_pv_minimal_format() -> Result<(), String> {
     use zkpow_core::MINIMAL_PV_SIZE;
 
     let genesis_state = mainnet_genesis_state();
-    let records = util::load_header_records_from_db(db_path(), 1, 10);
-    let headers = util::records_to_new_headers(&records);
-    let hints = util::median_time_past_hints_for_headers(&genesis_state, &headers);
-    let input = input_for_state(&genesis_state, RecursiveProof::default());
-    let stdin = stdin_for_input(&input, &genesis_state, &headers, &hints);
+    let witness = open_db().load_header_batch_witness(1, 10);
+    let pcs = pcs_for_state(&genesis_state, VerifierKeyDigest::default(), Proof::default());
+    let stdin = build_stdin(&pcs, &genesis_state, &witness.headers, &witness.median_time_past_hints);
 
     let pv = run_and_get_pv(stdin).await?;
 
@@ -528,9 +516,11 @@ async fn test_pv_minimal_format() -> Result<(), String> {
 
     // Host-computed continuation digest must match.
     let genesis_state2 = mainnet_genesis_state();
-    let records2 = util::load_header_records_from_db(db_path(), 1, 10);
-    let headers2 = util::records_to_new_headers(&records2);
-    let final_state = util::compute_final_state(&genesis_state2, &headers2);
+    let final_state = util::compute_final_state_with_hints(
+        &genesis_state2,
+        &witness.headers,
+        &witness.median_time_past_hints,
+    );
     let host_digest = util::continuation_digest_from_state(&final_state);
     if host_digest != mpv.continuation_digest {
         return Err(format!(

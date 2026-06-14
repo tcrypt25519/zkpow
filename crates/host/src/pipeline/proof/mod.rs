@@ -12,7 +12,7 @@ use crate::pipeline::diagnostics::timed_async;
 #[cfg(feature = "CUDA")]
 use crate::pipeline::diagnostics::timed_sync;
 use crate::pipeline::ELF;
-use crate::pipeline::{BoxError, ProofGenerationConfig, ProverBackend};
+use crate::pipeline::{BoxError, ProverBackend};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct PreparedProverConfig {
@@ -45,11 +45,12 @@ fn prepared_prover_store() -> &'static AsyncMutex<Option<(PreparedProverConfig, 
 }
 
 pub(crate) async fn get_prepared_prover(
-    config: &ProofGenerationConfig,
+    prover_backend: ProverBackend,
+    cuda_device_id: Option<u32>,
 ) -> Result<PreparedProver, BoxError> {
     let desired = PreparedProverConfig {
-        backend: config.prover_backend,
-        cuda_device_id: config.cuda_device_id,
+        backend: prover_backend,
+        cuda_device_id,
     };
 
     {
@@ -79,7 +80,7 @@ pub(crate) async fn get_prepared_prover(
         "building prepared prover"
     );
 
-    let prepared = match config.prover_backend {
+    let prepared = match prover_backend {
         ProverBackend::Mock => {
             let prover = timed_async("build_mock_prover", || async {
                 Ok::<_, BoxError>(ProverClient::builder().mock().build().await)
@@ -108,10 +109,10 @@ pub(crate) async fn get_prepared_prover(
             #[cfg(feature = "CUDA")]
             {
                 let report =
-                    timed_sync("cuda_preflight", || crate::cuda_env::run_preflight(config))?;
+                    timed_sync("cuda_preflight", || crate::cuda_env::run_preflight(cuda_device_id))?;
                 crate::cuda_env::log_preflight(&report);
                 let prover = timed_async("build_cuda_prover", || async {
-                    let device_id = config.cuda_device_id;
+                    let device_id = cuda_device_id;
                     let handle = tokio::spawn(async move {
                         let builder = if let Some(device_id) = device_id {
                             ProverClient::builder().cuda().with_device_id(device_id)

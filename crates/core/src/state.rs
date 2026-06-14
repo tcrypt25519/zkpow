@@ -3,16 +3,15 @@ compile_error!("zkpow wire types require a little-endian target");
 
 use crate::{
     calculate_next_target_required, check_proof_of_work, copy_from_bytes, copy_to_bytes,
-    ref_from_bytes, work_from_target, ApplyFailure, BlockHash, BlockTimestamp, ChainWork,
-    CompactTarget, Header, NewHeader, ParseError, PrivateContinuationState, PublicChainClaim,
-    Target, TargetError, ValidationErrorCode, EPOCH_LENGTH, PRIVATE_CONTINUATION_STATE_SIZE,
+    work_from_target, ApplyFailure, BlockHash, BlockTimestamp, ChainWork,
+    CompactTarget, Claim, ContinuationData, Header, NewHeader, ParseError,
+    Target, TargetError, ValidationErrorCode, EPOCH_LENGTH, CONTINUATION_DATA_SIZE,
     STATE_SIZE, WINDOW_SIZE,
 };
 
-/// Execute a closure while emitting stable, report-backed cycle-tracker markers in the guest.
 #[cfg(all(target_os = "zkvm", feature = "profiling"))]
 #[inline(always)]
-pub fn cycle_track_report<T, F>(label: &'static str, f: F) -> T
+pub fn cycle_track<T, F>(label: &'static str, f: F) -> T
 where
     F: FnOnce() -> T,
 {
@@ -28,24 +27,13 @@ where
     output
 }
 
-/// Execute a closure while preserving the call shape when report-backed
-/// profiling is not enabled.
 #[cfg(not(all(target_os = "zkvm", feature = "profiling")))]
 #[inline(always)]
-pub fn cycle_track_report<T, F>(_label: &'static str, f: F) -> T
+pub fn cycle_track<T, F>(_label: &'static str, f: F) -> T
 where
     F: FnOnce() -> T,
 {
     f()
-}
-
-/// Backwards-compatible helper for existing call sites.
-#[inline(always)]
-pub fn cycle_track<T, F>(label: &'static str, f: F) -> T
-where
-    F: FnOnce() -> T,
-{
-    cycle_track_report(label, f)
 }
 
 /// Complete authenticated validation state, serialized between recursive iterations.
@@ -91,15 +79,10 @@ impl State {
         cycle_track("parse/state", || copy_from_bytes(bytes))
     }
 
-    /// Borrow a [`State`] directly from aligned protocol bytes.
-    pub fn ref_from_bytes(bytes: &[u8]) -> Result<&Self, ParseError> {
-        cycle_track("parse/state_ref", || ref_from_bytes(bytes))
-    }
-
     /// Extract the verifier-visible public claim from this state.
     #[must_use]
-    pub fn public_claim(&self) -> PublicChainClaim {
-        PublicChainClaim {
+    pub fn public_claim(&self) -> Claim {
+        Claim {
             genesis_hash: self.genesis_hash,
             tip_hash: self.block_hash,
             chain_work: self.chain_work,
@@ -107,10 +90,10 @@ impl State {
         }
     }
 
-    /// Serialize the private continuation fields directly to bytes.
+    /// Serialize the continuation data directly to bytes.
     #[must_use]
-    pub fn continuation_bytes(&self) -> [u8; PRIVATE_CONTINUATION_STATE_SIZE] {
-        PrivateContinuationState::from_state(self).to_bytes()
+    pub fn continuation_bytes(&self) -> [u8; CONTINUATION_DATA_SIZE] {
+        ContinuationData::from_state(self).to_bytes()
     }
 
     /// Compute the difficulty values that become active at a new epoch boundary.
