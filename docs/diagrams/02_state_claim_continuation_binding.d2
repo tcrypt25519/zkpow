@@ -1,13 +1,12 @@
 ## Diagram 2: State, Claim, and Continuation — Cryptographic Binding
 ## (commit 6a3cfc4)
 ##
-## The public Input wire now carries only PublicChainClaim + RecursiveProof.
-## The full State is a separate private witness. The guest derives
-## ValidationState from the witness and checks its public half matches the
-## claim before using any private fields. For recursive batches, the
-## PrivateContinuationState is used to reconstruct the prior proof's
-## public values, so tampering any private field (next_work, next_target, …)
-## changes the digest and is rejected.
+## The public Input wire (ProofCarryingState) carries Claim + verifier_key +
+## Proof. The full State is a separate private witness. The guest checks the
+## witness's public half (state.public_claim()) matches the claim before using
+## any private fields. For recursive batches, the ContinuationData is used to
+## reconstruct the prior proof's public values, so tampering any private field
+## (current_work, current_target, …) changes the digest and is rejected.
 
 direction: right
 
@@ -53,12 +52,12 @@ structs: Data Structures {
     tooltip: |
       All fields needed to validate the next header:
         genesis_hash, block_hash, height, chain_work  ← public
-        next_nbits, next_work, next_target,
+        current_nbits, current_work, current_target,
         epoch_start_timestamp, timestamps[11]         ← private
     |
   }
 
-  claim: PublicChainClaim (72 B) {
+  claim: Claim (100 B) {
     class: public_data
     tooltip: |
       genesis_hash  32 B
@@ -68,41 +67,40 @@ structs: Data Structures {
     |
   }
 
-  continuation: PrivateContinuationState (116 B) {
+  continuation: ContinuationData (116 B) {
     class: private_data
     tooltip: |
-      next_nbits              4 B
-      next_work              32 B  ← tamper → digest mismatch
-      next_target            32 B  ← tamper → digest mismatch
+      current_nbits           4 B
+      current_work           32 B  ← tamper → digest mismatch
+      current_target         32 B  ← tamper → digest mismatch
       epoch_start_timestamp   4 B
       timestamps[11]         44 B
     |
   }
 
-  vs: ValidationState {
+  vs: State-derived views {
     class: ok
     tooltip: |
-      public:  PublicChainClaim
-      private: PrivateContinuationState
-      Derived by ValidationState::from_state(&state)
+      public:  Claim            (state.public_claim())
+      private: ContinuationData (state.continuation_bytes())
     |
   }
 
-  state -> vs: from_state()
-  vs -> claim: .public
-  vs -> continuation: .private
+  state -> vs: derive views
+  vs -> claim: public_claim()
+  vs -> continuation: continuation_bytes()
 }
 
 # ── Wire protocol ─────────────────────────────────────────────────────────────
 
 wire: Wire Protocol (stdin) {
-  pub_wire: "stdin[0]: PublicChainClaim ∥ RecursiveProof" {
+  pub_wire: "stdin[0]: ProofCarryingState (Claim ∥ verifier_key ∥ Proof)" {
     class: public_data
     shape: queue
     tooltip: |
       PUBLIC — verifier can inspect.
       Replaces the old full-State wire input.
-      Size: PUBLIC_CHAIN_CLAIM_SIZE + RECURSIVE_PROOF_SIZE
+      Size: CLAIM_SIZE + 32 + PROOF_SIZE = 168 B
     |
   }
 
@@ -120,7 +118,7 @@ wire: Wire Protocol (stdin) {
 # ── Guest execution ───────────────────────────────────────────────────────────
 
 guest: Guest (zkVM) {
-  parse_pub: Parse PublicChainClaim {
+  parse_pub: Parse ProofCarryingState {
     shape: hexagon
     style.fill: "#E3F2FD"
   }
@@ -130,9 +128,9 @@ guest: Guest (zkVM) {
     style.fill: "#FFF9C4"
   }
 
-  derive_vs: ValidationState::from_state(witness) {
+  derive_vs: state.public_claim() + continuation_bytes() {
     class: crypto
-    tooltip: Splits witness into (public claim, private continuation)
+    tooltip: Derives (public claim, private continuation) from the witness
   }
 
   bind_check: witness.public == claim? {
@@ -148,14 +146,14 @@ guest: Guest (zkVM) {
     class: check
   }
 
-  verify_recursive: verify_recursive_proof(proof, claim, continuation) {
+  verify_recursive: verify_prior_proof(proof, vk, claim, continuation_bytes) {
     class: crypto
     tooltip: |
       Reconstructs prior proof's MinimalPublicValues
-      from (claim, continuation_digest).
+      from (claim, continuation_digest, verifier_key).
       SHA256(continuation bytes) must match the
       digest embedded in the prior proof's public values.
-      Tampered next_work/next_target → wrong digest → REJECT.
+      Tampered current_work/current_target → wrong digest → REJECT.
     |
   }
 
@@ -168,7 +166,7 @@ guest: Guest (zkVM) {
     class: ok
     tooltip: |
       Includes new continuation_digest =
-      SHA256(PrivateContinuationState bytes)
+      SHA256(ContinuationData bytes)
       so the next batch can verify this one.
     |
   }
@@ -194,7 +192,7 @@ guest: Guest (zkVM) {
 crypto_chain: Cryptographic Binding Chain {
   digest_n: continuation_digest(N) {
     class: crypto
-    tooltip: SHA256(PrivateContinuationState_N bytes) — in proof N public values
+    tooltip: SHA256(ContinuationData_N bytes) — in proof N public values
   }
 
   pv_n: MinimalPublicValues(N) {
@@ -206,8 +204,8 @@ crypto_chain: Cryptographic Binding Chain {
     class: private_data
     tooltip: |
       Supplied by prover for batch N+1.
-      Contains PrivateContinuationState fields
-      (next_work, next_target, …)
+      Contains ContinuationData fields
+      (current_work, current_target, …)
     |
   }
 
@@ -244,13 +242,13 @@ wire.state_wire -> guest.parse_state
 note: |md
   **Commit 6a3cfc4** — bind state witness to public claim
 
-  *Before*: `Input` carried the full `State` (296 B) as the public wire input.
-  Private fields (`next_work`, `next_target`, …) were not independently bound.
+  *Before*: the public wire input carried the full `State` (296 B).
+  Private fields (`current_work`, `current_target`, …) were not independently bound.
 
-  *After*: `Input` carries only `PublicChainClaim` (72 B) + `RecursiveProof`.
-  The full `State` is a separate private witness. The guest calls
-  `ValidationState::from_state(witness)` and asserts `.public == claim`.
-  For recursive batches, `PrivateContinuationState` is hashed and compared
+  *After*: the public wire input is `ProofCarryingState` = `Claim` (100 B) +
+  `verifier_key` (32 B) + `Proof` (36 B). The full `State` is a separate private
+  witness; the guest asserts `state.public_claim() == pcs.claim`.
+  For recursive batches, `ContinuationData` is hashed and compared
   against the digest in the prior proof's public values — so any tampering
   of private cached fields is cryptographically rejected.
 | {
