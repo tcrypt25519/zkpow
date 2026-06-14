@@ -11,18 +11,25 @@ from any trusted starting point.
 # Build
 cargo build --release
 
-# Run prover (genesis → block 99)
-cd script && cargo run --release --bin zkpow-host
+# Run prover (genesis → first batch; default batch size 2016)
+cargo run --release -p zkpow-host --bin zkpow-host
 
 # Run prover extending a previous proof
-PREV_PROOF=proof_height_0_to_99.bin START_HEIGHT=100 NUM_HEADERS=100 \
-  cargo run --release --bin zkpow-host
+ZKPOW_PREV_PROOF=proof_height_1_to_2016.bin \
+  cargo run --release -p zkpow-host --bin zkpow-host
+
+# Tune batch size / number of batches per process
+ZKPOW_BATCH_SIZE=2016 ZKPOW_BATCH_COUNT=10 \
+  cargo run --release -p zkpow-host --bin zkpow-host
+
+# Also emit a Groth16-wrapped proof (slower)
+ZKPOW_GENERATE_GROTH16=1 cargo run --release -p zkpow-host --bin zkpow-host
 
 # Run test suite (fast, no proving)
-cargo run --release --bin test_errors
+cargo run --release -p zkpow-host --bin test_errors
 
 # Inspect a proof
-cargo run --release --bin inspect_proof -- proof_height_0_to_99.bin
+cargo run --release -p zkpow-host --bin inspect_proof -- proof_height_1_to_2016.bin
 
 # Clippy (clean)
 cargo clippy --all-targets -- -D warnings
@@ -31,22 +38,29 @@ cargo clippy --all-targets -- -D warnings
 ## Project Structure
 
 ```text
-bitcoin-header-chain/
-├── program/                    # zkVM program (constrained execution)
-│   ├── Cargo.toml              # Only sp1-zkvm (verify feature)
+crates/
+├── core/                       # Shared consensus types + pure logic (no_std)
 │   └── src/
-│       ├── main.rs             # Header validation logic
+│       ├── lib.rs              # Types, wire sizes, PoW/difficulty/work helpers, public values
+│       ├── state.rs            # State + apply_headers (per-header state machine)
+│       ├── input.rs            # ProofCarryingState / Proof / hint parsing
+│       ├── types.rs            # u256 + branded newtypes (Target, ChainWork, …)
+│       └── brand.rs            # Zero-cost Branded<Tag, T> newtype wrapper
+├── guest/                      # zkVM program (constrained execution)
+│   └── src/
+│       ├── main.rs             # Reads stdin, verifies recursion, applies headers, commits PV
 │       └── sha256.rs           # Specialized SHA-256 precompile calls
-└── script/                     # Host script (proving orchestration)
-    ├── Cargo.toml
-    ├── build.rs                # Compiles program to RISC-V ELF
-    └── src/
-        ├── main.rs             # Prove → verify → save (compressed + Groth16)
-        ├── util.rs             # DB loading, work calculation, PV builder
-        ├── lib.rs              # pub mod util
-        └── bin/
-            ├── test_errors.rs      # Automated tests (8/8 pass)
-            └── inspect_proof.rs    # Human-readable proof display
+├── host/                       # Host script (proving orchestration)
+│   ├── build.rs                # Compiles the guest program to a RISC-V ELF
+│   └── src/
+│       ├── main.rs             # Entry point → run_batch_session()
+│       ├── pipeline/           # batch prep, input serialization, execution, proof gen
+│       ├── util/               # DB loading, hashing, simulation helpers
+│       └── bin/
+│           ├── test_errors.rs      # Automated validation tests (no proving)
+│           ├── inspect_proof.rs    # Human-readable proof display
+│           └── sp1_stress.rs       # SP1 stress/benchmark harness
+└── memory-usage/               # Allocation tracking utilities
 ```
 
 ## Architecture
@@ -54,35 +68,46 @@ bitcoin-header-chain/
 ### Data Flow
 
 ```text
-Host: genesis_hash, start_height, num_headers, headers_bytes
-  ↓ stdin
-zkVM: reads inputs → validates headers → commits public values → HALT(0)
+Host: ProofCarryingState (Claim ∥ verifier_key ∥ Proof), State witness,
+      NewHeader[], median hints, [compressed prior proof if height > 0]
+  ↓ stdin (4 or 5 length-prefixed frames)
+zkVM: parse + authenticate inputs → [verify prior proof] → apply_headers
+      → commit MinimalPublicValues → HALT(0)
   ↓ proof
 Host: verifies proof → verifies public values → saves proof
 ```
 
-### Public Values Layout (237 bytes)
+See `docs/diagrams/03_guest_data_flow.md` for the full byte-level data flow
+through the guest program.
+
+### Public Values Layout — `MinimalPublicValues` (169 bytes)
 
 | Offset | Size | Field |
-| -------- | ------ | ------- |
+| ------ | ---- | ----- |
 | 0..32 | 32 | genesis_hash |
-| 32..64 | 32 | final_header_hash |
-| 64..72 | 8 | num_headers (total validated) |
-| 72..152 | 80 | final_header (raw bytes) |
-| 152..184 | 32 | cumulative_chain_work (u256 LE) |
-| 184..188 | 4 | last_epoch_start_timestamp |
-| 188..232 | 44 | median_timestamp_buffer (\[u32; 11]) |
-| 232..233 | 1 | success_code (0=success, 1-7=error) |
-| 233..237 | 4 | failure_height (0 on success, absolute chain height on failure) |
+| 32..64 | 32 | tip_hash |
+| 64..96 | 32 | chain_work (u256 LE) |
+| 96..100 | 4 | height (u32 LE, last valid height) |
+| 100..101 | 1 | return_code (0 = success, nonzero = `ValidationErrorCode`) |
+| 101..105 | 4 | failure_height (0 on success; absolute chain height of the bad block) |
+| 105..137 | 32 | continuation_digest (SHA-256 of `ContinuationData`) |
+| 137..169 | 32 | verifier_key (\[u32; 8] LE) |
 
-### Median Count is Derivable
+The private cached fields (current_nbits, current_work, current_target,
+epoch_start_timestamp, timestamps\[11]) are not committed directly — they are
+bound through `continuation_digest`, which the next batch recomputes from its
+State witness. See `docs/diagrams/03_guest_data_flow.md`.
 
-Do NOT commit median_count to public values. It's computed as:
+### Median Window Count is Derivable
+
+Do NOT commit the median-window count to public values. It equals
+`State::timestamp_count()`:
 
 ```text
-count = min(11, total_validated - 1)  for total_validated > 0
-count = 0                              for total_validated == 0
+count = min(height + 1, 11)
 ```
+
+(At the genesis anchor, height = 0, so the window holds a single timestamp.)
 
 ## SHA-256 Implementation
 
@@ -90,8 +115,8 @@ Uses direct SP1 precompile syscalls — no `sha2` crate in the program.
 
 - `sha256_80bytes(&[u8; 80])` → `[u8; 32]`: Bitcoin block header. Hardcoded for exactly 2 blocks. No loops, no branching.
 - `sha256_32bytes(&[u8; 32])` → `[u8; 32]`: Intermediate hash. Hardcoded for exactly 1 block.
-- `sha256_116bytes(&[u8; 116])` → `[u8; 32]`: Serialized `PrivateContinuationState` (116 bytes = 2 SHA-256 blocks). Used for the continuation digest.
-- `sha256_137bytes(&[u8; 137])` → `[u8; 32]`: Serialized `MinimalPublicValues` (137 bytes = 3 SHA-256 blocks).
+- `sha256_116bytes(&[u8; 116])` → `[u8; 32]`: Serialized `ContinuationData` (116 bytes = 2 SHA-256 blocks). Used for the continuation digest.
+- `sha256_169bytes(&[u8; 169])` → `[u8; 32]`: Serialized `MinimalPublicValues` (169 bytes = 3 SHA-256 blocks). Used to reconstruct the prior proof's public-values digest during recursion.
 - `sha256d_80bytes(&[u8; 80])` → `[u8; 32]`: Double-SHA-256 of a Bitcoin block header (SHA256(SHA256(header))).
 
 The host script still uses the `sha2` crate (via workspace) for
@@ -102,25 +127,35 @@ verify it built the same public values the program committed.
 
 | Constant | Bytes | Description |
 | -------- | ----- | ----------- |
-| `STATE_SIZE` | 296 | Full `State` (public + private, serialized for recursive chaining) |
-| `PRIVATE_CONTINUATION_STATE_SIZE` | 116 | `PrivateContinuationState` (next_nbits=4, next_work=32, next_target=32, epoch_ts=4, timestamps=44) |
-| `PUBLIC_CHAIN_CLAIM_SIZE` | 100 | `PublicChainClaim` (genesis_hash=32, tip_hash=32, chain_work=32, height=4) |
+| `STATE_SIZE` | 296 | Full `State` (public + private, serialized as the recursive-chaining witness) |
+| `CLAIM_SIZE` | 100 | `Claim` (genesis_hash=32, tip_hash=32, chain_work=32, height=4) |
+| `PROOF_SIZE` | 36 | `Proof` (public_values_digest=32, exit_code=1, _pad=3) |
+| `CONTINUATION_DATA_SIZE` | 116 | `ContinuationData` (current_nbits=4, current_work=32, current_target=32, epoch_start_timestamp=4, timestamps=44) |
+| `MINIMAL_PV_SIZE` | 169 | `MinimalPublicValues` committed output |
+
+The public wire input `ProofCarryingState` is `CLAIM_SIZE + 32 (verifier_key) +
+PROOF_SIZE = 168` bytes.
 
 ## Error Codes
 
 | Code | Name | Trigger |
-| ------ | ------ | --------- |
-| 0 | Success | All headers valid |
-| 1 | Header payload length invalid | Input/header-hint payload length is malformed |
-| 2 | PoW insufficient | `SHA256d(header) > target` |
-| 3 | Timestamp too old | `timestamp ≤ median_time_past` |
-| 4 | Genesis hash mismatch | At height 0, first validated header hash ≠ expected genesis hash |
+| ---- | ---- | ------- |
+| 0 | Success (return_code) | All headers valid |
+| 1 | `HeaderPayloadLengthInvalid` | Reserved. Malformed input lengths currently abort proving as a parse panic, not a committed code. |
+| 2 | `PowInsufficient` | `SHA256d(header) > active_target` (committed in public values) |
+| 3 | `TimestampTooOld` | `header.timestamp ≤ claimed_median` (committed in public values) |
+| 4 | `GenesisHashMismatch` | Reserved. The height-0 state is a trusted anchor (see ADRs), so genesis is not re-checked at runtime. |
 
 Notes:
 
-- Prev-blockhash and bits-mismatch checks are not separate error codes in this design.
-  They are derived from authenticated state when materializing `Header` from `NewHeader`.
-- Not used (reserved): 5, 6, 7, 8, 9, 10.
+- `return_code` 0 is success; it is not a `ValidationErrorCode` variant. The enum
+  defines only codes 1–4 (`crates/core/src/types.rs`).
+- Validation failures (codes 2, 3) are committed in `MinimalPublicValues` and the
+  proof still verifies. Malformed inputs and rejected recursion `panic!`, so no
+  proof is produced.
+- Prev-blockhash and `nBits` mismatches are not separate error codes by design:
+  those fields are injected from authenticated state when materializing `Header`
+  from `NewHeader`, so they cannot be forged.
 
 ## Proof Files
 

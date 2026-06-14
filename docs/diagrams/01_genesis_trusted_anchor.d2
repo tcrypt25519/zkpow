@@ -52,7 +52,7 @@ host: Host {
   input_wire: Input Wire {
     shape: queue
     style.fill: "#E3F2FD"
-    tooltip: PublicChainClaim || RecursiveProof
+    tooltip: ProofCarryingState (Claim || verifier_key || Proof)
   }
 
   state_wire: State Witness Wire {
@@ -61,7 +61,7 @@ host: Host {
     tooltip: Full State bytes (separate channel)
   }
 
-  genesis_state -> input_wire: extract PublicChainClaim
+  genesis_state -> input_wire: extract Claim
   genesis_state -> state_wire: pass full State
 }
 
@@ -81,7 +81,7 @@ guest: Guest (zkVM) {
   verify_claim: Verify State ↔ Claim {
     shape: diamond
     style.fill: "#FFF9C4"
-    tooltip: ValidationState::from_state(state).public == claim
+    tooltip: state.public_claim() == pcs.claim
   }
 
   anchor_check: height == 0? {
