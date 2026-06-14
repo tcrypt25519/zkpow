@@ -3,12 +3,22 @@
   "checkpoint_id": "e70fbc2df031",
   "strategy": "manual-commit",
   "branch": "dry-refactor",
-  "checkpoints_count": 2,
+  "checkpoints_count": 6,
   "files_touched": [
+    "crates/core/src/input.rs",
     "crates/core/src/lib.rs",
     "crates/core/src/state.rs",
     "crates/guest/src/main.rs",
-    "crates/guest/src/sha256.rs"
+    "crates/guest/src/sha256.rs",
+    "crates/host/src/bin/inspect_proof.rs",
+    "crates/host/src/bin/test_errors.rs",
+    "crates/host/src/pipeline/diagnostics.rs",
+    "crates/host/src/pipeline/execution.rs",
+    "crates/host/src/pipeline/input.rs",
+    "crates/host/src/pipeline/mod.rs",
+    "crates/host/src/util.rs",
+    "crates/host/src/util/db.rs",
+    "crates/host/src/util/hash.rs"
   ],
   "sessions": [
     {
@@ -22,13 +32,19 @@
       "transcript": "/e7/0fbc2df031/1/full.jsonl",
       "content_hash": "/e7/0fbc2df031/1/content_hash.txt",
       "prompt": "/e7/0fbc2df031/1/prompt.txt"
+    },
+    {
+      "metadata": "/e7/0fbc2df031/2/metadata.json",
+      "transcript": "/e7/0fbc2df031/2/full.jsonl",
+      "content_hash": "/e7/0fbc2df031/2/content_hash.txt",
+      "prompt": "/e7/0fbc2df031/2/prompt.txt"
     }
   ],
   "token_usage": {
-    "input_tokens": 12901,
-    "cache_creation_tokens": 125606,
-    "cache_read_tokens": 6314381,
-    "output_tokens": 32986,
-    "api_call_count": 64
+    "input_tokens": 18731,
+    "cache_creation_tokens": 586435,
+    "cache_read_tokens": 16202119,
+    "output_tokens": 153829,
+    "api_call_count": 166
   }
 }
