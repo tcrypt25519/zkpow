@@ -62,7 +62,6 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates/core/Cargo.toml  crates/core/
 COPY crates/guest/Cargo.toml crates/guest/
 COPY crates/host/Cargo.toml  crates/host/
-COPY crates/memory-usage/    crates/memory-usage/
 
 # Stub sources so `cargo fetch` / dep compilation can proceed without real code
 RUN mkdir -p crates/core/src crates/guest/src crates/host/src/bin && \
