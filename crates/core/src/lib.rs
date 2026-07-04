@@ -39,6 +39,17 @@ pub const BLOCK_HEADER_SIZE: usize = size_of::<Header>();
 /// Sliding window size used for median-time-past checks.
 pub const WINDOW_SIZE: usize = 11;
 
+/// Number of valid entries in an MTP ring buffer whose most-recently-written
+/// slot is `height` — e.g. at genesis (`height == 0`) there is exactly one
+/// valid entry (genesis's own timestamp). Shared by `State`'s median-time-past
+/// logic and `sync-headers`'s `Tip`/`connect_headers` window-length logic; every
+/// caller computing "how many ring-buffer slots are populated" goes through
+/// this one function.
+#[must_use]
+pub fn timestamp_count(height: u64) -> usize {
+    (height as usize + 1).min(WINDOW_SIZE)
+}
+
 /// Number of blocks per difficulty retarget epoch.
 pub const EPOCH_LENGTH: u32 = 2016;
 
@@ -64,6 +75,13 @@ pub const GENESIS_NBITS: u32 = 0x1d00ffff;
 /// In LE limbs: limbs[3] = 0xFFFF0000, limbs[0..2] = 0.
 pub const GENESIS_TARGET: Target = Target::from_limbs([0, 0, 0, 0x0000_0000_FFFF_0000]);
 
+/// Work represented by the genesis block's target — the one and only
+/// `work_from_target(GENESIS_TARGET)` call site; everywhere else reuses this.
+#[must_use]
+pub fn genesis_work() -> ChainWork {
+    work_from_target(GENESIS_TARGET).expect("GENESIS_TARGET is a valid target")
+}
+
 /// Raw little-endian mainnet genesis block hash.
 pub const MAINNET_GENESIS_HASH_RAW: [u8; 32] = [
     0x6f, 0xe2, 0x8c, 0x0a, 0xb6, 0xf1, 0xb3, 0x72, 0xc1, 0xa6, 0xa2, 0x46, 0xae, 0x63, 0xf7, 0x4f,
@@ -83,6 +101,22 @@ pub struct Header {
     pub nonce: u32,
 }
 
+/// The mainnet genesis block header (height 0). `prev_blockhash` is the zero
+/// hash; `merkle_root` is the genesis coinbase merkle root in internal
+/// (reversed-from-display) byte order.
+pub const MAINNET_GENESIS_HEADER: Header = Header {
+    version: 1,
+    prev_blockhash: BlockHash::new([0u8; 32]),
+    merkle_root: [
+        0x3b, 0xa3, 0xed, 0xfd, 0x7a, 0x7b, 0x12, 0xb2, 0x7a, 0xc7, 0x2c, 0x3e, 0x67, 0x76, 0x8f,
+        0x61, 0x7f, 0xc8, 0x1b, 0xc3, 0x88, 0x8a, 0x51, 0x32, 0x3a, 0x9f, 0xb8, 0xaa, 0x4b, 0x1e,
+        0x5e, 0x4a,
+    ],
+    timestamp: BlockTimestamp::new(1231006505),
+    compact_target: CompactTarget::new(GENESIS_NBITS),
+    nonce: 2083236893,
+};
+
 impl Header {
     /// Serialize to exactly [`BLOCK_HEADER_SIZE`] bytes.
     #[must_use]
@@ -95,6 +129,37 @@ impl Header {
     pub fn parse(bytes: &[u8]) -> Result<Self, ParseError> {
         cycle_track("parse/header", || copy_from_bytes(bytes))
     }
+}
+
+/// Double-SHA256 (`SHA-256(SHA-256(data))`), computed on the host via the `sha2` crate.
+///
+/// This is the only SHA256d implementation outside the guest. The guest computes
+/// the same value for 80-byte headers via SP1's SHA-256 precompile syscalls
+/// (`crates/guest/src/sha256.rs::sha256d_80bytes`); those are the two — and only
+/// two — SHA256d implementations in the tree. To hash a header, pass
+/// `&header.to_bytes()`.
+#[cfg(feature = "host")]
+#[must_use]
+pub fn sha256d(data: &[u8]) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    let first: [u8; 32] = Sha256::digest(data).into();
+    Sha256::digest(first).into()
+}
+
+/// Big-endian byte encoding of chainwork as stored in `headers.db`'s `chainwork`
+/// column — predates `ChainWork`'s little-endian in-memory representation.
+/// Every reader and writer of that column must agree on this convention.
+pub fn chain_work_to_db_bytes(work: ChainWork) -> [u8; 32] {
+    let mut bytes = work.to_le_bytes();
+    bytes.reverse();
+    bytes
+}
+
+/// Inverse of [`chain_work_to_db_bytes`]. Returns `None` if `bytes` isn't exactly 32 bytes.
+pub fn chain_work_from_db_bytes(bytes: &[u8]) -> Option<ChainWork> {
+    let mut arr: [u8; 32] = bytes.try_into().ok()?;
+    arr.reverse();
+    Some(ChainWork::from_le_bytes(arr))
 }
 
 /// Digest of a program verifier key.
@@ -1016,12 +1081,6 @@ mod tests {
         BlockHash::new([0; 32])
     }
 
-    /// Convert compact `bits` into cumulative-work units using the genesis constant.
-    #[must_use]
-    pub fn genesis_work() -> ChainWork {
-        work_from_target(GENESIS_TARGET).expect("GENESIS_TARGET is a valid target")
-    }
-
     fn test_state() -> State {
         State {
             current_nbits: CompactTarget::new(GENESIS_NBITS),
@@ -1032,7 +1091,7 @@ mod tests {
     }
 
     pub(crate) fn median_time_past(state: &State) -> BlockTimestamp {
-        let count = state.timestamp_count();
+        let count = timestamp_count(state.height as u64);
         let mut sorted = state.timestamps;
         if count >= WINDOW_SIZE {
             sorted.sort_unstable();

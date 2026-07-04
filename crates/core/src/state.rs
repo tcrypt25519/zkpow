@@ -3,10 +3,9 @@ compile_error!("zkpow wire types require a little-endian target");
 
 use crate::{
     calculate_next_target_required, check_proof_of_work, copy_from_bytes, copy_to_bytes,
-    work_from_target, ApplyFailure, BlockHash, BlockTimestamp, ChainWork,
-    CompactTarget, Claim, ContinuationData, Header, NewHeader, ParseError,
-    Target, TargetError, ValidationErrorCode, EPOCH_LENGTH, CONTINUATION_DATA_SIZE,
-    STATE_SIZE, WINDOW_SIZE,
+    work_from_target, ApplyFailure, BlockHash, BlockTimestamp, ChainWork, Claim, CompactTarget,
+    ContinuationData, Header, NewHeader, ParseError, Target, TargetError, ValidationErrorCode,
+    CONTINUATION_DATA_SIZE, EPOCH_LENGTH, STATE_SIZE, WINDOW_SIZE,
 };
 
 #[cfg(all(target_os = "zkvm", feature = "profiling"))]
@@ -56,12 +55,6 @@ pub struct State {
 }
 
 impl State {
-    /// The number of timestamps currently tracked for median-time-past.
-    #[must_use]
-    pub fn timestamp_count(&self) -> usize {
-        (self.height as usize + 1).min(WINDOW_SIZE)
-    }
-
     /// The circular-buffer slot containing the current tip timestamp.
     #[must_use]
     fn current_timestamp_slot(&self) -> usize {
@@ -115,7 +108,7 @@ impl State {
     #[must_use]
     fn median_time_past_hinted(&self, claimed_median: BlockTimestamp) -> bool {
         cycle_track("state/median_time_past_hinted", || {
-            let window_len = self.timestamp_count();
+            let window_len = crate::timestamp_count(self.height as u64);
             if window_len == 0 {
                 return true;
             }
@@ -161,7 +154,7 @@ impl State {
         &mut self,
         headers: &[NewHeader],
         median_hints: &[BlockTimestamp],
-        mut hash_header: F,
+        mut block_hash_fn: F,
     ) -> Result<(), ApplyFailure>
     where
         F: FnMut(&Header) -> BlockHash,
@@ -236,7 +229,7 @@ impl State {
                     new_header.into_header(self.block_hash, active_nbits)
                 });
                 let block_hash =
-                    cycle_track("state/apply_headers/hash_header", || hash_header(&header));
+                    cycle_track("state/apply_headers/block_hash", || block_hash_fn(&header));
 
                 if cycle_track("state/apply_headers/validate/pow", || {
                     !check_proof_of_work(block_hash, active_target)

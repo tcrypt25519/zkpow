@@ -95,3 +95,14 @@ pub type ChainWork = Branded<ChainWorkTag, u256>;
 pub type BlockTimestamp = Branded<BlockTimestampTag, u32>;
 pub type CompactTarget = Branded<CompactTargetTag, u32>;
 pub type BlockHash = Branded<BlockHashTag, [u8; 32]>;
+
+impl core::fmt::Display for BlockHash {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let mut bytes = self.to_le_bytes();
+        bytes.reverse();
+        for byte in bytes {
+            write!(f, "{byte:02x}")?;
+        }
+        Ok(())
+    }
+}
