@@ -18,7 +18,7 @@
 sp1_zkvm::entrypoint!(main);
 
 use zkpow_core::{
-    cycle_track, parse_median_hints, parse_new_headers, Claim, Header, MinimalPublicValues,
+    cycle_track, parse_median_hints, parse_new_headers, Claim, MinimalPublicValues,
     Proof, ProofCarryingState, State, VerifierKeyDigest, MINIMAL_PV_SIZE,
     CONTINUATION_DATA_SIZE,
 };
@@ -26,14 +26,6 @@ use zkpow_core::{
 mod sha256;
 
 use sha256::{sha256_116bytes, sha256_169bytes, sha256d_80bytes};
-
-/// Hash a full 80-byte Bitcoin header with SHA256d.
-fn hash_header(header: &Header) -> zkpow_core::BlockHash {
-    cycle_track("crypto/hash_header", || {
-        let header_bytes = header.to_bytes();
-        zkpow_core::BlockHash::new(sha256d_80bytes(&header_bytes))
-    })
-}
 
 /// Compute the continuation digest: SHA-256 of the serialized continuation data.
 fn compute_continuation_digest(state: &State) -> [u8; 32] {
@@ -138,7 +130,9 @@ pub fn main() {
         }
 
         // Apply headers; on failure commit minimal PV and halt.
-        if let Err(failure) = state.apply_headers(header_hints, median_hints, hash_header) {
+        if let Err(failure) = state.apply_headers(header_hints, median_hints, |header| {
+            zkpow_core::BlockHash::new(sha256d_80bytes(&header.to_bytes()))
+        }) {
             let digest = compute_continuation_digest(&failure.last_valid_state);
             let pv = MinimalPublicValues::failure(
                 &failure.last_valid_state.public_claim(),
