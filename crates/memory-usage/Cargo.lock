@@ -3,5 +3,5 @@
 version = 4
 
 [[package]]
-name = "memory-usage"
+name = "memuse"
 version = "0.1.0"

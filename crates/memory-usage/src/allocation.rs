@@ -1,32 +1,34 @@
 use std::alloc::{GlobalAlloc, Layout};
 use std::sync::atomic::{AtomicI64, Ordering};
 
-pub struct AllocationTracker {
+use crate::StageSample;
+
+struct Tracker {
     live_bytes: AtomicI64,
     peak_bytes: AtomicI64,
 }
 
-impl AllocationTracker {
-    pub const fn new() -> Self {
+impl Tracker {
+    const fn new() -> Self {
         Self {
             live_bytes: AtomicI64::new(0),
             peak_bytes: AtomicI64::new(0),
         }
     }
 
-    pub fn live_bytes(&self) -> u64 {
+    fn live_bytes(&self) -> u64 {
         self.live_bytes.load(Ordering::Relaxed).max(0) as u64
     }
 
-    pub fn live_kb(&self) -> u64 {
+    fn live_kb(&self) -> u64 {
         self.live_bytes() / 1024
     }
 
-    pub fn peak_bytes(&self) -> u64 {
+    fn peak_bytes(&self) -> u64 {
         self.peak_bytes.load(Ordering::Relaxed).max(0) as u64
     }
 
-    pub fn peak_kb(&self) -> u64 {
+    fn peak_kb(&self) -> u64 {
         self.peak_bytes() / 1024
     }
 
@@ -46,24 +48,59 @@ impl AllocationTracker {
     }
 }
 
-impl Default for AllocationTracker {
+impl Default for Tracker {
     fn default() -> Self {
         Self::new()
     }
 }
 
-pub struct TrackingAllocator<'a, A> {
+pub struct Allocator<A> {
     inner: A,
-    tracker: &'a AllocationTracker,
+    tracker: Tracker,
 }
 
-impl<'a, A> TrackingAllocator<'a, A> {
-    pub const fn new(inner: A, tracker: &'a AllocationTracker) -> Self {
-        Self { inner, tracker }
+impl Allocator<std::alloc::System> {
+    pub const fn new() -> Self {
+        Allocator::wrap(std::alloc::System)
     }
 }
 
-unsafe impl<A: GlobalAlloc> GlobalAlloc for TrackingAllocator<'_, A> {
+impl Default for Allocator<std::alloc::System> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<A> Allocator<A> {
+    pub const fn wrap(inner: A) -> Self {
+        Self {
+            inner,
+            tracker: Tracker::new(),
+        }
+    }
+
+    pub fn live_bytes(&self) -> u64 {
+        self.tracker.live_bytes()
+    }
+
+    pub fn live_kb(&self) -> u64 {
+        self.tracker.live_kb()
+    }
+
+    pub fn peak_bytes(&self) -> u64 {
+        self.tracker.peak_bytes()
+    }
+
+    pub fn peak_kb(&self) -> u64 {
+        self.tracker.peak_kb()
+    }
+
+    pub fn sample(&self) -> StageSample {
+        StageSample::new(crate::rss_kb().unwrap_or(0), self.live_kb())
+    }
+}
+
+unsafe impl<A: GlobalAlloc> GlobalAlloc for Allocator<A> {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         let ptr = unsafe { self.inner.alloc(layout) };
         if !ptr.is_null() {
@@ -96,27 +133,26 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for TrackingAllocator<'_, A> {
 
 #[cfg(test)]
 mod tests {
-    use super::{AllocationTracker, TrackingAllocator};
+    use super::Allocator;
     use std::alloc::{GlobalAlloc, Layout, System};
 
     #[test]
     fn tracking_allocator_counts_live_and_peak_bytes() {
-        let tracker = AllocationTracker::new();
-        let allocator = TrackingAllocator::new(System, &tracker);
+        let allocator = Allocator::wrap(System);
         let layout = Layout::from_size_align(16, 8).unwrap();
 
         let ptr = unsafe { allocator.alloc(layout) };
         assert!(!ptr.is_null());
-        assert_eq!(tracker.live_bytes(), 16);
-        assert_eq!(tracker.peak_bytes(), 16);
+        assert_eq!(allocator.live_bytes(), 16);
+        assert_eq!(allocator.peak_bytes(), 16);
 
         let ptr = unsafe { allocator.realloc(ptr, layout, 40) };
         assert!(!ptr.is_null());
-        assert_eq!(tracker.live_bytes(), 40);
-        assert_eq!(tracker.peak_bytes(), 40);
+        assert_eq!(allocator.live_bytes(), 40);
+        assert_eq!(allocator.peak_bytes(), 40);
 
         unsafe { allocator.dealloc(ptr, Layout::from_size_align(40, 8).unwrap()) };
-        assert_eq!(tracker.live_bytes(), 0);
-        assert_eq!(tracker.peak_bytes(), 40);
+        assert_eq!(allocator.live_bytes(), 0);
+        assert_eq!(allocator.peak_bytes(), 40);
     }
 }
