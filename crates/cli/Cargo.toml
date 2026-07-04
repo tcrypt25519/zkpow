@@ -1,0 +1,18 @@
+[package]
+name = "zkpow-cli"
+version = "0.1.0"
+edition = "2021"
+description = "Bitcoin header sync and chainwork calculator"
+
+[[bin]]
+name = "zkpow-cli"
+path = "src/main.rs"
+
+[dependencies]
+zkpow-core.workspace = true
+zkpow-sync-headers.workspace = true
+zkpow-store.workspace = true
+clap.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
