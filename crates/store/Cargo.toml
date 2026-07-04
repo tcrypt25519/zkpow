@@ -1,0 +1,10 @@
+[package]
+name = "zkpow-store"
+version = "0.1.0"
+edition = "2021"
+description = "SQLite persistence for Bitcoin block headers"
+
+[dependencies]
+zkpow-core = { workspace = true, features = ["host"] }
+zkpow-sync-headers.workspace = true
+rusqlite.workspace = true
