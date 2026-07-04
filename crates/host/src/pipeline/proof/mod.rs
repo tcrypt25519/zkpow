@@ -108,8 +108,9 @@ pub(crate) async fn get_prepared_prover(
         ProverBackend::Cuda => {
             #[cfg(feature = "CUDA")]
             {
-                let report =
-                    timed_sync("cuda_preflight", || crate::cuda_env::run_preflight(cuda_device_id))?;
+                let report = timed_sync("cuda_preflight", || {
+                    crate::cuda_env::run_preflight(cuda_device_id)
+                })?;
                 crate::cuda_env::log_preflight(&report);
                 let prover = timed_async("build_cuda_prover", || async {
                     let device_id = cuda_device_id;

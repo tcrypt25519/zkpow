@@ -9,7 +9,7 @@ use crate::pipeline::BoxError;
 pub(crate) struct CompressedProofArtifacts {
     pub(crate) vk: sp1_prover::SP1VerifyingKey,
     pub(crate) compressed_proof: SP1ProofWithPublicValues,
-    pub(crate) before_prove_sample: memory_usage::StageSample,
+    pub(crate) before_prove_sample: memuse::StageSample,
     pub(crate) execution_report: sp1_sdk::ExecutionReport,
 }
 

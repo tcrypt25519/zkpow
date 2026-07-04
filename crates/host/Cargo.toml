@@ -17,21 +17,26 @@ path = "src/lib.rs"
 
 [dependencies]
 zkpow-core = { workspace = true, features = ["host"] }
+zkpow-controller = { workspace = true }
 console-subscriber = "0.4.1"
 sp1-sdk = { workspace = true }
 sp1-prover = { workspace = true }
 sp1-recursion-gnark-ffi = { workspace = true, features = ["native"] }
-memory-usage = { workspace = true }
+memuse = { workspace = true }
 hex = { workspace = true }
 humantime = { workspace = true }
 num-bigint = { workspace = true }
-rusqlite = { workspace = true }
-sha2 = "0.10.9"
+serde_json = { workspace = true }
+reqwest = { workspace = true, features = ["blocking"] }
+rust-s3 = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
 tracing-appender = "0.2"
 
+
+[dev-dependencies]
+axum = { workspace = true }
 
 [build-dependencies]
 sp1-build = { workspace = true }

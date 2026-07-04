@@ -16,24 +16,16 @@
 
 use std::path::PathBuf;
 
-#[cfg(feature = "memory-diagnostics")]
-use memory_usage::TrackingAllocator;
-use memory_usage::{StageHistory, StageMetric};
-#[cfg(feature = "memory-diagnostics")]
-use std::alloc::System;
-use zkpow_host::config::db_path;
+use memuse::{StageHistory, StageMetric};
+use zkpow_controller::db_path;
+use zkpow_controller::{Controller, HeaderStore};
 use zkpow_host::memory_monitor;
 use zkpow_host::observability;
 use zkpow_host::pipeline::input::{
-    ENV_ZKPOW_BATCH_SIZE, ENV_ZKPOW_DB_PATH, ENV_ZKPOW_EXECUTE_ONLY,
+    genesis_hash, ENV_ZKPOW_BATCH_SIZE, ENV_ZKPOW_DB_PATH, ENV_ZKPOW_EXECUTE_ONLY,
 };
+use zkpow_host::pipeline::source::LocalControllerSource;
 use zkpow_host::pipeline::{generate_and_save_proofs, ProofGenerationConfig, ProverBackend};
-use zkpow_host::util::DbConfig;
-
-#[cfg(feature = "memory-diagnostics")]
-#[global_allocator]
-static ALLOCATOR: TrackingAllocator<'static, System> =
-    TrackingAllocator::new(System, &memory_monitor::ALLOCATION_TRACKER);
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -71,10 +63,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let db_path_buf = std::env::var(ENV_ZKPOW_DB_PATH)
         .ok()
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(db_path()));
-    let db = DbConfig::new(&db_path_buf)
-        .connect()
-        .map_err(|e| format!("failed to open database: {e}"))?;
+        .unwrap_or_else(db_path);
+    let db =
+        HeaderStore::open(&db_path_buf).map_err(|e| format!("failed to open database: {e}"))?;
+    let source = LocalControllerSource::new(Controller::new(db, genesis_hash()));
 
     let mut prev_proof_path: Option<PathBuf> = None;
     let mut baseline_rss_kb: Option<u64> = None;
@@ -92,7 +84,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             db_path: std::env::var(ENV_ZKPOW_DB_PATH)
                 .ok()
                 .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from(db_path())),
+                .unwrap_or_else(db_path),
             output_dir: PathBuf::from(format!("profiling/sp1/stress/{}/iter_{}", timestamp, i)),
             batch_count: 1,
             generate_groth16: false,
@@ -110,7 +102,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let start_mem = memory_monitor::log_point("stress_iter_start", "Stress iteration start");
 
         let iter_start = std::time::Instant::now();
-        let artifacts = generate_and_save_proofs(&config, &db).await?;
+        let artifacts = generate_and_save_proofs(&config, &source).await?;
         let compressed_path = artifacts.compressed_path.clone();
         if !execute_only && compressed_path.is_none() {
             return Err("sp1_stress expected compressed proof but got none".into());

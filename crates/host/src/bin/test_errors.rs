@@ -12,7 +12,8 @@
 use sp1_sdk::prelude::*;
 use sp1_sdk::{Elf, HashableKey, Prover, ProverClient, SP1Stdin};
 
-use zkpow_host::config::db_path;
+use zkpow_controller::db_path;
+use zkpow_host::pipeline::input::genesis_hash;
 use zkpow_host::{observability, util};
 
 use zkpow_host::util::{
@@ -21,9 +22,6 @@ use zkpow_host::util::{
 };
 
 const ELF: Elf = include_elf!("zkpow-guest");
-
-const MAINNET_GENESIS_HEX: &str =
-    "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f";
 
 /// Run the program with given inputs and return the raw public values.
 async fn run_and_get_pv(stdin: SP1Stdin) -> Result<Vec<u8>, String> {
@@ -89,25 +87,14 @@ fn consensus_bits(bits: util::CompactTarget) -> u32 {
     bits.into_inner()
 }
 
-fn mainnet_genesis_hash() -> util::BlockHash {
-    let mut bytes: [u8; 32] = hex::decode(MAINNET_GENESIS_HEX)
-        .expect("mainnet genesis hash should decode")
-        .try_into()
-        .expect("mainnet genesis hash should be 32 bytes");
-    bytes.reverse();
-    util::BlockHash::new(bytes)
-}
-
-fn open_db() -> util::DbConn {
-    util::DbConfig::new(db_path())
-        .connect()
-        .expect("failed to open database")
+fn open_db() -> zkpow_controller::HeaderStore {
+    zkpow_controller::HeaderStore::open(db_path()).expect("failed to open database")
 }
 
 fn mainnet_genesis_state() -> util::State {
     let db = open_db();
     let genesis = db.load_header_record(0);
-    util::genesis_state_from_record(genesis, mainnet_genesis_hash())
+    zkpow_controller::genesis_state_from_record(genesis, genesis_hash())
 }
 
 fn build_stdin(

@@ -1,4 +1,4 @@
-use memory_usage::StageSample;
+use memuse::StageSample;
 use sp1_sdk::prelude::*;
 use sp1_sdk::ExecutionReport;
 

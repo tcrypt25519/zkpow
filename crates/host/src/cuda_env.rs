@@ -50,9 +50,7 @@ impl std::fmt::Display for ComputeCapability {
     }
 }
 
-pub(crate) fn run_preflight(
-    cuda_device_id: Option<u32>,
-) -> Result<CudaPreflightReport, BoxError> {
+pub(crate) fn run_preflight(cuda_device_id: Option<u32>) -> Result<CudaPreflightReport, BoxError> {
     if std::env::consts::ARCH != "x86_64" {
         return Err(format!(
             "CUDA proving requires an x86_64 machine; detected architecture `{}`",

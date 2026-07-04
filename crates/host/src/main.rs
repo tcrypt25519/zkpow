@@ -21,16 +21,6 @@
 use zkpow_host::observability;
 use zkpow_host::pipeline::run_batch_session;
 
-#[cfg(feature = "memory-diagnostics")]
-use memory_usage::TrackingAllocator;
-#[cfg(feature = "memory-diagnostics")]
-use std::alloc::System;
-
-#[cfg(feature = "memory-diagnostics")]
-#[global_allocator]
-static ALLOC: TrackingAllocator<'static, System> =
-    TrackingAllocator::new(System, &zkpow_host::memory_monitor::ALLOCATION_TRACKER);
-
 #[tokio::main]
 async fn main() {
     println!("Host script started. For detailed tracing, set RUST_LOG=info.");

@@ -4,19 +4,26 @@ use std::collections::HashMap;
 use std::env::VarError;
 use std::path::PathBuf;
 
-use crate::config::db_path;
 use crate::pipeline::{BoxError, ProofGenerationConfig, ProverBackend};
 use crate::util;
 use crate::util::{Proof, ProofCarryingState, PublicValuesDigest, VerifierKeyDigest};
-
-const GENESIS_HASH_HEX: &str = "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f";
 
 pub const ENV_ZKPOW_BATCH_SIZE: &str = "ZKPOW_BATCH_SIZE";
 pub const ENV_ZKPOW_BATCH_COUNT: &str = "ZKPOW_BATCH_COUNT";
 pub const ENV_ZKPOW_OUTPUT_DIR: &str = "ZKPOW_OUTPUT_DIR";
 pub const ENV_ZKPOW_DB_PATH: &str = "ZKPOW_DB_PATH";
 pub const ENV_ZKPOW_PREV_PROOF: &str = "ZKPOW_PREV_PROOF";
+pub const ENV_ZKPOW_PROOF_STORE_DIR: &str = "ZKPOW_PROOF_STORE_DIR";
 pub const ENV_ZKPOW_SHOW_COMPRESSED_PROOF_SPANS: &str = "ZKPOW_SHOW_COMPRESSED_PROOF_SPANS";
+pub const ENV_ZKPOW_CONTROLLER_URL: &str = "ZKPOW_CONTROLLER_URL";
+pub const ENV_ZKPOW_S3_BUCKET: &str = "ZKPOW_S3_BUCKET";
+pub const ENV_ZKPOW_S3_REGION: &str = "ZKPOW_S3_REGION";
+pub const ENV_ZKPOW_S3_ENDPOINT: &str = "ZKPOW_S3_ENDPOINT";
+pub const ENV_ZKPOW_S3_ACCESS_KEY: &str = "ZKPOW_S3_ACCESS_KEY";
+pub const ENV_ZKPOW_S3_SECRET_KEY: &str = "ZKPOW_S3_SECRET_KEY";
+pub const ENV_ZKPOW_S3_PREFIX: &str = "ZKPOW_S3_PREFIX";
+
+const DEFAULT_PROOF_STORE_DIR: &str = "proof_store";
 
 pub const ENV_ZKPOW_EXECUTE_ONLY: &str = "ZKPOW_EXECUTE_ONLY";
 pub const ENV_ZKPOW_GENERATE_GROTH16: &str = "ZKPOW_GENERATE_GROTH16";
@@ -60,13 +67,8 @@ impl EnvSource for MapEnvSource {
     }
 }
 
-pub fn parse_genesis_hash() -> Result<util::BlockHash, BoxError> {
-    let mut genesis_hash: [u8; 32] = hex::decode(GENESIS_HASH_HEX)
-        .map_err(|err| format!("invalid genesis hash hex: {}", err))?
-        .try_into()
-        .map_err(|_| "genesis hash should be 32 bytes")?;
-    genesis_hash.reverse();
-    Ok(util::BlockHash::new(genesis_hash))
+pub fn genesis_hash() -> util::BlockHash {
+    util::BlockHash::new(zkpow_core::MAINNET_GENESIS_HASH_RAW)
 }
 
 pub(crate) fn parse_bool_env(
@@ -181,7 +183,7 @@ pub(crate) fn config_from_source(
         num_headers,
         batch_count,
         db_path: parse_path_env(source, ENV_ZKPOW_DB_PATH)
-            .unwrap_or_else(|| PathBuf::from(db_path())),
+            .unwrap_or_else(zkpow_controller::db_path),
         output_dir: parse_path_env(source, ENV_ZKPOW_OUTPUT_DIR)
             .unwrap_or_else(|| PathBuf::from(".")),
         generate_groth16,
@@ -193,6 +195,62 @@ pub(crate) fn config_from_source(
 
 pub fn config_from_env() -> Result<ProofGenerationConfig, BoxError> {
     config_from_source(&ProcessEnv)
+}
+
+pub(crate) fn proof_store_dir_from_source(source: &impl EnvSource) -> PathBuf {
+    parse_path_env(source, ENV_ZKPOW_PROOF_STORE_DIR)
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_PROOF_STORE_DIR))
+}
+
+pub fn proof_store_dir_from_env() -> PathBuf {
+    proof_store_dir_from_source(&ProcessEnv)
+}
+
+pub(crate) fn controller_url_from_source(source: &impl EnvSource) -> Option<String> {
+    source.get(ENV_ZKPOW_CONTROLLER_URL).ok()
+}
+
+pub fn controller_url_from_env() -> Option<String> {
+    controller_url_from_source(&ProcessEnv)
+}
+
+#[derive(Debug, Clone)]
+pub struct S3ProofStoreConfig {
+    pub bucket: String,
+    pub region: String,
+    pub endpoint: String,
+    pub access_key: String,
+    pub secret_key: String,
+    pub prefix: String,
+}
+
+pub(crate) fn s3_proof_store_config_from_source(
+    source: &impl EnvSource,
+) -> Result<Option<S3ProofStoreConfig>, BoxError> {
+    let bucket = match source.get(ENV_ZKPOW_S3_BUCKET) {
+        Ok(bucket) => bucket,
+        Err(VarError::NotPresent) => return Ok(None),
+        Err(err) => return Err(err.into()),
+    };
+
+    let require = |var_name: &'static str| -> Result<String, BoxError> {
+        source
+            .get(var_name)
+            .map_err(|_| format!("{var_name} is required when {ENV_ZKPOW_S3_BUCKET} is set").into())
+    };
+
+    Ok(Some(S3ProofStoreConfig {
+        bucket,
+        region: require(ENV_ZKPOW_S3_REGION)?,
+        endpoint: require(ENV_ZKPOW_S3_ENDPOINT)?,
+        access_key: require(ENV_ZKPOW_S3_ACCESS_KEY)?,
+        secret_key: require(ENV_ZKPOW_S3_SECRET_KEY)?,
+        prefix: source.get(ENV_ZKPOW_S3_PREFIX).unwrap_or_default(),
+    }))
+}
+
+pub fn s3_proof_store_config_from_env() -> Result<Option<S3ProofStoreConfig>, BoxError> {
+    s3_proof_store_config_from_source(&ProcessEnv)
 }
 
 pub fn build_proof(

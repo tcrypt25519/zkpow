@@ -1,9 +1,15 @@
-use memory_usage::{rss_kb, AllocationTracker, StageSample};
-
-pub static ALLOCATION_TRACKER: AllocationTracker = AllocationTracker::new();
+use memuse::StageSample;
 
 pub fn sample() -> StageSample {
-    StageSample::new(rss_kb().unwrap_or(0), ALLOCATION_TRACKER.live_kb())
+    #[cfg(feature = "memory-diagnostics")]
+    {
+        crate::MEMORY_ALLOCATOR.sample()
+    }
+
+    #[cfg(not(feature = "memory-diagnostics"))]
+    {
+        StageSample::new(memuse::rss_kb().unwrap_or(0), 0)
+    }
 }
 
 pub fn log_point(label: &'static str, message: &'static str) -> StageSample {
@@ -13,7 +19,7 @@ pub fn log_point(label: &'static str, message: &'static str) -> StageSample {
             label,
             rss_kb = sample.rss_kb(),
             live_kb = sample.live_kb(),
-            peak_kb = ALLOCATION_TRACKER.peak_kb(),
+            peak_kb = peak_kb(),
             "{message}"
         );
     }
@@ -37,10 +43,20 @@ pub fn log_delta(
             start_live_kb = started.live_kb(),
             end_live_kb = finished.live_kb(),
             live_delta_kb = finished.live_kb() as i64 - started.live_kb() as i64,
-            peak_kb = ALLOCATION_TRACKER.peak_kb(),
+            peak_kb = peak_kb(),
             "{message}"
         );
     }
+}
+
+#[cfg(feature = "memory-diagnostics")]
+fn peak_kb() -> u64 {
+    crate::MEMORY_ALLOCATOR.peak_kb()
+}
+
+#[cfg(not(feature = "memory-diagnostics"))]
+fn peak_kb() -> u64 {
+    0
 }
 
 #[cfg(feature = "memory-diagnostics")]
