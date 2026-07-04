@@ -53,7 +53,6 @@ COPY .cargo ./
 COPY crates/core/Cargo.toml ./crates/core/
 COPY crates/guest/Cargo.toml ./crates/guest/
 COPY crates/host/Cargo.toml ./crates/host/
-COPY crates/memory-usage/ ./crates/memory-usage/
 
 # Build dependencies first (layer caching)
 RUN mkdir -p /app/crates/core/src /app/crates/guest/src /app/crates/host/src/bin && \

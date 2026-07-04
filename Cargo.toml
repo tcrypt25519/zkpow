@@ -4,7 +4,6 @@ members = [
     "crates/core",
     "crates/guest",
     "crates/host",
-    "crates/memory-usage",
     "crates/store",
     "crates/sync-headers",
     "crates/cli",
@@ -36,7 +35,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 humantime = "2.3"
 num-bigint = "0.4.6"
-memuse = { path = "crates/memory-usage" }
+memuse = { path = "../memuse" }
 clap = { version = "4", features = ["derive"] }
 thiserror = "2"
 rand = "0.8"
