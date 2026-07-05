@@ -12,6 +12,10 @@ path = "src/main.rs"
 name = "sp1_stress"
 path = "src/bin/sp1_stress.rs"
 
+[[bin]]
+name = "test_hash_vectors"
+path = "src/bin/test_hash_vectors.rs"
+
 [lib]
 path = "src/lib.rs"
 

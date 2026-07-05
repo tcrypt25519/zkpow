@@ -153,10 +153,8 @@ impl Header {
 /// Double-SHA256 (`SHA-256(SHA-256(data))`), computed on the host via the `sha2` crate.
 ///
 /// This is the only SHA256d implementation outside the guest. The guest computes
-/// the same value for 80-byte headers via SP1's SHA-256 precompile syscalls
-/// (`crates/guest/src/sha256.rs::sha256d_80bytes`); those are the two — and only
-/// two — SHA256d implementations in the tree. To hash a header, pass
-/// `&header.to_bytes()`.
+/// the same value for headers via SP1's SHA-256 precompile syscalls and direct
+/// word injection from `NewHeader` plus authenticated state fields.
 #[cfg(feature = "host")]
 #[must_use]
 pub fn sha256d(data: &[u8]) -> [u8; 32] {
@@ -393,6 +391,57 @@ impl NewHeader {
             nonce: self.nonce,
         }
     }
+}
+
+#[inline]
+const fn sha256_word_from_le_u32(value: u32) -> u64 {
+    value.swap_bytes() as u64
+}
+
+#[inline]
+const fn sha256_word_from_bytes(bytes: &[u8], word_index: usize) -> u64 {
+    let i = word_index * 4;
+    ((bytes[i] as u64) << 24)
+        | ((bytes[i + 1] as u64) << 16)
+        | ((bytes[i + 2] as u64) << 8)
+        | (bytes[i + 3] as u64)
+}
+
+/// Build the first SHA-256 block words for a Bitcoin header represented by
+/// disjoint prover/header-state fields.
+#[doc(hidden)]
+#[inline]
+pub fn header_first_sha256_block_words(
+    header: &NewHeader,
+    prev_blockhash: &BlockHash,
+) -> [u64; 64] {
+    let mut words = [0u64; 64];
+    words[0] = sha256_word_from_le_u32(header.version);
+    for i in 0..8 {
+        words[1 + i] = sha256_word_from_bytes(prev_blockhash.as_inner(), i);
+    }
+    for i in 0..7 {
+        words[9 + i] = sha256_word_from_bytes(&header.merkle_root, i);
+    }
+    words
+}
+
+/// Build the second SHA-256 block words for a Bitcoin header represented by
+/// disjoint prover/header-state fields.
+#[doc(hidden)]
+#[inline]
+pub fn header_second_sha256_block_words(
+    header: &NewHeader,
+    compact_target: CompactTarget,
+) -> [u64; 64] {
+    let mut words = [0u64; 64];
+    words[0] = sha256_word_from_bytes(&header.merkle_root, 7);
+    words[1] = sha256_word_from_le_u32(header.timestamp.into_inner());
+    words[2] = sha256_word_from_le_u32(compact_target.into_inner());
+    words[3] = sha256_word_from_le_u32(header.nonce);
+    words[4] = 0x80000000;
+    words[15] = 0x280;
+    words
 }
 
 // ============================================================================
@@ -1102,7 +1151,7 @@ mod tests {
                     nonce: 7,
                 }],
                 &[median_hint],
-                |_| zero_hash(),
+                |_, _, _| zero_hash(),
             )
             .unwrap();
     }
@@ -1233,6 +1282,37 @@ mod tests {
     }
 
     #[test]
+    fn header_sha256_block_words_match_serialized_header_bytes() {
+        let header = Header {
+            version: 0x1122_3344,
+            prev_blockhash: BlockHash::new([0x55; 32]),
+            merkle_root: [
+                0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d,
+                0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b,
+                0x1c, 0x1d, 0x1e, 0x1f,
+            ],
+            timestamp: BlockTimestamp::new(0x7788_99aa),
+            compact_target: CompactTarget::new(0x1d00_ffff),
+            nonce: 0xbbcc_ddee,
+        };
+        let new_header = NewHeader::from_header(&header);
+        let bytes = header.to_bytes();
+
+        let first = header_first_sha256_block_words(&new_header, &header.prev_blockhash);
+        for (i, word) in first.iter().enumerate().take(16) {
+            assert_eq!(*word, sha256_word_from_bytes(&bytes, i));
+        }
+
+        let second = header_second_sha256_block_words(&new_header, header.compact_target);
+        for (i, word) in second.iter().enumerate().take(4) {
+            assert_eq!(*word, sha256_word_from_bytes(&bytes, 16 + i));
+        }
+        assert_eq!(second[4], 0x80000000);
+        assert_eq!(second[15], 0x280);
+        assert!(second[5..15].iter().all(|word| *word == 0));
+    }
+
+    #[test]
     fn u256_add_handles_carry_and_wrap_cases() {
         let cases = [
             (
@@ -1299,7 +1379,7 @@ mod tests {
 
         let hints = median_hints_for_headers(&state, &headers);
         state
-            .apply_headers(&headers, &hints, |_| zero_hash())
+            .apply_headers(&headers, &hints, |_, _, _| zero_hash())
             .expect("headers should validate");
 
         let work = genesis_work();
@@ -1333,7 +1413,7 @@ mod tests {
 
         let hints = median_hints_for_headers(&state, &headers);
         state
-            .apply_headers(&headers, &hints, |_| zero_hash())
+            .apply_headers(&headers, &hints, |_, _, _| zero_hash())
             .expect("validation should succeed");
 
         let work = genesis_work();
@@ -1356,7 +1436,7 @@ mod tests {
         }];
         // Use a hash that exceeds the target to trigger PowInsufficient.
         let failure = state
-            .apply_headers(&headers, &[ts(0)], |_| BlockHash::new([0xFF; 32]))
+            .apply_headers(&headers, &[ts(0)], |_, _, _| BlockHash::new([0xFF; 32]))
             .expect_err("should fail PoW");
 
         assert_eq!(failure.error_code, ValidationErrorCode::PowInsufficient);
@@ -1385,7 +1465,7 @@ mod tests {
         let hints = median_hints_for_headers(&state, &headers);
 
         let failure = state
-            .apply_headers(&headers, &hints, |_| zero_hash())
+            .apply_headers(&headers, &hints, |_, _, _| zero_hash())
             .expect_err("second header should fail timestamp validation");
 
         let work = genesis_work();
@@ -1416,7 +1496,7 @@ mod tests {
 
         let hints = median_hints_for_headers(&state, &headers);
         let failure = state
-            .apply_headers(&headers, &hints, |_| zero_hash())
+            .apply_headers(&headers, &hints, |_, _, _| zero_hash())
             .expect_err("validation should fail on the second header");
 
         let public_values = failure_public_value_bytes(&failure);
@@ -1444,14 +1524,14 @@ mod tests {
         for header in headers.iter().copied() {
             let median_hint = median_time_past(&sequential);
             sequential
-                .apply_headers(&[header], &[median_hint], |_| zero_hash())
+                .apply_headers(&[header], &[median_hint], |_, _, _| zero_hash())
                 .expect("sequential validation should succeed");
         }
 
         let hints = median_hints_for_headers(&test_state(), &headers);
         let mut batched = test_state();
         batched
-            .apply_headers(&headers, &hints, |_| zero_hash())
+            .apply_headers(&headers, &hints, |_, _, _| zero_hash())
             .expect("batched validation should succeed");
 
         assert_eq!(batched, sequential);
@@ -1472,7 +1552,7 @@ mod tests {
 
         let mut hinted = state;
         hinted
-            .apply_headers(&headers, &hints, |_| zero_hash())
+            .apply_headers(&headers, &hints, |_, _, _| zero_hash())
             .expect("hinted validation should succeed");
         assert_eq!(hinted.height, 23);
     }
@@ -1505,7 +1585,7 @@ mod tests {
         }];
 
         state
-            .apply_headers(&headers, &[ts(6)], |_| zero_hash())
+            .apply_headers(&headers, &[ts(6)], |_, _, _| zero_hash())
             .expect("duplicate median values should be accepted");
     }
 
@@ -1539,7 +1619,7 @@ mod tests {
         let result = std::panic::catch_unwind(|| {
             let mut state = state;
             state
-                .apply_headers(&headers, &[ts(4)], |_| zero_hash())
+                .apply_headers(&headers, &[ts(4)], |_, _, _| zero_hash())
                 .unwrap();
         });
 
@@ -1560,8 +1640,8 @@ mod tests {
         let hints = median_hints_for_headers(&state, &headers);
         let mut materialized_prev = BlockHash::default();
         state
-            .apply_headers(&headers, &hints, |header| {
-                materialized_prev = header.prev_blockhash;
+            .apply_headers(&headers, &hints, |_, prev_blockhash, _| {
+                materialized_prev = *prev_blockhash;
                 zero_hash()
             })
             .expect("height-zero anchor should already be trusted");
@@ -1633,7 +1713,7 @@ mod tests {
                     nonce: 7,
                 }],
                 &[median_hint],
-                |_| BlockHash::new([0; 32]), // Use zero hash which meets any target
+                |_, _, _| BlockHash::new([0; 32]), // Use zero hash which meets any target
             )
             .unwrap();
 
@@ -1767,7 +1847,7 @@ mod tests {
 
         // PowInsufficient on first header using a deliberately large hash value (> target).
         state
-            .apply_headers(&[hdr1], &hints, |_| BlockHash::new([0xFF; 32]))
+            .apply_headers(&[hdr1], &hints, |_, _, _| BlockHash::new([0xFF; 32]))
             .expect_err("expected PoW failure");
 
         // TimestampTooOld on equality to median (<= median should fail).
@@ -1780,7 +1860,7 @@ mod tests {
             timestamp: ts(1),
             nonce: 9,
         };
-        s2.apply_headers(&[ok_hdr], &[median0], |_| zero_hash())
+        s2.apply_headers(&[ok_hdr], &[median0], |_, _, _| zero_hash())
             .unwrap();
         let median_after_1 = median_time_past(&s2);
         let bad_hdr = NewHeader {
@@ -1790,7 +1870,7 @@ mod tests {
             nonce: 10,
         };
         let failure = s2
-            .apply_headers(&[bad_hdr], &[median_after_1], |_| zero_hash())
+            .apply_headers(&[bad_hdr], &[median_after_1], |_, _, _| zero_hash())
             .expect_err("timestamp equal to median must fail");
         assert_eq!(failure.error_code, ValidationErrorCode::TimestampTooOld);
 
@@ -1803,7 +1883,7 @@ mod tests {
             timestamp: ts(median_start.into_inner().wrapping_add(1)),
             nonce: 1,
         };
-        s3.apply_headers(&[odd_version_hdr], &[median_start], |_| zero_hash())
+        s3.apply_headers(&[odd_version_hdr], &[median_start], |_, _, _| zero_hash())
             .expect("unexpected failure due to version only");
     }
 
@@ -1823,7 +1903,7 @@ mod tests {
             nonce: 1,
         };
         let failure = state
-            .apply_headers(&[hdr], &[median], |_| zero_hash())
+            .apply_headers(&[hdr], &[median], |_, _, _| zero_hash())
             .expect_err("timestamp equal to median must fail");
         assert_eq!(failure.error_code, ValidationErrorCode::TimestampTooOld);
     }

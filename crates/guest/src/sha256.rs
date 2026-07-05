@@ -2,16 +2,19 @@
 #![allow(clippy::needless_range_loop)]
 //!
 //! Specialized functions for the exact sizes we need:
-//! - `sha256_80bytes`: hashes exactly 80 bytes (Bitcoin block header)
 //! - `sha256_32bytes`: hashes exactly 32 bytes (intermediate hash output)
 //! - `sha256_169bytes`: hashes exactly 169 bytes (minimal public values)
 //! - `sha256_52bytes`: hashes exactly 52 bytes (continuation data)
-//! - `sha256d_80bytes`: hashes exactly 80 bytes with SHA256d
+//! - `sha256d_new_header`: hashes a full Bitcoin header from disjoint fields
 //!
 //! No loops, no branching on block count — the padding and block layout
 //! are hardcoded for each size.
 
 use sp1_zkvm::syscalls::{syscall_sha256_compress, syscall_sha256_extend};
+use zkpow_core::{
+    header_first_sha256_block_words, header_second_sha256_block_words, BlockHash, CompactTarget,
+    NewHeader,
+};
 
 const SHA256_IV: [u64; 8] = [
     0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
@@ -45,38 +48,6 @@ fn state_to_hash(state: &[u64; 8]) -> [u8; 32] {
 const fn be_u64_from_slice(s: &[u8], i: usize) -> u64 {
     let i = i * 4;
     ((s[i] as u64) << 24) | ((s[i + 1] as u64) << 16) | ((s[i + 2] as u64) << 8) | (s[i + 3] as u64)
-}
-
-/// Compute SHA-256 of exactly 80 bytes.
-///
-/// Produces two blocks:
-/// - Block 1: bytes 0–63 of the input (all data)
-/// - Block 2: bytes 64–79 (16 data bytes) + 0x80 + 47 zeros + 8-byte length (640 bits)
-pub fn sha256_80bytes(data: &[u8; 80]) -> [u8; 32] {
-    let mut state = SHA256_IV;
-
-    // ── Block 1: bytes 0–63 ──
-    let mut w = [0u64; 64];
-    for i in 0..16 {
-        w[i] = be_u64_from_slice(data, i);
-    }
-    syscall_sha256_extend(&mut w);
-    syscall_sha256_compress(&mut w, &mut state);
-
-    // ── Block 2: bytes 64–79 + padding + length ──
-    // Layout: [data 16 bytes | 0x80 | 47× 0x00 | 8-byte big-endian length 640 = 0x280]
-    let mut w = [0u64; 64];
-    for i in 0..4 {
-        w[i] = be_u64_from_slice(data, 16 + i);
-    }
-    // 0x80 byte at word index 4, byte 0 → 0x80000000
-    w[4] = 0x80000000;
-    // w[15] = lower 32 bits of length = 640 = 0x280
-    w[15] = 0x280;
-
-    syscall_sha256_extend(&mut w);
-    syscall_sha256_compress(&mut w, &mut state);
-    state_to_hash(&state)
 }
 
 /// Compute SHA-256 of exactly 32 bytes.
@@ -142,9 +113,29 @@ pub(crate) fn sha256_169bytes(data: &[u8; 169]) -> [u8; 32] {
     state_to_hash(&state)
 }
 
-/// Compute SHA256d of exactly 80 bytes: SHA-256(SHA-256(data)).
-pub(crate) fn sha256d_80bytes(data: &[u8; 80]) -> [u8; 32] {
-    sha256_32bytes(&sha256_80bytes(data))
+/// Compute SHA256d over a Bitcoin header represented by disjoint fields.
+///
+/// This is byte-for-byte equivalent to hashing:
+/// version || prev_blockhash || merkle_root || timestamp || compact_target || nonce,
+/// but avoids materializing either a full [`zkpow_core::Header`] or `[u8; 80]`.
+pub(crate) fn sha256d_new_header(
+    header: &NewHeader,
+    prev_blockhash: &BlockHash,
+    compact_target: CompactTarget,
+) -> [u8; 32] {
+    let mut state = SHA256_IV;
+
+    // ── Block 1: version + prev_blockhash + merkle_root[0..28] ──
+    let mut w = header_first_sha256_block_words(header, prev_blockhash);
+    syscall_sha256_extend(&mut w);
+    syscall_sha256_compress(&mut w, &mut state);
+
+    // ── Block 2: merkle_root[28..32] + timestamp + nBits + nonce + padding ──
+    let mut w = header_second_sha256_block_words(header, compact_target);
+    syscall_sha256_extend(&mut w);
+    syscall_sha256_compress(&mut w, &mut state);
+
+    sha256_32bytes(&state_to_hash(&state))
 }
 
 /// Compute SHA-256 of exactly 52 bytes.

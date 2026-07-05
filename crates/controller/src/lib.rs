@@ -203,9 +203,14 @@ fn replay_states_through(
     while replayed_states.len() <= target_index {
         let index = replayed_states.len();
         state
-            .apply_headers(&[headers[index]], &[median_hints[index]], |header| {
-                BlockHash::new(sha256d(&header.to_bytes()))
-            })
+            .apply_headers(
+                &[headers[index]],
+                &[median_hints[index]],
+                |new_header, prev_blockhash, compact_target| {
+                    let header = (*new_header).into_header(*prev_blockhash, compact_target);
+                    BlockHash::new(sha256d(&header.to_bytes()))
+                },
+            )
             .unwrap_or_else(|err| {
                 panic!("host state transition should succeed at header index {index}: {err:?}")
             });
@@ -316,9 +321,14 @@ mod tests {
             .enumerate()
         {
             state
-                .apply_headers(&[header], &[median_time_past], |header| {
-                    BlockHash::new(sha256d(&header.to_bytes()))
-                })
+                .apply_headers(
+                    &[header],
+                    &[median_time_past],
+                    |new_header, prev_blockhash, compact_target| {
+                        let header = (*new_header).into_header(*prev_blockhash, compact_target);
+                        BlockHash::new(sha256d(&header.to_bytes()))
+                    },
+                )
                 .expect("header should apply");
             let height = (index as u32) + 1;
             let db_claim = db.load_public_claim(height as u64, genesis_hash);

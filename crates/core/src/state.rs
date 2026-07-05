@@ -4,9 +4,8 @@ compile_error!("zkpow wire types require a little-endian target");
 use crate::{
     calculate_next_target_required, check_proof_of_work, copy_from_bytes, copy_to_bytes,
     target_from_bits, tracked, work_from_target, ApplyFailure, BlockHash, BlockTimestamp,
-    ChainWork, Claim, CompactTarget, ContinuationData, Header, NewHeader, ParseError, Target,
-    TargetError, ValidationErrorCode, CONTINUATION_DATA_SIZE, EPOCH_LENGTH, STATE_SIZE,
-    WINDOW_SIZE,
+    ChainWork, Claim, CompactTarget, ContinuationData, NewHeader, ParseError, Target, TargetError,
+    ValidationErrorCode, CONTINUATION_DATA_SIZE, EPOCH_LENGTH, STATE_SIZE, WINDOW_SIZE,
 };
 
 #[cfg(all(target_os = "zkvm", feature = "profiling"))]
@@ -154,7 +153,7 @@ impl State {
         mut block_hash_fn: F,
     ) -> Result<(), ApplyFailure>
     where
-        F: FnMut(&Header) -> BlockHash,
+        F: FnMut(&NewHeader, &BlockHash, CompactTarget) -> BlockHash,
     {
         assert_eq!(
             headers.len(),
@@ -177,11 +176,8 @@ impl State {
                 *run_count = 0;
             };
 
-        for (header_index, (new_header, claimed_median)) in headers
-            .iter()
-            .copied()
-            .zip(median_hints.iter().copied())
-            .enumerate()
+        for (header_index, (new_header, claimed_median)) in
+            headers.iter().zip(median_hints.iter().copied()).enumerate()
         {
             let candidate_height = cycle_track!(self.height + 1);
             let previous_timestamp =
@@ -213,8 +209,8 @@ impl State {
                 active_work = prepared.2;
             }
 
-            let header = cycle_track!({ new_header.into_header(self.block_hash, active_nbits) });
-            let block_hash = cycle_track!({ block_hash_fn(&header) });
+            let block_hash =
+                cycle_track!({ block_hash_fn(new_header, &self.block_hash, active_nbits) });
 
             if !check_proof_of_work(block_hash, active_target) {
                 flush_pending_chain_work(self, &mut pending_run_work, &mut pending_run_count);
@@ -233,10 +229,10 @@ impl State {
             pending_run_count += 1;
             cycle_track!({
                 self.height = candidate_height;
-                self.timestamps[timestamp_slot] = header.timestamp;
+                self.timestamps[timestamp_slot] = new_header.timestamp;
                 self.current_nbits = active_nbits;
                 if candidate_height.is_multiple_of(EPOCH_LENGTH) {
-                    self.epoch_start_timestamp = header.timestamp;
+                    self.epoch_start_timestamp = new_header.timestamp;
                 }
                 self.block_hash = block_hash;
             });
