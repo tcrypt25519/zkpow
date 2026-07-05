@@ -2,8 +2,8 @@
 //!
 //! Validates a batch of Bitcoin block headers incrementally.
 //! The prover supplies only non-deterministic fields (version, merkle_root,
-//! timestamp, nonce). The circuit constructs the full 80-byte header from
-//! authenticated state, then hashes and validates.
+//! timestamp, nonce). The circuit hashes those fields with authenticated state
+//! directly, then validates PoW and consensus state transitions.
 //!
 //! Input protocol:
 //!   1. pcs: Vec<u8>                  (ProofCarryingState bytes)
@@ -24,7 +24,7 @@ use zkpow_core::{
 
 mod sha256;
 
-use sha256::{sha256_169bytes, sha256_52bytes, sha256d_80bytes};
+use sha256::{sha256_169bytes, sha256_52bytes, sha256d_new_header};
 
 /// Compute the continuation digest: SHA-256 of the serialized continuation data.
 #[tracked]
@@ -85,9 +85,13 @@ pub fn main() {
         }
 
         // Apply headers; on failure commit minimal PV and halt.
-        if let Err(failure) = state.apply_headers(header_hints, median_hints, |header| {
-            zkpow_core::BlockHash::new(sha256d_80bytes(&header.to_bytes()))
-        }) {
+        if let Err(failure) = state.apply_headers(
+            header_hints,
+            median_hints,
+            |header, prev_blockhash, nbits| {
+                zkpow_core::BlockHash::new(sha256d_new_header(header, prev_blockhash, nbits))
+            },
+        ) {
             let digest = compute_continuation_digest(&failure.last_valid_state);
             let pv = MinimalPublicValues::failure(
                 &failure.last_valid_state.public_claim(),

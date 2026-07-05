@@ -8,6 +8,10 @@ publish = false
 name = "zkpow-guest"
 path = "src/main.rs"
 
+[[bin]]
+name = "test_hash_vectors"
+path = "src/bin/test_hash_vectors.rs"
+
 [dependencies]
 zkpow-core = { workspace = true }
 sp1-zkvm = { workspace = true, features = ["lib", "verify"] }

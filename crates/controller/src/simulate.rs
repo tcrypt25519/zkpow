@@ -9,9 +9,14 @@ pub fn compute_final_state_with_hints(
 ) -> State {
     let mut state = initial_state.clone();
     state
-        .apply_headers(headers, hints, |header| {
-            BlockHash::new(sha256d(&header.to_bytes()))
-        })
+        .apply_headers(
+            headers,
+            hints,
+            |new_header, prev_blockhash, compact_target| {
+                let header = (*new_header).into_header(*prev_blockhash, compact_target);
+                BlockHash::new(sha256d(&header.to_bytes()))
+            },
+        )
         .expect("host state transition should succeed");
     state
 }

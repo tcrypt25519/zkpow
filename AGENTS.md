@@ -88,11 +88,10 @@ count = 0                              for total_validated == 0
 
 Uses direct SP1 precompile syscalls — no `sha2` crate in the program.
 
-- `sha256_80bytes(&[u8; 80])` → `[u8; 32]`: Bitcoin block header. Hardcoded for exactly 2 blocks. No loops, no branching.
 - `sha256_32bytes(&[u8; 32])` → `[u8; 32]`: Intermediate hash. Hardcoded for exactly 1 block.
 - `sha256_52bytes(&[u8; 52])` → `[u8; 32]`: Serialized `ContinuationData` (52 bytes = 1 SHA-256 block). Used for the continuation digest.
 - `sha256_169bytes(&[u8; 169])` → `[u8; 32]`: Serialized `MinimalPublicValues` (169 bytes = 3 SHA-256 blocks).
-- `sha256d_80bytes(&[u8; 80])` → `[u8; 32]`: Double-SHA-256 of a Bitcoin block header (SHA256(SHA256(header))).
+- `sha256d_new_header(&NewHeader, &BlockHash, CompactTarget)` → `[u8; 32]`: Double-SHA-256 of a Bitcoin block header without materializing a full `Header` or `[u8; 80]`.
 
 The host script still uses the `sha2` crate (via workspace) for
 `compute_pv_digest()` — this is appropriate since the host needs SHA-256 to
