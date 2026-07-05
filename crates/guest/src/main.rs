@@ -10,7 +10,7 @@
 //!   2. state_witness: Vec<u8>        (State bytes)
 //!   3. header_hints: Vec<u8>
 //!   4. median_time_past_hints: Vec<u8>
-//!   5. If `claim.height > 0`, compressed SP1 proof witness (via write_proof)
+//!   5. If `state.height > 0`, compressed SP1 proof witness (via write_proof)
 //!
 //! Output: MinimalPublicValues (169 bytes) on success or failure.
 
@@ -73,21 +73,15 @@ pub fn main() {
 
         let pcs = ProofCarryingState::parse(&input_bytes).expect("input should parse");
         let mut state = State::parse(&state_bytes).expect("state witness should parse");
-        assert!(
-            state.genesis_hash == pcs.claim.genesis_hash
-                && state.block_hash == pcs.claim.tip_hash
-                && state.chain_work == pcs.claim.chain_work
-                && state.height == pcs.claim.height,
-            "state witness public claim mismatch"
-        );
         let header_hints =
             parse_new_headers(&header_hint_bytes).expect("new header hints should parse");
         let median_hints = parse_median_hints(&median_hint_bytes, header_hints.len())
             .expect("median time past hints should parse");
 
-        if pcs.claim.height > 0 {
+        if state.height > 0 {
+            let prior_claim = state.public_claim();
             let prior_continuation_bytes: [u8; CONTINUATION_DATA_SIZE] = state.continuation_bytes();
-            verify_prior_proof(&pcs.verifier_key, &pcs.claim, &prior_continuation_bytes);
+            verify_prior_proof(&pcs.verifier_key, &prior_claim, &prior_continuation_bytes);
         }
 
         // Apply headers; on failure commit minimal PV and halt.
