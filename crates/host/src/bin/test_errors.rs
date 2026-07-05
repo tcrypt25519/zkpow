@@ -17,8 +17,8 @@ use zkpow_host::pipeline::input::genesis_hash;
 use zkpow_host::{observability, util};
 
 use zkpow_host::util::{
-    HeaderChainPublicValues, MinimalPublicValues, Proof, ProofCarryingState, PublicValuesDigest,
-    ValidationErrorCode, VerifierKeyDigest,
+    HeaderChainPublicValues, MinimalPublicValues, ProofCarryingState, ValidationErrorCode,
+    VerifierKeyDigest,
 };
 
 const ELF: Elf = include_elf!("zkpow-guest");
@@ -111,12 +111,8 @@ fn build_stdin(
     stdin
 }
 
-fn pcs_for_state(
-    state: &util::State,
-    verifier_key: VerifierKeyDigest,
-    proof: Proof,
-) -> ProofCarryingState {
-    ProofCarryingState::new(state.public_claim(), verifier_key, proof)
+fn pcs_for_state(state: &util::State, verifier_key: VerifierKeyDigest) -> ProofCarryingState {
+    ProofCarryingState::new(state.public_claim(), verifier_key)
 }
 
 #[tokio::main]
@@ -170,11 +166,7 @@ async fn main() {
 async fn test_success_100_headers() -> Result<(), String> {
     let genesis_state = mainnet_genesis_state();
     let witness = open_db().load_header_batch_witness(1, 100);
-    let pcs = pcs_for_state(
-        &genesis_state,
-        VerifierKeyDigest::default(),
-        Proof::default(),
-    );
+    let pcs = pcs_for_state(&genesis_state, VerifierKeyDigest::default());
     let stdin = build_stdin(
         &pcs,
         &genesis_state,
@@ -309,11 +301,7 @@ async fn test_error_timestamp_too_old() -> Result<(), String> {
     let witness = open_db().load_header_batch_witness(1, 13);
     let mut headers = witness.headers;
     headers[11].timestamp = util::BlockTimestamp::new(1231006505);
-    let pcs = pcs_for_state(
-        &genesis_state,
-        VerifierKeyDigest::default(),
-        Proof::default(),
-    );
+    let pcs = pcs_for_state(&genesis_state, VerifierKeyDigest::default());
     let stdin = build_stdin(
         &pcs,
         &genesis_state,
@@ -330,11 +318,7 @@ async fn test_error_pow_insufficient() -> Result<(), String> {
     let witness = open_db().load_header_batch_witness(1, 2);
     let mut headers = witness.headers;
     headers[0].nonce ^= 0xFF;
-    let pcs = pcs_for_state(
-        &genesis_state,
-        VerifierKeyDigest::default(),
-        Proof::default(),
-    );
+    let pcs = pcs_for_state(&genesis_state, VerifierKeyDigest::default());
     let stdin = build_stdin(
         &pcs,
         &genesis_state,
@@ -359,7 +343,7 @@ async fn test_recursive_chain_success() -> Result<(), String> {
     let genesis_state = mainnet_genesis_state();
     let witness1 = db.load_header_batch_witness(1, 10);
     let verifier_key = VerifierKeyDigest::from_raw(vk.hash_u32());
-    let pcs1 = pcs_for_state(&genesis_state, verifier_key, Proof::default());
+    let pcs1 = pcs_for_state(&genesis_state, verifier_key);
     let stdin1 = build_stdin(
         &pcs1,
         &genesis_state,
@@ -391,15 +375,7 @@ async fn test_recursive_chain_success() -> Result<(), String> {
     );
 
     let witness2 = db.load_header_batch_witness(11, 10);
-    let pcs2 = pcs_for_state(
-        &state1,
-        verifier_key,
-        Proof {
-            public_values_digest: PublicValuesDigest::from_raw(util::compute_pv_digest(&pv1_bytes)),
-            exit_code: 0,
-            ..Default::default()
-        },
-    );
+    let pcs2 = pcs_for_state(&state1, verifier_key);
     let mut stdin2 = build_stdin(
         &pcs2,
         &state1,
@@ -430,18 +406,7 @@ async fn test_error_recursive_on_failed_proof() -> Result<(), String> {
         &witness.median_time_past_hints,
     );
 
-    // Craft a Proof that claims the prior proof had a failure (exit code 2).
-    let bad_proof = Proof {
-        public_values_digest: PublicValuesDigest::from_raw([0u8; 32]),
-        exit_code: 2,
-        ..Default::default()
-    };
-
-    let pcs = pcs_for_state(
-        &state_at_5,
-        VerifierKeyDigest::from_raw([0u32; 8]),
-        bad_proof,
-    );
+    let pcs = pcs_for_state(&state_at_5, VerifierKeyDigest::from_raw([0u32; 8]));
     let stdin = build_stdin(
         &pcs,
         &state_at_5,
@@ -479,22 +444,12 @@ async fn test_error_recursive_on_tampered_state_witness() -> Result<(), String> 
         &witness.median_time_past_hints,
     );
 
-    let original_digest = util::continuation_digest_from_state(&state_at_5);
     let verifier_key = VerifierKeyDigest::from_raw([0u32; 8]);
-    let original_pv =
-        MinimalPublicValues::success(&state_at_5.public_claim(), original_digest, verifier_key);
-    let proof = Proof {
-        public_values_digest: PublicValuesDigest::from_raw(util::compute_pv_digest(
-            &original_pv.to_bytes(),
-        )),
-        exit_code: 0,
-        ..Default::default()
-    };
 
     let mut tampered_state = state_at_5.clone();
     tampered_state.current_work = util::ChainWork::default();
 
-    let pcs = pcs_for_state(&state_at_5, verifier_key, proof);
+    let pcs = pcs_for_state(&state_at_5, verifier_key);
     let empty_headers = [];
     let empty_hints = Vec::new();
     let stdin = build_stdin(&pcs, &tampered_state, &empty_headers, &empty_hints);
@@ -523,11 +478,7 @@ async fn test_pv_minimal_format() -> Result<(), String> {
 
     let genesis_state = mainnet_genesis_state();
     let witness = open_db().load_header_batch_witness(1, 10);
-    let pcs = pcs_for_state(
-        &genesis_state,
-        VerifierKeyDigest::default(),
-        Proof::default(),
-    );
+    let pcs = pcs_for_state(&genesis_state, VerifierKeyDigest::default());
     let stdin = build_stdin(
         &pcs,
         &genesis_state,

@@ -5,7 +5,7 @@ use sp1_sdk::ExecutionReport;
 use crate::memory_monitor;
 use crate::pipeline::batch::PreparedBatch;
 use crate::pipeline::diagnostics::{timed_async, timed_sync};
-use crate::pipeline::input::{build_proof, build_stdin};
+use crate::pipeline::input::{build_stdin, verifier_key_digest};
 use crate::pipeline::BoxError;
 use crate::pipeline::ELF;
 use crate::util;
@@ -70,10 +70,10 @@ where
     )
     .to_bytes()
     .to_vec();
-    let (verifier_key, proof) = timed_sync("build_proof", || {
-        build_proof(proving_key.verifying_key(), batch.previous_proof.as_ref())
+    let verifier_key = timed_sync("build_verifier_key", || -> Result<_, BoxError> {
+        Ok(verifier_key_digest(proving_key.verifying_key()))
     })?;
-    let pcs = ProofCarryingState::new(batch.current_state.public_claim(), verifier_key, proof);
+    let pcs = ProofCarryingState::new(batch.current_state.public_claim(), verifier_key);
     let stdin = timed_sync("serialize_input", || {
         build_stdin(
             &pcs,
@@ -146,20 +146,7 @@ where
     )
     .to_bytes()
     .to_vec();
-    let continuation_digest = util::continuation_digest_from_state(batch.current_state);
-    let prior_public_values = util::MinimalPublicValues::success(
-        &batch.current_state.public_claim(),
-        continuation_digest,
-        verifier_key,
-    );
-    let proof = util::Proof {
-        public_values_digest: util::PublicValuesDigest::from_raw(util::compute_pv_digest(
-            &prior_public_values.to_bytes(),
-        )),
-        ..Default::default()
-    };
-    let pcs =
-        util::ProofCarryingState::new(batch.current_state.public_claim(), verifier_key, proof);
+    let pcs = util::ProofCarryingState::new(batch.current_state.public_claim(), verifier_key);
     let stdin = timed_sync("serialize_input", || {
         build_stdin(
             &pcs,

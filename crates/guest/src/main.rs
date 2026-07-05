@@ -18,7 +18,7 @@
 sp1_zkvm::entrypoint!(main);
 
 use zkpow_core::{
-    cycle_track, parse_median_hints, parse_new_headers, tracked, Claim, MinimalPublicValues, Proof,
+    cycle_track, parse_median_hints, parse_new_headers, tracked, Claim, MinimalPublicValues,
     ProofCarryingState, State, VerifierKeyDigest, CONTINUATION_DATA_SIZE, MINIMAL_PV_SIZE,
 };
 
@@ -46,18 +46,10 @@ fn commit_minimal_pv(pv: &MinimalPublicValues) -> ! {
 
 #[tracked]
 fn verify_prior_proof(
-    proof: &Proof,
     verifier_key: &VerifierKeyDigest,
     prior_claim: &Claim,
     prior_continuation_bytes: &[u8; CONTINUATION_DATA_SIZE],
 ) {
-    if proof.exit_code != 0 {
-        panic!(
-            "continuation rejected: prior proof has exit code {}",
-            proof.exit_code
-        );
-    }
-
     // 1. Hash the prior continuation data.
     let continuation_digest = cycle_track!({ sha256_116bytes(prior_continuation_bytes) });
 
@@ -66,16 +58,9 @@ fn verify_prior_proof(
     let prior_pv_bytes: [u8; MINIMAL_PV_SIZE] = prior_pv.to_bytes();
     let actual_pv_hash = cycle_track!({ sha256_169bytes(&prior_pv_bytes) });
 
-    if actual_pv_hash != proof.public_values_digest.into_raw() {
-        panic!("proof public values digest mismatch");
-    }
-
     // 3. Verify the SP1 proof.
     cycle_track!({
-        sp1_zkvm::lib::verify::verify_sp1_proof(
-            verifier_key.as_raw(),
-            proof.public_values_digest.as_raw(),
-        );
+        sp1_zkvm::lib::verify::verify_sp1_proof(verifier_key.as_raw(), &actual_pv_hash);
     });
 }
 
@@ -102,12 +87,7 @@ pub fn main() {
 
         if pcs.claim.height > 0 {
             let prior_continuation_bytes: [u8; CONTINUATION_DATA_SIZE] = state.continuation_bytes();
-            verify_prior_proof(
-                &pcs.proof,
-                &pcs.verifier_key,
-                &pcs.claim,
-                &prior_continuation_bytes,
-            );
+            verify_prior_proof(&pcs.verifier_key, &pcs.claim, &prior_continuation_bytes);
         }
 
         // Apply headers; on failure commit minimal PV and halt.
