@@ -5,12 +5,12 @@
 use std::path::Path;
 
 use rusqlite::{params, Connection, OptionalExtension};
-use zkpow_core::{
-    chain_work_from_db_bytes, chain_work_to_db_bytes, sha256d, target_from_bits,
-    work_from_target, BlockHash, BlockTimestamp, ChainWork, Claim, CompactTarget, Header,
-    NewHeader, State, Target, GENESIS_TARGET, WINDOW_SIZE,
-};
 use sync_headers::{ConnectedHeader, Tip};
+use zkpow_core::{
+    chain_work_from_db_bytes, chain_work_to_db_bytes, sha256d, target_from_bits, work_from_target,
+    BlockHash, BlockTimestamp, ChainWork, Claim, CompactTarget, Header, NewHeader, State, Target,
+    GENESIS_TARGET, WINDOW_SIZE,
+};
 
 const HASH_LEN: usize = 32;
 
@@ -407,8 +407,8 @@ mod tests {
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use zkpow_core::{target_from_bits, work_from_target, BlockTimestamp};
     use sync_headers::Header as SyncHeader;
+    use zkpow_core::{target_from_bits, work_from_target, BlockTimestamp};
 
     fn temp_db_path(test_name: &str) -> PathBuf {
         let nonce = SystemTime::now()

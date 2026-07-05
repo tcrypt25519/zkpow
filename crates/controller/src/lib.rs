@@ -11,8 +11,8 @@ pub use simulate::{
 
 pub use diagnostics::format_claim_mismatch;
 pub use zkpow_core::{
-    serialize_median_hints, serialize_new_headers, sha256d, BlockHash, BlockTimestamp,
-    NewHeader, State,
+    serialize_median_hints, serialize_new_headers, sha256d, BlockHash, BlockTimestamp, NewHeader,
+    State,
 };
 pub use zkpow_store::{
     db_path, genesis_state_from_record, HeaderBatchWitness, HeaderRecord, HeaderStore,
