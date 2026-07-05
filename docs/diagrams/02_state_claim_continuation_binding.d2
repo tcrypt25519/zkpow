@@ -1,13 +1,10 @@
 ## Diagram 2: State, Claim, and Continuation — Cryptographic Binding
 ## (commit 6a3cfc4)
 ##
-## The public Input wire now carries only PublicChainClaim + RecursiveProof.
-## The full State is a separate private witness. The guest derives
-## ValidationState from the witness and checks its public half matches the
-## claim before using any private fields. For recursive batches, the
-## PrivateContinuationState is used to reconstruct the prior proof's
-## public values, so tampering any private field (next_work, next_target, …)
-## changes the digest and is rejected.
+## The stdin wire carries the verifier-key digest plus the private State
+## witness. For recursive batches, the guest derives the prior Claim and
+## ContinuationData from State, reconstructs the prior MinimalPublicValues,
+## and verifies the proof against that public-values hash.
 
 direction: right
 
@@ -48,17 +45,17 @@ classes: {
 # ── Data structures ──────────────────────────────────────────────────────────
 
 structs: Data Structures {
-  state: State (full, 216 B) {
+  state: State (full, 152 B) {
     class: private_data
     tooltip: |
       All fields needed to validate the next header:
         genesis_hash, block_hash, height, chain_work  ← public
-        next_nbits, next_work, next_target,
+        current_nbits,
         epoch_start_timestamp, timestamps[11]         ← private
     |
   }
 
-  claim: PublicChainClaim (72 B) {
+  claim: Claim (100 B) {
     class: public_data
     tooltip: |
       genesis_hash  32 B
@@ -68,41 +65,28 @@ structs: Data Structures {
     |
   }
 
-  continuation: PrivateContinuationState (116 B) {
+  continuation: ContinuationData (52 B) {
     class: private_data
     tooltip: |
-      next_nbits              4 B
-      next_work              32 B  ← tamper → digest mismatch
-      next_target            32 B  ← tamper → digest mismatch
+      current_nbits           4 B
       epoch_start_timestamp   4 B
       timestamps[11]         44 B
     |
   }
 
-  vs: ValidationState {
-    class: ok
-    tooltip: |
-      public:  PublicChainClaim
-      private: PrivateContinuationState
-      Derived by ValidationState::from_state(&state)
-    |
-  }
-
-  state -> vs: from_state()
-  vs -> claim: .public
-  vs -> continuation: .private
+  state -> claim: public_claim()
+  state -> continuation: continuation_bytes()
 }
 
 # ── Wire protocol ─────────────────────────────────────────────────────────────
 
 wire: Wire Protocol (stdin) {
-  pub_wire: "stdin[0]: PublicChainClaim ∥ RecursiveProof" {
+  pcs_wire: "stdin[0]: ProofCarryingState" {
     class: public_data
     shape: queue
     tooltip: |
-      PUBLIC — verifier can inspect.
-      Replaces the old full-State wire input.
-      Size: PUBLIC_CHAIN_CLAIM_SIZE + RECURSIVE_PROOF_SIZE
+      Verifier-key digest only.
+      Size: PROOF_CARRYING_STATE_SIZE (32 B)
     |
   }
 
@@ -112,7 +96,16 @@ wire: Wire Protocol (stdin) {
     tooltip: |
       PRIVATE — auxiliary witness, not part of
       the public input envelope.
-      Size: STATE_SIZE (216 B)
+      Size: STATE_SIZE (152 B)
+    |
+  }
+
+  proof_wire: "stdin proof witness if state.height > 0" {
+    class: private_data
+    shape: queue
+    tooltip: |
+      Compressed SP1 proof witness is streamed with write_proof.
+      No public-values digest or claim is duplicated in stdin.
     |
   }
 }
@@ -120,7 +113,7 @@ wire: Wire Protocol (stdin) {
 # ── Guest execution ───────────────────────────────────────────────────────────
 
 guest: Guest (zkVM) {
-  parse_pub: Parse PublicChainClaim {
+  parse_pcs: Parse ProofCarryingState {
     shape: hexagon
     style.fill: "#E3F2FD"
   }
@@ -130,32 +123,26 @@ guest: Guest (zkVM) {
     style.fill: "#FFF9C4"
   }
 
-  derive_vs: ValidationState::from_state(witness) {
+  derive_claim: State::public_claim() {
     class: crypto
-    tooltip: Splits witness into (public claim, private continuation)
+    tooltip: Derives prior claim from authenticated state witness
   }
 
-  bind_check: witness.public == claim? {
-    class: check
-    tooltip: |
-      Panics if mismatch.
-      Ensures the private witness is consistent
-      with the publicly committed claim.
-    |
+  derive_continuation: State::continuation_bytes() {
+    class: crypto
+    tooltip: Serializes the continuation digest preimage
   }
 
-  height_check: claim.height > 0? {
+  height_check: state.height > 0? {
     class: check
   }
 
-  verify_recursive: verify_recursive_proof(proof, claim, continuation) {
+  verify_recursive: verify_sp1_proof(vk, hash(MinimalPV)) {
     class: crypto
     tooltip: |
       Reconstructs prior proof's MinimalPublicValues
-      from (claim, continuation_digest).
-      SHA256(continuation bytes) must match the
-      digest embedded in the prior proof's public values.
-      Tampered next_work/next_target → wrong digest → REJECT.
+      from (claim, continuation_digest, verifier_key).
+      Tampered continuation bytes → wrong public-values hash → REJECT.
     |
   }
 
@@ -168,7 +155,7 @@ guest: Guest (zkVM) {
     class: ok
     tooltip: |
       Includes new continuation_digest =
-      SHA256(PrivateContinuationState bytes)
+      SHA256(ContinuationData bytes)
       so the next batch can verify this one.
     |
   }
@@ -177,13 +164,14 @@ guest: Guest (zkVM) {
     class: reject
   }
 
-  parse_pub -> bind_check
-  parse_state -> derive_vs
-  derive_vs -> bind_check
-  bind_check -> height_check: match ✓
-  bind_check -> reject: mismatch ✗
+  parse_pcs -> verify_recursive: verifier key
+  parse_state -> derive_claim
+  parse_state -> derive_continuation
+  parse_state -> height_check
   height_check -> verify_recursive: yes
   height_check -> apply: no (genesis batch)
+  derive_claim -> verify_recursive
+  derive_continuation -> verify_recursive
   verify_recursive -> apply: proof valid ✓
   verify_recursive -> reject: digest mismatch ✗
   apply -> commit
@@ -194,7 +182,7 @@ guest: Guest (zkVM) {
 crypto_chain: Cryptographic Binding Chain {
   digest_n: continuation_digest(N) {
     class: crypto
-    tooltip: SHA256(PrivateContinuationState_N bytes) — in proof N public values
+    tooltip: SHA256(ContinuationData_N bytes) — in proof N public values
   }
 
   pv_n: MinimalPublicValues(N) {
@@ -206,8 +194,7 @@ crypto_chain: Cryptographic Binding Chain {
     class: private_data
     tooltip: |
       Supplied by prover for batch N+1.
-      Contains PrivateContinuationState fields
-      (next_work, next_target, …)
+      Contains Claim fields plus ContinuationData fields.
     |
   }
 
@@ -238,21 +225,20 @@ crypto_chain: Cryptographic Binding Chain {
 
 # ── Wire connections ──────────────────────────────────────────────────────────
 
-wire.pub_wire -> guest.parse_pub
+wire.pcs_wire -> guest.parse_pcs
 wire.state_wire -> guest.parse_state
+wire.proof_wire -> guest.verify_recursive
 
 note: |md
-  **Commit 6a3cfc4** — bind state witness to public claim
+  **Current recursive input binding**
 
-  *Before*: `Input` carried the full `State` as the public wire input.
-  Private fields (`next_work`, `next_target`, …) were not independently bound.
+  `ProofCarryingState` carries only the verifier-key digest. The full `State`
+  remains a private witness. The guest derives the prior `Claim` and
+  `ContinuationData` from `State`.
 
-  *After*: `Input` carries only `PublicChainClaim` (72 B) + `RecursiveProof`.
-  The full `State` is a separate private witness. The guest calls
-  `ValidationState::from_state(witness)` and asserts `.public == claim`.
-  For recursive batches, `PrivateContinuationState` is hashed and compared
-  against the digest in the prior proof's public values — so any tampering
-  of private cached fields is cryptographically rejected.
+  For recursive batches, `ContinuationData` is hashed, folded into reconstructed
+  `MinimalPublicValues`, and verified against the supplied proof. Tampering the
+  private continuation witness changes the public-values hash and is rejected.
 | {
   shape: text
   near: "bottom-center"

@@ -443,34 +443,28 @@ impl Claim {
 /// Committed only as a digest in the public values; the raw bytes are
 /// supplied as a private witness when extending to the next step.
 ///
-/// Serialized without struct padding (116 bytes):
+/// Serialized without struct padding (52 bytes):
 /// ```text
 ///  0..  4  current_nbits           u32 LE
-///  4.. 36  current_work            [u64; 4] LE
-/// 36.. 68  current_target          [u64; 4] LE
-/// 68.. 72  epoch_start_timestamp   u32 LE
-/// 72..116  timestamps              [u32; 11] LE
+///  4..  8  epoch_start_timestamp   u32 LE
+///  8.. 52  timestamps              [u32; 11] LE
 /// ```
 #[repr(C)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContinuationData {
     pub current_nbits: CompactTarget,
-    pub current_work: ChainWork,
-    pub current_target: Target,
     pub epoch_start_timestamp: BlockTimestamp,
     pub timestamps: [BlockTimestamp; WINDOW_SIZE],
 }
 
 /// Size of the serialized [`ContinuationData`] in bytes (no padding).
-pub const CONTINUATION_DATA_SIZE: usize = 4 + 32 + 32 + 4 + 4 * WINDOW_SIZE;
+pub const CONTINUATION_DATA_SIZE: usize = 4 + 4 + 4 * WINDOW_SIZE;
 
 impl ContinuationData {
     #[must_use]
     pub fn from_state(state: &State) -> Self {
         Self {
             current_nbits: state.current_nbits,
-            current_work: state.current_work,
-            current_target: state.current_target,
             epoch_start_timestamp: state.epoch_start_timestamp,
             timestamps: state.timestamps,
         }
@@ -480,11 +474,9 @@ impl ContinuationData {
     pub fn to_bytes(&self) -> [u8; CONTINUATION_DATA_SIZE] {
         let mut out = [0u8; CONTINUATION_DATA_SIZE];
         out[0..4].copy_from_slice(self.current_nbits.to_le_bytes_slice());
-        out[4..36].copy_from_slice(self.current_work.to_le_bytes_slice());
-        out[36..68].copy_from_slice(self.current_target.to_le_bytes_slice());
-        out[68..72].copy_from_slice(self.epoch_start_timestamp.to_le_bytes_slice());
+        out[4..8].copy_from_slice(self.epoch_start_timestamp.to_le_bytes_slice());
         for (i, ts) in self.timestamps.iter().enumerate() {
-            out[72 + i * 4..72 + (i + 1) * 4].copy_from_slice(ts.to_le_bytes_slice());
+            out[8 + i * 4..8 + (i + 1) * 4].copy_from_slice(ts.to_le_bytes_slice());
         }
         out
     }
@@ -492,20 +484,15 @@ impl ContinuationData {
     pub fn parse(bytes: &[u8]) -> Result<Self, ParseError> {
         check_exact_len(bytes, CONTINUATION_DATA_SIZE)?;
         let current_nbits = CompactTarget::new(u32::from_le_bytes(bytes[0..4].try_into().unwrap()));
-        let current_work = ChainWork::from_le_bytes(bytes[4..36].try_into().unwrap());
-        let current_target = Target::from_le_bytes(bytes[36..68].try_into().unwrap());
-        let epoch_start_timestamp =
-            BlockTimestamp::from_le_bytes(bytes[68..72].try_into().unwrap());
+        let epoch_start_timestamp = BlockTimestamp::from_le_bytes(bytes[4..8].try_into().unwrap());
         let mut timestamps = [BlockTimestamp::default(); WINDOW_SIZE];
         for (i, ts) in timestamps.iter_mut().enumerate() {
             *ts = BlockTimestamp::from_le_bytes(
-                bytes[72 + i * 4..72 + (i + 1) * 4].try_into().unwrap(),
+                bytes[8 + i * 4..8 + (i + 1) * 4].try_into().unwrap(),
             );
         }
         Ok(Self {
             current_nbits,
-            current_work,
-            current_target,
             epoch_start_timestamp,
             timestamps,
         })
@@ -1088,8 +1075,6 @@ mod tests {
     fn test_state() -> State {
         State {
             current_nbits: CompactTarget::new(GENESIS_NBITS),
-            current_work: genesis_work(),
-            current_target: GENESIS_TARGET,
             ..State::default()
         }
     }
@@ -1159,9 +1144,9 @@ mod tests {
     #[test]
     fn fixed_width_wire_sizes_match_protocol() {
         assert_eq!(NEW_HEADER_SIZE, 44);
-        assert_eq!(STATE_SIZE, 216);
+        assert_eq!(STATE_SIZE, 152);
         assert_eq!(CLAIM_SIZE, 100);
-        assert_eq!(CONTINUATION_DATA_SIZE, 116);
+        assert_eq!(CONTINUATION_DATA_SIZE, 52);
         assert_eq!(MINIMAL_PV_SIZE, 169);
         assert_eq!(core::mem::align_of::<Header>(), 4);
         assert_eq!(core::mem::align_of::<NewHeader>(), 4);
@@ -1361,8 +1346,6 @@ mod tests {
         let mut state: State = State {
             height: 5,
             current_nbits: CompactTarget::new(GENESIS_NBITS),
-            current_work: genesis_work(),
-            current_target: GENESIS_TARGET,
             ..State::default()
         };
         let headers = [NewHeader {
@@ -1499,8 +1482,6 @@ mod tests {
         let mut state: State = State {
             height: WINDOW_SIZE as u32,
             current_nbits: CompactTarget::new(GENESIS_NBITS),
-            current_work: genesis_work(),
-            current_target: GENESIS_TARGET,
             timestamps: [
                 ts(1),
                 ts(2),
@@ -1533,8 +1514,6 @@ mod tests {
         let state: State = State {
             height: WINDOW_SIZE as u32,
             current_nbits: CompactTarget::new(GENESIS_NBITS),
-            current_work: genesis_work(),
-            current_target: GENESIS_TARGET,
             timestamps: [
                 ts(1),
                 ts(2),
@@ -1640,8 +1619,6 @@ mod tests {
         let mut state: State = State {
             block_hash: BlockHash::new([0x11; 32]),
             current_nbits: CompactTarget::new(GENESIS_NBITS),
-            current_work: genesis_work(),
-            current_target: GENESIS_TARGET,
             height: WINDOW_SIZE as u32,
             timestamps: original,
             ..State::default()
@@ -1675,8 +1652,6 @@ mod tests {
     fn continuation_data_serializes_to_fixed_width() {
         let pcs = ContinuationData {
             current_nbits: CompactTarget::new(GENESIS_NBITS),
-            current_work: ChainWork::from_limbs([1, 2, 3, 4]),
-            current_target: GENESIS_TARGET,
             epoch_start_timestamp: BlockTimestamp::new(500),
             timestamps: [BlockTimestamp::new(10); WINDOW_SIZE],
         };
@@ -1690,8 +1665,6 @@ mod tests {
     fn state_continuation_bytes_matches_continuation_data_to_bytes() {
         let state = State {
             current_nbits: CompactTarget::new(GENESIS_NBITS),
-            current_work: ChainWork::from_limbs([1, 2, 3, 4]),
-            current_target: GENESIS_TARGET,
             epoch_start_timestamp: BlockTimestamp::new(500),
             timestamps: [BlockTimestamp::new(10); WINDOW_SIZE],
             ..Default::default()

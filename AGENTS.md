@@ -90,8 +90,8 @@ Uses direct SP1 precompile syscalls — no `sha2` crate in the program.
 
 - `sha256_80bytes(&[u8; 80])` → `[u8; 32]`: Bitcoin block header. Hardcoded for exactly 2 blocks. No loops, no branching.
 - `sha256_32bytes(&[u8; 32])` → `[u8; 32]`: Intermediate hash. Hardcoded for exactly 1 block.
-- `sha256_116bytes(&[u8; 116])` → `[u8; 32]`: Serialized `PrivateContinuationState` (116 bytes = 2 SHA-256 blocks). Used for the continuation digest.
-- `sha256_137bytes(&[u8; 137])` → `[u8; 32]`: Serialized `MinimalPublicValues` (137 bytes = 3 SHA-256 blocks).
+- `sha256_52bytes(&[u8; 52])` → `[u8; 32]`: Serialized `ContinuationData` (52 bytes = 1 SHA-256 block). Used for the continuation digest.
+- `sha256_169bytes(&[u8; 169])` → `[u8; 32]`: Serialized `MinimalPublicValues` (169 bytes = 3 SHA-256 blocks).
 - `sha256d_80bytes(&[u8; 80])` → `[u8; 32]`: Double-SHA-256 of a Bitcoin block header (SHA256(SHA256(header))).
 
 The host script still uses the `sha2` crate (via workspace) for
@@ -102,9 +102,9 @@ verify it built the same public values the program committed.
 
 | Constant | Bytes | Description |
 | -------- | ----- | ----------- |
-| `STATE_SIZE` | 216 | Full `State` (public + private, serialized for recursive chaining) |
-| `PRIVATE_CONTINUATION_STATE_SIZE` | 116 | `PrivateContinuationState` (next_nbits=4, next_work=32, next_target=32, epoch_ts=4, timestamps=44) |
-| `PUBLIC_CHAIN_CLAIM_SIZE` | 100 | `PublicChainClaim` (genesis_hash=32, tip_hash=32, chain_work=32, height=4) |
+| `STATE_SIZE` | 152 | Full `State` (public + private, serialized for recursive chaining) |
+| `CONTINUATION_DATA_SIZE` | 52 | `ContinuationData` (current_nbits=4, epoch_ts=4, timestamps=44) |
+| `CLAIM_SIZE` | 100 | `Claim` (genesis_hash=32, tip_hash=32, chain_work=32, height=4) |
 
 ## Error Codes
 

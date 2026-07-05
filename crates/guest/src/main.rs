@@ -24,13 +24,13 @@ use zkpow_core::{
 
 mod sha256;
 
-use sha256::{sha256_116bytes, sha256_169bytes, sha256d_80bytes};
+use sha256::{sha256_169bytes, sha256_52bytes, sha256d_80bytes};
 
 /// Compute the continuation digest: SHA-256 of the serialized continuation data.
 #[tracked]
 fn compute_continuation_digest(state: &State) -> [u8; 32] {
     let cd_bytes: [u8; CONTINUATION_DATA_SIZE] = state.continuation_bytes();
-    sha256_116bytes(&cd_bytes)
+    sha256_52bytes(&cd_bytes)
 }
 
 /// Commit the minimal public values and halt.
@@ -51,7 +51,7 @@ fn verify_prior_proof(
     prior_continuation_bytes: &[u8; CONTINUATION_DATA_SIZE],
 ) {
     // 1. Hash the prior continuation data.
-    let continuation_digest = cycle_track!({ sha256_116bytes(prior_continuation_bytes) });
+    let continuation_digest = cycle_track!({ sha256_52bytes(prior_continuation_bytes) });
 
     // 2. Reconstruct the prior proof's minimal public values and hash them.
     let prior_pv = MinimalPublicValues::success(prior_claim, continuation_digest, *verifier_key);

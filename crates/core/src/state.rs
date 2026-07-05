@@ -2,10 +2,11 @@
 compile_error!("zkpow wire types require a little-endian target");
 
 use crate::{
-    calculate_next_target_required, check_proof_of_work, copy_from_bytes, copy_to_bytes, tracked,
-    work_from_target, ApplyFailure, BlockHash, BlockTimestamp, ChainWork, Claim, CompactTarget,
-    ContinuationData, Header, NewHeader, ParseError, Target, TargetError, ValidationErrorCode,
-    CONTINUATION_DATA_SIZE, EPOCH_LENGTH, STATE_SIZE, WINDOW_SIZE,
+    calculate_next_target_required, check_proof_of_work, copy_from_bytes, copy_to_bytes,
+    target_from_bits, tracked, work_from_target, ApplyFailure, BlockHash, BlockTimestamp,
+    ChainWork, Claim, CompactTarget, ContinuationData, Header, NewHeader, ParseError, Target,
+    TargetError, ValidationErrorCode, CONTINUATION_DATA_SIZE, EPOCH_LENGTH, STATE_SIZE,
+    WINDOW_SIZE,
 };
 
 #[cfg(all(target_os = "zkvm", feature = "profiling"))]
@@ -46,11 +47,6 @@ pub struct State {
     pub current_nbits: CompactTarget,
     pub height: u32,
     pub chain_work: ChainWork,
-    pub current_work: ChainWork,
-    /// Expanded 256-bit target for the current difficulty period.
-    /// Cached to avoid recomputing from `current_nbits` on every block.
-    /// Updated only at retarget boundaries and at genesis.
-    pub current_target: Target,
     pub epoch_start_timestamp: BlockTimestamp,
     pub timestamps: [BlockTimestamp; WINDOW_SIZE],
 }
@@ -95,10 +91,11 @@ impl State {
     #[tracked]
     fn prepare_new_epoch(
         &self,
+        current_target: Target,
         previous_timestamp: BlockTimestamp,
     ) -> Result<(CompactTarget, Target, ChainWork), TargetError> {
         let (current_nbits, current_target) = calculate_next_target_required(
-            self.current_target,
+            current_target,
             self.epoch_start_timestamp,
             previous_timestamp,
         );
@@ -167,6 +164,10 @@ impl State {
 
         let mut pending_run_work: Option<ChainWork> = None;
         let mut pending_run_count: u32 = 0;
+        let mut active_nbits = self.current_nbits;
+        let mut active_target = target_from_bits(active_nbits);
+        let mut active_work =
+            work_from_target(active_target).expect("current target must be valid blockchain data");
 
         let flush_pending_chain_work =
             |state: &mut State, run_work: &mut Option<ChainWork>, run_count: &mut u32| {
@@ -202,13 +203,10 @@ impl State {
                 });
             }
 
-            let mut active_nbits = self.current_nbits;
-            let mut active_target = self.current_target;
-            let mut active_work = self.current_work;
             if cycle_track!({ candidate_height.is_multiple_of(EPOCH_LENGTH) }) {
                 flush_pending_chain_work(self, &mut pending_run_work, &mut pending_run_count);
                 let prepared = self
-                    .prepare_new_epoch(previous_timestamp)
+                    .prepare_new_epoch(active_target, previous_timestamp)
                     .expect("epoch target must not be u256::MAX — invalid blockchain data");
                 active_nbits = prepared.0;
                 active_target = prepared.1;
@@ -237,8 +235,6 @@ impl State {
                 self.height = candidate_height;
                 self.timestamps[timestamp_slot] = header.timestamp;
                 self.current_nbits = active_nbits;
-                self.current_target = active_target;
-                self.current_work = active_work;
                 if candidate_height.is_multiple_of(EPOCH_LENGTH) {
                     self.epoch_start_timestamp = header.timestamp;
                 }
@@ -260,8 +256,6 @@ impl Default for State {
             current_nbits: CompactTarget::default(),
             height: 0,
             chain_work: ChainWork::default(),
-            current_work: ChainWork::default(),
-            current_target: Target::default(),
             epoch_start_timestamp: BlockTimestamp::default(),
             timestamps: [BlockTimestamp::default(); WINDOW_SIZE],
         }
