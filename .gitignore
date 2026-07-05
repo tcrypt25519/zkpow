@@ -14,7 +14,12 @@ docs/plans/
 zkpow-host
 *.bin
 *.log
-*.md
+
+# No mds in root except README, AGENTS, and CLAUDE
+/*.md
+!README.md
+!AGENTS.md
+!CLAUDE.md
 
 # IDE
 .idea/
