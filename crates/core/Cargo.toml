@@ -12,6 +12,7 @@ host = ["dep:sha2"]
 profiling = []
 
 [dependencies]
+sha2 = { workspace = true, optional = true }
 sp1-zkvm = { workspace = true }
 thiserror = { version = "2.0", default-features = false }
-sha2 = { workspace = true, optional = true }
+zkpow-core-macros = { workspace = true }

@@ -2,6 +2,7 @@
 members = [
     "crates/controller",
     "crates/core",
+    "crates/core-macros",
     "crates/guest",
     "crates/host",
     "crates/store",
@@ -14,6 +15,7 @@ resolver = "2"
 dhat = "0.3.3"
 zkpow-controller = { path = "crates/controller" }
 zkpow-core = { path = "crates/core" }
+zkpow-core-macros = { path = "crates/core-macros" }
 zkpow-guest = { path = "crates/guest" }
 zkpow-host = { path = "crates/host" }
 zkpow-store = { path = "crates/store" }

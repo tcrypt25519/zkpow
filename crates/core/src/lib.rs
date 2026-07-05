@@ -3,11 +3,30 @@
 #![no_std]
 
 extern crate alloc;
+extern crate self as zkpow_core;
 
 use core::{
     mem::{align_of, size_of, MaybeUninit},
     ptr, slice,
 };
+
+pub use zkpow_core_macros::tracked;
+
+/// Cycle-track an expression without providing a string label.
+///
+/// The generated label is `module_path:line`, which is unique and maps directly
+/// back to the call site. This removes the verbosity of manually naming every
+/// small span while still feeding the `cycle-tracker-report-*` data used by the
+/// host execution report.
+#[macro_export]
+macro_rules! cycle_track {
+    ($body:expr) => {
+        $crate::run_cycle_track(concat!(module_path!(), ":", line!()), || $body)
+    };
+    ($label:expr, $body:expr) => {
+        $crate::run_cycle_track($label, || $body)
+    };
+}
 
 pub mod brand;
 pub mod types;
@@ -15,7 +34,9 @@ pub mod types;
 pub use types::{u256, BlockHash, BlockTimestamp, ChainWork, CompactTarget, Target};
 
 mod state;
-pub use state::{cycle_track, State};
+#[doc(hidden)]
+pub use state::run_cycle_track;
+pub use state::State;
 
 mod input;
 
@@ -126,8 +147,9 @@ impl Header {
 
     /// Deserialize from exactly [`BLOCK_HEADER_SIZE`] bytes.
     #[cfg(test)]
+    #[tracked]
     pub fn parse(bytes: &[u8]) -> Result<Self, ParseError> {
-        cycle_track("parse/header", || copy_from_bytes(bytes))
+        copy_from_bytes(bytes)
     }
 }
 
@@ -270,68 +292,61 @@ pub enum TargetError {
     TargetTooLarge,
 }
 
+#[tracked]
 pub(crate) fn check_exact_len(bytes: &[u8], expected: usize) -> Result<(), ParseError> {
-    cycle_track("util/check_exact_len", || {
-        if bytes.len() != expected {
-            return Err(ParseError::InvalidLength {
-                expected,
-                actual: bytes.len(),
-            });
-        }
-        Ok(())
-    })
+    if bytes.len() != expected {
+        return Err(ParseError::InvalidLength {
+            expected,
+            actual: bytes.len(),
+        });
+    }
+    Ok(())
 }
 
+#[tracked]
 pub(crate) fn check_aligned<T>(bytes: &[u8]) -> Result<(), ParseError> {
-    cycle_track("util/check_aligned", || {
-        let required = align_of::<T>();
-        let address = bytes.as_ptr() as usize;
-        if !address.is_multiple_of(required) {
-            return Err(ParseError::Misaligned { required });
-        }
-        Ok(())
-    })
+    let required = align_of::<T>();
+    let address = bytes.as_ptr() as usize;
+    if !address.is_multiple_of(required) {
+        return Err(ParseError::Misaligned { required });
+    }
+    Ok(())
 }
 
+#[tracked]
 pub(crate) fn copy_from_bytes<T>(bytes: &[u8]) -> Result<T, ParseError> {
-    cycle_track("util/copy_from_bytes", || {
-        check_exact_len(bytes, size_of::<T>())?;
-        let mut value = MaybeUninit::<T>::uninit();
-        unsafe {
-            ptr::copy_nonoverlapping(
-                bytes.as_ptr(),
-                value.as_mut_ptr() as *mut u8,
-                size_of::<T>(),
-            );
-            Ok(value.assume_init())
-        }
-    })
+    check_exact_len(bytes, size_of::<T>())?;
+    let mut value = MaybeUninit::<T>::uninit();
+    unsafe {
+        ptr::copy_nonoverlapping(
+            bytes.as_ptr(),
+            value.as_mut_ptr() as *mut u8,
+            size_of::<T>(),
+        );
+        Ok(value.assume_init())
+    }
 }
 
+#[tracked]
 pub(crate) fn copy_to_bytes<const N: usize, T>(value: &T) -> [u8; N] {
-    cycle_track("util/copy_to_bytes", || {
-        assert_eq!(size_of::<T>(), N);
-        let mut bytes = [0u8; N];
-        unsafe {
-            ptr::copy_nonoverlapping(value as *const T as *const u8, bytes.as_mut_ptr(), N);
-        }
-        bytes
-    })
+    assert_eq!(size_of::<T>(), N);
+    let mut bytes = [0u8; N];
+    unsafe {
+        ptr::copy_nonoverlapping(value as *const T as *const u8, bytes.as_mut_ptr(), N);
+    }
+    bytes
 }
 
+#[tracked]
 pub(crate) fn slice_from_bytes<T>(bytes: &[u8]) -> Result<&[T], ParseError> {
-    cycle_track("util/slice_from_bytes", || {
-        if !bytes.len().is_multiple_of(size_of::<T>()) {
-            return Err(ParseError::InvalidLength {
-                expected: bytes.len().div_ceil(size_of::<T>()) * size_of::<T>(),
-                actual: bytes.len(),
-            });
-        }
-        check_aligned::<T>(bytes)?;
-        Ok(unsafe {
-            slice::from_raw_parts(bytes.as_ptr() as *const T, bytes.len() / size_of::<T>())
-        })
-    })
+    if !bytes.len().is_multiple_of(size_of::<T>()) {
+        return Err(ParseError::InvalidLength {
+            expected: bytes.len().div_ceil(size_of::<T>()) * size_of::<T>(),
+            actual: bytes.len(),
+        });
+    }
+    check_aligned::<T>(bytes)?;
+    Ok(unsafe { slice::from_raw_parts(bytes.as_ptr() as *const T, bytes.len() / size_of::<T>()) })
 }
 
 /// Prover-supplied fields for a new header.
@@ -358,8 +373,9 @@ impl NewHeader {
 
     /// Parse a [`NewHeader`] from exactly [`NEW_HEADER_SIZE`] bytes.
     #[cfg(test)]
+    #[tracked]
     pub fn parse(bytes: &[u8]) -> Result<Self, ParseError> {
-        cycle_track("parse/new_header", || copy_from_bytes(bytes))
+        copy_from_bytes(bytes)
     }
 
     /// Serialize to exactly [`NEW_HEADER_SIZE`] bytes.
@@ -804,112 +820,107 @@ impl core::error::Error for PublicValuesParseError {}
 
 /// Convert a full 256-bit target into compact `bits` encoding.
 #[must_use]
+#[tracked]
 pub fn target_to_bits(target: Target) -> CompactTarget {
-    cycle_track("difficulty/target_to_bits", || {
-        let bytes = target.to_le_bytes();
-        let mut nbytes = 32usize;
-        while nbytes > 0 && bytes[nbytes - 1] == 0 {
-            nbytes -= 1;
-        }
-        if nbytes == 0 {
-            return CompactTarget::new(0);
-        }
+    let bytes = target.to_le_bytes();
+    let mut nbytes = 32usize;
+    while nbytes > 0 && bytes[nbytes - 1] == 0 {
+        nbytes -= 1;
+    }
+    if nbytes == 0 {
+        return CompactTarget::new(0);
+    }
 
-        let mut compact = if nbytes <= 3 {
-            let mut value = 0u32;
-            for i in (0..nbytes).rev() {
-                value = (value << 8) | bytes[i] as u32;
-            }
-            value << (8 * (3 - nbytes))
-        } else {
-            ((bytes[nbytes - 1] as u32) << 16)
-                | ((bytes[nbytes - 2] as u32) << 8)
-                | (bytes[nbytes - 3] as u32)
-        };
-
-        if (compact & 0x0080_0000) != 0 {
-            compact >>= 8;
-            nbytes += 1;
+    let mut compact = if nbytes <= 3 {
+        let mut value = 0u32;
+        for i in (0..nbytes).rev() {
+            value = (value << 8) | bytes[i] as u32;
         }
+        value << (8 * (3 - nbytes))
+    } else {
+        ((bytes[nbytes - 1] as u32) << 16)
+            | ((bytes[nbytes - 2] as u32) << 8)
+            | (bytes[nbytes - 3] as u32)
+    };
 
-        CompactTarget::new(((nbytes as u32) << 24) | (compact & 0x007f_ffff))
-    })
+    if (compact & 0x0080_0000) != 0 {
+        compact >>= 8;
+        nbytes += 1;
+    }
+
+    CompactTarget::new(((nbytes as u32) << 24) | (compact & 0x007f_ffff))
 }
 
 /// Expand compact Bitcoin `bits` into a normalized full 256-bit target.
 #[must_use]
+#[tracked]
 pub fn target_from_bits(compact_target: CompactTarget) -> Target {
-    cycle_track("difficulty/target_from_bits", || {
-        let bits = compact_target.into_inner();
-        let size = (bits >> 24) as usize;
-        let mantissa = bits & 0x007f_ffff;
-        let mut normalized_target_bytes = [0u8; 32];
+    let bits = compact_target.into_inner();
+    let size = (bits >> 24) as usize;
+    let mantissa = bits & 0x007f_ffff;
+    let mut normalized_target_bytes = [0u8; 32];
 
-        if size <= 3 {
-            let value = mantissa >> (8 * (3 - size));
-            normalized_target_bytes[0..4].copy_from_slice(&value.to_le_bytes());
-        } else {
-            let offset = size - 3;
-            if offset < 32 {
-                normalized_target_bytes[offset] = (mantissa & 0xff) as u8;
-            }
-            if offset + 1 < 32 {
-                normalized_target_bytes[offset + 1] = ((mantissa >> 8) & 0xff) as u8;
-            }
-            if offset + 2 < 32 {
-                normalized_target_bytes[offset + 2] = ((mantissa >> 16) & 0xff) as u8;
-            }
+    if size <= 3 {
+        let value = mantissa >> (8 * (3 - size));
+        normalized_target_bytes[0..4].copy_from_slice(&value.to_le_bytes());
+    } else {
+        let offset = size - 3;
+        if offset < 32 {
+            normalized_target_bytes[offset] = (mantissa & 0xff) as u8;
         }
+        if offset + 1 < 32 {
+            normalized_target_bytes[offset + 1] = ((mantissa >> 8) & 0xff) as u8;
+        }
+        if offset + 2 < 32 {
+            normalized_target_bytes[offset + 2] = ((mantissa >> 16) & 0xff) as u8;
+        }
+    }
 
-        Target::from_le_bytes(normalized_target_bytes)
-    })
+    Target::from_le_bytes(normalized_target_bytes)
 }
 
 /// Check whether a header hash satisfies a target.
 #[must_use]
+#[tracked]
 pub fn check_proof_of_work(hash: BlockHash, target: Target) -> bool {
-    cycle_track("pow/check_proof_of_work", || {
-        u256::from_le_bytes(*hash.as_inner()) <= *target.as_inner()
-    })
+    u256::from_le_bytes(*hash.as_inner()) <= *target.as_inner()
 }
 
 impl core::ops::Add for ChainWork {
     type Output = Self;
 
+    #[tracked]
     fn add(self, rhs: Self) -> Self::Output {
-        cycle_track("u256/add", || {
-            let a = self.as_limbs();
-            let b = rhs.as_limbs();
-            let mut result = [0u64; 4];
-            let mut carry = 0u128;
-            for i in 0..4 {
-                let sum = (a[i] as u128) + (b[i] as u128) + carry;
-                result[i] = sum as u64;
-                carry = sum >> 64;
-            }
-            ChainWork::from_limbs(result)
-        })
+        let a = self.as_limbs();
+        let b = rhs.as_limbs();
+        let mut result = [0u64; 4];
+        let mut carry = 0u128;
+        for i in 0..4 {
+            let sum = (a[i] as u128) + (b[i] as u128) + carry;
+            result[i] = sum as u64;
+            carry = sum >> 64;
+        }
+        ChainWork::from_limbs(result)
     }
 }
 
 impl core::ops::Mul<u32> for ChainWork {
     type Output = Self;
 
+    #[tracked]
     fn mul(self, rhs: u32) -> Self::Output {
-        cycle_track("u256/mul_u32", || {
-            let limbs = self.as_limbs();
-            let mut result = [0u64; 4];
-            let mut carry = 0u128;
-            let multiplier = rhs as u128;
+        let limbs = self.as_limbs();
+        let mut result = [0u64; 4];
+        let mut carry = 0u128;
+        let multiplier = rhs as u128;
 
-            for i in 0..4 {
-                let product = (limbs[i] as u128) * multiplier + carry;
-                result[i] = product as u64;
-                carry = product >> 64;
-            }
+        for i in 0..4 {
+            let product = (limbs[i] as u128) * multiplier + carry;
+            result[i] = product as u64;
+            carry = product >> 64;
+        }
 
-            ChainWork::from_limbs(result)
-        })
+        ChainWork::from_limbs(result)
     }
 }
 
@@ -955,40 +966,38 @@ fn sub_assign(lhs: &mut u256, rhs: u256) -> bool {
 /// We can iterate until we find a limb < max u64, add 1 to it, and we're done. As long as we find max u64 limbs we
 /// just set them to 0 and move forward. Iterating fully without hitting a non-max u64 indicates that we have bad
 /// data; the target is invalid and we return an error.
+#[tracked]
 fn increment_target(target: &mut u256) -> Result<(), TargetError> {
-    cycle_track("pow/work/target_plus_one", || {
-        for (i, limb) in target.as_limbs_mut().iter_mut().enumerate() {
-            // This limb isn't saturated so it can't carry; add 1 and we're done.
-            if *limb < u64::MAX {
-                *limb += 1;
-                break;
-            }
-
-            // If we're here at the last index then all limbs are saturated and the target is invalid.
-            if i == 3 {
-                return Err(TargetError::TargetTooLarge);
-            }
-
-            // This limb is saturated but not the final limb, so roll it over to 0 and proceed with the carry
-            *limb = 0;
+    for (i, limb) in target.as_limbs_mut().iter_mut().enumerate() {
+        // This limb isn't saturated so it can't carry; add 1 and we're done.
+        if *limb < u64::MAX {
+            *limb += 1;
+            break;
         }
-        Ok(())
-    })
+
+        // If we're here at the last index then all limbs are saturated and the target is invalid.
+        if i == 3 {
+            return Err(TargetError::TargetTooLarge);
+        }
+
+        // This limb is saturated but not the final limb, so roll it over to 0 and proceed with the carry
+        *limb = 0;
+    }
+    Ok(())
 }
 
 /// Shift `value` left by one bit in place, returning the carry (the evicted MSB).
 #[must_use]
+#[tracked]
 fn shl1_with_carry(value: &mut u256) -> bool {
-    cycle_track("pow/work/shl1_with_carry", || {
-        let limbs = value.as_limbs_mut();
-        let mut carry = 0u64;
-        for limb in limbs.iter_mut() {
-            let next_carry = *limb >> 63;
-            *limb = (*limb << 1) | carry;
-            carry = next_carry;
-        }
-        carry > 0
-    })
+    let limbs = value.as_limbs_mut();
+    let mut carry = 0u64;
+    for limb in limbs.iter_mut() {
+        let next_carry = *limb >> 63;
+        *limb = (*limb << 1) | carry;
+        carry = next_carry;
+    }
+    carry > 0
 }
 
 /// Compute one-block cumulative-work units from the expanded target.
@@ -997,73 +1006,71 @@ fn shl1_with_carry(value: &mut u256) -> bool {
 /// The loop processes 257 bits (indices 256 down to 0): at `bit == 256` we introduce
 /// the implicit leading 1 of the dividend `2^256`; for `bit < 256` we set the
 /// corresponding quotient bit when the remainder meets the divisor.
+#[tracked]
 pub fn work_from_target(target: Target) -> Result<ChainWork, TargetError> {
-    cycle_track("pow/work_from_target", || {
-        let mut divisor = *target.as_inner();
-        increment_target(&mut divisor)?;
+    let mut divisor = *target.as_inner();
+    increment_target(&mut divisor)?;
 
-        let mut remainder = u256::from_limbs([0u64; 4]);
-        let mut quotient = [0u64; 4];
-        for bit in (0..=256u32).rev() {
-            // Shift remainder left, absorbing the next dividend bit.
-            // At bit == 256 the dividend is 2^256, so its MSB is 1; all lower bits are 0.
-            let carry = shl1_with_carry(&mut remainder);
-            if bit == 256 {
-                // Inject the implicit leading 1 of 2^256 into the LSB of the shifted remainder.
-                remainder.as_limbs_mut()[0] |= 1;
-            }
-            // If carry is set the remainder is effectively > 2^256, which is always >= divisor.
+    let mut remainder = u256::from_limbs([0u64; 4]);
+    let mut quotient = [0u64; 4];
+    for bit in (0..=256u32).rev() {
+        // Shift remainder left, absorbing the next dividend bit.
+        // At bit == 256 the dividend is 2^256, so its MSB is 1; all lower bits are 0.
+        let carry = shl1_with_carry(&mut remainder);
+        if bit == 256 {
+            // Inject the implicit leading 1 of 2^256 into the LSB of the shifted remainder.
+            remainder.as_limbs_mut()[0] |= 1;
+        }
+        // If carry is set the remainder is effectively > 2^256, which is always >= divisor.
 
-            if carry || remainder >= divisor {
-                let _ = sub_assign(&mut remainder, divisor);
-                if bit < 256 {
-                    quotient[(bit / 64) as usize] |= 1u64 << (bit % 64);
-                }
+        if carry || remainder >= divisor {
+            let _ = sub_assign(&mut remainder, divisor);
+            if bit < 256 {
+                quotient[(bit / 64) as usize] |= 1u64 << (bit % 64);
             }
         }
+    }
 
-        Ok(ChainWork::from_limbs(quotient))
-    })
+    Ok(ChainWork::from_limbs(quotient))
 }
 
 /// Compute the compact and normalized full target required at a difficulty boundary.
 #[must_use]
+#[tracked]
 pub fn calculate_next_target_required(
     old_target: Target,
     epoch_start_timestamp: BlockTimestamp,
     previous_timestamp: BlockTimestamp,
 ) -> (CompactTarget, Target) {
-    cycle_track("pow/calculate_next_target_required", || {
-        // Normalize the timespan to ensure it's within the min/max bounds allowed.
-        let actual_timespan = i64::from(*previous_timestamp) - i64::from(*epoch_start_timestamp);
-        let clamped_timespan = actual_timespan.clamp(MIN_EPOCH_TIMESPAN, MAX_EPOCH_TIMESPAN) as u32;
+    // Normalize the timespan to ensure it's within the min/max bounds allowed.
+    let actual_timespan = i64::from(*previous_timestamp) - i64::from(*epoch_start_timestamp);
+    let clamped_timespan = actual_timespan.clamp(MIN_EPOCH_TIMESPAN, MAX_EPOCH_TIMESPAN) as u32;
 
-        // Calculate the raw target value from the normalized previous target and the timespan.
-        let mut target_limbs = old_target.into_inner().into_limbs();
-        let mut carry = 0u128;
-        for limb in &mut target_limbs {
-            let product = (*limb as u128) * (clamped_timespan as u128) + carry;
-            *limb = product as u64;
-            carry = product >> 64;
-        }
+    // Calculate the raw target value from the normalized previous target and the timespan.
+    let mut target_limbs = old_target.into_inner().into_limbs();
+    let mut carry = 0u128;
+    for limb in &mut target_limbs {
+        let product = (*limb as u128) * (clamped_timespan as u128) + carry;
+        *limb = product as u64;
+        carry = product >> 64;
+    }
 
-        let mut remainder = 0u128;
-        for limb in target_limbs.iter_mut().rev() {
-            let value = (remainder << 64) | (*limb as u128);
-            *limb = (value / (EXPECTED_EPOCH_TIMESPAN as u128)) as u64;
-            remainder = value % (EXPECTED_EPOCH_TIMESPAN as u128);
-        }
+    let mut remainder = 0u128;
+    for limb in target_limbs.iter_mut().rev() {
+        let value = (remainder << 64) | (*limb as u128);
+        *limb = (value / (EXPECTED_EPOCH_TIMESPAN as u128)) as u64;
+        remainder = value % (EXPECTED_EPOCH_TIMESPAN as u128);
+    }
 
-        // Normalize the new target to ensure an upper-bound (a minimum difficulty) and to handle the implicit
-        // truncation that occurs when round-tripping through the nbits format.
-        let calculated_target = Target::from_limbs(target_limbs);
-        let clamped_target = calculated_target.min(GENESIS_TARGET);
-        let compact_target = target_to_bits(clamped_target);
-        let normalized_target = target_from_bits(compact_target);
+    // Normalize the new target to ensure an upper-bound (a minimum difficulty) and to handle the implicit
+    // truncation that occurs when round-tripping through the nbits format.
+    let calculated_target = Target::from_limbs(target_limbs);
+    let clamped_target = calculated_target.min(GENESIS_TARGET);
+    let compact_target = target_to_bits(clamped_target);
+    let normalized_target = target_from_bits(compact_target);
 
-        // The target is capped above and truncated below; return it and the compact form we calculated along the way.
-        (compact_target, normalized_target)
-    })
+    // The target is capped above and truncated below; return it and the compact form we calculated along the way.
+    (compact_target, normalized_target)
 }
 
 #[cfg(test)]
