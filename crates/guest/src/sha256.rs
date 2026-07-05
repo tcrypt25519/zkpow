@@ -42,17 +42,9 @@ fn state_to_hash(state: &[u64; 8]) -> [u8; 32] {
 }
 
 #[inline]
-const fn be_u64(a: u8, b: u8, c: u8, d: u8) -> u64 {
-    ((a as u64) << 24) | ((b as u64) << 16) | ((c as u64) << 8) | (d as u64)
-}
-
-#[inline]
 const fn be_u64_from_slice(s: &[u8], i: usize) -> u64 {
     let i = i * 4;
-    ((s[i] as u64) << 24)
-        | ((s[i + 1] as u64) << 16)
-        | ((s[i + 2] as u64) << 8)
-        | (s[i + 3] as u64)
+    ((s[i] as u64) << 24) | ((s[i + 1] as u64) << 16) | ((s[i + 2] as u64) << 8) | (s[i + 3] as u64)
 }
 
 /// Compute SHA-256 of exactly 80 bytes.
@@ -120,59 +112,26 @@ pub(crate) fn sha256_169bytes(data: &[u8; 169]) -> [u8; 32] {
 
     // ── Block 1: bytes 0–63 ──
     let mut w = [0u64; 64];
-    w[0] = be_u64(data[0], data[1], data[2], data[3]);
-    w[1] = be_u64(data[4], data[5], data[6], data[7]);
-    w[2] = be_u64(data[8], data[9], data[10], data[11]);
-    w[3] = be_u64(data[12], data[13], data[14], data[15]);
-    w[4] = be_u64(data[16], data[17], data[18], data[19]);
-    w[5] = be_u64(data[20], data[21], data[22], data[23]);
-    w[6] = be_u64(data[24], data[25], data[26], data[27]);
-    w[7] = be_u64(data[28], data[29], data[30], data[31]);
-    w[8] = be_u64(data[32], data[33], data[34], data[35]);
-    w[9] = be_u64(data[36], data[37], data[38], data[39]);
-    w[10] = be_u64(data[40], data[41], data[42], data[43]);
-    w[11] = be_u64(data[44], data[45], data[46], data[47]);
-    w[12] = be_u64(data[48], data[49], data[50], data[51]);
-    w[13] = be_u64(data[52], data[53], data[54], data[55]);
-    w[14] = be_u64(data[56], data[57], data[58], data[59]);
-    w[15] = be_u64(data[60], data[61], data[62], data[63]);
+    for i in 0..16 {
+        w[i] = be_u64_from_slice(data, i);
+    }
     syscall_sha256_extend(&mut w);
     syscall_sha256_compress(&mut w, &mut state);
 
     // ── Block 2: bytes 64–127 ──
     let mut w = [0u64; 64];
-    w[0] = be_u64(data[64], data[65], data[66], data[67]);
-    w[1] = be_u64(data[68], data[69], data[70], data[71]);
-    w[2] = be_u64(data[72], data[73], data[74], data[75]);
-    w[3] = be_u64(data[76], data[77], data[78], data[79]);
-    w[4] = be_u64(data[80], data[81], data[82], data[83]);
-    w[5] = be_u64(data[84], data[85], data[86], data[87]);
-    w[6] = be_u64(data[88], data[89], data[90], data[91]);
-    w[7] = be_u64(data[92], data[93], data[94], data[95]);
-    w[8] = be_u64(data[96], data[97], data[98], data[99]);
-    w[9] = be_u64(data[100], data[101], data[102], data[103]);
-    w[10] = be_u64(data[104], data[105], data[106], data[107]);
-    w[11] = be_u64(data[108], data[109], data[110], data[111]);
-    w[12] = be_u64(data[112], data[113], data[114], data[115]);
-    w[13] = be_u64(data[116], data[117], data[118], data[119]);
-    w[14] = be_u64(data[120], data[121], data[122], data[123]);
-    w[15] = be_u64(data[124], data[125], data[126], data[127]);
+    for i in 0..16 {
+        w[i] = be_u64_from_slice(data, 16 + i);
+    }
     syscall_sha256_extend(&mut w);
     syscall_sha256_compress(&mut w, &mut state);
 
     // ── Block 3: bytes 128–168 (41 bytes) + padding + length ──
     // 41 data bytes, then 0x80, then zeros, then 8-byte length (1352 bits = 0x548)
     let mut w = [0u64; 64];
-    w[0] = be_u64(data[128], data[129], data[130], data[131]);
-    w[1] = be_u64(data[132], data[133], data[134], data[135]);
-    w[2] = be_u64(data[136], data[137], data[138], data[139]);
-    w[3] = be_u64(data[140], data[141], data[142], data[143]);
-    w[4] = be_u64(data[144], data[145], data[146], data[147]);
-    w[5] = be_u64(data[148], data[149], data[150], data[151]);
-    w[6] = be_u64(data[152], data[153], data[154], data[155]);
-    w[7] = be_u64(data[156], data[157], data[158], data[159]);
-    w[8] = be_u64(data[160], data[161], data[162], data[163]);
-    w[9] = be_u64(data[164], data[165], data[166], data[167]);
+    for i in 0..10 {
+        w[i] = be_u64_from_slice(data, 32 + i);
+    }
     // data[168] in high byte, then 0x80 in next byte
     w[10] = ((data[168] as u64) << 24) | 0x0080_0000;
     // w[15] = length in bits = 169 * 8 = 1352 = 0x548
@@ -198,40 +157,17 @@ pub(crate) fn sha256_116bytes(data: &[u8; 116]) -> [u8; 32] {
 
     // ── Block 1: bytes 0–63 ──
     let mut w = [0u64; 64];
-    w[0] = be_u64(data[0], data[1], data[2], data[3]);
-    w[1] = be_u64(data[4], data[5], data[6], data[7]);
-    w[2] = be_u64(data[8], data[9], data[10], data[11]);
-    w[3] = be_u64(data[12], data[13], data[14], data[15]);
-    w[4] = be_u64(data[16], data[17], data[18], data[19]);
-    w[5] = be_u64(data[20], data[21], data[22], data[23]);
-    w[6] = be_u64(data[24], data[25], data[26], data[27]);
-    w[7] = be_u64(data[28], data[29], data[30], data[31]);
-    w[8] = be_u64(data[32], data[33], data[34], data[35]);
-    w[9] = be_u64(data[36], data[37], data[38], data[39]);
-    w[10] = be_u64(data[40], data[41], data[42], data[43]);
-    w[11] = be_u64(data[44], data[45], data[46], data[47]);
-    w[12] = be_u64(data[48], data[49], data[50], data[51]);
-    w[13] = be_u64(data[52], data[53], data[54], data[55]);
-    w[14] = be_u64(data[56], data[57], data[58], data[59]);
-    w[15] = be_u64(data[60], data[61], data[62], data[63]);
+    for i in 0..16 {
+        w[i] = be_u64_from_slice(data, i);
+    }
     syscall_sha256_extend(&mut w);
     syscall_sha256_compress(&mut w, &mut state);
 
     // ── Block 2: bytes 64–115 (52 bytes) + padding + length ──
     let mut w = [0u64; 64];
-    w[0] = be_u64(data[64], data[65], data[66], data[67]);
-    w[1] = be_u64(data[68], data[69], data[70], data[71]);
-    w[2] = be_u64(data[72], data[73], data[74], data[75]);
-    w[3] = be_u64(data[76], data[77], data[78], data[79]);
-    w[4] = be_u64(data[80], data[81], data[82], data[83]);
-    w[5] = be_u64(data[84], data[85], data[86], data[87]);
-    w[6] = be_u64(data[88], data[89], data[90], data[91]);
-    w[7] = be_u64(data[92], data[93], data[94], data[95]);
-    w[8] = be_u64(data[96], data[97], data[98], data[99]);
-    w[9] = be_u64(data[100], data[101], data[102], data[103]);
-    w[10] = be_u64(data[104], data[105], data[106], data[107]);
-    w[11] = be_u64(data[108], data[109], data[110], data[111]);
-    w[12] = be_u64(data[112], data[113], data[114], data[115]);
+    for i in 0..13 {
+        w[i] = be_u64_from_slice(data, 16 + i);
+    }
     // 0x80 at word index 13, byte 0 → 0x80000000
     w[13] = 0x80000000;
     // w[15] = length in bits = 116 * 8 = 928 = 0x3A0
@@ -241,4 +177,3 @@ pub(crate) fn sha256_116bytes(data: &[u8; 116]) -> [u8; 32] {
 
     state_to_hash(&state)
 }
-
