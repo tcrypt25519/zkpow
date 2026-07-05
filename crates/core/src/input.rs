@@ -3,9 +3,9 @@
 use alloc::vec::Vec;
 
 use crate::{
-    check_exact_len, copy_from_bytes, copy_to_bytes, cycle_track, slice_from_bytes, BlockTimestamp,
-    Claim, NewHeader, ParseError, PublicValuesDigest, VerifierKeyDigest,
-    CLAIM_SIZE, NEW_HEADER_SIZE, PROOF_SIZE,
+    check_exact_len, copy_from_bytes, copy_to_bytes, slice_from_bytes, tracked, BlockTimestamp,
+    Claim, NewHeader, ParseError, PublicValuesDigest, VerifierKeyDigest, CLAIM_SIZE,
+    NEW_HEADER_SIZE, PROOF_SIZE,
 };
 
 // ============================================================================
@@ -81,10 +81,9 @@ impl From<ParseError> for InputError {
 
 impl Proof {
     /// Parse and validate a Proof from exactly [`PROOF_SIZE`] bytes.
+    #[tracked]
     pub fn parse(bytes: &[u8]) -> Result<Self, InputError> {
-        cycle_track("input/proof", || {
-            copy_from_bytes(bytes).map_err(InputError::from)
-        })
+        copy_from_bytes(bytes).map_err(InputError::from)
     }
 
     /// Serialize to exactly [`PROOF_SIZE`] bytes.
@@ -105,18 +104,17 @@ pub fn serialize_new_headers(headers: &[NewHeader]) -> Vec<u8> {
 }
 
 /// Parse new headers as a zero-copy slice reference.
+#[tracked]
 pub fn parse_new_headers(bytes: &[u8]) -> Result<&[NewHeader], NewHeaderHintError> {
-    cycle_track("input/parse/new_header_hints", || {
-        if !bytes.len().is_multiple_of(NEW_HEADER_SIZE) {
-            return Err(NewHeaderHintError::PayloadLengthInvalid {
-                expected: bytes.len().div_ceil(NEW_HEADER_SIZE) * NEW_HEADER_SIZE,
-                actual: bytes.len(),
-            });
-        }
+    if !bytes.len().is_multiple_of(NEW_HEADER_SIZE) {
+        return Err(NewHeaderHintError::PayloadLengthInvalid {
+            expected: bytes.len().div_ceil(NEW_HEADER_SIZE) * NEW_HEADER_SIZE,
+            actual: bytes.len(),
+        });
+    }
 
-        let headers = slice_from_bytes::<NewHeader>(bytes).map_err(NewHeaderHintError::Parse)?;
-        Ok(headers)
-    })
+    let headers = slice_from_bytes::<NewHeader>(bytes).map_err(NewHeaderHintError::Parse)?;
+    Ok(headers)
 }
 
 /// Serialize median hints.
@@ -130,23 +128,22 @@ pub fn serialize_median_hints(medians: &[BlockTimestamp]) -> Vec<u8> {
 }
 
 /// Parse median hints as a zero-copy slice reference.
+#[tracked]
 pub fn parse_median_hints(
     bytes: &[u8],
     expected_count: usize,
 ) -> Result<&[BlockTimestamp], MedianTimePastHintError> {
-    cycle_track("input/parse/median_time_past_hints", || {
-        let expected_len = expected_count * core::mem::size_of::<BlockTimestamp>();
-        if bytes.len() != expected_len {
-            return Err(MedianTimePastHintError::PayloadLengthInvalid {
-                expected: expected_len,
-                actual: bytes.len(),
-            });
-        }
+    let expected_len = expected_count * core::mem::size_of::<BlockTimestamp>();
+    if bytes.len() != expected_len {
+        return Err(MedianTimePastHintError::PayloadLengthInvalid {
+            expected: expected_len,
+            actual: bytes.len(),
+        });
+    }
 
-        let medians =
-            slice_from_bytes::<BlockTimestamp>(bytes).map_err(MedianTimePastHintError::Parse)?;
-        Ok(medians)
-    })
+    let medians =
+        slice_from_bytes::<BlockTimestamp>(bytes).map_err(MedianTimePastHintError::Parse)?;
+    Ok(medians)
 }
 
 /// Wire size of the verifier key field in [`ProofCarryingState`]: `VerifierKeyDigest` → `[u32; 8]` → 32 bytes LE.
@@ -177,23 +174,20 @@ impl ProofCarryingState {
     }
 
     /// Parse and validate from the host/guest wire format.
+    #[tracked]
     pub fn parse(bytes: &[u8]) -> Result<Self, InputError> {
-        cycle_track("input/parse", || {
-            let (claim_bytes, vk_bytes, proof_bytes) = split_pcs_wire(bytes)?;
-            let claim = cycle_track("input/parse/claim", || {
-                Claim::parse(claim_bytes).map_err(InputError::from)
-            })?;
-            let verifier_key = cycle_track("input/parse/verifier_key", || {
-                Ok::<_, InputError>(VerifierKeyDigest::from_bytes(
-                    vk_bytes.try_into().expect("vk_bytes is exactly 32 bytes"),
-                ))
-            })?;
-            let proof = cycle_track("input/parse/proof", || Proof::parse(proof_bytes))?;
-            Ok(Self {
-                claim,
-                verifier_key,
-                proof,
-            })
+        let (claim_bytes, vk_bytes, proof_bytes) = split_pcs_wire(bytes)?;
+        let claim = cycle_track!({ Claim::parse(claim_bytes).map_err(InputError::from) })?;
+        let verifier_key = cycle_track!({
+            Ok::<_, InputError>(VerifierKeyDigest::from_bytes(
+                vk_bytes.try_into().expect("vk_bytes is exactly 32 bytes"),
+            ))
+        })?;
+        let proof = Proof::parse(proof_bytes)?;
+        Ok(Self {
+            claim,
+            verifier_key,
+            proof,
         })
     }
 

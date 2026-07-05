@@ -18,9 +18,8 @@
 sp1_zkvm::entrypoint!(main);
 
 use zkpow_core::{
-    cycle_track, parse_median_hints, parse_new_headers, Claim, MinimalPublicValues,
-    Proof, ProofCarryingState, State, VerifierKeyDigest, MINIMAL_PV_SIZE,
-    CONTINUATION_DATA_SIZE,
+    cycle_track, parse_median_hints, parse_new_headers, tracked, Claim, MinimalPublicValues, Proof,
+    ProofCarryingState, State, VerifierKeyDigest, CONTINUATION_DATA_SIZE, MINIMAL_PV_SIZE,
 };
 
 mod sha256;
@@ -28,11 +27,10 @@ mod sha256;
 use sha256::{sha256_116bytes, sha256_169bytes, sha256d_80bytes};
 
 /// Compute the continuation digest: SHA-256 of the serialized continuation data.
+#[tracked]
 fn compute_continuation_digest(state: &State) -> [u8; 32] {
-    cycle_track("crypto/continuation_digest", || {
-        let cd_bytes: [u8; CONTINUATION_DATA_SIZE] = state.continuation_bytes();
-        sha256_116bytes(&cd_bytes)
-    })
+    let cd_bytes: [u8; CONTINUATION_DATA_SIZE] = state.continuation_bytes();
+    sha256_116bytes(&cd_bytes)
 }
 
 /// Commit the minimal public values and halt.
@@ -46,81 +44,64 @@ fn commit_minimal_pv(pv: &MinimalPublicValues) -> ! {
 // Prior proof verification
 // ============================================================================
 
+#[tracked]
 fn verify_prior_proof(
     proof: &Proof,
     verifier_key: &VerifierKeyDigest,
     prior_claim: &Claim,
     prior_continuation_bytes: &[u8; CONTINUATION_DATA_SIZE],
 ) {
-    cycle_track("proof/verify", || {
-        if proof.exit_code != 0 {
-            panic!(
-                "continuation rejected: prior proof has exit code {}",
-                proof.exit_code
-            );
-        }
-
-        // 1. Hash the prior continuation data.
-        let continuation_digest = cycle_track("proof/continuation_digest", || {
-            sha256_116bytes(prior_continuation_bytes)
-        });
-
-        // 2. Reconstruct the prior proof's minimal public values and hash them.
-        let prior_pv = MinimalPublicValues::success(
-            prior_claim,
-            continuation_digest,
-            *verifier_key,
+    if proof.exit_code != 0 {
+        panic!(
+            "continuation rejected: prior proof has exit code {}",
+            proof.exit_code
         );
-        let prior_pv_bytes: [u8; MINIMAL_PV_SIZE] = prior_pv.to_bytes();
-        let actual_pv_hash = cycle_track("proof/public_values_digest", || {
-            sha256_169bytes(&prior_pv_bytes)
-        });
+    }
 
-        if actual_pv_hash != proof.public_values_digest.into_raw() {
-            panic!("proof public values digest mismatch");
-        }
+    // 1. Hash the prior continuation data.
+    let continuation_digest = cycle_track!({ sha256_116bytes(prior_continuation_bytes) });
 
-        // 3. Verify the SP1 proof.
-        cycle_track("proof/sp1_verify", || {
-            sp1_zkvm::lib::verify::verify_sp1_proof(
-                verifier_key.as_raw(),
-                proof.public_values_digest.as_raw(),
-            );
-        });
+    // 2. Reconstruct the prior proof's minimal public values and hash them.
+    let prior_pv = MinimalPublicValues::success(prior_claim, continuation_digest, *verifier_key);
+    let prior_pv_bytes: [u8; MINIMAL_PV_SIZE] = prior_pv.to_bytes();
+    let actual_pv_hash = cycle_track!({ sha256_169bytes(&prior_pv_bytes) });
+
+    if actual_pv_hash != proof.public_values_digest.into_raw() {
+        panic!("proof public values digest mismatch");
+    }
+
+    // 3. Verify the SP1 proof.
+    cycle_track!({
+        sp1_zkvm::lib::verify::verify_sp1_proof(
+            verifier_key.as_raw(),
+            proof.public_values_digest.as_raw(),
+        );
     });
 }
 
 pub fn main() {
-    cycle_track("main", || {
+    cycle_track!("main", {
         let input_bytes = sp1_zkvm::io::read_vec();
         let state_bytes = sp1_zkvm::io::read_vec();
         let header_hint_bytes = sp1_zkvm::io::read_vec();
         let median_hint_bytes = sp1_zkvm::io::read_vec();
 
         let pcs = ProofCarryingState::parse(&input_bytes).expect("input should parse");
-        let mut state = cycle_track("input/parse_state_witness", || {
-            State::parse(&state_bytes).expect("state witness should parse")
-        });
-        cycle_track("input/verify_state_claim", || {
-            assert!(
-                state.genesis_hash == pcs.claim.genesis_hash
-                    && state.block_hash == pcs.claim.tip_hash
-                    && state.chain_work == pcs.claim.chain_work
-                    && state.height == pcs.claim.height,
-                "state witness public claim mismatch"
-            );
-        });
-        let header_hints = cycle_track("input/parse_header_hints", || {
-            parse_new_headers(&header_hint_bytes).expect("new header hints should parse")
-        });
-        let median_hints = cycle_track("input/parse_median_hints", || {
-            parse_median_hints(&median_hint_bytes, header_hints.len())
-                .expect("median time past hints should parse")
-        });
+        let mut state = State::parse(&state_bytes).expect("state witness should parse");
+        assert!(
+            state.genesis_hash == pcs.claim.genesis_hash
+                && state.block_hash == pcs.claim.tip_hash
+                && state.chain_work == pcs.claim.chain_work
+                && state.height == pcs.claim.height,
+            "state witness public claim mismatch"
+        );
+        let header_hints =
+            parse_new_headers(&header_hint_bytes).expect("new header hints should parse");
+        let median_hints = parse_median_hints(&median_hint_bytes, header_hints.len())
+            .expect("median time past hints should parse");
 
         if pcs.claim.height > 0 {
-            let prior_continuation_bytes: [u8; CONTINUATION_DATA_SIZE] =
-                state.continuation_bytes();
+            let prior_continuation_bytes: [u8; CONTINUATION_DATA_SIZE] = state.continuation_bytes();
             verify_prior_proof(
                 &pcs.proof,
                 &pcs.verifier_key,
@@ -145,11 +126,7 @@ pub fn main() {
         }
 
         let digest = compute_continuation_digest(&state);
-        let pv = MinimalPublicValues::success(
-            &state.public_claim(),
-            digest,
-            pcs.verifier_key,
-        );
+        let pv = MinimalPublicValues::success(&state.public_claim(), digest, pcs.verifier_key);
         commit_minimal_pv(&pv);
     });
 }
