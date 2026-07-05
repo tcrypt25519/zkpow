@@ -1159,7 +1159,7 @@ mod tests {
     #[test]
     fn fixed_width_wire_sizes_match_protocol() {
         assert_eq!(NEW_HEADER_SIZE, 44);
-        assert_eq!(STATE_SIZE, 296);
+        assert_eq!(STATE_SIZE, 216);
         assert_eq!(CLAIM_SIZE, 100);
         assert_eq!(CONTINUATION_DATA_SIZE, 116);
         assert_eq!(MINIMAL_PV_SIZE, 169);
@@ -1579,13 +1579,17 @@ mod tests {
             nonce: 7,
         }];
         let hints = median_hints_for_headers(&state, &headers);
+        let mut materialized_prev = BlockHash::default();
         state
-            .apply_headers(&headers, &hints, |_| zero_hash())
+            .apply_headers(&headers, &hints, |header| {
+                materialized_prev = header.prev_blockhash;
+                zero_hash()
+            })
             .expect("height-zero anchor should already be trusted");
 
         assert_eq!(state.height, 1);
         assert_eq!(state.genesis_hash, BlockHash::new([0x11; 32]));
-        assert_eq!(state.header.prev_blockhash, BlockHash::new([0x22; 32]));
+        assert_eq!(materialized_prev, BlockHash::new([0x22; 32]));
         assert_eq!(state.block_hash, zero_hash());
     }
 
