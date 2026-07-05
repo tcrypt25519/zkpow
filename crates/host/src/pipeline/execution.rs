@@ -158,7 +158,8 @@ where
         )),
         ..Default::default()
     };
-    let pcs = util::ProofCarryingState::new(batch.current_state.public_claim(), verifier_key, proof);
+    let pcs =
+        util::ProofCarryingState::new(batch.current_state.public_claim(), verifier_key, proof);
     let stdin = timed_sync("serialize_input", || {
         build_stdin(
             &pcs,
