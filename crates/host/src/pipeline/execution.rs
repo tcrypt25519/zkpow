@@ -73,7 +73,7 @@ where
     let verifier_key = timed_sync("build_verifier_key", || -> Result<_, BoxError> {
         Ok(verifier_key_digest(proving_key.verifying_key()))
     })?;
-    let pcs = ProofCarryingState::new(batch.current_state.public_claim(), verifier_key);
+    let pcs = ProofCarryingState::new(verifier_key);
     let stdin = timed_sync("serialize_input", || {
         build_stdin(
             &pcs,
@@ -146,7 +146,7 @@ where
     )
     .to_bytes()
     .to_vec();
-    let pcs = util::ProofCarryingState::new(batch.current_state.public_claim(), verifier_key);
+    let pcs = util::ProofCarryingState::new(verifier_key);
     let stdin = timed_sync("serialize_input", || {
         build_stdin(
             &pcs,
