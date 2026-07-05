@@ -25,3 +25,4 @@ zkpow-host
 # OS
 .DS_Store
 .todos/
+.venv
