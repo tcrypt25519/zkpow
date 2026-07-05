@@ -9,12 +9,10 @@ pub fn connect_headers(anchor: &Tip, headers: &[Header]) -> Vec<ConnectedHeader>
     let mut cumulative_work = anchor.chainwork;
     let mut timestamps = anchor.timestamps;
 
-    // Cached exactly like `zkpow_core::State::{current_target,current_work}`:
-    // carried forward from the anchor and only re-derived at a retarget
-    // boundary (`candidate_height % EPOCH_LENGTH == 0`) — every header in
-    // between carries the identical `compact_target`, so re-expanding the
-    // full 256-bit target and its work on every single header instead of
-    // once per 2016 is pure waste.
+    // Host-side sync caches carried forward from the anchor and only re-derived
+    // at retarget boundaries. Every header in between carries identical
+    // `compact_target`, so re-expanding the full 256-bit target and its work on
+    // every single header instead of once per 2016 is pure waste.
     let mut active_target = anchor.current_target;
     let mut active_work = anchor.current_work;
 

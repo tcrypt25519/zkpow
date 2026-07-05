@@ -217,8 +217,7 @@ fn replay_states_through(
 mod tests {
     use super::*;
     use zkpow_core::{
-        BlockTimestamp as BTimestamp, ChainWork, CompactTarget, ContinuationData, GENESIS_NBITS,
-        GENESIS_TARGET, WINDOW_SIZE,
+        BlockTimestamp as BTimestamp, CompactTarget, ContinuationData, GENESIS_NBITS, WINDOW_SIZE,
     };
 
     fn open_db() -> HeaderStore {
@@ -228,8 +227,6 @@ mod tests {
     fn make_pcs() -> ContinuationData {
         ContinuationData {
             current_nbits: CompactTarget::new(GENESIS_NBITS),
-            current_work: ChainWork::from_limbs([1, 2, 3, 4]),
-            current_target: GENESIS_TARGET,
             epoch_start_timestamp: BTimestamp::new(500),
             timestamps: [BTimestamp::new(10); WINDOW_SIZE],
         }

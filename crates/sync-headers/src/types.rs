@@ -23,9 +23,8 @@ pub struct Tip {
     /// Ring buffer of the last (up to `WINDOW_SIZE`) block timestamps, slot
     /// `height % WINDOW_SIZE` — mirrors `zkpow_core::State::timestamps`.
     pub timestamps: [u32; WINDOW_SIZE],
-    /// Difficulty bits/target/work active at `height`, cached exactly like
-    /// `zkpow_core::State::{current_nbits,current_target,current_work}` —
-    /// updated only at a retarget boundary (`height % EPOCH_LENGTH == 0`),
+    /// Difficulty bits/target/work active at `height`, cached by the sync path.
+    /// Updated only at a retarget boundary (`height % EPOCH_LENGTH == 0`) and
     /// carried forward unchanged otherwise.
     pub current_nbits: CompactTarget,
     pub current_target: Target,

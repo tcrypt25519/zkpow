@@ -432,9 +432,8 @@ async fn test_error_recursive_on_failed_proof() -> Result<(), String> {
     }
 }
 
-/// Verify that private cached continuation fields are bound by the prior
-/// proof's public-values digest, even though they are not part of the public
-/// chain claim.
+/// Verify that private continuation fields are bound by the prior proof's
+/// public-values digest, even though they are not part of the public chain claim.
 async fn test_error_recursive_on_tampered_state_witness() -> Result<(), String> {
     let genesis_state = mainnet_genesis_state();
     let witness = open_db().load_header_batch_witness(1, 5);
@@ -447,7 +446,7 @@ async fn test_error_recursive_on_tampered_state_witness() -> Result<(), String> 
     let verifier_key = VerifierKeyDigest::from_raw([0u32; 8]);
 
     let mut tampered_state = state_at_5.clone();
-    tampered_state.current_work = util::ChainWork::default();
+    tampered_state.epoch_start_timestamp = util::BlockTimestamp::default();
 
     let pcs = pcs(verifier_key);
     let empty_headers = [];

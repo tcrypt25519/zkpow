@@ -5,7 +5,7 @@
 //! - `sha256_80bytes`: hashes exactly 80 bytes (Bitcoin block header)
 //! - `sha256_32bytes`: hashes exactly 32 bytes (intermediate hash output)
 //! - `sha256_169bytes`: hashes exactly 169 bytes (minimal public values)
-//! - `sha256_116bytes`: hashes exactly 116 bytes (continuation data)
+//! - `sha256_52bytes`: hashes exactly 52 bytes (continuation data)
 //! - `sha256d_80bytes`: hashes exactly 80 bytes with SHA256d
 //!
 //! No loops, no branching on block count — the padding and block layout
@@ -147,31 +147,22 @@ pub(crate) fn sha256d_80bytes(data: &[u8; 80]) -> [u8; 32] {
     sha256_32bytes(&sha256_80bytes(data))
 }
 
-/// Compute SHA-256 of exactly 116 bytes.
+/// Compute SHA-256 of exactly 52 bytes.
 ///
-/// Produces two blocks:
-/// - Block 1: bytes 0–63
-/// - Block 2: bytes 64–115 (52 data bytes) + 0x80 + zeros + 8-byte length (928 bits = 0x3A0)
-pub(crate) fn sha256_116bytes(data: &[u8; 116]) -> [u8; 32] {
+/// Produces one block:
+/// bytes 0–51 (all data) + 0x80 + 3 zeros + 8-byte length (416 bits = 0x1A0)
+pub(crate) fn sha256_52bytes(data: &[u8; 52]) -> [u8; 32] {
     let mut state = SHA256_IV;
 
-    // ── Block 1: bytes 0–63 ──
-    let mut w = [0u64; 64];
-    for i in 0..16 {
-        w[i] = be_u64_from_slice(data, i);
-    }
-    syscall_sha256_extend(&mut w);
-    syscall_sha256_compress(&mut w, &mut state);
-
-    // ── Block 2: bytes 64–115 (52 bytes) + padding + length ──
+    // ── Single block: bytes 0–51 + padding + length ──
     let mut w = [0u64; 64];
     for i in 0..13 {
-        w[i] = be_u64_from_slice(data, 16 + i);
+        w[i] = be_u64_from_slice(data, i);
     }
     // 0x80 at word index 13, byte 0 → 0x80000000
     w[13] = 0x80000000;
-    // w[15] = length in bits = 116 * 8 = 928 = 0x3A0
-    w[15] = 0x3A0;
+    // w[15] = length in bits = 52 * 8 = 416 = 0x1A0
+    w[15] = 0x1A0;
     syscall_sha256_extend(&mut w);
     syscall_sha256_compress(&mut w, &mut state);
 

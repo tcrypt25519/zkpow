@@ -7,9 +7,8 @@ use std::path::Path;
 use rusqlite::{params, Connection, OptionalExtension};
 use sync_headers::{ConnectedHeader, Tip};
 use zkpow_core::{
-    chain_work_from_db_bytes, chain_work_to_db_bytes, sha256d, target_from_bits, work_from_target,
-    BlockHash, BlockTimestamp, ChainWork, Claim, CompactTarget, Header, NewHeader, State, Target,
-    GENESIS_TARGET, WINDOW_SIZE,
+    chain_work_from_db_bytes, chain_work_to_db_bytes, sha256d, BlockHash, BlockTimestamp,
+    ChainWork, Claim, CompactTarget, Header, NewHeader, State, WINDOW_SIZE,
 };
 
 const HASH_LEN: usize = 32;
@@ -333,16 +332,12 @@ impl HeaderStore {
             timestamps[r.height as usize % zkpow_core::WINDOW_SIZE] = r.header.timestamp;
         }
 
-        let current_target: Target = target_from_bits(current.header.compact_target);
-
         State {
             block_hash: BlockHash::new(sha256d(&current.header.to_bytes())),
             genesis_hash,
             current_nbits: current.header.compact_target,
             height,
             chain_work: current.chain_work,
-            current_work: work_from_target(current_target).expect("DB target valid"),
-            current_target,
             epoch_start_timestamp: epoch_start.header.timestamp,
             timestamps,
         }
@@ -380,7 +375,6 @@ pub struct HeaderBatchWitness {
 pub fn genesis_state_from_record(genesis: HeaderRecord, genesis_hash: BlockHash) -> State {
     let block_hash = BlockHash::new(sha256d(&genesis.header.to_bytes()));
     assert_eq!(block_hash, genesis_hash, "genesis hash mismatch");
-    let genesis_work = zkpow_core::genesis_work();
 
     let mut timestamps = [BlockTimestamp::default(); zkpow_core::WINDOW_SIZE];
     timestamps[0] = genesis.header.timestamp;
@@ -391,8 +385,6 @@ pub fn genesis_state_from_record(genesis: HeaderRecord, genesis_hash: BlockHash)
         current_nbits: genesis.header.compact_target,
         height: genesis.height as u32,
         chain_work: genesis.chain_work,
-        current_work: genesis_work,
-        current_target: GENESIS_TARGET,
         epoch_start_timestamp: genesis.header.timestamp,
         timestamps,
     }
