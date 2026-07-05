@@ -41,7 +41,6 @@ where
 #[repr(C)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct State {
-    pub header: Header,
     pub block_hash: BlockHash,
     pub genesis_hash: BlockHash,
     pub current_nbits: CompactTarget,
@@ -243,7 +242,6 @@ impl State {
                 if candidate_height.is_multiple_of(EPOCH_LENGTH) {
                     self.epoch_start_timestamp = header.timestamp;
                 }
-                self.header = header;
                 self.block_hash = block_hash;
             });
         }
@@ -257,7 +255,6 @@ impl State {
 impl Default for State {
     fn default() -> Self {
         Self {
-            header: Header::default(),
             block_hash: BlockHash::default(),
             genesis_hash: BlockHash::default(),
             current_nbits: CompactTarget::default(),

@@ -336,7 +336,6 @@ impl HeaderStore {
         let current_target: Target = target_from_bits(current.header.compact_target);
 
         State {
-            header: current.header,
             block_hash: BlockHash::new(sha256d(&current.header.to_bytes())),
             genesis_hash,
             current_nbits: current.header.compact_target,
@@ -387,7 +386,6 @@ pub fn genesis_state_from_record(genesis: HeaderRecord, genesis_hash: BlockHash)
     timestamps[0] = genesis.header.timestamp;
 
     State {
-        header: genesis.header,
         block_hash,
         genesis_hash,
         current_nbits: genesis.header.compact_target,
