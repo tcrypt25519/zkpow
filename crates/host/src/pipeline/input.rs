@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use crate::pipeline::{BoxError, ProofGenerationConfig, ProverBackend};
 use crate::util;
-use crate::util::{Proof, ProofCarryingState, PublicValuesDigest, VerifierKeyDigest};
+use crate::util::{ProofCarryingState, VerifierKeyDigest};
 
 pub const ENV_ZKPOW_BATCH_SIZE: &str = "ZKPOW_BATCH_SIZE";
 pub const ENV_ZKPOW_BATCH_COUNT: &str = "ZKPOW_BATCH_COUNT";
@@ -253,31 +253,8 @@ pub fn s3_proof_store_config_from_env() -> Result<Option<S3ProofStoreConfig>, Bo
     s3_proof_store_config_from_source(&ProcessEnv)
 }
 
-pub fn build_proof(
-    vk: &sp1_prover::SP1VerifyingKey,
-    previous_proof: Option<&SP1ProofWithPublicValues>,
-) -> Result<(VerifierKeyDigest, Proof), BoxError> {
-    let verifier_key = VerifierKeyDigest::from_raw(vk.hash_u32());
-    let proof = if let Some(prev_proof_val) = previous_proof {
-        let pv_bytes = prev_proof_val.public_values.to_vec();
-        let exit_code = match zkpow_core::HeaderChainPublicValues::parse(&pv_bytes) {
-            Ok(zkpow_core::HeaderChainPublicValues::Success { .. }) => 0u8,
-            Ok(zkpow_core::HeaderChainPublicValues::Failure { failure, .. }) => {
-                failure.error_code.as_byte()
-            }
-            Err(e) => {
-                return Err(format!("failed to parse previous proof public values: {}", e).into())
-            }
-        };
-        Proof {
-            public_values_digest: PublicValuesDigest::from_raw(util::compute_pv_digest(&pv_bytes)),
-            exit_code,
-            ..Default::default()
-        }
-    } else {
-        Proof::default()
-    };
-    Ok((verifier_key, proof))
+pub fn verifier_key_digest(vk: &sp1_prover::SP1VerifyingKey) -> VerifierKeyDigest {
+    VerifierKeyDigest::from_raw(vk.hash_u32())
 }
 
 pub fn build_stdin(

@@ -3,13 +3,12 @@
 use alloc::vec::Vec;
 
 use crate::{
-    check_exact_len, copy_from_bytes, copy_to_bytes, slice_from_bytes, tracked, BlockTimestamp,
-    Claim, NewHeader, ParseError, PublicValuesDigest, VerifierKeyDigest, CLAIM_SIZE,
-    NEW_HEADER_SIZE, PROOF_SIZE,
+    check_exact_len, slice_from_bytes, tracked, BlockTimestamp, Claim, NewHeader, ParseError,
+    VerifierKeyDigest, CLAIM_SIZE, NEW_HEADER_SIZE,
 };
 
 // ============================================================================
-// ProofCarryingState & Proof
+// ProofCarryingState
 // ============================================================================
 
 /// The complete output of the prior execution: the proven chain state plus its SP1 proof.
@@ -21,31 +20,6 @@ use crate::{
 pub struct ProofCarryingState {
     pub claim: Claim,
     pub verifier_key: VerifierKeyDigest,
-    pub proof: Proof,
-}
-
-/// SP1 proof authentication data for the prior execution.
-///
-/// `exit_code` must be 0 (success) for the guest to accept the recursive
-/// continuation.  A nonzero value means the prior proof committed a validation
-/// failure, and extending from it is rejected.
-#[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Proof {
-    pub public_values_digest: PublicValuesDigest,
-    /// Exit code from the previous proof (0 = success, nonzero = failure).
-    pub exit_code: u8,
-    pub _pad: [u8; 3],
-}
-
-impl Default for Proof {
-    fn default() -> Self {
-        Self {
-            public_values_digest: PublicValuesDigest::from_raw([0u8; 32]),
-            exit_code: 0,
-            _pad: [0u8; 3],
-        }
-    }
 }
 
 /// Parse and validation errors for [`ProofCarryingState`].
@@ -76,20 +50,6 @@ pub enum MedianTimePastHintError {
 impl From<ParseError> for InputError {
     fn from(value: ParseError) -> Self {
         Self::Parse(value)
-    }
-}
-
-impl Proof {
-    /// Parse and validate a Proof from exactly [`PROOF_SIZE`] bytes.
-    #[tracked]
-    pub fn parse(bytes: &[u8]) -> Result<Self, InputError> {
-        copy_from_bytes(bytes).map_err(InputError::from)
-    }
-
-    /// Serialize to exactly [`PROOF_SIZE`] bytes.
-    #[must_use]
-    pub fn to_bytes(&self) -> [u8; PROOF_SIZE] {
-        copy_to_bytes(self)
     }
 }
 
@@ -149,55 +109,50 @@ pub fn parse_median_hints(
 /// Wire size of the verifier key field in [`ProofCarryingState`]: `VerifierKeyDigest` → `[u32; 8]` → 32 bytes LE.
 const VK_WIRE_SIZE: usize = 32;
 
-/// Split and validate the wire layout, returning `(claim_bytes, vk_bytes, proof_bytes)`.
+/// Split and validate the wire layout, returning `(claim_bytes, vk_bytes)`.
 ///
 /// The full [`State`](crate::State) is supplied separately as private witness data
 /// and checked against the claim before use.
 #[allow(clippy::type_complexity)]
-fn split_pcs_wire(bytes: &[u8]) -> Result<(&[u8], &[u8], &[u8]), InputError> {
-    check_exact_len(bytes, CLAIM_SIZE + VK_WIRE_SIZE + PROOF_SIZE)?;
+fn split_pcs_wire(bytes: &[u8]) -> Result<(&[u8], &[u8]), InputError> {
+    check_exact_len(bytes, CLAIM_SIZE + VK_WIRE_SIZE)?;
     Ok((
         &bytes[..CLAIM_SIZE],
         &bytes[CLAIM_SIZE..CLAIM_SIZE + VK_WIRE_SIZE],
-        &bytes[CLAIM_SIZE + VK_WIRE_SIZE..],
     ))
 }
 
 impl ProofCarryingState {
     /// Constructs a new ProofCarryingState.
-    pub fn new(claim: Claim, verifier_key: VerifierKeyDigest, proof: Proof) -> Self {
+    pub fn new(claim: Claim, verifier_key: VerifierKeyDigest) -> Self {
         Self {
             claim,
             verifier_key,
-            proof,
         }
     }
 
     /// Parse and validate from the host/guest wire format.
     #[tracked]
     pub fn parse(bytes: &[u8]) -> Result<Self, InputError> {
-        let (claim_bytes, vk_bytes, proof_bytes) = split_pcs_wire(bytes)?;
+        let (claim_bytes, vk_bytes) = split_pcs_wire(bytes)?;
         let claim = cycle_track!({ Claim::parse(claim_bytes).map_err(InputError::from) })?;
         let verifier_key = cycle_track!({
             Ok::<_, InputError>(VerifierKeyDigest::from_bytes(
                 vk_bytes.try_into().expect("vk_bytes is exactly 32 bytes"),
             ))
         })?;
-        let proof = Proof::parse(proof_bytes)?;
         Ok(Self {
             claim,
             verifier_key,
-            proof,
         })
     }
 
     /// Serialize to the host/guest wire format.
     #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut bytes = Vec::with_capacity(CLAIM_SIZE + VK_WIRE_SIZE + PROOF_SIZE);
+        let mut bytes = Vec::with_capacity(CLAIM_SIZE + VK_WIRE_SIZE);
         bytes.extend_from_slice(&self.claim.to_bytes());
         bytes.extend_from_slice(&self.verifier_key.to_bytes());
-        bytes.extend_from_slice(&self.proof.to_bytes());
         bytes
     }
 }
@@ -214,24 +169,6 @@ mod tests {
     use crate::{BlockHash, BlockTimestamp, State};
 
     #[test]
-    fn test_proof_default_is_zeros() {
-        let proof = Proof::default();
-        assert_eq!(proof.public_values_digest.as_raw(), &[0u8; 32]);
-        assert_eq!(proof.exit_code, 0);
-    }
-
-    #[test]
-    fn test_proof_exit_code_round_trips() {
-        let proof = Proof {
-            exit_code: 3,
-            ..Default::default()
-        };
-        let bytes = proof.to_bytes();
-        let parsed = Proof::parse(&bytes).unwrap();
-        assert_eq!(parsed.exit_code, 3);
-    }
-
-    #[test]
     fn test_parse_from_bytes_genesis_no_proof() {
         let genesis_state: State = State {
             height: 0,
@@ -241,13 +178,12 @@ mod tests {
         };
         let claim = genesis_state.public_claim();
         let vk = VerifierKeyDigest::from_raw([0; 8]);
-        let bytes = ProofCarryingState::new(claim, vk, Proof::default()).to_bytes();
+        let bytes = ProofCarryingState::new(claim, vk).to_bytes();
         let pcs = ProofCarryingState::parse(&bytes).unwrap();
 
         assert_eq!(pcs.claim.height, 0);
         assert_eq!(pcs.claim.genesis_hash, BlockHash::new([1; 32]));
         assert_eq!(pcs.claim.tip_hash, BlockHash::new([2; 32]));
-        assert_eq!(pcs.proof, Proof::default());
         assert_eq!(pcs.verifier_key, vk);
     }
 
@@ -262,18 +198,12 @@ mod tests {
         non_genesis_state.header.prev_blockhash = BlockHash::new([3; 32]);
 
         let expected_verifier_key = VerifierKeyDigest::from_raw([1; 8]);
-        let expected_pvd = PublicValuesDigest::from_raw([2; 32]);
-        let proof_data = Proof {
-            public_values_digest: expected_pvd,
-            ..Default::default()
-        };
         let claim = non_genesis_state.public_claim();
-        let bytes = ProofCarryingState::new(claim, expected_verifier_key, proof_data).to_bytes();
+        let bytes = ProofCarryingState::new(claim, expected_verifier_key).to_bytes();
         let pcs = ProofCarryingState::parse(&bytes).unwrap();
 
         assert_eq!(pcs.claim.height, 100);
         assert_eq!(pcs.verifier_key, expected_verifier_key);
-        assert_eq!(pcs.proof.public_values_digest, expected_pvd);
     }
 
     #[test]

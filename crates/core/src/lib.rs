@@ -42,14 +42,11 @@ mod input;
 
 pub use input::{
     parse_median_hints, parse_new_headers, serialize_median_hints, serialize_new_headers,
-    InputError, MedianTimePastHintError, NewHeaderHintError, Proof, ProofCarryingState,
+    InputError, MedianTimePastHintError, NewHeaderHintError, ProofCarryingState,
 };
 
 /// Size of the serialized [`State`] in bytes.
 pub const STATE_SIZE: usize = size_of::<State>();
-
-/// Wire size of a serialized [`Proof`] in bytes (excludes the separate [`VerifierKeyDigest`]).
-pub const PROOF_SIZE: usize = size_of::<Proof>();
 
 /// Size of each [`NewHeader`] input from the prover.
 pub const NEW_HEADER_SIZE: usize = size_of::<NewHeader>();
@@ -1162,14 +1159,12 @@ mod tests {
     #[test]
     fn fixed_width_wire_sizes_match_protocol() {
         assert_eq!(NEW_HEADER_SIZE, 44);
-        assert_eq!(PROOF_SIZE, 36);
         assert_eq!(STATE_SIZE, 296);
         assert_eq!(CLAIM_SIZE, 100);
         assert_eq!(CONTINUATION_DATA_SIZE, 116);
         assert_eq!(MINIMAL_PV_SIZE, 169);
         assert_eq!(core::mem::align_of::<Header>(), 4);
         assert_eq!(core::mem::align_of::<NewHeader>(), 4);
-        assert_eq!(core::mem::align_of::<Proof>(), 1);
         assert_eq!(core::mem::align_of::<State>(), 8);
     }
 
