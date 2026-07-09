@@ -1,4 +1,4 @@
-use crate::brand::Branded;
+use crate::{brand::Branded, tracked};
 
 /// A 256-bit unsigned integer stored as four little-endian u64 limbs.
 #[allow(non_camel_case_types)]
@@ -104,5 +104,43 @@ impl core::fmt::Display for BlockHash {
             write!(f, "{byte:02x}")?;
         }
         Ok(())
+    }
+}
+
+impl core::ops::Add for ChainWork {
+    type Output = Self;
+
+    #[tracked]
+    fn add(self, rhs: Self) -> Self::Output {
+        let a = self.as_limbs();
+        let b = rhs.as_limbs();
+        let mut result = [0u64; 4];
+        let mut carry = 0u128;
+        for i in 0..4 {
+            let sum = (a[i] as u128) + (b[i] as u128) + carry;
+            result[i] = sum as u64;
+            carry = sum >> 64;
+        }
+        ChainWork::from_limbs(result)
+    }
+}
+
+impl core::ops::Mul<u32> for ChainWork {
+    type Output = Self;
+
+    #[tracked]
+    fn mul(self, rhs: u32) -> Self::Output {
+        let limbs = self.as_limbs();
+        let mut result = [0u64; 4];
+        let mut carry = 0u128;
+        let multiplier = rhs as u128;
+
+        for i in 0..4 {
+            let product = (limbs[i] as u128) * multiplier + carry;
+            result[i] = product as u64;
+            carry = product >> 64;
+        }
+
+        ChainWork::from_limbs(result)
     }
 }

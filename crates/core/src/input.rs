@@ -1,15 +1,14 @@
 //! Logic for parsing the proof-carrying state and header batch inputs to the guest.
 
-use alloc::vec::Vec;
-
 use crate::{
-    check_exact_len, slice_from_bytes, tracked, BlockTimestamp, NewHeader, ParseError,
-    VerifierKeyDigest, NEW_HEADER_SIZE,
+    check_exact_len, slice_from_bytes, tracked, BlockTimestamp, InputError,
+    MedianTimePastHintError, NewHeader, NewHeaderHintError, VerifierKeyDigest, NEW_HEADER_SIZE,
 };
+use alloc::vec::Vec;
+use core::mem;
 
-// ============================================================================
-// ProofCarryingState
-// ============================================================================
+/// Wire size of [`ProofCarryingState`]: `VerifierKeyDigest` → `[u32; 8]` → 32 bytes LE.
+const PCS_WIRE_SIZE: usize = mem::size_of::<ProofCarryingState>();
 
 /// Authentication context for a recursive continuation.
 ///
@@ -20,34 +19,30 @@ pub struct ProofCarryingState {
     pub verifier_key: VerifierKeyDigest,
 }
 
-/// Parse and validation errors for [`ProofCarryingState`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum InputError {
-    #[error("input parse error: {0}")]
-    Parse(ParseError),
-}
+impl ProofCarryingState {
+    /// Constructs a new ProofCarryingState.
+    pub fn new(verifier_key: VerifierKeyDigest) -> Self {
+        Self { verifier_key }
+    }
 
-/// Parse and validation errors for the new-header private witness batch.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum NewHeaderHintError {
-    #[error("new-header hint payload length mismatch: expected {expected} bytes, got {actual}")]
-    PayloadLengthInvalid { expected: usize, actual: usize },
-    #[error("new-header hint parse error: {0}")]
-    Parse(ParseError),
-}
+    /// Parse and validate from the host/guest wire format.
+    #[tracked]
+    pub fn parse(bytes: &[u8]) -> Result<Self, InputError> {
+        check_exact_len(bytes, PCS_WIRE_SIZE)?;
+        let verifier_key = cycle_track!({
+            Ok::<_, InputError>(VerifierKeyDigest::from_bytes(
+                bytes.try_into().expect("bytes is exactly 32 bytes"),
+            ))
+        })?;
+        Ok(Self { verifier_key })
+    }
 
-/// Parse and validation errors for median-time-past private witness hints.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum MedianTimePastHintError {
-    #[error("median hint payload length mismatch: expected {expected} bytes, got {actual}")]
-    PayloadLengthInvalid { expected: usize, actual: usize },
-    #[error("median hint parse error: {0}")]
-    Parse(ParseError),
-}
-
-impl From<ParseError> for InputError {
-    fn from(value: ParseError) -> Self {
-        Self::Parse(value)
+    /// Serialize to the host/guest wire format.
+    #[must_use]
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(PCS_WIRE_SIZE);
+        bytes.extend_from_slice(&self.verifier_key.to_bytes());
+        bytes
     }
 }
 
@@ -104,46 +99,12 @@ pub fn parse_median_hints(
     Ok(medians)
 }
 
-/// Wire size of [`ProofCarryingState`]: `VerifierKeyDigest` → `[u32; 8]` → 32 bytes LE.
-const PCS_WIRE_SIZE: usize = 32;
-
-impl ProofCarryingState {
-    /// Constructs a new ProofCarryingState.
-    pub fn new(verifier_key: VerifierKeyDigest) -> Self {
-        Self { verifier_key }
-    }
-
-    /// Parse and validate from the host/guest wire format.
-    #[tracked]
-    pub fn parse(bytes: &[u8]) -> Result<Self, InputError> {
-        check_exact_len(bytes, PCS_WIRE_SIZE)?;
-        let verifier_key = cycle_track!({
-            Ok::<_, InputError>(VerifierKeyDigest::from_bytes(
-                bytes.try_into().expect("bytes is exactly 32 bytes"),
-            ))
-        })?;
-        Ok(Self { verifier_key })
-    }
-
-    /// Serialize to the host/guest wire format.
-    #[must_use]
-    pub fn to_bytes(&self) -> Vec<u8> {
-        let mut bytes = Vec::with_capacity(PCS_WIRE_SIZE);
-        bytes.extend_from_slice(&self.verifier_key.to_bytes());
-        bytes
-    }
-}
-
-// ============================================================================
-// Tests
-// ============================================================================
-
 #[cfg(test)]
 mod tests {
     use alloc::vec;
 
     use super::*;
-    use crate::BlockTimestamp;
+    use crate::{BlockTimestamp, ParseError};
 
     #[test]
     fn proof_carrying_state_round_trips_verifier_key() {
