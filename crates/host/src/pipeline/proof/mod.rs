@@ -14,6 +14,9 @@ use crate::pipeline::diagnostics::timed_sync;
 use crate::pipeline::ELF;
 use crate::pipeline::{BoxError, ProverBackend};
 
+static PREPARED_PROVER: OnceLock<AsyncMutex<Option<(PreparedProverConfig, PreparedProver)>>> =
+    OnceLock::new();
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct PreparedProverConfig {
     backend: ProverBackend,
@@ -36,9 +39,6 @@ pub(crate) enum PreparedProver {
         proving_key: <CudaProver as Prover>::ProvingKey,
     },
 }
-
-static PREPARED_PROVER: OnceLock<AsyncMutex<Option<(PreparedProverConfig, PreparedProver)>>> =
-    OnceLock::new();
 
 fn prepared_prover_store() -> &'static AsyncMutex<Option<(PreparedProverConfig, PreparedProver)>> {
     PREPARED_PROVER.get_or_init(|| AsyncMutex::new(None))

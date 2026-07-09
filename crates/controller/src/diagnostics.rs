@@ -13,6 +13,31 @@ pub enum HighlightMode {
     Brackets,
 }
 
+trait ClaimHex {
+    fn genesis_hash_display_hex(&self) -> String;
+    fn tip_hash_display_hex(&self) -> String;
+    fn chain_work_display_hex(&self) -> String;
+    fn height_display_hex(&self) -> String;
+}
+
+impl ClaimHex for Claim {
+    fn genesis_hash_display_hex(&self) -> String {
+        display_hex_32(self.genesis_hash.to_le_bytes())
+    }
+
+    fn tip_hash_display_hex(&self) -> String {
+        display_hex_32(self.tip_hash.to_le_bytes())
+    }
+
+    fn chain_work_display_hex(&self) -> String {
+        display_hex_32(self.chain_work.to_le_bytes())
+    }
+
+    fn height_display_hex(&self) -> String {
+        hex::encode(self.height.to_be_bytes())
+    }
+}
+
 fn format_claim_pretty(claim: &Claim) -> String {
     let mut output = String::new();
     output.push_str("    Claim {\n");
@@ -257,31 +282,6 @@ fn field_prefix(name: &str) -> String {
 
 pub fn value_prefix(name: &str) -> String {
     format!("      {}  ", " ".repeat(name.len()))
-}
-
-trait ClaimHex {
-    fn genesis_hash_display_hex(&self) -> String;
-    fn tip_hash_display_hex(&self) -> String;
-    fn chain_work_display_hex(&self) -> String;
-    fn height_display_hex(&self) -> String;
-}
-
-impl ClaimHex for Claim {
-    fn genesis_hash_display_hex(&self) -> String {
-        display_hex_32(self.genesis_hash.to_le_bytes())
-    }
-
-    fn tip_hash_display_hex(&self) -> String {
-        display_hex_32(self.tip_hash.to_le_bytes())
-    }
-
-    fn chain_work_display_hex(&self) -> String {
-        display_hex_32(self.chain_work.to_le_bytes())
-    }
-
-    fn height_display_hex(&self) -> String {
-        hex::encode(self.height.to_be_bytes())
-    }
 }
 
 fn display_hex_32(mut bytes: [u8; 32]) -> String {

@@ -16,6 +16,13 @@ use crate::{
 
 pub type SharedController = Arc<Mutex<Controller>>;
 
+#[derive(serde::Deserialize)]
+struct BatchQuery {
+    num_headers: u32,
+    #[serde(default)]
+    simulate: bool,
+}
+
 pub fn build_router(controller: SharedController) -> Router {
     Router::new()
         .route("/genesis_hash", get(genesis_hash_handler))
@@ -48,13 +55,6 @@ async fn state_handler(
 ) -> Json<Value> {
     let state = lock_controller(&controller).state_at(height);
     Json(json!({ "state_hex": hex::encode(state.to_bytes()) }))
-}
-
-#[derive(serde::Deserialize)]
-struct BatchQuery {
-    num_headers: u32,
-    #[serde(default)]
-    simulate: bool,
 }
 
 async fn batch_handler(

@@ -4,6 +4,20 @@ use crate::{
     copy_to_bytes, BlockHash, BlockTimestamp, CompactTarget, BLOCK_HEADER_SIZE, NEW_HEADER_SIZE,
 };
 
+#[inline]
+const fn sha256_word_from_le_u32(value: u32) -> u64 {
+    value.swap_bytes() as u64
+}
+
+#[inline]
+pub(crate) const fn sha256_word_from_bytes(bytes: &[u8], word_index: usize) -> u64 {
+    let i = word_index * 4;
+    ((bytes[i] as u64) << 24)
+        | ((bytes[i + 1] as u64) << 16)
+        | ((bytes[i + 2] as u64) << 8)
+        | (bytes[i + 3] as u64)
+}
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Header {
@@ -79,20 +93,6 @@ impl NewHeader {
             nonce: self.nonce,
         }
     }
-}
-
-#[inline]
-const fn sha256_word_from_le_u32(value: u32) -> u64 {
-    value.swap_bytes() as u64
-}
-
-#[inline]
-pub(crate) const fn sha256_word_from_bytes(bytes: &[u8], word_index: usize) -> u64 {
-    let i = word_index * 4;
-    ((bytes[i] as u64) << 24)
-        | ((bytes[i + 1] as u64) << 16)
-        | ((bytes[i + 2] as u64) << 8)
-        | (bytes[i + 3] as u64)
 }
 
 /// Build the first SHA-256 block words for a Bitcoin header represented by

@@ -8,6 +8,8 @@ use sp1_sdk::ExecutionReport;
 
 pub(crate) use zkpow_controller::format_claim_mismatch;
 
+static PHASE_TIMINGS: OnceLock<Mutex<HashMap<&'static str, PhaseTimingAccum>>> = OnceLock::new();
+
 #[derive(Debug, Clone)]
 pub struct PhaseTiming {
     pub label: String,
@@ -20,8 +22,6 @@ struct PhaseTimingAccum {
     total: Duration,
     invocations: u32,
 }
-
-static PHASE_TIMINGS: OnceLock<Mutex<HashMap<&'static str, PhaseTimingAccum>>> = OnceLock::new();
 
 fn phase_timings_store() -> &'static Mutex<HashMap<&'static str, PhaseTimingAccum>> {
     PHASE_TIMINGS.get_or_init(|| Mutex::new(HashMap::new()))

@@ -17,12 +17,12 @@
 #![no_main]
 sp1_zkvm::entrypoint!(main);
 
+mod sha256;
+
 use zkpow_core::{
     cycle_track, parse_median_hints, parse_new_headers, tracked, Claim, MinimalPublicValues,
     ProofCarryingState, State, VerifierKeyDigest, CONTINUATION_DATA_SIZE, MINIMAL_PV_SIZE,
 };
-
-mod sha256;
 
 use sha256::{sha256_169bytes, sha256_52bytes, sha256d_new_header};
 
