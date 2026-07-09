@@ -1,6 +1,8 @@
 //! Build script for the host crate.
 //! Sets the `docker` arg iff the env var `USE_DOCKER_BUILD` is set.
 
+const GUEST_CRATE_PATH: &str = "../guest";
+
 fn main() {
     println!("cargo:rerun-if-env-changed=GUEST_PROFILING");
     let use_docker = std::env::var("USE_DOCKER_BUILD").is_ok();
@@ -13,7 +15,7 @@ fn main() {
         Vec::new()
     };
     sp1_build::build_program_with_args(
-        "../guest",
+        GUEST_CRATE_PATH,
         sp1_build::BuildArgs {
             docker: use_docker,
             features,
