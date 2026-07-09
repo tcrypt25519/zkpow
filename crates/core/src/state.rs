@@ -80,6 +80,11 @@ impl State {
         self.height as usize % WINDOW_SIZE
     }
 
+    #[must_use]
+    fn previous_timestamp(&self) -> BlockTimestamp {
+        self.timestamps[self.current_timestamp_slot()]
+    }
+
     /// Whether this state has the full 11-block timestamp window needed by the
     /// steady-state median-time-past path.
     #[must_use]
@@ -145,16 +150,107 @@ impl State {
 
     #[must_use]
     #[tracked]
-    fn median_time_past_hinted_cold(&self, claimed_median: BlockTimestamp) -> bool {
+    fn median_time_past_cold(&self) -> BlockTimestamp {
         let window_len = self.height as usize + 1;
-        let median_index = window_len / 2;
-        self.median_time_past_hinted_for_window(claimed_median, window_len, median_index)
+        let mut sorted = self.timestamps;
+        sorted[..window_len].sort_unstable();
+        sorted[window_len / 2]
     }
 
     #[must_use]
     #[tracked]
     fn median_time_past_hinted_warm(&self, claimed_median: BlockTimestamp) -> bool {
         self.median_time_past_hinted_for_window(claimed_median, WINDOW_SIZE, WINDOW_SIZE / 2)
+    }
+
+    #[must_use]
+    #[tracked]
+    fn median_time_past_ordered_warm(&self) -> BlockTimestamp {
+        self.timestamps[(self.height as usize + WINDOW_SIZE - (WINDOW_SIZE / 2)) % WINDOW_SIZE]
+    }
+
+    #[must_use]
+    #[tracked]
+    fn ordered_timestamp_suffix_len_warm(&self) -> usize {
+        let mut len = 1usize;
+        let mut newer = self.previous_timestamp();
+        for offset in 1..WINDOW_SIZE {
+            let older =
+                self.timestamps[(self.height as usize + WINDOW_SIZE - offset) % WINDOW_SIZE];
+            if older <= newer {
+                len += 1;
+                newer = older;
+            } else {
+                break;
+            }
+        }
+        len
+    }
+
+    fn update_ordered_timestamp_suffix_len(
+        ordered_run_len: &mut usize,
+        previous_timestamp: BlockTimestamp,
+        next_timestamp: BlockTimestamp,
+    ) {
+        if next_timestamp >= previous_timestamp {
+            if *ordered_run_len < WINDOW_SIZE {
+                *ordered_run_len += 1;
+            }
+        } else {
+            *ordered_run_len = 1;
+        }
+    }
+
+    fn append_timestamp_for_projection(&mut self, timestamp: BlockTimestamp) {
+        self.height += 1;
+        self.timestamps[self.current_timestamp_slot()] = timestamp;
+    }
+
+    /// Project dense database median-time-past values into the sparse witness
+    /// format consumed by [`State::apply_headers`].
+    ///
+    /// Cold, not-yet-full timestamp windows do not emit hints. Warm ordered
+    /// windows compute their median directly. A hint is emitted only when the
+    /// full 11-timestamp window is not ordered by chain height.
+    #[must_use]
+    pub fn sparse_median_hints_for_headers(
+        &self,
+        headers: &[NewHeader],
+        dense_median_hints: &[BlockTimestamp],
+    ) -> alloc::vec::Vec<BlockTimestamp> {
+        assert_eq!(
+            headers.len(),
+            dense_median_hints.len(),
+            "dense median hint count must match header count"
+        );
+
+        let mut projection = self.clone();
+        let cold_count = projection.cold_header_count(headers.len());
+        for header in &headers[..cold_count] {
+            projection.append_timestamp_for_projection(header.timestamp);
+        }
+
+        let mut sparse_hints = alloc::vec::Vec::new();
+        if cold_count == headers.len() {
+            return sparse_hints;
+        }
+
+        let mut ordered_run_len = projection.ordered_timestamp_suffix_len_warm();
+        for index in cold_count..headers.len() {
+            if ordered_run_len < WINDOW_SIZE {
+                sparse_hints.push(dense_median_hints[index]);
+            }
+
+            let previous_timestamp = projection.previous_timestamp();
+            projection.append_timestamp_for_projection(headers[index].timestamp);
+            Self::update_ordered_timestamp_suffix_len(
+                &mut ordered_run_len,
+                previous_timestamp,
+                headers[index].timestamp,
+            );
+        }
+
+        sparse_hints
     }
 
     #[must_use]
@@ -216,7 +312,7 @@ impl State {
         F: FnMut(&NewHeader, &BlockHash, CompactTarget) -> BlockHash,
     {
         let candidate_height = cycle_track!(self.height + 1);
-        let previous_timestamp = cycle_track!({ self.timestamps[self.current_timestamp_slot()] });
+        let previous_timestamp = cycle_track!({ self.previous_timestamp() });
         let timestamp_slot = candidate_height as usize % WINDOW_SIZE;
 
         if cycle_track!({ new_header.timestamp <= claimed_median }) {
@@ -280,27 +376,12 @@ impl State {
     where
         F: FnMut(&NewHeader, &BlockHash, CompactTarget) -> BlockHash,
     {
-        assert_eq!(
-            headers.len(),
-            median_hints.len(),
-            "median hint count must match header count"
-        );
-
         let mut context = HeaderApplyContext::new(self.current_nbits);
         let cold_count = self.cold_header_count(headers.len());
         let (cold_headers, warm_headers) = headers.split_at(cold_count);
-        let (cold_median_hints, warm_median_hints) = median_hints.split_at(cold_count);
 
-        for (header_index, (new_header, claimed_median)) in cold_headers
-            .iter()
-            .zip(cold_median_hints.iter().copied())
-            .enumerate()
-        {
-            assert!(
-                self.median_time_past_hinted_cold(claimed_median),
-                "invalid median time past hint at header index {}",
-                header_index
-            );
+        for new_header in cold_headers {
+            let claimed_median = self.median_time_past_cold();
             self.apply_header_after_median_check(
                 new_header,
                 claimed_median,
@@ -309,25 +390,48 @@ impl State {
             )?;
         }
 
-        for (warm_index, (new_header, claimed_median)) in warm_headers
-            .iter()
-            .zip(warm_median_hints.iter().copied())
-            .enumerate()
-        {
+        let mut median_hint_index = 0usize;
+        let mut ordered_run_len = if warm_headers.is_empty() {
+            0
+        } else {
+            self.ordered_timestamp_suffix_len_warm()
+        };
+
+        for (warm_index, new_header) in warm_headers.iter().enumerate() {
             let header_index = cold_count + warm_index;
-            assert!(
-                self.median_time_past_hinted_warm(claimed_median),
-                "invalid median time past hint at header index {}",
-                header_index
-            );
+            let claimed_median = if ordered_run_len == WINDOW_SIZE {
+                self.median_time_past_ordered_warm()
+            } else {
+                let claimed_median = *median_hints.get(median_hint_index).unwrap_or_else(|| {
+                    panic!("missing median time past hint at header index {header_index}")
+                });
+                median_hint_index += 1;
+                assert!(
+                    self.median_time_past_hinted_warm(claimed_median),
+                    "invalid median time past hint at header index {}",
+                    header_index
+                );
+                claimed_median
+            };
+            let previous_timestamp = self.previous_timestamp();
             self.apply_header_after_median_check(
                 new_header,
                 claimed_median,
                 &mut context,
                 &mut block_hash_fn,
             )?;
+            Self::update_ordered_timestamp_suffix_len(
+                &mut ordered_run_len,
+                previous_timestamp,
+                new_header.timestamp,
+            );
         }
 
+        assert_eq!(
+            median_hint_index,
+            median_hints.len(),
+            "unused sparse median time past hints"
+        );
         self.flush_pending_chain_work(&mut context);
 
         Ok(())

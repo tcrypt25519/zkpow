@@ -101,14 +101,24 @@ fn build_stdin(
     pcs: &ProofCarryingState,
     state: &util::State,
     headers: &[util::NewHeader],
-    hints: &[util::BlockTimestamp],
+    dense_hints: &[util::BlockTimestamp],
 ) -> SP1Stdin {
+    let sparse_hints = state.sparse_median_hints_for_headers(headers, dense_hints);
     let mut stdin = SP1Stdin::new();
     stdin.write_vec(pcs.to_bytes());
     stdin.write_vec(state.to_bytes().to_vec());
     stdin.write_vec(util::serialize_new_headers(headers));
-    stdin.write_vec(util::serialize_median_hints(hints));
+    stdin.write_vec(util::serialize_median_hints(&sparse_hints));
     stdin
+}
+
+fn compute_final_state_with_dense_hints(
+    initial_state: &util::State,
+    headers: &[util::NewHeader],
+    dense_hints: &[util::BlockTimestamp],
+) -> util::State {
+    let sparse_hints = initial_state.sparse_median_hints_for_headers(headers, dense_hints);
+    util::compute_final_state_with_hints(initial_state, headers, &sparse_hints)
 }
 
 fn pcs(verifier_key: VerifierKeyDigest) -> ProofCarryingState {
@@ -183,7 +193,7 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
     let genesis_state = mainnet_genesis_state();
 
     let witness_first_epoch = db.load_header_batch_witness(1, FIRST_BOUNDARY_TIP_HEIGHT as u64);
-    let first_epoch_state = util::compute_final_state_with_hints(
+    let first_epoch_state = compute_final_state_with_dense_hints(
         &genesis_state,
         &witness_first_epoch.headers,
         &witness_first_epoch.median_time_past_hints,
@@ -206,7 +216,7 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
     }
 
     let witness_retarget = db.load_header_batch_witness(1, RETARGET_TIP_HEIGHT as u64);
-    let state = util::compute_final_state_with_hints(
+    let state = compute_final_state_with_dense_hints(
         &genesis_state,
         &witness_retarget.headers,
         &witness_retarget.median_time_past_hints,
@@ -251,7 +261,7 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
     }
 
     let witness_boundary = db.load_header_batch_witness(RETARGET_HEIGHT as u64, 1);
-    let boundary_state = util::compute_final_state_with_hints(
+    let boundary_state = compute_final_state_with_dense_hints(
         &state,
         &witness_boundary.headers,
         &witness_boundary.median_time_past_hints,
@@ -271,7 +281,7 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
     }
 
     let witness_pre_boundary = db.load_header_batch_witness(1, (RETARGET_HEIGHT - 2) as u64);
-    let pre_boundary_state = util::compute_final_state_with_hints(
+    let pre_boundary_state = compute_final_state_with_dense_hints(
         &genesis_state,
         &witness_pre_boundary.headers,
         &witness_pre_boundary.median_time_past_hints,
@@ -364,7 +374,7 @@ async fn test_recursive_chain_success() -> Result<(), String> {
     // Reconstruct the full state at height 10 from DB (needed for continuation witness).
     let genesis_state2 = mainnet_genesis_state();
     let witness_to_10 = db.load_header_batch_witness(1, 10);
-    let state1 = util::compute_final_state_with_hints(
+    let state1 = compute_final_state_with_dense_hints(
         &genesis_state2,
         &witness_to_10.headers,
         &witness_to_10.median_time_past_hints,
@@ -396,7 +406,7 @@ async fn test_error_recursive_on_failed_proof() -> Result<(), String> {
     let genesis_state = mainnet_genesis_state();
     let witness = open_db().load_header_batch_witness(1, 5);
 
-    let state_at_5 = util::compute_final_state_with_hints(
+    let state_at_5 = compute_final_state_with_dense_hints(
         &genesis_state,
         &witness.headers,
         &witness.median_time_past_hints,
@@ -433,7 +443,7 @@ async fn test_error_recursive_on_failed_proof() -> Result<(), String> {
 async fn test_error_recursive_on_tampered_state_witness() -> Result<(), String> {
     let genesis_state = mainnet_genesis_state();
     let witness = open_db().load_header_batch_witness(1, 5);
-    let state_at_5 = util::compute_final_state_with_hints(
+    let state_at_5 = compute_final_state_with_dense_hints(
         &genesis_state,
         &witness.headers,
         &witness.median_time_past_hints,
@@ -508,7 +518,7 @@ async fn test_pv_minimal_format() -> Result<(), String> {
 
     // Host-computed continuation digest must match.
     let genesis_state2 = mainnet_genesis_state();
-    let final_state = util::compute_final_state_with_hints(
+    let final_state = compute_final_state_with_dense_hints(
         &genesis_state2,
         &witness.headers,
         &witness.median_time_past_hints,
