@@ -159,10 +159,6 @@ async fn main() {
     println!("\nDone.");
 }
 
-// ============================================================================
-// Tests
-// ============================================================================
-
 async fn test_success_100_headers() -> Result<(), String> {
     let genesis_state = mainnet_genesis_state();
     let witness = open_db().load_header_batch_witness(1, 100);

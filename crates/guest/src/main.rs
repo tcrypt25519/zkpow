@@ -40,10 +40,6 @@ fn commit_minimal_pv(pv: &MinimalPublicValues) -> ! {
     sp1_zkvm::syscalls::syscall_halt(0)
 }
 
-// ============================================================================
-// Prior proof verification
-// ============================================================================
-
 #[tracked]
 fn verify_prior_proof(
     verifier_key: &VerifierKeyDigest,
