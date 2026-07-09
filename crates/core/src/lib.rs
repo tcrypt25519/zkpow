@@ -33,16 +33,36 @@ pub mod types;
 
 pub use types::{u256, BlockHash, BlockTimestamp, ChainWork, CompactTarget, Target};
 
+mod header;
+#[cfg(test)]
+use header::sha256_word_from_bytes;
+pub use header::{
+    header_first_sha256_block_words, header_second_sha256_block_words, Header, NewHeader,
+};
+
 mod state;
 #[doc(hidden)]
 pub use state::run_cycle_track;
 pub use state::State;
 
+mod errors;
+
+pub(crate) use errors::TargetError;
+pub use errors::{
+    InputError, MedianTimePastHintError, NewHeaderHintError, ParseError, PublicValuesParseError,
+};
+
 mod input;
 
 pub use input::{
     parse_median_hints, parse_new_headers, serialize_median_hints, serialize_new_headers,
-    InputError, MedianTimePastHintError, NewHeaderHintError, ProofCarryingState,
+    ProofCarryingState,
+};
+
+mod public_values;
+pub use public_values::{
+    ApplyFailure, Claim, ContinuationData, HeaderChainPublicValues, MinimalPublicValues,
+    ProofFailure, PublicValuesDigest, ValidationErrorCode, VerifierKeyDigest,
 };
 
 /// Size of the serialized [`State`] in bytes.
@@ -106,19 +126,6 @@ pub const MAINNET_GENESIS_HASH_RAW: [u8; 32] = [
     0x93, 0x1e, 0x83, 0x65, 0xe1, 0x5a, 0x08, 0x9c, 0x68, 0xd6, 0x19, 0x00, 0x00, 0x00, 0x00, 0x00,
 ];
 
-#[repr(C)]
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Header {
-    /// TODO: Make a newtype for Version.
-    /// The maximally correct underlying type is a NonZero<i32>
-    pub version: u32,
-    pub prev_blockhash: BlockHash,
-    pub merkle_root: [u8; 32],
-    pub timestamp: BlockTimestamp,
-    pub compact_target: CompactTarget,
-    pub nonce: u32,
-}
-
 /// The mainnet genesis block header (height 0). `prev_blockhash` is the zero
 /// hash; `merkle_root` is the genesis coinbase merkle root in internal
 /// (reversed-from-display) byte order.
@@ -134,21 +141,6 @@ pub const MAINNET_GENESIS_HEADER: Header = Header {
     compact_target: CompactTarget::new(GENESIS_NBITS),
     nonce: 2083236893,
 };
-
-impl Header {
-    /// Serialize to exactly [`BLOCK_HEADER_SIZE`] bytes.
-    #[must_use]
-    pub fn to_bytes(&self) -> [u8; BLOCK_HEADER_SIZE] {
-        copy_to_bytes(self)
-    }
-
-    /// Deserialize from exactly [`BLOCK_HEADER_SIZE`] bytes.
-    #[cfg(test)]
-    #[tracked]
-    pub fn parse(bytes: &[u8]) -> Result<Self, ParseError> {
-        copy_from_bytes(bytes)
-    }
-}
 
 /// Double-SHA256 (`SHA-256(SHA-256(data))`), computed on the host via the `sha2` crate.
 ///
@@ -177,114 +169,6 @@ pub fn chain_work_from_db_bytes(bytes: &[u8]) -> Option<ChainWork> {
     let mut arr: [u8; 32] = bytes.try_into().ok()?;
     arr.reverse();
     Some(ChainWork::from_le_bytes(arr))
-}
-
-/// Digest of a program verifier key.
-#[repr(transparent)]
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct VerifierKeyDigest([u32; 8]);
-
-impl VerifierKeyDigest {
-    #[must_use]
-    pub const fn from_raw(raw: [u32; 8]) -> Self {
-        Self(raw)
-    }
-
-    #[must_use]
-    pub const fn as_raw(&self) -> &[u32; 8] {
-        &self.0
-    }
-
-    #[must_use]
-    pub const fn into_raw(self) -> [u32; 8] {
-        self.0
-    }
-
-    #[must_use]
-    pub fn to_bytes(self) -> [u8; 32] {
-        let mut out = [0u8; 32];
-        for (i, word) in self.0.iter().enumerate() {
-            out[i * 4..(i + 1) * 4].copy_from_slice(&word.to_le_bytes());
-        }
-        out
-    }
-
-    #[must_use]
-    pub fn from_bytes(bytes: [u8; 32]) -> Self {
-        let mut words = [0u32; 8];
-        for (i, word) in words.iter_mut().enumerate() {
-            *word = u32::from_le_bytes(bytes[i * 4..(i + 1) * 4].try_into().unwrap());
-        }
-        Self(words)
-    }
-}
-
-impl From<[u32; 8]> for VerifierKeyDigest {
-    fn from(value: [u32; 8]) -> Self {
-        Self(value)
-    }
-}
-
-impl From<VerifierKeyDigest> for [u32; 8] {
-    fn from(value: VerifierKeyDigest) -> Self {
-        value.0
-    }
-}
-
-/// Digest of committed public values.
-#[repr(transparent)]
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct PublicValuesDigest([u8; 32]);
-
-impl PublicValuesDigest {
-    #[must_use]
-    pub const fn from_raw(raw: [u8; 32]) -> Self {
-        Self(raw)
-    }
-
-    #[must_use]
-    pub const fn as_raw(&self) -> &[u8; 32] {
-        &self.0
-    }
-
-    #[must_use]
-    pub const fn into_raw(self) -> [u8; 32] {
-        self.0
-    }
-}
-
-impl From<[u8; 32]> for PublicValuesDigest {
-    fn from(value: [u8; 32]) -> Self {
-        Self(value)
-    }
-}
-
-impl From<PublicValuesDigest> for [u8; 32] {
-    fn from(value: PublicValuesDigest) -> Self {
-        value.0
-    }
-}
-
-/// Parse errors for fixed-width serialized core types.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum ParseError {
-    #[error("invalid length: expected {expected}, got {actual}")]
-    InvalidLength { expected: usize, actual: usize },
-    #[error("misaligned input requires {required}-byte alignment")]
-    Misaligned { required: usize },
-    #[error("truncated input at offset {offset}: need {needed} bytes, got {actual}")]
-    Truncated {
-        offset: usize,
-        needed: usize,
-        actual: usize,
-    },
-}
-
-/// Target errors that occur during arithmetic
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum TargetError {
-    #[error("invalid target: can not be max u256")]
-    TargetTooLarge,
 }
 
 #[tracked]
@@ -344,512 +228,14 @@ pub(crate) fn slice_from_bytes<T>(bytes: &[u8]) -> Result<&[T], ParseError> {
     Ok(unsafe { slice::from_raw_parts(bytes.as_ptr() as *const T, bytes.len() / size_of::<T>()) })
 }
 
-/// Prover-supplied fields for a new header.
-#[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct NewHeader {
-    pub version: u32,
-    pub merkle_root: [u8; 32],
-    pub timestamp: BlockTimestamp,
-    pub nonce: u32,
-}
-
-impl NewHeader {
-    /// Extract the prover-supplied subset of fields from a full [`Header`].
-    #[must_use]
-    pub fn from_header(header: &Header) -> Self {
-        Self {
-            version: header.version,
-            merkle_root: header.merkle_root,
-            timestamp: header.timestamp,
-            nonce: header.nonce,
-        }
-    }
-
-    /// Parse a [`NewHeader`] from exactly [`NEW_HEADER_SIZE`] bytes.
-    #[cfg(test)]
-    #[tracked]
-    pub fn parse(bytes: &[u8]) -> Result<Self, ParseError> {
-        copy_from_bytes(bytes)
-    }
-
-    /// Serialize to exactly [`NEW_HEADER_SIZE`] bytes.
-    #[must_use]
-    pub fn to_bytes(&self) -> [u8; NEW_HEADER_SIZE] {
-        copy_to_bytes(self)
-    }
-
-    /// Materialize a full [`Header`] using authenticated chain context.
-    #[must_use]
-    pub fn into_header(self, prev_blockhash: BlockHash, compact_target: CompactTarget) -> Header {
-        Header {
-            version: self.version,
-            prev_blockhash,
-            merkle_root: self.merkle_root,
-            timestamp: self.timestamp,
-            compact_target,
-            nonce: self.nonce,
-        }
-    }
-}
-
-#[inline]
-const fn sha256_word_from_le_u32(value: u32) -> u64 {
-    value.swap_bytes() as u64
-}
-
-#[inline]
-const fn sha256_word_from_bytes(bytes: &[u8], word_index: usize) -> u64 {
-    let i = word_index * 4;
-    ((bytes[i] as u64) << 24)
-        | ((bytes[i + 1] as u64) << 16)
-        | ((bytes[i + 2] as u64) << 8)
-        | (bytes[i + 3] as u64)
-}
-
-/// Build the first SHA-256 block words for a Bitcoin header represented by
-/// disjoint prover/header-state fields.
-#[doc(hidden)]
-#[inline]
-pub fn header_first_sha256_block_words(
-    header: &NewHeader,
-    prev_blockhash: &BlockHash,
-) -> [u64; 64] {
-    let mut words = [0u64; 64];
-    words[0] = sha256_word_from_le_u32(header.version);
-    for i in 0..8 {
-        words[1 + i] = sha256_word_from_bytes(prev_blockhash.as_inner(), i);
-    }
-    for i in 0..7 {
-        words[9 + i] = sha256_word_from_bytes(&header.merkle_root, i);
-    }
-    words
-}
-
-/// Build the second SHA-256 block words for a Bitcoin header represented by
-/// disjoint prover/header-state fields.
-#[doc(hidden)]
-#[inline]
-pub fn header_second_sha256_block_words(
-    header: &NewHeader,
-    compact_target: CompactTarget,
-) -> [u64; 64] {
-    let mut words = [0u64; 64];
-    words[0] = sha256_word_from_bytes(&header.merkle_root, 7);
-    words[1] = sha256_word_from_le_u32(header.timestamp.into_inner());
-    words[2] = sha256_word_from_le_u32(compact_target.into_inner());
-    words[3] = sha256_word_from_le_u32(header.nonce);
-    words[4] = 0x80000000;
-    words[15] = 0x280;
-    words
-}
-
-// ============================================================================
-// Claim and ContinuationData types
-// ============================================================================
-
-/// The verifier-visible portion of a validated chain segment.
-#[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct Claim {
-    pub genesis_hash: BlockHash,
-    pub tip_hash: BlockHash,
-    pub chain_work: ChainWork,
-    pub height: u32,
-}
-
 /// Size of a serialized [`Claim`] in bytes.
 pub const CLAIM_SIZE: usize = 32 + 32 + 32 + 4;
-
-impl Claim {
-    #[must_use]
-    pub fn to_bytes(&self) -> [u8; CLAIM_SIZE] {
-        let mut out = [0u8; CLAIM_SIZE];
-        out[0..32].copy_from_slice(self.genesis_hash.to_le_bytes_slice());
-        out[32..64].copy_from_slice(self.tip_hash.to_le_bytes_slice());
-        out[64..96].copy_from_slice(self.chain_work.to_le_bytes_slice());
-        out[96..100].copy_from_slice(&self.height.to_le_bytes());
-        out
-    }
-
-    pub fn parse(bytes: &[u8]) -> Result<Self, ParseError> {
-        check_exact_len(bytes, CLAIM_SIZE)?;
-        let genesis_hash = BlockHash::new(bytes[0..32].try_into().unwrap());
-        let tip_hash = BlockHash::new(bytes[32..64].try_into().unwrap());
-        let chain_work = ChainWork::from_le_bytes(bytes[64..96].try_into().unwrap());
-        let height = u32::from_le_bytes(bytes[96..100].try_into().unwrap());
-        Ok(Self {
-            genesis_hash,
-            tip_hash,
-            chain_work,
-            height,
-        })
-    }
-}
-
-/// Continuation data carried forward at each proof step.
-///
-/// Committed only as a digest in the public values; the raw bytes are
-/// supplied as a private witness when extending to the next step.
-///
-/// Serialized without struct padding (52 bytes):
-/// ```text
-///  0..  4  current_nbits           u32 LE
-///  4..  8  epoch_start_timestamp   u32 LE
-///  8.. 52  timestamps              [u32; 11] LE
-/// ```
-#[repr(C)]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ContinuationData {
-    pub current_nbits: CompactTarget,
-    pub epoch_start_timestamp: BlockTimestamp,
-    pub timestamps: [BlockTimestamp; WINDOW_SIZE],
-}
 
 /// Size of the serialized [`ContinuationData`] in bytes (no padding).
 pub const CONTINUATION_DATA_SIZE: usize = 4 + 4 + 4 * WINDOW_SIZE;
 
-impl ContinuationData {
-    #[must_use]
-    pub fn from_state(state: &State) -> Self {
-        Self {
-            current_nbits: state.current_nbits,
-            epoch_start_timestamp: state.epoch_start_timestamp,
-            timestamps: state.timestamps,
-        }
-    }
-
-    #[must_use]
-    pub fn to_bytes(&self) -> [u8; CONTINUATION_DATA_SIZE] {
-        let mut out = [0u8; CONTINUATION_DATA_SIZE];
-        out[0..4].copy_from_slice(self.current_nbits.to_le_bytes_slice());
-        out[4..8].copy_from_slice(self.epoch_start_timestamp.to_le_bytes_slice());
-        for (i, ts) in self.timestamps.iter().enumerate() {
-            out[8 + i * 4..8 + (i + 1) * 4].copy_from_slice(ts.to_le_bytes_slice());
-        }
-        out
-    }
-
-    pub fn parse(bytes: &[u8]) -> Result<Self, ParseError> {
-        check_exact_len(bytes, CONTINUATION_DATA_SIZE)?;
-        let current_nbits = CompactTarget::new(u32::from_le_bytes(bytes[0..4].try_into().unwrap()));
-        let epoch_start_timestamp = BlockTimestamp::from_le_bytes(bytes[4..8].try_into().unwrap());
-        let mut timestamps = [BlockTimestamp::default(); WINDOW_SIZE];
-        for (i, ts) in timestamps.iter_mut().enumerate() {
-            *ts = BlockTimestamp::from_le_bytes(
-                bytes[8 + i * 4..8 + (i + 1) * 4].try_into().unwrap(),
-            );
-        }
-        Ok(Self {
-            current_nbits,
-            epoch_start_timestamp,
-            timestamps,
-        })
-    }
-}
-
-// ValidationState has been removed as it was only used in tests.
-
-/// Validation status emitted by the program on failure.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum ValidationErrorCode {
-    HeaderPayloadLengthInvalid = 1,
-    PowInsufficient = 2,
-    TimestampTooOld = 3,
-    GenesisHashMismatch = 4,
-}
-
-impl ValidationErrorCode {
-    /// Return the committed byte representation for the error code.
-    #[must_use]
-    pub const fn as_byte(self) -> u8 {
-        self as u8
-    }
-}
-
-impl core::fmt::Display for ValidationErrorCode {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str(match self {
-            Self::HeaderPayloadLengthInvalid => "Header payload length invalid",
-            Self::PowInsufficient => "PoW insufficient",
-            Self::TimestampTooOld => "Timestamp too old",
-            Self::GenesisHashMismatch => "Genesis hash mismatch",
-        })
-    }
-}
-
-impl TryFrom<u8> for ValidationErrorCode {
-    type Error = PublicValuesParseError;
-
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        match value {
-            1 => Ok(Self::HeaderPayloadLengthInvalid),
-            2 => Ok(Self::PowInsufficient),
-            3 => Ok(Self::TimestampTooOld),
-            4 => Ok(Self::GenesisHashMismatch),
-            _ => Err(PublicValuesParseError::UnknownErrorCode { code: value }),
-        }
-    }
-}
-
-/// Failure payload returned by [`State::apply_headers`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ApplyFailure {
-    pub last_valid_state: State,
-    pub error_code: ValidationErrorCode,
-    /// Absolute chain height of the failed header (last_valid_height + 1).
-    pub failure_height: u32,
-}
-
-/// Failure payload in committed public values.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProofFailure {
-    pub error_code: ValidationErrorCode,
-    /// Absolute chain height of the failed header (last_valid_height + 1).
-    pub failure_height: u32,
-}
-
-// ============================================================================
-// Minimal public values (Step 6)
-// ============================================================================
-
-/// Wire layout of the minimal public values committed by the prover.
-///
-/// Layout (169 bytes, little-endian):
-/// ```text
-///  0.. 32  genesis_hash        [u8; 32]
-/// 32.. 64  tip_hash            [u8; 32]
-/// 64.. 96  chain_work          [u8; 32]  (u256 LE)
-/// 96..100  height              u32 LE
-/// 100      return_code         u8  (0 = success, nonzero = failure)
-/// 101..105 failure_height      u32 LE  (0 on success)
-/// 105..137 continuation_digest [u8; 32]
-/// 137..169 verifier_key         [u8; 32]  ([u32; 8] LE words)
-/// ```
-///
-/// Serialized manually to avoid struct padding; use [`MinimalPublicValues::to_bytes`]
-/// and [`MinimalPublicValues::parse`] rather than transmuting.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MinimalPublicValues {
-    pub genesis_hash: BlockHash,
-    pub tip_hash: BlockHash,
-    pub chain_work: [u8; 32],
-    pub height: u32,
-    pub return_code: u8,
-    pub failure_height: u32,
-    pub continuation_digest: [u8; 32],
-    pub verifier_key: VerifierKeyDigest,
-}
-
 /// Size of the serialized [`MinimalPublicValues`] in bytes.
 pub const MINIMAL_PV_SIZE: usize = 32 + 32 + 32 + 4 + 1 + 4 + 32 + 32; // = 169
-
-impl MinimalPublicValues {
-    /// Build success public values from a public claim and continuation digest.
-    #[must_use]
-    pub fn success(
-        claim: &Claim,
-        continuation_digest: [u8; 32],
-        verifier_key: VerifierKeyDigest,
-    ) -> Self {
-        Self {
-            genesis_hash: claim.genesis_hash,
-            tip_hash: claim.tip_hash,
-            chain_work: claim.chain_work.to_le_bytes(),
-            height: claim.height,
-            return_code: 0,
-            failure_height: 0,
-            continuation_digest,
-            verifier_key,
-        }
-    }
-
-    /// Build failure public values from a public claim, error, and continuation digest.
-    #[must_use]
-    pub fn failure(
-        claim: &Claim,
-        error_code: ValidationErrorCode,
-        failure_height: u32,
-        continuation_digest: [u8; 32],
-        verifier_key: VerifierKeyDigest,
-    ) -> Self {
-        Self {
-            genesis_hash: claim.genesis_hash,
-            tip_hash: claim.tip_hash,
-            chain_work: claim.chain_work.to_le_bytes(),
-            height: claim.height,
-            return_code: error_code.as_byte(),
-            failure_height,
-            continuation_digest,
-            verifier_key,
-        }
-    }
-
-    /// Serialize to exactly [`MINIMAL_PV_SIZE`] bytes (no padding).
-    #[must_use]
-    pub fn to_bytes(&self) -> [u8; MINIMAL_PV_SIZE] {
-        let mut out = [0u8; MINIMAL_PV_SIZE];
-        out[0..32].copy_from_slice(self.genesis_hash.to_le_bytes_slice());
-        out[32..64].copy_from_slice(self.tip_hash.to_le_bytes_slice());
-        out[64..96].copy_from_slice(&self.chain_work);
-        out[96..100].copy_from_slice(&self.height.to_le_bytes());
-        out[100] = self.return_code;
-        out[101..105].copy_from_slice(&self.failure_height.to_le_bytes());
-        out[105..137].copy_from_slice(&self.continuation_digest);
-        out[137..169].copy_from_slice(&self.verifier_key.to_bytes());
-        out
-    }
-
-    /// Deserialize from exactly [`MINIMAL_PV_SIZE`] bytes.
-    pub fn parse(bytes: &[u8]) -> Result<Self, PublicValuesParseError> {
-        if bytes.len() != MINIMAL_PV_SIZE {
-            return Err(PublicValuesParseError::InvalidLength {
-                actual: bytes.len(),
-            });
-        }
-        let genesis_hash = BlockHash::new(bytes[0..32].try_into().unwrap());
-        let tip_hash = BlockHash::new(bytes[32..64].try_into().unwrap());
-        let chain_work: [u8; 32] = bytes[64..96].try_into().unwrap();
-        let height = u32::from_le_bytes(bytes[96..100].try_into().unwrap());
-        let return_code = bytes[100];
-        let failure_height = u32::from_le_bytes(bytes[101..105].try_into().unwrap());
-        let continuation_digest: [u8; 32] = bytes[105..137].try_into().unwrap();
-        let verifier_key = VerifierKeyDigest::from_bytes(bytes[137..169].try_into().unwrap());
-        Ok(Self {
-            genesis_hash,
-            tip_hash,
-            chain_work,
-            height,
-            return_code,
-            failure_height,
-            continuation_digest,
-            verifier_key,
-        })
-    }
-
-    /// Extract the chain work as a [`ChainWork`].
-    #[must_use]
-    pub fn chain_work(&self) -> ChainWork {
-        ChainWork::from_le_bytes(self.chain_work)
-    }
-
-    /// Return the error code if this is a failure, or `None` on success.
-    pub fn error_code(&self) -> Option<Result<ValidationErrorCode, PublicValuesParseError>> {
-        if self.return_code == 0 {
-            None
-        } else {
-            Some(ValidationErrorCode::try_from(self.return_code))
-        }
-    }
-}
-
-/// Typed public values committed by the prover.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum HeaderChainPublicValues {
-    Success {
-        claim: Claim,
-        continuation_digest: [u8; 32],
-        verifier_key: VerifierKeyDigest,
-    },
-    Failure {
-        failure: ProofFailure,
-        last_valid_claim: Claim,
-        continuation_digest: [u8; 32],
-        verifier_key: VerifierKeyDigest,
-    },
-}
-
-impl HeaderChainPublicValues {
-    /// Parse committed public values from the minimal 169-byte format.
-    pub fn parse(bytes: &[u8]) -> Result<Self, PublicValuesParseError> {
-        let pv = MinimalPublicValues::parse(bytes)?;
-        let claim = Claim {
-            genesis_hash: pv.genesis_hash,
-            tip_hash: pv.tip_hash,
-            chain_work: pv.chain_work(),
-            height: pv.height,
-        };
-        if pv.return_code == 0 {
-            Ok(Self::Success {
-                claim,
-                continuation_digest: pv.continuation_digest,
-                verifier_key: pv.verifier_key,
-            })
-        } else {
-            let error_code = ValidationErrorCode::try_from(pv.return_code)?;
-            Ok(Self::Failure {
-                failure: ProofFailure {
-                    error_code,
-                    failure_height: pv.failure_height,
-                },
-                last_valid_claim: claim,
-                continuation_digest: pv.continuation_digest,
-                verifier_key: pv.verifier_key,
-            })
-        }
-    }
-
-    /// Borrow the public claim regardless of success or failure.
-    #[must_use]
-    pub fn claim(&self) -> &Claim {
-        match self {
-            Self::Success { claim, .. } => claim,
-            Self::Failure {
-                last_valid_claim, ..
-            } => last_valid_claim,
-        }
-    }
-
-    /// Return the continuation digest.
-    #[must_use]
-    pub fn continuation_digest(&self) -> &[u8; 32] {
-        match self {
-            Self::Success {
-                continuation_digest,
-                ..
-            } => continuation_digest,
-            Self::Failure {
-                continuation_digest,
-                ..
-            } => continuation_digest,
-        }
-    }
-
-    /// Return the verifier-key digest committed by the proof.
-    #[must_use]
-    pub fn verifier_key(&self) -> &VerifierKeyDigest {
-        match self {
-            Self::Success { verifier_key, .. } | Self::Failure { verifier_key, .. } => verifier_key,
-        }
-    }
-}
-
-/// Parse errors for committed public values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PublicValuesParseError {
-    InvalidLength { actual: usize },
-    UnknownErrorCode { code: u8 },
-}
-
-impl core::fmt::Display for PublicValuesParseError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::InvalidLength { actual } => {
-                write!(
-                    f,
-                    "invalid public values length: expected {}, got {}",
-                    MINIMAL_PV_SIZE, actual
-                )
-            }
-            Self::UnknownErrorCode { code } => {
-                write!(f, "unknown validation error code: {}", code)
-            }
-        }
-    }
-}
-
-impl core::error::Error for PublicValuesParseError {}
 
 /// Convert a full 256-bit target into compact `bits` encoding.
 #[must_use]
@@ -917,44 +303,6 @@ pub fn target_from_bits(compact_target: CompactTarget) -> Target {
 #[tracked]
 pub fn check_proof_of_work(hash: BlockHash, target: Target) -> bool {
     u256::from_le_bytes(*hash.as_inner()) <= *target.as_inner()
-}
-
-impl core::ops::Add for ChainWork {
-    type Output = Self;
-
-    #[tracked]
-    fn add(self, rhs: Self) -> Self::Output {
-        let a = self.as_limbs();
-        let b = rhs.as_limbs();
-        let mut result = [0u64; 4];
-        let mut carry = 0u128;
-        for i in 0..4 {
-            let sum = (a[i] as u128) + (b[i] as u128) + carry;
-            result[i] = sum as u64;
-            carry = sum >> 64;
-        }
-        ChainWork::from_limbs(result)
-    }
-}
-
-impl core::ops::Mul<u32> for ChainWork {
-    type Output = Self;
-
-    #[tracked]
-    fn mul(self, rhs: u32) -> Self::Output {
-        let limbs = self.as_limbs();
-        let mut result = [0u64; 4];
-        let mut carry = 0u128;
-        let multiplier = rhs as u128;
-
-        for i in 0..4 {
-            let product = (limbs[i] as u128) * multiplier + carry;
-            result[i] = product as u64;
-            carry = product >> 64;
-        }
-
-        ChainWork::from_limbs(result)
-    }
 }
 
 /// Subtract `rhs` from `self` in place. Returns `true` if there was an underflow (borrow out).
@@ -1722,12 +1070,6 @@ mod tests {
         assert_eq!(state.timestamps, expected);
     }
 
-    // =========================================================================
-    // Step 3: Public claim and continuation type tests
-    // =========================================================================
-
-    // state_round_trips_through_validation_state has been removed since ValidationState is deleted.
-
     #[test]
     fn continuation_data_serializes_to_fixed_width() {
         let pcs = ContinuationData {
@@ -1771,10 +1113,6 @@ mod tests {
         let parsed = Claim::parse(&bytes).unwrap();
         assert_eq!(parsed, claim);
     }
-
-    // ---------------------------------------------------------------------
-    // Additional tests from TESTING_GAPS.md
-    // ---------------------------------------------------------------------
 
     // Difficulty retargeting edge cases using the pure helper. These represent
     // the extremes the state machine will clamp to during epoch transitions.
