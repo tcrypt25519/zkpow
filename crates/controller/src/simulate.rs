@@ -1,7 +1,7 @@
 use zkpow_core::{sha256d, BlockHash, BlockTimestamp, NewHeader, State};
 use zkpow_store::HeaderRecord;
 
-/// Simulate the zkVM program locally using the supplied median-time-past hints.
+/// Simulate the zkVM program locally using sparse median-time-past hints.
 pub fn compute_final_state_with_hints(
     initial_state: &State,
     headers: &[NewHeader],
@@ -28,7 +28,7 @@ pub fn records_to_new_headers(records: &[HeaderRecord]) -> Vec<NewHeader> {
         .collect()
 }
 
-/// Build the median-time-past witness hints from database header records.
+/// Extract dense database median-time-past values from header records.
 pub fn median_time_past_hints_from_records(records: &[HeaderRecord]) -> Vec<BlockTimestamp> {
     records
         .iter()

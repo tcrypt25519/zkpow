@@ -145,7 +145,7 @@ impl BatchSource for HttpControllerSource {
             .map_err(|err| format!("failed to parse headers_hex: {err}"))?
             .to_vec();
         let median_hints_bytes = Self::decode_hex_field(&value, "median_hints_hex")?;
-        let median_hints = util::parse_median_hints(&median_hints_bytes, headers.len())
+        let median_hints = util::parse_median_hints(&median_hints_bytes)
             .map_err(|err| format!("failed to parse median_hints_hex: {err}"))?
             .to_vec();
         let expected_state = match value.get("expected_state_hex") {

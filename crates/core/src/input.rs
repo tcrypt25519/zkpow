@@ -82,14 +82,11 @@ pub fn serialize_median_hints(medians: &[BlockTimestamp]) -> Vec<u8> {
 
 /// Parse median hints as a zero-copy slice reference.
 #[tracked]
-pub fn parse_median_hints(
-    bytes: &[u8],
-    expected_count: usize,
-) -> Result<&[BlockTimestamp], MedianTimePastHintError> {
-    let expected_len = expected_count * core::mem::size_of::<BlockTimestamp>();
-    if bytes.len() != expected_len {
+pub fn parse_median_hints(bytes: &[u8]) -> Result<&[BlockTimestamp], MedianTimePastHintError> {
+    let hint_size = core::mem::size_of::<BlockTimestamp>();
+    if !bytes.len().is_multiple_of(hint_size) {
         return Err(MedianTimePastHintError::PayloadLengthInvalid {
-            expected: expected_len,
+            expected: bytes.len().div_ceil(hint_size) * hint_size,
             actual: bytes.len(),
         });
     }
@@ -181,41 +178,20 @@ mod tests {
         ];
 
         let bytes = serialize_median_hints(&hints);
-        let parsed = parse_median_hints(&bytes, 3).unwrap();
+        let parsed = parse_median_hints(&bytes).unwrap();
 
         assert_eq!(parsed, hints.as_slice());
     }
 
     #[test]
     fn median_time_past_hints_reject_invalid_lengths() {
-        let one_hint = serialize_median_hints(&[BlockTimestamp::new(123)]);
-        let mut truncated_hint = one_hint.clone();
-        truncated_hint.pop();
-
-        let cases = [
-            (
-                "wrong hint count",
-                one_hint,
-                2,
-                MedianTimePastHintError::PayloadLengthInvalid {
-                    expected: 8,
-                    actual: 4,
-                },
-            ),
-            (
-                "truncated payload",
-                truncated_hint,
-                1,
-                MedianTimePastHintError::PayloadLengthInvalid {
-                    expected: 4,
-                    actual: 3,
-                },
-            ),
-        ];
-
-        for (name, bytes, expected_count, expected_error) in cases {
-            let err = parse_median_hints(&bytes, expected_count).unwrap_err();
-            assert_eq!(err, expected_error, "{name}");
-        }
+        let err = parse_median_hints(&[1, 2, 3]).unwrap_err();
+        assert_eq!(
+            err,
+            MedianTimePastHintError::PayloadLengthInvalid {
+                expected: 4,
+                actual: 3,
+            }
+        );
     }
 }

@@ -71,8 +71,8 @@ pub fn main() {
         let mut state = State::parse(&state_bytes).expect("state witness should parse");
         let header_hints =
             parse_new_headers(&header_hint_bytes).expect("new header hints should parse");
-        let median_hints = parse_median_hints(&median_hint_bytes, header_hints.len())
-            .expect("median time past hints should parse");
+        let median_hints =
+            parse_median_hints(&median_hint_bytes).expect("median time past hints should parse");
 
         if state.height > 0 {
             let prior_claim = state.public_claim();
