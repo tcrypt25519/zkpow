@@ -7,7 +7,7 @@
 use sp1_sdk::prelude::*;
 use sp1_sdk::{Elf, ProverClient, SP1Stdin};
 
-const ELF: Elf = include_elf!("test_hash_vectors");
+const ELF: Elf = include_elf!("guest_hash_vectors");
 const HEADER_SIZE: usize = 80;
 const HASH_SIZE: usize = 32;
 
@@ -71,6 +71,6 @@ async fn main() -> Result<(), String> {
         ));
     }
 
-    println!("test_hash_vectors: {} vectors ok", HEADER_HEX.len());
+    println!("host_hash_vectors: {} vectors ok", HEADER_HEX.len());
     Ok(())
 }

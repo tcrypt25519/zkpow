@@ -9,8 +9,8 @@ name = "zkpow-guest"
 path = "src/main.rs"
 
 [[bin]]
-name = "test_hash_vectors"
-path = "src/bin/test_hash_vectors.rs"
+name = "guest_hash_vectors"
+path = "src/bin/guest_hash_vectors.rs"
 
 [dependencies]
 zkpow-core = { workspace = true }
