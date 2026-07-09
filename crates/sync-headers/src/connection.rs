@@ -91,6 +91,68 @@ impl Command {
     }
 }
 
+/// Simplified version message structure.
+#[derive(Debug)]
+pub struct VersionMessage {
+    pub version: i32,
+    #[allow(dead_code)]
+    pub services: u64,
+    #[allow(dead_code)]
+    pub timestamp: i64,
+    #[allow(dead_code)]
+    pub receiver_services: u64,
+    #[allow(dead_code)]
+    pub sender_services: u64,
+    #[allow(dead_code)]
+    pub nonce: u64,
+    pub user_agent: String,
+    pub starting_height: i32,
+}
+
+impl Decodable for VersionMessage {
+    fn consensus_decode<D: bitcoin::io::Read + ?Sized>(
+        d: &mut D,
+    ) -> std::result::Result<Self, encode::Error> {
+        use bitcoin::io::Read as BitcoinRead;
+        let version = Decodable::consensus_decode(d)?;
+        let services = Decodable::consensus_decode(d)?;
+        let timestamp = Decodable::consensus_decode(d)?;
+        let receiver_services = Decodable::consensus_decode(d)?;
+
+        let mut _receiver_addr = [0u8; 18];
+        BitcoinRead::read_exact(d, &mut _receiver_addr)?;
+
+        let sender_services = Decodable::consensus_decode(d)?;
+
+        let mut _sender_addr = [0u8; 18];
+        BitcoinRead::read_exact(d, &mut _sender_addr)?;
+
+        let nonce = Decodable::consensus_decode(d)?;
+
+        let ua_len: encode::VarInt = Decodable::consensus_decode(d)?;
+        let mut ua_buf = vec![0u8; ua_len.0 as usize];
+        BitcoinRead::read_exact(d, &mut ua_buf)?;
+        let user_agent = String::from_utf8_lossy(&ua_buf).to_string();
+
+        let starting_height = Decodable::consensus_decode(d)?;
+
+        // Relay flag (1 byte) — present since protocol version 70001.
+        let mut _relay = [0u8; 1];
+        let _ = BitcoinRead::read_exact(d, &mut _relay);
+
+        Ok(VersionMessage {
+            version,
+            services,
+            timestamp,
+            receiver_services,
+            sender_services,
+            nonce,
+            user_agent,
+            starting_height,
+        })
+    }
+}
+
 /// A P2P connection to a Bitcoin peer.
 pub struct PeerConnection {
     stream: TcpStream,
@@ -294,67 +356,6 @@ fn bitcoin_to_core(bh: BitcoinHeader) -> CoreHeader {
 }
 
 /// Simplified version message structure.
-#[derive(Debug)]
-pub struct VersionMessage {
-    pub version: i32,
-    #[allow(dead_code)]
-    pub services: u64,
-    #[allow(dead_code)]
-    pub timestamp: i64,
-    #[allow(dead_code)]
-    pub receiver_services: u64,
-    #[allow(dead_code)]
-    pub sender_services: u64,
-    #[allow(dead_code)]
-    pub nonce: u64,
-    pub user_agent: String,
-    pub starting_height: i32,
-}
-
-impl Decodable for VersionMessage {
-    fn consensus_decode<D: bitcoin::io::Read + ?Sized>(
-        d: &mut D,
-    ) -> std::result::Result<Self, encode::Error> {
-        use bitcoin::io::Read as BitcoinRead;
-        let version = Decodable::consensus_decode(d)?;
-        let services = Decodable::consensus_decode(d)?;
-        let timestamp = Decodable::consensus_decode(d)?;
-        let receiver_services = Decodable::consensus_decode(d)?;
-
-        let mut _receiver_addr = [0u8; 18];
-        BitcoinRead::read_exact(d, &mut _receiver_addr)?;
-
-        let sender_services = Decodable::consensus_decode(d)?;
-
-        let mut _sender_addr = [0u8; 18];
-        BitcoinRead::read_exact(d, &mut _sender_addr)?;
-
-        let nonce = Decodable::consensus_decode(d)?;
-
-        let ua_len: encode::VarInt = Decodable::consensus_decode(d)?;
-        let mut ua_buf = vec![0u8; ua_len.0 as usize];
-        BitcoinRead::read_exact(d, &mut ua_buf)?;
-        let user_agent = String::from_utf8_lossy(&ua_buf).to_string();
-
-        let starting_height = Decodable::consensus_decode(d)?;
-
-        // Relay flag (1 byte) — present since protocol version 70001.
-        let mut _relay = [0u8; 1];
-        let _ = BitcoinRead::read_exact(d, &mut _relay);
-
-        Ok(VersionMessage {
-            version,
-            services,
-            timestamp,
-            receiver_services,
-            sender_services,
-            nonce,
-            user_agent,
-            starting_height,
-        })
-    }
-}
-
 fn io_error(e: encode::Error) -> std::io::Error {
     std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
 }

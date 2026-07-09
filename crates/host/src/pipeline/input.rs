@@ -34,6 +34,16 @@ pub const ENV_ZKPOW_CUDA_DEVICE_ID: &str = "ZKPOW_CUDA_DEVICE_ID";
 const DEFAULT_BATCH_SIZE: u32 = 2016;
 const DEFAULT_BATCH_COUNT: u32 = 500;
 
+#[derive(Debug, Clone)]
+pub struct S3ProofStoreConfig {
+    pub bucket: String,
+    pub region: String,
+    pub endpoint: String,
+    pub access_key: String,
+    pub secret_key: String,
+    pub prefix: String,
+}
+
 pub(crate) trait EnvSource {
     fn get(&self, var_name: &str) -> Result<String, VarError>;
 }
@@ -212,16 +222,6 @@ pub(crate) fn controller_url_from_source(source: &impl EnvSource) -> Option<Stri
 
 pub fn controller_url_from_env() -> Option<String> {
     controller_url_from_source(&ProcessEnv)
-}
-
-#[derive(Debug, Clone)]
-pub struct S3ProofStoreConfig {
-    pub bucket: String,
-    pub region: String,
-    pub endpoint: String,
-    pub access_key: String,
-    pub secret_key: String,
-    pub prefix: String,
 }
 
 pub(crate) fn s3_proof_store_config_from_source(
