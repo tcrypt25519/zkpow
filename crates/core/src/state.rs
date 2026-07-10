@@ -85,24 +85,6 @@ impl State {
         self.timestamps[self.current_timestamp_slot()]
     }
 
-    /// Whether this state has the full 11-block timestamp window needed by the
-    /// steady-state median-time-past path.
-    #[must_use]
-    fn has_full_timestamp_window(&self) -> bool {
-        self.height as usize >= WINDOW_SIZE - 1
-    }
-
-    /// Number of incoming headers that must stay on the cold, variable-window
-    /// path before the steady-state path can assume 11 timestamps exist.
-    #[must_use]
-    fn cold_header_count(&self, incoming_headers: usize) -> usize {
-        if self.has_full_timestamp_window() {
-            0
-        } else {
-            ((WINDOW_SIZE - 1) - self.height as usize).min(incoming_headers)
-        }
-    }
-
     /// Serialize to exactly [`STATE_SIZE`] bytes.
     #[must_use]
     pub fn to_bytes(&self) -> [u8; STATE_SIZE] {
@@ -225,18 +207,20 @@ impl State {
         );
 
         let mut projection = self.clone();
-        let cold_count = projection.cold_header_count(headers.len());
-        for header in &headers[..cold_count] {
+        let warm_start = (WINDOW_SIZE - 1)
+            .saturating_sub(projection.height as usize)
+            .min(headers.len());
+        for header in &headers[..warm_start] {
             projection.append_timestamp_for_projection(header.timestamp);
         }
 
         let mut sparse_hints = alloc::vec::Vec::new();
-        if cold_count == headers.len() {
+        if warm_start == headers.len() {
             return sparse_hints;
         }
 
         let mut ordered_run_len = projection.ordered_timestamp_suffix_len_warm();
-        for index in cold_count..headers.len() {
+        for index in warm_start..headers.len() {
             if ordered_run_len < WINDOW_SIZE {
                 sparse_hints.push(dense_median_hints[index]);
             }
@@ -377,8 +361,10 @@ impl State {
         F: FnMut(&NewHeader, &BlockHash, CompactTarget) -> BlockHash,
     {
         let mut context = HeaderApplyContext::new(self.current_nbits);
-        let cold_count = self.cold_header_count(headers.len());
-        let (cold_headers, warm_headers) = headers.split_at(cold_count);
+        let warm_start = (WINDOW_SIZE - 1)
+            .saturating_sub(self.height as usize)
+            .min(headers.len());
+        let (cold_headers, warm_headers) = headers.split_at(warm_start);
 
         for new_header in cold_headers {
             let claimed_median = self.median_time_past_cold();
@@ -398,7 +384,7 @@ impl State {
         };
 
         for (warm_index, new_header) in warm_headers.iter().enumerate() {
-            let header_index = cold_count + warm_index;
+            let header_index = warm_start + warm_index;
             let claimed_median = if ordered_run_len == WINDOW_SIZE {
                 self.median_time_past_ordered_warm()
             } else {
