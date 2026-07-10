@@ -8,6 +8,7 @@ pub fn connect_headers(anchor: &Tip, headers: &[Header]) -> Vec<ConnectedHeader>
     let mut height = anchor.height;
     let mut cumulative_work = anchor.chainwork;
     let mut timestamps = anchor.timestamps;
+    let mut ordered_timestamp_run = anchor.ordered_timestamp_run;
 
     // Host-side sync caches carried forward from the anchor and only re-derived
     // at retarget boundaries. Every header in between carries identical
@@ -28,6 +29,7 @@ pub fn connect_headers(anchor: &Tip, headers: &[Header]) -> Vec<ConnectedHeader>
 
         let hash = header.block_hash();
         let candidate_height = height + 1;
+        let previous_timestamp = timestamps[height as usize % WINDOW_SIZE];
 
         if candidate_height.is_multiple_of(EPOCH_LENGTH as u64) {
             let (_, target, work) = current_difficulty(header.inner.compact_target);
@@ -56,12 +58,18 @@ pub fn connect_headers(anchor: &Tip, headers: &[Header]) -> Vec<ConnectedHeader>
 
         cumulative_work = cumulative_work + active_work;
         height = candidate_height;
+        ordered_timestamp_run = if header.inner.timestamp.into_inner() >= previous_timestamp {
+            ordered_timestamp_run.saturating_add(1)
+        } else {
+            0
+        };
 
         connected.push(ConnectedHeader::new(
             header.clone(),
             height,
             cumulative_work,
             mtp,
+            ordered_timestamp_run,
         ));
         prev_hash = hash;
 
@@ -92,6 +100,7 @@ pub fn tip_from_connected(anchor: &Tip, connected: &[ConnectedHeader]) -> Tip {
         last.height,
         last.chainwork,
         timestamps,
+        last.ordered_timestamp_run,
         current_nbits,
         current_target,
         current_work,
@@ -176,6 +185,7 @@ mod tests {
             height,
             current_work,
             [2_000_000_000u32; WINDOW_SIZE],
+            height,
             current_nbits,
             current_target,
             current_work,
@@ -280,6 +290,7 @@ mod tests {
             0,
             current_work,
             timestamps,
+            0,
             current_nbits,
             current_target,
             current_work,
@@ -322,6 +333,10 @@ mod tests {
                 expected_mtp(height),
                 "height {height}: median_time_past"
             );
+            assert_eq!(
+                ch.ordered_timestamp_run, height,
+                "height {height}: ordered timestamp run"
+            );
         }
 
         // Spot-check the exact wrap boundary by hand, not just via the closed
@@ -333,5 +348,41 @@ mod tests {
         assert_eq!(connected[10].median_time_past, base + 5);
         assert_eq!(connected[11].height, 12);
         assert_eq!(connected[11].median_time_past, base + 6);
+    }
+
+    #[test]
+    fn connect_headers_resets_ordered_timestamp_run_on_timestamp_regression() {
+        let base = 2_000_000_000u32;
+        let (current_nbits, current_target, current_work) =
+            current_difficulty(CompactTarget::new(TRIVIAL_NBITS_A));
+        let anchor = Tip::new(
+            BlockHash::new([0xEF; 32]),
+            10,
+            current_work,
+            [
+                base,
+                base + 1,
+                base + 2,
+                base + 3,
+                base + 4,
+                base + 5,
+                base + 6,
+                base + 7,
+                base + 8,
+                base + 9,
+                base + 10,
+            ],
+            10,
+            current_nbits,
+            current_target,
+            current_work,
+        );
+
+        let regressing_header = mine_header(anchor.hash, TRIVIAL_NBITS_A, base + 7);
+        let connected = connect_headers(&anchor, std::slice::from_ref(&regressing_header));
+
+        assert_eq!(connected.len(), 1);
+        assert_eq!(connected[0].ordered_timestamp_run, 0);
+        assert_eq!(connected[0].median_time_past, base + 5);
     }
 }

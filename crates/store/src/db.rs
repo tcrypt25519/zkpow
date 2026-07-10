@@ -34,6 +34,14 @@ fn work_from_bytes(bytes: &[u8]) -> rusqlite::Result<ChainWork> {
     })
 }
 
+fn ordered_timestamp_run_from_db(height: u64, value: i64) -> u64 {
+    assert!(
+        value >= 0 && value as u64 <= height,
+        "invalid ordered_timestamp_run {value} at height {height}; rebuild or explicitly migrate headers.db"
+    );
+    value as u64
+}
+
 struct HeaderFields {
     version: u32,
     prev: [u8; HASH_LEN],
@@ -77,7 +85,8 @@ impl HeaderStore {
                 nonce           INTEGER NOT NULL,
                 height          INTEGER NOT NULL,
                 chainwork       BLOB NOT NULL,
-                median_time_past INTEGER NOT NULL DEFAULT 0
+                median_time_past INTEGER NOT NULL DEFAULT 0,
+                ordered_timestamp_run INTEGER NOT NULL CHECK (ordered_timestamp_run >= 0)
             );
             ",
         )?;
@@ -92,21 +101,39 @@ impl HeaderStore {
     }
 
     pub fn get_best_tip(&self) -> rusqlite::Result<Option<Tip>> {
-        let row: Option<(Vec<u8>, i64, Vec<u8>, i64)> = self
+        struct BestTipRow {
+            hash_bytes: Vec<u8>,
+            height: i64,
+            chainwork_bytes: Vec<u8>,
+            n_bits: i64,
+            ordered_timestamp_run: i64,
+        }
+
+        let row: Option<BestTipRow> = self
             .conn
             .query_row(
-                "SELECT block_hash, height, chainwork, n_bits FROM headers ORDER BY height DESC LIMIT 1",
+                "SELECT block_hash, height, chainwork, n_bits, ordered_timestamp_run FROM headers ORDER BY height DESC LIMIT 1",
                 [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                |row| {
+                    Ok(BestTipRow {
+                        hash_bytes: row.get(0)?,
+                        height: row.get(1)?,
+                        chainwork_bytes: row.get(2)?,
+                        n_bits: row.get(3)?,
+                        ordered_timestamp_run: row.get(4)?,
+                    })
+                },
             )
             .optional()?;
 
         match row {
-            Some((hash_bytes, height, chainwork_bytes, n_bits)) => {
-                let hash = hash_from_bytes(&hash_bytes)?;
-                let chainwork = work_from_bytes(&chainwork_bytes)?;
+            Some(row) => {
+                let hash = hash_from_bytes(&row.hash_bytes)?;
+                let chainwork = work_from_bytes(&row.chainwork_bytes)?;
+                let ordered_timestamp_run =
+                    ordered_timestamp_run_from_db(row.height as u64, row.ordered_timestamp_run);
                 let (current_nbits, current_target, current_work) =
-                    sync_headers::current_difficulty(CompactTarget::new(n_bits as u32));
+                    sync_headers::current_difficulty(CompactTarget::new(row.n_bits as u32));
 
                 let mut stmt = self.conn.prepare(
                     "SELECT height, timestamp FROM headers ORDER BY height DESC LIMIT ?1",
@@ -124,9 +151,10 @@ impl HeaderStore {
 
                 Ok(Some(Tip::new(
                     hash,
-                    height as u64,
+                    row.height as u64,
                     chainwork,
                     timestamps,
+                    ordered_timestamp_run,
                     current_nbits,
                     current_target,
                     current_work,
@@ -143,8 +171,8 @@ impl HeaderStore {
             let fields = header_fields(&ch.header.inner);
             tx.execute(
                 "INSERT OR IGNORE INTO headers
-                    (block_hash, prev, merkle_root, version, timestamp, n_bits, nonce, height, chainwork, median_time_past)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                    (block_hash, prev, merkle_root, version, timestamp, n_bits, nonce, height, chainwork, median_time_past, ordered_timestamp_run)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                 params![
                     hash_to_bytes(&ch.block_hash()),
                     fields.prev,
@@ -156,6 +184,7 @@ impl HeaderStore {
                     ch.height as i64,
                     work_to_bytes(&ch.chainwork),
                     ch.median_time_past as i64,
+                    ch.ordered_timestamp_run as i64,
                 ],
             )?;
         }
@@ -175,8 +204,8 @@ impl HeaderStore {
         let fields = header_fields(&genesis.header.inner);
         self.conn.execute(
             "INSERT OR IGNORE INTO headers
-                (block_hash, prev, merkle_root, version, timestamp, n_bits, nonce, height, chainwork, median_time_past)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0)",
+                (block_hash, prev, merkle_root, version, timestamp, n_bits, nonce, height, chainwork, median_time_past, ordered_timestamp_run)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, ?10)",
             params![
                 hash_to_bytes(&genesis.block_hash()),
                 fields.prev,
@@ -187,6 +216,7 @@ impl HeaderStore {
                 fields.nonce,
                 genesis.height as i64,
                 work_to_bytes(&genesis.chainwork),
+                genesis.ordered_timestamp_run as i64,
             ],
         )?;
         Ok(())
@@ -223,7 +253,7 @@ impl HeaderStore {
     pub fn load_header_records(&self, start_height: u64, count: u64) -> Vec<HeaderRecord> {
         const SQL: &str =
             "SELECT height, version, prev, merkle_root, timestamp, n_bits, nonce, chainwork, \
-             median_time_past FROM headers \
+             median_time_past, ordered_timestamp_run FROM headers \
              WHERE height >= ?1 AND height < ?2 ORDER BY height ASC";
 
         let mut stmt = self.conn.prepare_cached(SQL).expect("prepare");
@@ -238,8 +268,10 @@ impl HeaderStore {
                 let nonce: i64 = row.get(6)?;
                 let chainwork: Vec<u8> = row.get(7)?;
                 let median_time_past: i64 = row.get(8)?;
+                let ordered_timestamp_run: i64 = row.get(9)?;
+                let height = height as u64;
                 Ok(HeaderRecord {
-                    height: height as u64,
+                    height,
                     header: Header {
                         version: version as u32,
                         prev_blockhash: hash_from_bytes(&prev)?,
@@ -252,6 +284,10 @@ impl HeaderStore {
                     },
                     chain_work: work_from_bytes(&chainwork)?,
                     median_time_past: BlockTimestamp::new(median_time_past as u32),
+                    ordered_timestamp_run: ordered_timestamp_run_from_db(
+                        height,
+                        ordered_timestamp_run,
+                    ),
                 })
             })
             .expect("query");
@@ -276,18 +312,23 @@ impl HeaderStore {
 
     pub fn load_header_batch_witness(&self, start_height: u64, count: u64) -> HeaderBatchWitness {
         const SQL: &str =
-            "SELECT version, merkle_root, timestamp, nonce, median_time_past FROM headers \
-             WHERE height >= ?1 AND height < ?2 ORDER BY height ASC";
+            "SELECT h.height, h.version, h.merkle_root, h.timestamp, h.nonce, h.median_time_past, h.ordered_timestamp_run \
+             FROM headers h \
+             WHERE h.height >= ?1 AND h.height < ?2 ORDER BY h.height ASC";
 
         let mut stmt = self.conn.prepare_cached(SQL).expect("prepare");
         let rows = stmt
             .query_map(params![start_height, start_height + count], |row| {
-                let version: i64 = row.get(0)?;
-                let merkle_root: Vec<u8> = row.get(1)?;
-                let timestamp: i64 = row.get(2)?;
-                let nonce: i64 = row.get(3)?;
-                let median_time_past: i64 = row.get(4)?;
+                let height: i64 = row.get(0)?;
+                let version: i64 = row.get(1)?;
+                let merkle_root: Vec<u8> = row.get(2)?;
+                let timestamp: i64 = row.get(3)?;
+                let nonce: i64 = row.get(4)?;
+                let median_time_past: i64 = row.get(5)?;
+                let ordered_timestamp_run: i64 = row.get(6)?;
+                let height = height as u64;
                 Ok((
+                    height,
                     NewHeader {
                         version: version as u32,
                         merkle_root: merkle_root
@@ -297,16 +338,28 @@ impl HeaderStore {
                         nonce: nonce as u32,
                     },
                     BlockTimestamp::new(median_time_past as u32),
+                    ordered_timestamp_run_from_db(height, ordered_timestamp_run),
                 ))
             })
             .expect("query");
 
         let mut headers = Vec::with_capacity(count as usize);
         let mut median_time_past_hints = Vec::with_capacity(count as usize);
+        let mut previous_ordered_timestamp_run = if start_height == 0 {
+            0
+        } else {
+            self.load_header_record(start_height - 1)
+                .ordered_timestamp_run
+        };
         for row in rows {
-            let (h, m) = row.expect("row");
+            let (height, h, m, ordered_timestamp_run) = row.expect("row");
             headers.push(h);
-            median_time_past_hints.push(m);
+            if height >= WINDOW_SIZE as u64
+                && previous_ordered_timestamp_run < (WINDOW_SIZE as u64 - 1)
+            {
+                median_time_past_hints.push(m);
+            }
+            previous_ordered_timestamp_run = ordered_timestamp_run;
         }
         HeaderBatchWitness {
             headers,
@@ -351,6 +404,7 @@ pub struct HeaderRecord {
     pub header: Header,
     pub chain_work: ChainWork,
     pub median_time_past: BlockTimestamp,
+    pub ordered_timestamp_run: u64,
 }
 
 impl HeaderRecord {
@@ -419,7 +473,7 @@ mod tests {
 
     fn genesis_connected_header() -> ConnectedHeader {
         let header = SyncHeader::new(zkpow_core::MAINNET_GENESIS_HEADER);
-        ConnectedHeader::new(header, 0, zkpow_core::genesis_work(), 0)
+        ConnectedHeader::new(header, 0, zkpow_core::genesis_work(), 0, 0)
     }
 
     #[test]
@@ -449,6 +503,7 @@ mod tests {
                 "height",
                 "chainwork",
                 "median_time_past",
+                "ordered_timestamp_run",
             ]
         );
 
@@ -491,7 +546,7 @@ mod tests {
         let row = store
             .conn
             .query_row(
-                "SELECT block_hash, prev, merkle_root, version, timestamp, n_bits, nonce, height, chainwork, median_time_past
+                "SELECT block_hash, prev, merkle_root, version, timestamp, n_bits, nonce, height, chainwork, median_time_past, ordered_timestamp_run
                  FROM headers",
                 [],
                 |row| {
@@ -506,6 +561,7 @@ mod tests {
                         row.get::<_, i64>(7)?,
                         row.get::<_, Vec<u8>>(8)?,
                         row.get::<_, i64>(9)?,
+                        row.get::<_, i64>(10)?,
                     ))
                 },
             )
@@ -521,6 +577,7 @@ mod tests {
         assert_eq!(row.7, 0);
         assert_eq!(row.8, work_to_bytes(&genesis.chainwork));
         assert_eq!(row.9, 0);
+        assert_eq!(row.10, 0);
 
         assert_eq!(store.header_count().unwrap(), 1);
         assert_eq!(
@@ -530,6 +587,27 @@ mod tests {
 
         drop(store);
         remove_db_files(&path);
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid ordered_timestamp_run 1 at height 0")]
+    fn stale_ordered_timestamp_run_fails_before_witness_loading() {
+        let path = temp_db_path("invalid-ordered-run");
+        remove_db_files(&path);
+        let store = HeaderStore::open(path.to_str().unwrap()).unwrap();
+        let genesis = genesis_connected_header();
+
+        store.insert_genesis(&genesis).unwrap();
+        store
+            .conn
+            .execute("PRAGMA ignore_check_constraints = ON", [])
+            .unwrap();
+        store
+            .conn
+            .execute("UPDATE headers SET ordered_timestamp_run = 1", [])
+            .unwrap();
+
+        let _ = store.load_header_batch_witness(0, 1);
     }
 
     #[test]
@@ -563,7 +641,14 @@ mod tests {
             let work =
                 work_from_target(target_from_bits(inner.compact_target)).expect("valid target");
             cumulative_work = cumulative_work + work;
-            let ch = ConnectedHeader::new(header, i.into(), cumulative_work, mtp);
+            let ordered_timestamp_run = u64::from(i);
+            let ch = ConnectedHeader::new(
+                header,
+                i.into(),
+                cumulative_work,
+                mtp,
+                ordered_timestamp_run,
+            );
             headers.push(ch);
 
             window.push(inner.timestamp.into_inner());

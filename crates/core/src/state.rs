@@ -183,60 +183,6 @@ impl State {
         }
     }
 
-    fn append_timestamp_for_projection(&mut self, timestamp: BlockTimestamp) {
-        self.height += 1;
-        self.timestamps[self.current_timestamp_slot()] = timestamp;
-    }
-
-    /// Project dense database median-time-past values into the sparse witness
-    /// format consumed by [`State::apply_headers`].
-    ///
-    /// Cold, not-yet-full timestamp windows do not emit hints. Warm ordered
-    /// windows compute their median directly. A hint is emitted only when the
-    /// full 11-timestamp window is not ordered by chain height.
-    #[must_use]
-    pub fn sparse_median_hints_for_headers(
-        &self,
-        headers: &[NewHeader],
-        dense_median_hints: &[BlockTimestamp],
-    ) -> alloc::vec::Vec<BlockTimestamp> {
-        assert_eq!(
-            headers.len(),
-            dense_median_hints.len(),
-            "dense median hint count must match header count"
-        );
-
-        let mut projection = self.clone();
-        let warm_start = (WINDOW_SIZE - 1)
-            .saturating_sub(projection.height as usize)
-            .min(headers.len());
-        for header in &headers[..warm_start] {
-            projection.append_timestamp_for_projection(header.timestamp);
-        }
-
-        let mut sparse_hints = alloc::vec::Vec::new();
-        if warm_start == headers.len() {
-            return sparse_hints;
-        }
-
-        let mut ordered_run_len = projection.ordered_timestamp_suffix_len_warm();
-        for index in warm_start..headers.len() {
-            if ordered_run_len < WINDOW_SIZE {
-                sparse_hints.push(dense_median_hints[index]);
-            }
-
-            let previous_timestamp = projection.previous_timestamp();
-            projection.append_timestamp_for_projection(headers[index].timestamp);
-            Self::update_ordered_timestamp_suffix_len(
-                &mut ordered_run_len,
-                previous_timestamp,
-                headers[index].timestamp,
-            );
-        }
-
-        sparse_hints
-    }
-
     #[must_use]
     #[tracked]
     fn median_time_past_hinted_for_window(

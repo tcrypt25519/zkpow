@@ -78,14 +78,11 @@ impl Controller {
         }
         let loaded_count = witness.headers.len() as u32;
         let end_height = current_state.height + loaded_count;
-        let sparse_median_hints = current_state
-            .sparse_median_hints_for_headers(&witness.headers, &witness.median_time_past_hints);
 
         let (expected_state, expected_continuation_digest) = if simulate {
             let expected_state = self.simulate_expected_state(
                 current_state,
                 &witness.headers,
-                &sparse_median_hints,
                 &witness.median_time_past_hints,
                 first_new_height,
                 end_height,
@@ -98,7 +95,7 @@ impl Controller {
 
         Ok(FetchedBatch {
             headers: witness.headers,
-            median_hints: sparse_median_hints,
+            median_hints: witness.median_time_past_hints,
             expected_state,
             expected_continuation_digest,
             first_new_height,
@@ -111,7 +108,6 @@ impl Controller {
         current_state: &State,
         headers: &[NewHeader],
         median_hints: &[BlockTimestamp],
-        dense_median_hints: &[BlockTimestamp],
         first_new_height: u32,
         end_height: u32,
     ) -> Result<State, BoxError> {
@@ -124,12 +120,8 @@ impl Controller {
             return Ok(expected_state);
         }
 
-        let (bad_index, actual_state) = self.find_first_diverging_state(
-            current_state,
-            headers,
-            dense_median_hints,
-            first_new_height,
-        );
+        let (bad_index, actual_state) =
+            self.find_first_diverging_state(current_state, headers, median_hints, first_new_height);
 
         let bad_height = first_new_height + (bad_index as u32);
         let expected_claim = self
@@ -150,81 +142,62 @@ impl Controller {
         &self,
         current_state: &State,
         headers: &[NewHeader],
-        dense_median_hints: &[BlockTimestamp],
+        median_hints: &[BlockTimestamp],
         first_new_height: u32,
     ) -> (usize, State) {
         assert!(
             !headers.is_empty(),
             "find_first_diverging_state requires at least one header"
         );
-        assert_eq!(
-            headers.len(),
-            dense_median_hints.len(),
-            "dense median hint count must match header count"
-        );
 
         let mut replay_state = current_state.clone();
-        let mut replayed_states = Vec::new();
-        let mut lo = 0usize;
-        let mut hi = headers.len() - 1;
+        let records = self
+            .store
+            .load_header_records(first_new_height as u64, headers.len() as u64);
+        let mut previous_ordered_run = if first_new_height == 0 {
+            0
+        } else {
+            self.store
+                .load_header_record(first_new_height as u64 - 1)
+                .ordered_timestamp_run
+        };
+        let mut median_hint_index = 0usize;
 
-        while lo < hi {
-            let mid = lo + (hi - lo) / 2;
-            replay_states_through(
-                &mut replay_state,
-                &mut replayed_states,
-                headers,
-                dense_median_hints,
-                mid,
-            );
+        for (index, (header, record)) in headers.iter().zip(records.iter()).enumerate() {
+            let needs_hint = record.height >= zkpow_core::WINDOW_SIZE as u64
+                && previous_ordered_run < (zkpow_core::WINDOW_SIZE as u64 - 1);
+            let one_hint = if needs_hint {
+                let hint = &median_hints[median_hint_index..median_hint_index + 1];
+                median_hint_index += 1;
+                hint
+            } else {
+                &[]
+            };
 
-            let height = first_new_height + (mid as u32);
+            replay_state
+                .apply_headers(
+                    core::slice::from_ref(header),
+                    one_hint,
+                    |new_header, prev_blockhash, compact_target| {
+                        let header = (*new_header).into_header(*prev_blockhash, compact_target);
+                        BlockHash::new(sha256d(&header.to_bytes()))
+                    },
+                )
+                .unwrap_or_else(|err| {
+                    panic!("host state transition should succeed at header index {index}: {err:?}")
+                });
+
             let db_claim = self
                 .store
-                .load_public_claim(height as u64, self.genesis_hash);
-            if replayed_states[mid].public_claim() == db_claim {
-                lo = mid + 1;
-            } else {
-                hi = mid;
+                .load_public_claim(record.height, self.genesis_hash);
+            if replay_state.public_claim() != db_claim {
+                return (index, replay_state);
             }
+
+            previous_ordered_run = record.ordered_timestamp_run;
         }
 
-        replay_states_through(
-            &mut replay_state,
-            &mut replayed_states,
-            headers,
-            dense_median_hints,
-            lo,
-        );
-
-        (lo, replayed_states[lo].clone())
-    }
-}
-
-fn replay_states_through(
-    state: &mut State,
-    replayed_states: &mut Vec<State>,
-    headers: &[NewHeader],
-    dense_median_hints: &[BlockTimestamp],
-    target_index: usize,
-) {
-    while replayed_states.len() <= target_index {
-        let index = replayed_states.len();
-        let median_hints =
-            state.sparse_median_hints_for_headers(&[headers[index]], &[dense_median_hints[index]]);
-        state
-            .apply_headers(
-                &[headers[index]],
-                &median_hints,
-                |new_header, prev_blockhash, compact_target| {
-                    let header = (*new_header).into_header(*prev_blockhash, compact_target);
-                    BlockHash::new(sha256d(&header.to_bytes()))
-                },
-            )
-            .unwrap_or_else(|err| {
-                panic!("host state transition should succeed at header index {index}: {err:?}")
-            });
-        replayed_states.push(state.clone());
+        (headers.len() - 1, replay_state)
     }
 }
 
@@ -278,12 +251,13 @@ mod tests {
         let genesis = db.load_header_record(0);
         let genesis_hash = BlockHash::new(sha256d(&genesis.header.to_bytes()));
         let genesis_state = genesis_state_from_record(genesis, genesis_hash);
-        let records = db.load_header_records(1, 13);
-        let headers = records_to_new_headers(&records);
-        let dense_hints = median_time_past_hints_from_records(&records);
-        let hints = genesis_state.sparse_median_hints_for_headers(&headers, &dense_hints);
+        let witness = db.load_header_batch_witness(1, 13);
 
-        compute_final_state_with_hints(&genesis_state, &headers, &hints);
+        compute_final_state_with_hints(
+            &genesis_state,
+            &witness.headers,
+            &witness.median_time_past_hints,
+        );
     }
 
     #[test]
@@ -293,10 +267,7 @@ mod tests {
         let witness = db.load_header_batch_witness(1, 13);
 
         assert_eq!(witness.headers, records_to_new_headers(&records));
-        assert_eq!(
-            witness.median_time_past_hints,
-            median_time_past_hints_from_records(&records)
-        );
+        assert!(witness.median_time_past_hints.is_empty());
     }
 
     #[test]
@@ -306,11 +277,11 @@ mod tests {
         let genesis_hash = BlockHash::new(sha256d(&genesis.header.to_bytes()));
         let genesis_state = genesis_state_from_record(genesis, genesis_hash);
         let witness = db.load_header_batch_witness(1, 128);
-        let sparse_hints = genesis_state
-            .sparse_median_hints_for_headers(&witness.headers, &witness.median_time_past_hints);
-
-        let final_state =
-            compute_final_state_with_hints(&genesis_state, &witness.headers, &sparse_hints);
+        let final_state = compute_final_state_with_hints(
+            &genesis_state,
+            &witness.headers,
+            &witness.median_time_past_hints,
+        );
 
         assert_eq!(final_state.height, 128);
     }
@@ -320,22 +291,22 @@ mod tests {
         let db = open_db();
         let genesis = db.load_header_record(0);
         let genesis_hash = BlockHash::new(sha256d(&genesis.header.to_bytes()));
-        let mut state = genesis_state_from_record(genesis, genesis_hash);
-        let witness = db.load_header_batch_witness(1, 64);
+        let mut state = genesis_state_from_record(genesis.clone(), genesis_hash);
+        let records = db.load_header_records(1, 64);
+        let mut previous_ordered_run = genesis.ordered_timestamp_run;
 
-        for (index, (header, median_time_past)) in witness
-            .headers
-            .iter()
-            .copied()
-            .zip(witness.median_time_past_hints.iter().copied())
-            .enumerate()
-        {
-            let sparse_hints =
-                state.sparse_median_hints_for_headers(&[header], &[median_time_past]);
+        for (index, record) in records.iter().enumerate() {
+            let header = NewHeader::from_header(&record.header);
+            let needs_hint = record.height >= WINDOW_SIZE as u64
+                && previous_ordered_run < (WINDOW_SIZE as u64 - 1);
             state
                 .apply_headers(
                     &[header],
-                    &sparse_hints,
+                    if needs_hint {
+                        core::slice::from_ref(&record.median_time_past)
+                    } else {
+                        &[]
+                    },
                     |new_header, prev_blockhash, compact_target| {
                         let header = (*new_header).into_header(*prev_blockhash, compact_target);
                         BlockHash::new(sha256d(&header.to_bytes()))
@@ -345,6 +316,7 @@ mod tests {
             let height = (index as u32) + 1;
             let db_claim = db.load_public_claim(height as u64, genesis_hash);
             assert_eq!(state.public_claim(), db_claim);
+            previous_ordered_run = record.ordered_timestamp_run;
         }
     }
 
@@ -355,20 +327,22 @@ mod tests {
         let genesis_hash = BlockHash::new(sha256d(&genesis.header.to_bytes()));
         let genesis_state = genesis_state_from_record(genesis, genesis_hash);
         let witness_1 = db.load_header_batch_witness(1, 40319);
-        let sparse_hints_1 = genesis_state
-            .sparse_median_hints_for_headers(&witness_1.headers, &witness_1.median_time_past_hints);
-        let state =
-            compute_final_state_with_hints(&genesis_state, &witness_1.headers, &sparse_hints_1);
+        let state = compute_final_state_with_hints(
+            &genesis_state,
+            &witness_1.headers,
+            &witness_1.median_time_past_hints,
+        );
         let pre_boundary_nbits = db.load_compact_target(40319);
 
         assert_eq!(state.height, 40319);
         assert_eq!(state.current_nbits, pre_boundary_nbits);
 
         let witness_2 = db.load_header_batch_witness(40320, 1);
-        let sparse_hints_2 = state
-            .sparse_median_hints_for_headers(&witness_2.headers, &witness_2.median_time_past_hints);
-        let boundary_state =
-            compute_final_state_with_hints(&state, &witness_2.headers, &sparse_hints_2);
+        let boundary_state = compute_final_state_with_hints(
+            &state,
+            &witness_2.headers,
+            &witness_2.median_time_past_hints,
+        );
         assert_eq!(boundary_state.height, 40320);
         let boundary_nbits = db.load_compact_target(40320);
         assert_eq!(boundary_state.current_nbits, boundary_nbits);
@@ -408,10 +382,11 @@ mod tests {
                 InitialState::DbHeight(height) => db.state_at_height(height, genesis_hash),
             };
             let witness = db.load_header_batch_witness(record_start, record_count);
-            let sparse_hints = initial_state
-                .sparse_median_hints_for_headers(&witness.headers, &witness.median_time_past_hints);
-            let final_state =
-                compute_final_state_with_hints(&initial_state, &witness.headers, &sparse_hints);
+            let final_state = compute_final_state_with_hints(
+                &initial_state,
+                &witness.headers,
+                &witness.median_time_past_hints,
+            );
             let db_claim = db.load_public_claim(expected_height as u64, genesis_hash);
             let db_nbits = db.load_compact_target(expected_height as u64);
 
