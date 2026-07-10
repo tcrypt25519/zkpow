@@ -495,8 +495,7 @@ mod tests {
             timestamp: ts(timestamp),
             nonce: 7,
         };
-        let median_hint = median_time_past(state);
-        let median_hints = state.sparse_median_hints_for_headers(&[header], &[median_hint]);
+        let median_hints = median_hints_for_headers(state, &[header]);
         state
             .apply_headers(&[header], &median_hints, |_, _, _| zero_hash())
             .unwrap();
@@ -522,7 +521,51 @@ mod tests {
         headers: &[NewHeader],
     ) -> Vec<BlockTimestamp> {
         let dense_hints = dense_median_hints_for_headers(initial_state, headers);
-        initial_state.sparse_median_hints_for_headers(headers, &dense_hints)
+        let mut state = initial_state.clone();
+        let warm_start = (WINDOW_SIZE - 1)
+            .saturating_sub(state.height as usize)
+            .min(headers.len());
+        for header in &headers[..warm_start] {
+            state.height += 1;
+            state.timestamps[state.height as usize % WINDOW_SIZE] = header.timestamp;
+        }
+
+        let mut hints = Vec::new();
+        if warm_start == headers.len() {
+            return hints;
+        }
+
+        let mut ordered_run_len = {
+            let mut len = 1usize;
+            let mut newer = state.timestamps[state.height as usize % WINDOW_SIZE];
+            for offset in 1..WINDOW_SIZE {
+                let older =
+                    state.timestamps[(state.height as usize + WINDOW_SIZE - offset) % WINDOW_SIZE];
+                if older <= newer {
+                    len += 1;
+                    newer = older;
+                } else {
+                    break;
+                }
+            }
+            len
+        };
+        for index in warm_start..headers.len() {
+            if ordered_run_len < WINDOW_SIZE {
+                hints.push(dense_hints[index]);
+            }
+            let previous_timestamp = state.timestamps[state.height as usize % WINDOW_SIZE];
+            state.height += 1;
+            state.timestamps[state.height as usize % WINDOW_SIZE] = headers[index].timestamp;
+            if headers[index].timestamp >= previous_timestamp {
+                if ordered_run_len < WINDOW_SIZE {
+                    ordered_run_len += 1;
+                }
+            } else {
+                ordered_run_len = 1;
+            }
+        }
+        hints
     }
 
     fn failure_public_value_bytes(failure: &ApplyFailure) -> [u8; MINIMAL_PV_SIZE] {
@@ -877,9 +920,7 @@ mod tests {
 
         let mut sequential = test_state();
         for header in headers.iter().copied() {
-            let median_hint = median_time_past(&sequential);
-            let median_hints =
-                sequential.sparse_median_hints_for_headers(&[header], &[median_hint]);
+            let median_hints = median_hints_for_headers(&sequential, &[header]);
             sequential
                 .apply_headers(&[header], &median_hints, |_, _, _| zero_hash())
                 .expect("sequential validation should succeed");
@@ -1060,14 +1101,13 @@ mod tests {
             timestamps: original,
             ..State::default()
         };
-        let median_hint = median_time_past(&state);
         let header = NewHeader {
             version: 1,
             merkle_root: [0x22; 32],
             timestamp: ts(999),
             nonce: 7,
         };
-        let median_hints = state.sparse_median_hints_for_headers(&[header], &[median_hint]);
+        let median_hints = median_hints_for_headers(&state, &[header]);
         state
             .apply_headers(
                 &[header],
@@ -1202,14 +1242,13 @@ mod tests {
         // TimestampTooOld on equality to median (<= median should fail).
         let mut s2 = test_state();
         // First, accept a valid header to seed the window deterministically.
-        let median0 = median_time_past(&s2);
         let ok_hdr = NewHeader {
             version: 2,
             merkle_root: [0x33; 32],
             timestamp: ts(1),
             nonce: 9,
         };
-        let median_hints = s2.sparse_median_hints_for_headers(&[ok_hdr], &[median0]);
+        let median_hints = median_hints_for_headers(&s2, &[ok_hdr]);
         s2.apply_headers(&[ok_hdr], &median_hints, |_, _, _| zero_hash())
             .unwrap();
         let median_after_1 = median_time_past(&s2);
@@ -1219,7 +1258,7 @@ mod tests {
             timestamp: median_after_1,
             nonce: 10,
         };
-        let median_hints = s2.sparse_median_hints_for_headers(&[bad_hdr], &[median_after_1]);
+        let median_hints = median_hints_for_headers(&s2, &[bad_hdr]);
         let failure = s2
             .apply_headers(&[bad_hdr], &median_hints, |_, _, _| zero_hash())
             .expect_err("timestamp equal to median must fail");
@@ -1234,7 +1273,7 @@ mod tests {
             timestamp: ts(median_start.into_inner().wrapping_add(1)),
             nonce: 1,
         };
-        let median_hints = s3.sparse_median_hints_for_headers(&[odd_version_hdr], &[median_start]);
+        let median_hints = median_hints_for_headers(&s3, &[odd_version_hdr]);
         s3.apply_headers(&[odd_version_hdr], &median_hints, |_, _, _| zero_hash())
             .expect("unexpected failure due to version only");
     }
@@ -1254,7 +1293,7 @@ mod tests {
             timestamp: median,
             nonce: 1,
         };
-        let median_hints = state.sparse_median_hints_for_headers(&[hdr], &[median]);
+        let median_hints = median_hints_for_headers(&state, &[hdr]);
         let failure = state
             .apply_headers(&[hdr], &median_hints, |_, _, _| zero_hash())
             .expect_err("timestamp equal to median must fail");

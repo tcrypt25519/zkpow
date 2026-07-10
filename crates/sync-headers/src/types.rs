@@ -23,6 +23,9 @@ pub struct Tip {
     /// Ring buffer of the last (up to `WINDOW_SIZE`) block timestamps, slot
     /// `height % WINDOW_SIZE` — mirrors `zkpow_core::State::timestamps`.
     pub timestamps: [u32; WINDOW_SIZE],
+    /// Count of consecutive nondecreasing timestamp links ending at this tip.
+    /// Genesis has no predecessor, so its run is 0.
+    pub ordered_timestamp_run: u64,
     /// Difficulty bits/target/work active at `height`, cached by the sync path.
     /// Updated only at a retarget boundary (`height % EPOCH_LENGTH == 0`) and
     /// carried forward unchanged otherwise.
@@ -32,11 +35,13 @@ pub struct Tip {
 }
 
 impl Tip {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         hash: BlockHash,
         height: u64,
         chainwork: ChainWork,
         timestamps: [u32; WINDOW_SIZE],
+        ordered_timestamp_run: u64,
         current_nbits: CompactTarget,
         current_target: Target,
         current_work: ChainWork,
@@ -46,6 +51,7 @@ impl Tip {
             height,
             chainwork,
             timestamps,
+            ordered_timestamp_run,
             current_nbits,
             current_target,
             current_work,
@@ -60,6 +66,7 @@ impl Tip {
             height: 0,
             chainwork: genesis_work(),
             timestamps,
+            ordered_timestamp_run: 0,
             current_nbits: CompactTarget::new(GENESIS_NBITS),
             current_target: GENESIS_TARGET,
             current_work: genesis_work(),
@@ -106,15 +113,23 @@ pub struct ConnectedHeader {
     pub height: u64,
     pub chainwork: ChainWork,
     pub median_time_past: u32,
+    pub ordered_timestamp_run: u64,
 }
 
 impl ConnectedHeader {
-    pub fn new(header: Header, height: u64, chainwork: ChainWork, median_time_past: u32) -> Self {
+    pub fn new(
+        header: Header,
+        height: u64,
+        chainwork: ChainWork,
+        median_time_past: u32,
+        ordered_timestamp_run: u64,
+    ) -> Self {
         Self {
             header,
             height,
             chainwork,
             median_time_past,
+            ordered_timestamp_run,
         }
     }
 
