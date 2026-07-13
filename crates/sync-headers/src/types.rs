@@ -104,14 +104,9 @@ impl Header {
     }
 }
 
-/// A validated header connected to the chain with its computed position and
-/// cumulative work. Per-block work is computed in passing (to add into
-/// `chainwork`) but isn't stored — nothing reads it once accumulated, and
-/// `headers.db` has no column for it.
 #[derive(Debug, Clone)]
 pub struct ConnectedHeader {
     pub header: Header,
-    /// Hash computed while linking and checking this header's proof of work.
     pub block_hash: BlockHash,
     pub height: u64,
     pub chainwork: ChainWork,

@@ -86,6 +86,54 @@ pub fn timestamp_count(height: u64) -> usize {
     (height as usize + 1).min(WINDOW_SIZE)
 }
 
+#[must_use]
+pub const fn timestamp_slot(height: u64) -> usize {
+    height as usize % WINDOW_SIZE
+}
+
+#[must_use]
+pub const fn has_ordered_timestamp_window(ordered_timestamp_run: u64) -> bool {
+    ordered_timestamp_run >= (WINDOW_SIZE - 1) as u64
+}
+
+#[must_use]
+pub const fn advance_ordered_timestamp_run(
+    ordered_timestamp_run: u64,
+    previous_timestamp: u32,
+    timestamp: u32,
+) -> u64 {
+    if timestamp >= previous_timestamp {
+        ordered_timestamp_run.saturating_add(1)
+    } else {
+        0
+    }
+}
+
+#[must_use]
+pub fn ordered_timestamp_run(timestamps: &[BlockTimestamp; WINDOW_SIZE], height: u64) -> u64 {
+    let mut run = 0;
+    let mut newer = timestamps[timestamp_slot(height)];
+    for offset in 1..WINDOW_SIZE {
+        let older = timestamps[(timestamp_slot(height) + WINDOW_SIZE - offset) % WINDOW_SIZE];
+        if older > newer {
+            break;
+        }
+        run += 1;
+        newer = older;
+    }
+    run
+}
+
+#[must_use]
+pub const fn ordered_median_timestamp_slot(height: u64) -> usize {
+    (timestamp_slot(height) + WINDOW_SIZE - (WINDOW_SIZE / 2)) % WINDOW_SIZE
+}
+
+#[must_use]
+pub const fn requires_median_hint(height: u64, previous_ordered_timestamp_run: u64) -> bool {
+    height >= WINDOW_SIZE as u64 && !has_ordered_timestamp_window(previous_ordered_timestamp_run)
+}
+
 /// Number of blocks per difficulty retarget epoch.
 pub const EPOCH_LENGTH: u32 = 2016;
 
@@ -111,10 +159,6 @@ pub const GENESIS_NBITS: u32 = 0x1d00ffff;
 /// In LE limbs: limbs[3] = 0xFFFF0000, limbs[0..2] = 0.
 pub const GENESIS_TARGET: Target = Target::from_limbs([0, 0, 0, 0x0000_0000_FFFF_0000]);
 
-/// Work represented by the genesis block's target.
-///
-/// `floor(2^256 / (GENESIS_TARGET + 1))` is a protocol constant, so computing
-/// it through the generic 257-step divider at startup is needless work.
 pub const GENESIS_WORK: ChainWork = ChainWork::from_limbs([0x0000_0001_0001_0001, 0, 0, 0]);
 
 #[must_use]
@@ -532,33 +576,19 @@ mod tests {
             return hints;
         }
 
-        let mut ordered_run_len = {
-            let mut len = 0usize;
-            let mut newer = state.timestamps[state.height as usize % WINDOW_SIZE];
-            for offset in 1..WINDOW_SIZE {
-                let older =
-                    state.timestamps[(state.height as usize + WINDOW_SIZE - offset) % WINDOW_SIZE];
-                if older <= newer {
-                    len += 1;
-                    newer = older;
-                } else {
-                    break;
-                }
-            }
-            len
-        };
+        let mut ordered_run_len = ordered_timestamp_run(&state.timestamps, state.height.into());
         for index in warm_start..headers.len() {
-            if ordered_run_len < WINDOW_SIZE - 1 {
+            if !has_ordered_timestamp_window(ordered_run_len) {
                 hints.push(dense_hints[index]);
             }
             let previous_timestamp = state.timestamps[state.height as usize % WINDOW_SIZE];
             state.height += 1;
             state.timestamps[state.height as usize % WINDOW_SIZE] = headers[index].timestamp;
-            if headers[index].timestamp >= previous_timestamp {
-                ordered_run_len += 1;
-            } else {
-                ordered_run_len = 0;
-            }
+            ordered_run_len = advance_ordered_timestamp_run(
+                ordered_run_len,
+                previous_timestamp.into_inner(),
+                headers[index].timestamp.into_inner(),
+            );
         }
         hints
     }
