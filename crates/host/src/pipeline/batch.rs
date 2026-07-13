@@ -32,22 +32,16 @@ pub fn prepare_batch<S: BatchSource>(
     let current_state =
         resolve_current_state(trusted_start_height, source, previous_proof.as_ref())?;
     let fetched = timed_sync("fetch_batch", || -> Result<_, BoxError> {
-        source.fetch_batch(&current_state, num_headers, true)
+        source.fetch_batch(&current_state, num_headers)
     })?;
-    let expected_state = fetched
-        .expected_state
-        .expect("simulate=true always returns Some expected_state");
-    let expected_continuation_digest = fetched
-        .expected_continuation_digest
-        .expect("simulate=true always returns Some expected_continuation_digest");
 
     Ok(PreparedBatch {
         previous_proof,
         current_state,
         headers: fetched.headers,
         median_hints: fetched.median_hints,
-        expected_state,
-        expected_continuation_digest,
+        expected_state: fetched.expected_state,
+        expected_continuation_digest: fetched.expected_continuation_digest,
         first_new_height: fetched.first_new_height,
         end_height: fetched.end_height,
     })

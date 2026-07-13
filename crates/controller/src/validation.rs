@@ -1,7 +1,7 @@
 use zkpow_core::{sha256d, BlockHash, BlockTimestamp, NewHeader, State};
 use zkpow_store::HeaderRecord;
 
-/// Simulate the zkVM program locally using sparse median-time-past hints.
+/// Apply a batch locally with its sparse median-time-past hints.
 pub fn compute_final_state_with_hints(
     initial_state: &State,
     headers: &[NewHeader],
