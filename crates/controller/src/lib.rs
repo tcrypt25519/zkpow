@@ -11,8 +11,8 @@ pub use validation::{
 
 pub use diagnostics::format_claim_mismatch;
 pub use zkpow_core::{
-    serialize_median_hints, serialize_new_headers, sha256d, BlockHash, BlockTimestamp, NewHeader,
-    State,
+    serialize_median_hints, serialize_new_headers, sha256d, BlockHash, BlockTimestamp, Claim,
+    HeaderChainPublicValues, NewHeader, State,
 };
 pub use zkpow_store::{
     db_path, genesis_state_from_record, HeaderBatchWitness, HeaderRecord, HeaderStore,
@@ -22,15 +22,37 @@ pub type BoxError = Box<dyn std::error::Error + Send + Sync + 'static>;
 
 pub const NO_HEADERS_REMAINING_PREFIX: &str = "no headers remaining in database";
 
-/// Stateless source of chain data for a batch of headers, backed by a local SQLite database.
+/// Controller-owned batch session state.
+struct ControllerSession {
+    current_state: State,
+    pending: Option<PendingWork>,
+}
+
+struct PendingWork {
+    expected_state: State,
+    expected_continuation_digest: [u8; 32],
+}
+
+/// Initial state selected by the controller when beginning a session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionStart {
+    Genesis,
+    TrustedHeight(u32),
+    PriorPublicValues(Vec<u8>),
+}
+
+/// Controller state and its source database.
 pub struct Controller {
     store: HeaderStore,
     genesis_hash: BlockHash,
+    sessions: std::collections::HashMap<u64, ControllerSession>,
+    next_session_id: u64,
 }
 
 /// The data needed to build a batch's SP1 stdin witness and its controller-validated end state.
 #[derive(Debug)]
 pub struct FetchedBatch {
+    pub current_state: State,
     pub headers: Vec<NewHeader>,
     pub median_hints: Vec<BlockTimestamp>,
     pub expected_state: State,
@@ -44,11 +66,9 @@ impl Controller {
         Self {
             store,
             genesis_hash,
+            sessions: std::collections::HashMap::new(),
+            next_session_id: 1,
         }
-    }
-
-    pub fn genesis_hash(&self) -> BlockHash {
-        self.genesis_hash
     }
 
     /// Reconstruct full consensus state at an arbitrary height.
@@ -56,10 +76,121 @@ impl Controller {
         self.store.state_at_height(height, self.genesis_hash)
     }
 
-    /// Fetch and validate the next `num_headers` headers after `current_state`.
-    ///
-    /// Every batch is replayed against the DB-recorded claim before it reaches
-    /// the prover. The returned state and digest are therefore mandatory.
+    /// Begin a controller-owned proving session.
+    pub fn begin_session(&mut self, start: SessionStart) -> Result<u64, BoxError> {
+        let current_state = match start {
+            SessionStart::Genesis => self.state_at(0),
+            SessionStart::TrustedHeight(height) => self.state_at(height),
+            SessionStart::PriorPublicValues(bytes) => {
+                let prior =
+                    HeaderChainPublicValues::parse(&bytes).map_err(|err| err.to_string())?;
+                let claim = match prior {
+                    HeaderChainPublicValues::Success { claim, .. } => claim,
+                    HeaderChainPublicValues::Failure { failure, .. } => {
+                        return Err(format!(
+                            "previous proof ended in error: {} at height {}",
+                            failure.error_code, failure.failure_height
+                        )
+                        .into())
+                    }
+                };
+                if claim.genesis_hash != self.genesis_hash {
+                    return Err("previous proof genesis mismatch".into());
+                }
+                let state = self.state_at(claim.height);
+                if state.public_claim() != claim {
+                    return Err(format!(
+                        "db state mismatch at height {}:\n{}",
+                        claim.height,
+                        format_claim_mismatch(&claim, &state.public_claim())
+                    )
+                    .into());
+                }
+                state
+            }
+        };
+        let session_id = self.next_session_id;
+        self.next_session_id = self
+            .next_session_id
+            .checked_add(1)
+            .ok_or("controller session id exhausted")?;
+        self.sessions.insert(
+            session_id,
+            ControllerSession {
+                current_state,
+                pending: None,
+            },
+        );
+        Ok(session_id)
+    }
+
+    /// Return the next batch selected from the controller session's state.
+    pub fn next_work(
+        &mut self,
+        session_id: u64,
+        num_headers: u32,
+    ) -> Result<FetchedBatch, BoxError> {
+        let current_state = {
+            let session = self.session(session_id)?;
+            if session.pending.is_some() {
+                return Err("controller session has uncompleted work".into());
+            }
+            session.current_state.clone()
+        };
+        let batch = self.fetch_batch(&current_state, num_headers)?;
+        self.session_mut(session_id)?.pending = Some(PendingWork {
+            expected_state: batch.expected_state.clone(),
+            expected_continuation_digest: batch.expected_continuation_digest,
+        });
+        Ok(batch)
+    }
+
+    /// Accept guest execution or proof output and advance the controller session.
+    pub fn complete_work(&mut self, session_id: u64, public_values: &[u8]) -> Result<(), BoxError> {
+        let public_values =
+            HeaderChainPublicValues::parse(public_values).map_err(|err| err.to_string())?;
+        let session = self.session_mut(session_id)?;
+        let pending = session
+            .pending
+            .take()
+            .ok_or("controller session has no pending work")?;
+        match public_values {
+            HeaderChainPublicValues::Success {
+                claim,
+                continuation_digest,
+                ..
+            } if claim == pending.expected_state.public_claim()
+                && continuation_digest == pending.expected_continuation_digest =>
+            {
+                session.current_state = pending.expected_state;
+                Ok(())
+            }
+            HeaderChainPublicValues::Success { claim, .. } => Err(format!(
+                "guest public values mismatch:\n{}",
+                format_claim_mismatch(&pending.expected_state.public_claim(), &claim)
+            )
+            .into()),
+            HeaderChainPublicValues::Failure { failure, .. } => Err(format!(
+                "guest ended in error {} at height {}",
+                failure.error_code, failure.failure_height
+            )
+            .into()),
+        }
+    }
+
+    fn session(&self, session_id: u64) -> Result<&ControllerSession, BoxError> {
+        self.sessions
+            .get(&session_id)
+            .ok_or_else(|| format!("unknown controller session {session_id}").into())
+    }
+
+    fn session_mut(&mut self, session_id: u64) -> Result<&mut ControllerSession, BoxError> {
+        self.sessions
+            .get_mut(&session_id)
+            .ok_or_else(|| format!("unknown controller session {session_id}").into())
+    }
+
+    /// Fetch the next `num_headers` headers after `current_state`.
     pub fn fetch_batch(
         &self,
         current_state: &State,
@@ -78,16 +209,11 @@ impl Controller {
         let loaded_count = witness.headers.len() as u32;
         let end_height = current_state.height + loaded_count;
 
-        let expected_state = self.validate_expected_state(
-            current_state,
-            &witness.headers,
-            &witness.median_time_past_hints,
-            first_new_height,
-            end_height,
-        )?;
+        let expected_state = self.state_at(end_height);
         let expected_continuation_digest = continuation_digest_from_state(&expected_state);
 
         Ok(FetchedBatch {
+            current_state: current_state.clone(),
             headers: witness.headers,
             median_hints: witness.median_time_past_hints,
             expected_state,
@@ -95,103 +221,6 @@ impl Controller {
             first_new_height,
             end_height,
         })
-    }
-
-    fn validate_expected_state(
-        &self,
-        current_state: &State,
-        headers: &[NewHeader],
-        median_hints: &[BlockTimestamp],
-        first_new_height: u32,
-        end_height: u32,
-    ) -> Result<State, BoxError> {
-        let expected_state = compute_final_state_with_hints(current_state, headers, median_hints);
-        let db_end_claim = self
-            .store
-            .load_public_claim(end_height as u64, self.genesis_hash);
-
-        if expected_state.public_claim() == db_end_claim {
-            return Ok(expected_state);
-        }
-
-        let (bad_index, actual_state) =
-            self.find_first_diverging_state(current_state, headers, median_hints, first_new_height);
-
-        let bad_height = first_new_height + (bad_index as u32);
-        let expected_claim = self
-            .store
-            .load_public_claim(bad_height as u64, self.genesis_hash);
-        let actual_claim = actual_state.public_claim();
-
-        Err(format!(
-            "host simulation diverges from database\n  first bad header index in batch: {}\n  bad height: {}\n{}",
-            bad_index,
-            bad_height,
-            format_claim_mismatch(&actual_claim, &expected_claim),
-        )
-        .into())
-    }
-
-    fn find_first_diverging_state(
-        &self,
-        current_state: &State,
-        headers: &[NewHeader],
-        median_hints: &[BlockTimestamp],
-        first_new_height: u32,
-    ) -> (usize, State) {
-        assert!(
-            !headers.is_empty(),
-            "find_first_diverging_state requires at least one header"
-        );
-
-        let mut replay_state = current_state.clone();
-        let records = self
-            .store
-            .load_header_records(first_new_height as u64, headers.len() as u64);
-        let mut previous_ordered_run = if first_new_height == 0 {
-            0
-        } else {
-            self.store
-                .load_header_record(first_new_height as u64 - 1)
-                .ordered_timestamp_run
-        };
-        let mut median_hint_index = 0usize;
-
-        for (index, (header, record)) in headers.iter().zip(records.iter()).enumerate() {
-            let needs_hint = record.height >= zkpow_core::WINDOW_SIZE as u64
-                && previous_ordered_run < (zkpow_core::WINDOW_SIZE as u64 - 1);
-            let one_hint = if needs_hint {
-                let hint = &median_hints[median_hint_index..median_hint_index + 1];
-                median_hint_index += 1;
-                hint
-            } else {
-                &[]
-            };
-
-            replay_state
-                .apply_headers(
-                    core::slice::from_ref(header),
-                    one_hint,
-                    |new_header, prev_blockhash, compact_target| {
-                        let header = (*new_header).into_header(*prev_blockhash, compact_target);
-                        BlockHash::new(sha256d(&header.to_bytes()))
-                    },
-                )
-                .unwrap_or_else(|err| {
-                    panic!("host state transition should succeed at header index {index}: {err:?}")
-                });
-
-            let db_claim = self
-                .store
-                .load_public_claim(record.height, self.genesis_hash);
-            if replay_state.public_claim() != db_claim {
-                return (index, replay_state);
-            }
-
-            previous_ordered_run = record.ordered_timestamp_run;
-        }
-
-        (headers.len() - 1, replay_state)
     }
 }
 
@@ -417,5 +446,28 @@ mod tests {
 
         let err = controller.fetch_batch(&current_state, 0).unwrap_err();
         assert!(err.to_string().starts_with(NO_HEADERS_REMAINING_PREFIX));
+    }
+
+    #[test]
+    fn controller_session_advances_only_after_matching_public_values() {
+        let db = open_db();
+        let genesis = db.load_header_record(0);
+        let genesis_hash = BlockHash::new(sha256d(&genesis.header.to_bytes()));
+        let mut controller = Controller::new(db, genesis_hash);
+        let session = controller.begin_session(SessionStart::Genesis).unwrap();
+
+        let first = controller.next_work(session, 1).unwrap();
+        let public_values = zkpow_core::MinimalPublicValues::success(
+            &first.expected_state.public_claim(),
+            first.expected_continuation_digest,
+            zkpow_core::VerifierKeyDigest::default(),
+        )
+        .to_bytes();
+        controller.complete_work(session, &public_values).unwrap();
+
+        assert_eq!(
+            controller.next_work(session, 1).unwrap().first_new_height,
+            2
+        );
     }
 }

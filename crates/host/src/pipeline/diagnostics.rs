@@ -6,8 +6,6 @@ use crate::memory_monitor;
 use crate::pipeline::BoxError;
 use sp1_sdk::ExecutionReport;
 
-pub(crate) use zkpow_controller::format_claim_mismatch;
-
 static PHASE_TIMINGS: OnceLock<Mutex<HashMap<&'static str, PhaseTimingAccum>>> = OnceLock::new();
 
 #[derive(Debug, Clone)]

@@ -27,9 +27,9 @@ use proof::compressed::generate_compressed_proof;
 use proof::groth16::generate_groth16_proof;
 use proof::{get_prepared_prover, PreparedProver};
 use proof_store::{LocalProofStore, ProofStore, ResumePoint, S3ProofStore};
-use source::{BatchSource, HttpControllerSource, LocalControllerSource};
+use source::{ControllerClient, HttpControllerSource, LocalControllerSource};
 
-use zkpow_controller::{Controller, HeaderStore};
+use zkpow_controller::{Controller, HeaderStore, SessionStart};
 
 pub use diagnostics::log_execution_report;
 pub use diagnostics::PhaseTiming;
@@ -61,6 +61,7 @@ pub struct ProofGenerationConfig {
 
 #[derive(Debug)]
 pub struct ProofArtifacts {
+    pub public_values: Vec<u8>,
     pub compressed_path: Option<PathBuf>,
     pub groth16_path: Option<PathBuf>,
     pub compressed_proof: Option<SP1ProofWithPublicValues>,
@@ -185,8 +186,8 @@ pub async fn run_batch_session() -> Result<u32, BoxError> {
     }
 }
 
-async fn run_batch_session_with<S: BatchSource, P: ProofStore>(
-    source: S,
+async fn run_batch_session_with<S: ControllerClient, P: ProofStore>(
+    mut source: S,
     proof_store: P,
     mut batch_config: ProofGenerationConfig,
 ) -> Result<u32, BoxError> {
@@ -235,6 +236,15 @@ async fn run_batch_session_with<S: BatchSource, P: ProofStore>(
             }
         };
     let mut batch_count: u32 = 0;
+    let session_start = if let Some(path) = current_prev_proof.as_ref() {
+        let proof = SP1ProofWithPublicValues::load(path)?;
+        SessionStart::PriorPublicValues(proof.public_values.to_vec())
+    } else if let Some(height) = trusted_start_height {
+        SessionStart::TrustedHeight(height)
+    } else {
+        SessionStart::Genesis
+    };
+    source.begin_session(session_start)?;
 
     loop {
         if batch_count >= max_batches {
@@ -261,7 +271,7 @@ async fn run_batch_session_with<S: BatchSource, P: ProofStore>(
         );
         let batch_started = Instant::now();
 
-        let artifacts = match run_single_batch(&batch_config, &source).await {
+        let artifacts = match run_single_batch(&batch_config, &mut source).await {
             Ok(artifacts) => artifacts,
             Err(err) if is_header_exhaustion_error(&err) => {
                 tracing::info!(
@@ -279,6 +289,7 @@ async fn run_batch_session_with<S: BatchSource, P: ProofStore>(
         let end_height = artifacts.end_height;
         let before_prove_memory = artifacts.before_prove_sample;
         let batch_elapsed_secs = batch_started.elapsed().as_secs_f64();
+        source.complete_work(&artifacts.public_values)?;
         drop(artifacts);
 
         let end_memory = memory_monitor::log_point(
@@ -339,9 +350,9 @@ async fn run_batch_session_with<S: BatchSource, P: ProofStore>(
     Ok(batch_count)
 }
 
-pub async fn run_single_batch<S: BatchSource>(
+pub async fn run_single_batch<S: ControllerClient>(
     config: &ProofGenerationConfig,
-    source: &S,
+    source: &mut S,
 ) -> Result<ProofArtifacts, BoxError> {
     let action = if config.execute_only {
         "Starting execution"
@@ -438,9 +449,9 @@ fn log_prover_backend_selection(prover_backend: ProverBackend, cuda_device_id: O
     }
 }
 
-pub async fn generate_and_save_proofs<S: BatchSource>(
+pub async fn generate_and_save_proofs<S: ControllerClient>(
     config: &ProofGenerationConfig,
-    source: &S,
+    source: &mut S,
 ) -> Result<ProofArtifacts, BoxError> {
     if config.mode() != PipelineMode::ExecuteOnly {
         log_prover_backend_selection(config.prover_backend, config.cuda_device_id);
@@ -466,9 +477,9 @@ pub async fn generate_and_save_proofs<S: BatchSource>(
     }
 }
 
-async fn execute_without_setup<S: BatchSource>(
+async fn execute_without_setup<S: ControllerClient>(
     config: &ProofGenerationConfig,
-    source: &S,
+    source: &mut S,
 ) -> Result<ProofArtifacts, BoxError> {
     if config.prev_proof_path.is_some() {
         tracing::info!("Execute-only resume needs a previous proof witness; preparing prover");
@@ -483,12 +494,7 @@ async fn execute_without_setup<S: BatchSource>(
 
     clear_phase_timings();
     let overall_start = Instant::now();
-    let batch = prepare_batch(
-        config.prev_proof_path.as_ref(),
-        config.trusted_start_height,
-        config.num_headers,
-        source,
-    )?;
+    let batch = prepare_batch(config.prev_proof_path.as_ref(), config.num_headers, source)?;
     let prover = timed_async("build_mock_executor", || async {
         Ok::<_, BoxError>(ProverClient::builder().mock().build().await)
     })
@@ -515,13 +521,13 @@ async fn execute_without_setup<S: BatchSource>(
 
 async fn run_with_prover<S, P, K>(
     config: &ProofGenerationConfig,
-    source: &S,
+    source: &mut S,
     prover_name: &str,
     prover: &P,
     proving_key: &K,
 ) -> Result<ProofArtifacts, BoxError>
 where
-    S: BatchSource,
+    S: ControllerClient,
     P: Prover<ProvingKey = K>,
     K: ProvingKey,
     P::Error: std::fmt::Display + Send + Sync + 'static,
@@ -529,12 +535,7 @@ where
     clear_phase_timings();
     let overall_start = Instant::now();
 
-    let batch = prepare_batch(
-        config.prev_proof_path.as_ref(),
-        config.trusted_start_height,
-        config.num_headers,
-        source,
-    )?;
+    let batch = prepare_batch(config.prev_proof_path.as_ref(), config.num_headers, source)?;
 
     if config.mode() == PipelineMode::ExecuteOnly {
         let executed = execute_batch_with_prover(prover_name, prover, proving_key, &batch).await?;
@@ -576,6 +577,7 @@ where
     };
 
     Ok(ProofArtifacts {
+        public_values: compressed.compressed_proof.public_values.to_vec(),
         compressed_path: Some(compressed_path),
         groth16_path,
         compressed_proof: Some(compressed.compressed_proof),
@@ -596,6 +598,7 @@ impl ProofArtifacts {
         elapsed: std::time::Duration,
     ) -> Self {
         Self {
+            public_values: executed.expected_pv,
             compressed_path: None,
             groth16_path: None,
             compressed_proof: None,
