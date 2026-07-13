@@ -11,8 +11,8 @@ pub use validation::{
 
 pub use diagnostics::format_claim_mismatch;
 pub use zkpow_core::{
-    serialize_median_hints, serialize_new_headers, sha256d, BlockHash, BlockTimestamp, Claim,
-    HeaderChainPublicValues, NewHeader, State,
+    requires_median_hint, serialize_median_hints, serialize_new_headers, sha256d, BlockHash,
+    BlockTimestamp, Claim, HeaderChainPublicValues, NewHeader, State,
 };
 pub use zkpow_store::{
     db_path, genesis_state_from_record, HeaderBatchWitness, HeaderRecord, HeaderStore,
@@ -320,8 +320,7 @@ mod tests {
 
         for (index, record) in records.iter().enumerate() {
             let header = NewHeader::from_header(&record.header);
-            let needs_hint = record.height >= WINDOW_SIZE as u64
-                && previous_ordered_run < (WINDOW_SIZE as u64 - 1);
+            let needs_hint = requires_median_hint(record.height, previous_ordered_run);
             state
                 .apply_headers(
                     &[header],

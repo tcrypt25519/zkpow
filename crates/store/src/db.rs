@@ -7,8 +7,8 @@ use std::path::Path;
 use rusqlite::{params, Connection, OptionalExtension};
 use sync_headers::{ConnectedHeader, Tip};
 use zkpow_core::{
-    chain_work_from_db_bytes, chain_work_to_db_bytes, sha256d, BlockHash, BlockTimestamp,
-    ChainWork, Claim, CompactTarget, Header, NewHeader, State, WINDOW_SIZE,
+    chain_work_from_db_bytes, chain_work_to_db_bytes, requires_median_hint, sha256d, BlockHash,
+    BlockTimestamp, ChainWork, Claim, CompactTarget, Header, NewHeader, State, WINDOW_SIZE,
 };
 
 const HASH_LEN: usize = 32;
@@ -354,9 +354,7 @@ impl HeaderStore {
         for row in rows {
             let (height, h, m, ordered_timestamp_run) = row.expect("row");
             headers.push(h);
-            if height >= WINDOW_SIZE as u64
-                && previous_ordered_timestamp_run < (WINDOW_SIZE as u64 - 1)
-            {
+            if requires_median_hint(height, previous_ordered_timestamp_run) {
                 median_time_past_hints.push(m);
             }
             previous_ordered_timestamp_run = ordered_timestamp_run;

@@ -2,10 +2,12 @@
 compile_error!("zkpow wire types require a little-endian target");
 
 use crate::{
-    calculate_next_target_required, check_proof_of_work, copy_from_bytes, copy_to_bytes,
-    target_from_bits, tracked, work_from_target, ApplyFailure, BlockHash, BlockTimestamp,
-    ChainWork, Claim, CompactTarget, ContinuationData, NewHeader, ParseError, Target, TargetError,
-    ValidationErrorCode, CONTINUATION_DATA_SIZE, EPOCH_LENGTH, STATE_SIZE, WINDOW_SIZE,
+    advance_ordered_timestamp_run, calculate_next_target_required, check_proof_of_work,
+    copy_from_bytes, copy_to_bytes, has_ordered_timestamp_window, ordered_median_timestamp_slot,
+    ordered_timestamp_run, target_from_bits, timestamp_slot, tracked, work_from_target,
+    ApplyFailure, BlockHash, BlockTimestamp, ChainWork, Claim, CompactTarget, ContinuationData,
+    NewHeader, ParseError, Target, TargetError, ValidationErrorCode, CONTINUATION_DATA_SIZE,
+    EPOCH_LENGTH, STATE_SIZE, WINDOW_SIZE,
 };
 
 #[cfg(all(target_os = "zkvm", feature = "profiling"))]
@@ -54,7 +56,7 @@ impl State {
     /// The circular-buffer slot containing the current tip timestamp.
     #[must_use]
     fn current_timestamp_slot(&self) -> usize {
-        self.height as usize % WINDOW_SIZE
+        timestamp_slot(self.height.into())
     }
 
     #[must_use]
@@ -120,7 +122,7 @@ impl State {
         F: FnMut(&NewHeader, &BlockHash, CompactTarget) -> BlockHash,
     {
         let candidate_height = cycle_track!(self.height + 1);
-        let timestamp_slot = candidate_height as usize % WINDOW_SIZE;
+        let timestamp_slot = timestamp_slot(candidate_height.into());
 
         if cycle_track!({ new_header.timestamp <= claimed_median }) {
             return Err(ApplyFailure {
@@ -171,8 +173,8 @@ impl State {
             let cold_len = (WINDOW_SIZE - 1 - self.height as usize).min(headers.len());
             let mut context = EpochManager::new(self);
             for new_header in &headers[..cold_len] {
-                let median_index = (context.state.height as usize).div_ceil(2);
-                let claimed_median = context.state.timestamps[median_index];
+                let claimed_median =
+                    context.state.timestamps[(context.state.height as usize).div_ceil(2)];
                 if let Err(mut failure) = context.state.apply_header_after_median_check(
                     new_header,
                     claimed_median,
@@ -192,17 +194,9 @@ impl State {
         let mut median_hint_iter = median_hints.iter();
 
         if headers_consumed < headers.len() {
-            let mut ordered_run_len = 0;
-            let mut newer = cycle_track!({ self.previous_timestamp() });
-            for offset in 1..WINDOW_SIZE {
-                let older =
-                    self.timestamps[(self.height as usize + WINDOW_SIZE - offset) % WINDOW_SIZE];
-                if older > newer {
-                    break;
-                }
-                ordered_run_len += 1;
-                newer = older;
-            }
+            let mut ordered_run_len =
+                cycle_track!({ ordered_timestamp_run(&self.timestamps, self.height.into()) })
+                    as usize;
 
             while headers_consumed < headers.len() {
                 let mut context = EpochManager::new(self);
@@ -216,10 +210,9 @@ impl State {
 
                 for (chunk_index, new_header) in chunk_headers.iter().enumerate() {
                     let header_index = headers_consumed + chunk_index;
-                    let claimed_median = if ordered_run_len >= WINDOW_SIZE - 1 {
-                        context.state.timestamps[(context.state.height as usize + WINDOW_SIZE
-                            - (WINDOW_SIZE / 2))
-                            % WINDOW_SIZE]
+                    let claimed_median = if has_ordered_timestamp_window(ordered_run_len as u64) {
+                        context.state.timestamps
+                            [ordered_median_timestamp_slot(context.state.height.into())]
                     } else {
                         let claimed_median = *median_hint_iter.next().unwrap_or_else(|| {
                             panic!("missing median time past hint at header index {header_index}")
@@ -245,11 +238,11 @@ impl State {
                     };
 
                     let previous_timestamp = cycle_track!({ context.state.previous_timestamp() });
-                    ordered_run_len = if new_header.timestamp >= previous_timestamp {
-                        ordered_run_len + 1
-                    } else {
-                        0
-                    };
+                    ordered_run_len = advance_ordered_timestamp_run(
+                        ordered_run_len as u64,
+                        previous_timestamp.into_inner(),
+                        new_header.timestamp.into_inner(),
+                    ) as usize;
 
                     if let Err(mut failure) = context.state.apply_header_after_median_check(
                         new_header,

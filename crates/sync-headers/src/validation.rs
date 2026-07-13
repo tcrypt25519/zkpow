@@ -1,4 +1,7 @@
-use zkpow_core::{check_proof_of_work, EPOCH_LENGTH, WINDOW_SIZE};
+use zkpow_core::{
+    advance_ordered_timestamp_run, check_proof_of_work, has_ordered_timestamp_window,
+    ordered_median_timestamp_slot, timestamp_slot, EPOCH_LENGTH, WINDOW_SIZE,
+};
 
 use crate::types::{current_difficulty, ConnectedHeader, Header, Tip};
 
@@ -10,10 +13,6 @@ pub fn connect_headers(anchor: &Tip, headers: &[Header]) -> Vec<ConnectedHeader>
     let mut timestamps = anchor.timestamps;
     let mut ordered_timestamp_run = anchor.ordered_timestamp_run;
 
-    // Host-side sync caches carried forward from the anchor and only re-derived
-    // at retarget boundaries. Every header in between carries identical
-    // `compact_target`, so re-expanding the full 256-bit target and its work on
-    // every single header instead of once per 2016 is pure waste.
     let mut active_target = anchor.current_target;
     let mut active_work = anchor.current_work;
 
@@ -29,7 +28,7 @@ pub fn connect_headers(anchor: &Tip, headers: &[Header]) -> Vec<ConnectedHeader>
 
         let hash = header.block_hash();
         let candidate_height = height + 1;
-        let previous_timestamp = timestamps[height as usize % WINDOW_SIZE];
+        let previous_timestamp = timestamps[timestamp_slot(height)];
 
         if candidate_height.is_multiple_of(EPOCH_LENGTH as u64) {
             let (_, target, work) = current_difficulty(header.inner.compact_target);
@@ -43,9 +42,8 @@ pub fn connect_headers(anchor: &Tip, headers: &[Header]) -> Vec<ConnectedHeader>
         }
 
         let window_len = zkpow_core::timestamp_count(height);
-        let mtp = if window_len == WINDOW_SIZE && ordered_timestamp_run >= (WINDOW_SIZE - 1) as u64
-        {
-            timestamps[(height as usize + WINDOW_SIZE - (WINDOW_SIZE / 2)) % WINDOW_SIZE]
+        let mtp = if has_ordered_timestamp_window(ordered_timestamp_run) {
+            timestamps[ordered_median_timestamp_slot(height)]
         } else {
             let mut sorted = timestamps;
             sorted[..window_len].sort_unstable();
@@ -59,11 +57,11 @@ pub fn connect_headers(anchor: &Tip, headers: &[Header]) -> Vec<ConnectedHeader>
 
         cumulative_work = cumulative_work + active_work;
         height = candidate_height;
-        ordered_timestamp_run = if header.inner.timestamp.into_inner() >= previous_timestamp {
-            ordered_timestamp_run.saturating_add(1)
-        } else {
-            0
-        };
+        ordered_timestamp_run = advance_ordered_timestamp_run(
+            ordered_timestamp_run,
+            previous_timestamp,
+            header.inner.timestamp.into_inner(),
+        );
 
         connected.push(ConnectedHeader::new(
             header.clone(),
@@ -75,7 +73,7 @@ pub fn connect_headers(anchor: &Tip, headers: &[Header]) -> Vec<ConnectedHeader>
         ));
         prev_hash = hash;
 
-        timestamps[height as usize % WINDOW_SIZE] = header.inner.timestamp.into_inner();
+        timestamps[timestamp_slot(height)] = header.inner.timestamp.into_inner();
     }
 
     connected
@@ -84,14 +82,10 @@ pub fn connect_headers(anchor: &Tip, headers: &[Header]) -> Vec<ConnectedHeader>
 pub fn tip_from_connected(anchor: &Tip, connected: &[ConnectedHeader]) -> Tip {
     let last = connected.last().expect("non-empty slice");
 
-    // Only the last (up to) WINDOW_SIZE connected headers can still be in the
-    // window — anything earlier has already been overwritten by a later
-    // header landing in the same ring-buffer slot, so there's no need to walk
-    // the whole (possibly long) `connected` slice to reconstruct it.
     let mut timestamps = anchor.timestamps;
     let tail_start = connected.len().saturating_sub(WINDOW_SIZE);
     for ch in &connected[tail_start..] {
-        timestamps[ch.height as usize % WINDOW_SIZE] = ch.header.inner.timestamp.into_inner();
+        timestamps[timestamp_slot(ch.height)] = ch.header.inner.timestamp.into_inner();
     }
 
     let (current_nbits, current_target, current_work) =
