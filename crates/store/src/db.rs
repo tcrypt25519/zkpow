@@ -473,7 +473,8 @@ mod tests {
 
     fn genesis_connected_header() -> ConnectedHeader {
         let header = SyncHeader::new(zkpow_core::MAINNET_GENESIS_HEADER);
-        ConnectedHeader::new(header, 0, zkpow_core::genesis_work(), 0, 0)
+        let block_hash = header.block_hash();
+        ConnectedHeader::new(header, block_hash, 0, zkpow_core::genesis_work(), 0, 0)
     }
 
     #[test]
@@ -642,8 +643,10 @@ mod tests {
                 work_from_target(target_from_bits(inner.compact_target)).expect("valid target");
             cumulative_work = cumulative_work + work;
             let ordered_timestamp_run = u64::from(i);
+            let block_hash = header.block_hash();
             let ch = ConnectedHeader::new(
                 header,
+                block_hash,
                 i.into(),
                 cumulative_work,
                 mtp,

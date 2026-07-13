@@ -168,7 +168,7 @@ impl State {
         let mut headers_consumed = 0;
 
         if self.height < (WINDOW_SIZE - 1) as u32 {
-            let cold_len = ((WINDOW_SIZE - 1) as usize - self.height as usize).min(headers.len());
+            let cold_len = (WINDOW_SIZE - 1 - self.height as usize).min(headers.len());
             let mut context = EpochManager::new(self);
             for new_header in &headers[..cold_len] {
                 let median_index = (context.state.height as usize).div_ceil(2);

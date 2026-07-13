@@ -257,7 +257,6 @@ impl PeerConnection {
             .map_err(io_error2)?;
         for hash in locators {
             payload.extend_from_slice(hash.as_inner());
-            payload.extend_from_slice(&0u32.to_le_bytes());
         }
         payload.extend_from_slice(stop_hash.as_inner());
         self.write_message(Command::GetHeaders, &payload)

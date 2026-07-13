@@ -61,15 +61,16 @@ impl Tip {
     pub fn genesis(hash: BlockHash) -> Self {
         let mut timestamps = [0u32; WINDOW_SIZE];
         timestamps[0] = zkpow_core::MAINNET_GENESIS_HEADER.timestamp.into_inner();
+        let genesis_work = genesis_work();
         Self {
             hash,
             height: 0,
-            chainwork: genesis_work(),
+            chainwork: genesis_work,
             timestamps,
             ordered_timestamp_run: 0,
             current_nbits: CompactTarget::new(GENESIS_NBITS),
             current_target: GENESIS_TARGET,
-            current_work: genesis_work(),
+            current_work: genesis_work,
         }
     }
 }
@@ -110,6 +111,8 @@ impl Header {
 #[derive(Debug, Clone)]
 pub struct ConnectedHeader {
     pub header: Header,
+    /// Hash computed while linking and checking this header's proof of work.
+    pub block_hash: BlockHash,
     pub height: u64,
     pub chainwork: ChainWork,
     pub median_time_past: u32,
@@ -119,6 +122,7 @@ pub struct ConnectedHeader {
 impl ConnectedHeader {
     pub fn new(
         header: Header,
+        block_hash: BlockHash,
         height: u64,
         chainwork: ChainWork,
         median_time_past: u32,
@@ -126,6 +130,7 @@ impl ConnectedHeader {
     ) -> Self {
         Self {
             header,
+            block_hash,
             height,
             chainwork,
             median_time_past,
@@ -134,7 +139,7 @@ impl ConnectedHeader {
     }
 
     pub fn block_hash(&self) -> BlockHash {
-        self.header.block_hash()
+        self.block_hash
     }
 
     pub fn prev_blockhash(&self) -> BlockHash {
