@@ -3,10 +3,12 @@
 //! SQLite database directly.
 //!
 //! Routes:
-//!   GET  /genesis_hash                          -> {"genesis_hash_hex": "<64 hex chars>"}
-//!   GET  /state/{height}                         -> {"state_hex": "<hex>"}
-//!   POST /batch?num_headers=N&simulate=bool      -> body {"current_state_hex": "<hex>"}
-//!                                                    -> success/error envelope
+//!   GET  /genesis_hash                           -> 32 raw hash bytes
+//!   GET  /state/{height}                         -> 152 raw state bytes
+//!   POST /batch/{num_headers}                    -> raw state bytes
+//!                                                    -> binary batch frame
+//!
+//! Errors are plain-text bodies.
 //!
 //! Environment:
 //!   ZKPOW_DB_PATH          SQLite database path (default: headers.db at workspace root)

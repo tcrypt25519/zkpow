@@ -2,10 +2,10 @@ pub mod diagnostics;
 pub mod http;
 
 mod digest;
-mod simulate;
+mod validation;
 
 pub use digest::{continuation_digest, continuation_digest_from_state};
-pub use simulate::{
+pub use validation::{
     compute_final_state_with_hints, median_time_past_hints_from_records, records_to_new_headers,
 };
 
@@ -28,14 +28,13 @@ pub struct Controller {
     genesis_hash: BlockHash,
 }
 
-/// The data needed to build a batch's SP1 stdin witness, plus (optionally) the
-/// dry-run-derived expected end state for cross-checking against the proof's output.
+/// The data needed to build a batch's SP1 stdin witness and its controller-validated end state.
 #[derive(Debug)]
 pub struct FetchedBatch {
     pub headers: Vec<NewHeader>,
     pub median_hints: Vec<BlockTimestamp>,
-    pub expected_state: Option<State>,
-    pub expected_continuation_digest: Option<[u8; 32]>,
+    pub expected_state: State,
+    pub expected_continuation_digest: [u8; 32],
     pub first_new_height: u32,
     pub end_height: u32,
 }
@@ -57,14 +56,14 @@ impl Controller {
         self.store.state_at_height(height, self.genesis_hash)
     }
 
-    /// Fetch the next `num_headers` headers after `current_state`, optionally dry-running
-    /// them against the DB-recorded ground truth (`simulate`) to catch consensus-logic
-    /// divergence before it reaches the prover.
+    /// Fetch and validate the next `num_headers` headers after `current_state`.
+    ///
+    /// Every batch is replayed against the DB-recorded claim before it reaches
+    /// the prover. The returned state and digest are therefore mandatory.
     pub fn fetch_batch(
         &self,
         current_state: &State,
         num_headers: u32,
-        simulate: bool,
     ) -> Result<FetchedBatch, BoxError> {
         let first_new_height = current_state.height + 1;
         let witness = self
@@ -79,19 +78,14 @@ impl Controller {
         let loaded_count = witness.headers.len() as u32;
         let end_height = current_state.height + loaded_count;
 
-        let (expected_state, expected_continuation_digest) = if simulate {
-            let expected_state = self.simulate_expected_state(
-                current_state,
-                &witness.headers,
-                &witness.median_time_past_hints,
-                first_new_height,
-                end_height,
-            )?;
-            let digest = continuation_digest_from_state(&expected_state);
-            (Some(expected_state), Some(digest))
-        } else {
-            (None, None)
-        };
+        let expected_state = self.validate_expected_state(
+            current_state,
+            &witness.headers,
+            &witness.median_time_past_hints,
+            first_new_height,
+            end_height,
+        )?;
+        let expected_continuation_digest = continuation_digest_from_state(&expected_state);
 
         Ok(FetchedBatch {
             headers: witness.headers,
@@ -103,7 +97,7 @@ impl Controller {
         })
     }
 
-    fn simulate_expected_state(
+    fn validate_expected_state(
         &self,
         current_state: &State,
         headers: &[NewHeader],
@@ -407,25 +401,11 @@ mod tests {
         let controller = Controller::new(db, genesis_hash);
         let current_state = controller.state_at(0);
 
-        let fetched = controller.fetch_batch(&current_state, 1, true).unwrap();
+        let fetched = controller.fetch_batch(&current_state, 1).unwrap();
 
         assert_eq!(fetched.first_new_height, 1);
         assert_eq!(fetched.end_height, 1);
-        assert!(fetched.expected_state.is_some());
-        assert!(fetched.expected_continuation_digest.is_some());
-    }
-
-    #[test]
-    fn fetch_batch_without_simulate_skips_expected_state() {
-        let db = open_db();
-        let genesis_hash = BlockHash::new(sha256d(&db.load_header_record(0).header.to_bytes()));
-        let controller = Controller::new(db, genesis_hash);
-        let current_state = controller.state_at(0);
-
-        let fetched = controller.fetch_batch(&current_state, 1, false).unwrap();
-
-        assert!(fetched.expected_state.is_none());
-        assert!(fetched.expected_continuation_digest.is_none());
+        assert_eq!(fetched.expected_state.height, 1);
     }
 
     #[test]
@@ -435,7 +415,7 @@ mod tests {
         let controller = Controller::new(db, genesis_hash);
         let current_state = controller.state_at(2016);
 
-        let err = controller.fetch_batch(&current_state, 0, true).unwrap_err();
+        let err = controller.fetch_batch(&current_state, 0).unwrap_err();
         assert!(err.to_string().starts_with(NO_HEADERS_REMAINING_PREFIX));
     }
 }

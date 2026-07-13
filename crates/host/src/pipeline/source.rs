@@ -13,7 +13,6 @@ pub trait BatchSource {
         &self,
         current_state: &util::State,
         num_headers: u32,
-        simulate: bool,
     ) -> Result<FetchedBatch, BoxError>;
 }
 
@@ -40,15 +39,15 @@ impl BatchSource for LocalControllerSource {
         &self,
         current_state: &util::State,
         num_headers: u32,
-        simulate: bool,
     ) -> Result<FetchedBatch, BoxError> {
-        self.controller
-            .fetch_batch(current_state, num_headers, simulate)
+        self.controller.fetch_batch(current_state, num_headers)
     }
 }
 
 /// `BatchSource` backed by a remote `zkpow-controller-serve` HTTP server,
 /// for running the host on a different machine from the headers database.
+/// The controller transport is raw fixed-width bytes; it has no JSON or hex
+/// encoding layer.
 pub struct HttpControllerSource {
     base_url: String,
     client: reqwest::blocking::Client,
@@ -66,42 +65,38 @@ impl HttpControllerSource {
         }
     }
 
-    fn decode_hex_field(value: &serde_json::Value, field: &str) -> Result<Vec<u8>, BoxError> {
-        let hex_str = value
-            .get(field)
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| format!("response missing `{field}`"))?;
-        Ok(hex::decode(hex_str).map_err(|err| format!("invalid hex in `{field}`: {err}"))?)
+    fn get_bytes(&self, path: &str) -> Result<Vec<u8>, BoxError> {
+        let response = self
+            .client
+            .get(format!("{}{path}", self.base_url))
+            .send()
+            .map_err(|err| format!("controller request {path} failed: {err}"))?;
+        let status = response.status();
+        let bytes = response
+            .bytes()
+            .map_err(|err| format!("controller response {path} body read failed: {err}"))?;
+        if !status.is_success() {
+            return Err(String::from_utf8_lossy(&bytes).into_owned().into());
+        }
+        Ok(bytes.to_vec())
     }
 }
 
 impl BatchSource for HttpControllerSource {
     fn genesis_hash(&self) -> util::BlockHash {
-        let response: serde_json::Value = self
-            .client
-            .get(format!("{}/genesis_hash", self.base_url))
-            .send()
-            .unwrap_or_else(|err| panic!("genesis_hash request failed: {err}"))
-            .json()
-            .unwrap_or_else(|err| panic!("genesis_hash response was not JSON: {err}"));
-        let bytes = Self::decode_hex_field(&response, "genesis_hash_hex")
-            .unwrap_or_else(|err| panic!("{err}"));
+        let bytes = self
+            .get_bytes("/genesis_hash")
+            .unwrap_or_else(|err| panic!("genesis_hash request failed: {err}"));
         let array: [u8; 32] = bytes
             .try_into()
-            .unwrap_or_else(|_| panic!("genesis_hash_hex was not 32 bytes"));
+            .unwrap_or_else(|_| panic!("genesis_hash response was not 32 bytes"));
         util::BlockHash::new(array)
     }
 
     fn state_at(&self, height: u32) -> util::State {
-        let response: serde_json::Value = self
-            .client
-            .get(format!("{}/state/{height}", self.base_url))
-            .send()
-            .unwrap_or_else(|err| panic!("state_at({height}) request failed: {err}"))
-            .json()
-            .unwrap_or_else(|err| panic!("state_at({height}) response was not JSON: {err}"));
-        let bytes =
-            Self::decode_hex_field(&response, "state_hex").unwrap_or_else(|err| panic!("{err}"));
+        let bytes = self
+            .get_bytes(&format!("/state/{height}"))
+            .unwrap_or_else(|err| panic!("state_at({height}) request failed: {err}"));
         util::State::parse(&bytes)
             .unwrap_or_else(|err| panic!("state_at({height}) response failed to parse: {err}"))
     }
@@ -110,84 +105,23 @@ impl BatchSource for HttpControllerSource {
         &self,
         current_state: &util::State,
         num_headers: u32,
-        simulate: bool,
     ) -> Result<FetchedBatch, BoxError> {
-        let body = serde_json::json!({
-            "current_state_hex": hex::encode(current_state.to_bytes()),
-        });
         let response = self
             .client
-            .post(format!("{}/batch", self.base_url))
-            .query(&[
-                ("num_headers", num_headers.to_string()),
-                ("simulate", simulate.to_string()),
-            ])
-            .json(&body)
+            .post(format!("{}/batch/{num_headers}", self.base_url))
+            .body(current_state.to_bytes().to_vec())
             .send()
             .map_err(|err| format!("batch request failed: {err}"))?;
-
         let status = response.status();
-        let value: serde_json::Value = response
-            .json()
-            .map_err(|err| format!("batch response was not JSON: {err}"))?;
-
+        let bytes = response
+            .bytes()
+            .map_err(|err| format!("batch response body read failed: {err}"))?;
         if !status.is_success() {
-            let message = value
-                .get("error")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("unknown error")
-                .to_string();
-            return Err(message.into());
+            return Err(String::from_utf8_lossy(&bytes).into_owned().into());
         }
 
-        let headers_bytes = Self::decode_hex_field(&value, "headers_hex")?;
-        let headers = util::parse_new_headers(&headers_bytes)
-            .map_err(|err| format!("failed to parse headers_hex: {err}"))?
-            .to_vec();
-        let median_hints_bytes = Self::decode_hex_field(&value, "median_hints_hex")?;
-        let median_hints = util::parse_median_hints(&median_hints_bytes)
-            .map_err(|err| format!("failed to parse median_hints_hex: {err}"))?
-            .to_vec();
-        let expected_state = match value.get("expected_state_hex") {
-            Some(serde_json::Value::String(hex_str)) => {
-                let bytes = hex::decode(hex_str)
-                    .map_err(|err| format!("invalid hex in `expected_state_hex`: {err}"))?;
-                Some(
-                    util::State::parse(&bytes)
-                        .map_err(|err| format!("failed to parse expected_state_hex: {err}"))?,
-                )
-            }
-            _ => None,
-        };
-        let expected_continuation_digest = match value.get("expected_continuation_digest_hex") {
-            Some(serde_json::Value::String(hex_str)) => {
-                let bytes = hex::decode(hex_str).map_err(|err| {
-                    format!("invalid hex in `expected_continuation_digest_hex`: {err}")
-                })?;
-                let array: [u8; 32] = bytes
-                    .try_into()
-                    .map_err(|_| "expected_continuation_digest_hex was not 32 bytes")?;
-                Some(array)
-            }
-            _ => None,
-        };
-        let first_new_height = value
-            .get("first_new_height")
-            .and_then(serde_json::Value::as_u64)
-            .ok_or("response missing `first_new_height`")? as u32;
-        let end_height = value
-            .get("end_height")
-            .and_then(serde_json::Value::as_u64)
-            .ok_or("response missing `end_height`")? as u32;
-
-        Ok(FetchedBatch {
-            headers,
-            median_hints,
-            expected_state,
-            expected_continuation_digest,
-            first_new_height,
-            end_height,
-        })
+        zkpow_controller::http::decode_batch_response(&bytes)
+            .map_err(|err| format!("invalid binary batch response: {err}").into())
     }
 }
 
@@ -251,10 +185,10 @@ mod tests {
         let genesis_state = local_source.state_at(0);
 
         let local_batch = local_source
-            .fetch_batch(&genesis_state, 13, true)
+            .fetch_batch(&genesis_state, 13)
             .expect("local fetch_batch should succeed");
         let http_batch = http_source
-            .fetch_batch(&genesis_state, 13, true)
+            .fetch_batch(&genesis_state, 13)
             .expect("http fetch_batch should succeed");
 
         assert_eq!(local_batch.headers, http_batch.headers);
@@ -274,10 +208,10 @@ mod tests {
         let genesis_state = local_source.state_at(0);
 
         let local_err = local_source
-            .fetch_batch(&genesis_state, 0, false)
+            .fetch_batch(&genesis_state, 0)
             .expect_err("local fetch_batch with 0 headers should fail");
         let http_err = http_source
-            .fetch_batch(&genesis_state, 0, false)
+            .fetch_batch(&genesis_state, 0)
             .expect_err("http fetch_batch with 0 headers should fail");
 
         assert_eq!(local_err.to_string(), http_err.to_string());
