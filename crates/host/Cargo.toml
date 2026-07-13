@@ -30,7 +30,6 @@ memuse = { workspace = true }
 hex = { workspace = true }
 humantime = { workspace = true }
 num-bigint = { workspace = true }
-serde_json = { workspace = true }
 reqwest = { workspace = true, features = ["blocking"] }
 rust-s3 = { workspace = true }
 tokio = { workspace = true }
