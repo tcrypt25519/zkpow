@@ -111,11 +111,15 @@ pub const GENESIS_NBITS: u32 = 0x1d00ffff;
 /// In LE limbs: limbs[3] = 0xFFFF0000, limbs[0..2] = 0.
 pub const GENESIS_TARGET: Target = Target::from_limbs([0, 0, 0, 0x0000_0000_FFFF_0000]);
 
-/// Work represented by the genesis block's target — the one and only
-/// `work_from_target(GENESIS_TARGET)` call site; everywhere else reuses this.
+/// Work represented by the genesis block's target.
+///
+/// `floor(2^256 / (GENESIS_TARGET + 1))` is a protocol constant, so computing
+/// it through the generic 257-step divider at startup is needless work.
+pub const GENESIS_WORK: ChainWork = ChainWork::from_limbs([0x0000_0001_0001_0001, 0, 0, 0]);
+
 #[must_use]
-pub fn genesis_work() -> ChainWork {
-    work_from_target(GENESIS_TARGET).expect("GENESIS_TARGET is a valid target")
+pub const fn genesis_work() -> ChainWork {
+    GENESIS_WORK
 }
 
 /// Raw little-endian mainnet genesis block hash.

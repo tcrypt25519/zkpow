@@ -43,11 +43,12 @@ pub fn connect_headers(anchor: &Tip, headers: &[Header]) -> Vec<ConnectedHeader>
         }
 
         let window_len = zkpow_core::timestamp_count(height);
-        let mut sorted = timestamps;
-        sorted[..window_len].sort_unstable();
-        let mtp = if window_len == 0 {
-            0
+        let mtp = if window_len == WINDOW_SIZE && ordered_timestamp_run >= (WINDOW_SIZE - 1) as u64
+        {
+            timestamps[(height as usize + WINDOW_SIZE - (WINDOW_SIZE / 2)) % WINDOW_SIZE]
         } else {
+            let mut sorted = timestamps;
+            sorted[..window_len].sort_unstable();
             sorted[window_len / 2]
         };
 
@@ -66,6 +67,7 @@ pub fn connect_headers(anchor: &Tip, headers: &[Header]) -> Vec<ConnectedHeader>
 
         connected.push(ConnectedHeader::new(
             header.clone(),
+            hash,
             height,
             cumulative_work,
             mtp,
@@ -96,7 +98,7 @@ pub fn tip_from_connected(anchor: &Tip, connected: &[ConnectedHeader]) -> Tip {
         current_difficulty(last.header.inner.compact_target);
 
     Tip::new(
-        last.block_hash(),
+        last.block_hash,
         last.height,
         last.chainwork,
         timestamps,
@@ -383,6 +385,40 @@ mod tests {
 
         assert_eq!(connected.len(), 1);
         assert_eq!(connected[0].ordered_timestamp_run, 0);
+        assert_eq!(connected[0].median_time_past, base + 5);
+    }
+
+    #[test]
+    fn ordered_window_uses_ring_median_without_changing_result() {
+        let base = 2_000_000_000u32;
+        let (current_nbits, current_target, current_work) =
+            current_difficulty(CompactTarget::new(TRIVIAL_NBITS_A));
+        let anchor = Tip::new(
+            BlockHash::new([0x9A; 32]),
+            10,
+            current_work,
+            [
+                base,
+                base + 1,
+                base + 2,
+                base + 3,
+                base + 4,
+                base + 5,
+                base + 6,
+                base + 7,
+                base + 8,
+                base + 9,
+                base + 10,
+            ],
+            10,
+            current_nbits,
+            current_target,
+            current_work,
+        );
+        let header = mine_header(anchor.hash, TRIVIAL_NBITS_A, base + 11);
+
+        let connected = connect_headers(&anchor, std::slice::from_ref(&header));
+        assert_eq!(connected.len(), 1);
         assert_eq!(connected[0].median_time_past, base + 5);
     }
 }
