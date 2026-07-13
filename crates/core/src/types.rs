@@ -54,6 +54,19 @@ impl u256 {
     }
 }
 
+impl core::ops::MulAssign<u32> for u256 {
+    #[tracked]
+    fn mul_assign(&mut self, rhs: u32) {
+        let multiplier = rhs as u128;
+        let mut carry = 0u128;
+        for limb in self.0.iter_mut() {
+            let product = (*limb as u128) * multiplier + carry;
+            *limb = product as u64;
+            carry = product >> 64;
+        }
+    }
+}
+
 impl PartialOrd for u256 {
     #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
@@ -125,22 +138,30 @@ impl core::ops::Add for ChainWork {
     }
 }
 
-impl core::ops::Mul<u32> for ChainWork {
-    type Output = Self;
-
-    #[tracked]
-    fn mul(self, rhs: u32) -> Self::Output {
-        let limbs = self.as_limbs();
-        let mut result = [0u64; 4];
-        let mut carry = 0u128;
-        let multiplier = rhs as u128;
-
-        for i in 0..4 {
-            let product = (limbs[i] as u128) * multiplier + carry;
-            result[i] = product as u64;
-            carry = product >> 64;
-        }
-
-        ChainWork::from_limbs(result)
+impl core::ops::MulAssign<u32> for ChainWork {
+    fn mul_assign(&mut self, rhs: u32) {
+        *self.as_inner_mut() *= rhs;
     }
 }
+
+impl core::ops::MulAssign<u32> for Target {
+    fn mul_assign(&mut self, rhs: u32) {
+        *self.as_inner_mut() *= rhs;
+    }
+}
+
+// impl core::ops::Deref for Target {
+//     type Target = u256;
+
+//     #[inline]
+//     fn deref(&self) -> &Self::Target {
+//         &self.0
+//     }
+// }
+
+// impl core::ops::DerefMut for Target {
+//     #[inline]
+//     fn deref_mut(&mut self) -> &mut Self::Target {
+//         self.as_inner_mut()
+//     }
+// }

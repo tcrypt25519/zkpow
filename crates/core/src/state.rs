@@ -50,29 +50,6 @@ pub struct State {
     pub timestamps: [BlockTimestamp; WINDOW_SIZE],
 }
 
-struct HeaderApplyContext {
-    pending_run_work: Option<ChainWork>,
-    pending_run_count: u32,
-    active_nbits: CompactTarget,
-    active_target: Target,
-    active_work: ChainWork,
-}
-
-impl HeaderApplyContext {
-    fn new(current_nbits: CompactTarget) -> Self {
-        let active_target = target_from_bits(current_nbits);
-        let active_work =
-            work_from_target(active_target).expect("current target must be valid blockchain data");
-        Self {
-            pending_run_work: None,
-            pending_run_count: 0,
-            active_nbits: current_nbits,
-            active_target,
-            active_work,
-        }
-    }
-}
-
 impl State {
     /// The circular-buffer slot containing the current tip timestamp.
     #[must_use]
@@ -130,123 +107,22 @@ impl State {
         Ok((current_nbits, current_target, current_work))
     }
 
-    #[must_use]
-    #[tracked]
-    fn median_time_past_cold(&self) -> BlockTimestamp {
-        let window_len = self.height as usize + 1;
-        let mut sorted = self.timestamps;
-        sorted[..window_len].sort_unstable();
-        sorted[window_len / 2]
-    }
-
-    #[must_use]
-    #[tracked]
-    fn median_time_past_hinted_warm(&self, claimed_median: BlockTimestamp) -> bool {
-        self.median_time_past_hinted_for_window(claimed_median, WINDOW_SIZE, WINDOW_SIZE / 2)
-    }
-
-    #[must_use]
-    #[tracked]
-    fn median_time_past_ordered_warm(&self) -> BlockTimestamp {
-        self.timestamps[(self.height as usize + WINDOW_SIZE - (WINDOW_SIZE / 2)) % WINDOW_SIZE]
-    }
-
-    #[must_use]
-    #[tracked]
-    fn ordered_timestamp_suffix_len_warm(&self) -> usize {
-        let mut len = 1usize;
-        let mut newer = self.previous_timestamp();
-        for offset in 1..WINDOW_SIZE {
-            let older =
-                self.timestamps[(self.height as usize + WINDOW_SIZE - offset) % WINDOW_SIZE];
-            if older <= newer {
-                len += 1;
-                newer = older;
-            } else {
-                break;
-            }
-        }
-        len
-    }
-
-    fn update_ordered_timestamp_suffix_len(
-        ordered_run_len: &mut usize,
-        previous_timestamp: BlockTimestamp,
-        next_timestamp: BlockTimestamp,
-    ) {
-        if next_timestamp >= previous_timestamp {
-            if *ordered_run_len < WINDOW_SIZE {
-                *ordered_run_len += 1;
-            }
-        } else {
-            *ordered_run_len = 1;
-        }
-    }
-
-    #[must_use]
-    #[tracked]
-    fn median_time_past_hinted_for_window(
-        &self,
-        claimed_median: BlockTimestamp,
-        window_len: usize,
-        median_index: usize,
-    ) -> bool {
-        let (less_count, equal_count, greater_count) = cycle_track!({
-            let mut less_count = 0usize;
-            let mut equal_count = 0usize;
-            let mut greater_count = 0usize;
-            for timestamp in self.timestamps.iter().take(window_len) {
-                if *timestamp < claimed_median {
-                    less_count += 1;
-                } else if *timestamp > claimed_median {
-                    greater_count += 1;
-                } else {
-                    equal_count += 1;
-                }
-            }
-            (less_count, equal_count, greater_count)
-        });
-
-        cycle_track!({
-            less_count + equal_count + greater_count == window_len
-                && less_count <= median_index
-                && less_count + equal_count > median_index
-        })
-    }
-
-    fn apply_chain_work_run(&mut self, run_work: ChainWork, run_count: u32) {
-        if run_count > 0 {
-            cycle_track!({
-                let accumulated_work = run_work * run_count;
-                self.chain_work = self.chain_work + accumulated_work;
-            });
-        }
-    }
-
-    fn flush_pending_chain_work(&mut self, context: &mut HeaderApplyContext) {
-        if let Some(run_work) = context.pending_run_work.take() {
-            self.apply_chain_work_run(run_work, context.pending_run_count);
-        }
-        context.pending_run_count = 0;
-    }
-
     #[allow(clippy::result_large_err)]
     fn apply_header_after_median_check<F>(
         &mut self,
         new_header: &NewHeader,
         claimed_median: BlockTimestamp,
-        context: &mut HeaderApplyContext,
+        active_nbits: CompactTarget,
+        active_target: Target,
         block_hash_fn: &mut F,
     ) -> Result<(), ApplyFailure>
     where
         F: FnMut(&NewHeader, &BlockHash, CompactTarget) -> BlockHash,
     {
         let candidate_height = cycle_track!(self.height + 1);
-        let previous_timestamp = cycle_track!({ self.previous_timestamp() });
         let timestamp_slot = candidate_height as usize % WINDOW_SIZE;
 
         if cycle_track!({ new_header.timestamp <= claimed_median }) {
-            self.flush_pending_chain_work(context);
             return Err(ApplyFailure {
                 last_valid_state: self.clone(),
                 error_code: ValidationErrorCode::TimestampTooOld,
@@ -254,21 +130,10 @@ impl State {
             });
         }
 
-        if cycle_track!({ candidate_height.is_multiple_of(EPOCH_LENGTH) }) {
-            self.flush_pending_chain_work(context);
-            let prepared = self
-                .prepare_new_epoch(context.active_target, previous_timestamp)
-                .expect("epoch target must not be u256::MAX — invalid blockchain data");
-            context.active_nbits = prepared.0;
-            context.active_target = prepared.1;
-            context.active_work = prepared.2;
-        }
-
         let block_hash =
-            cycle_track!({ block_hash_fn(new_header, &self.block_hash, context.active_nbits) });
+            cycle_track!({ block_hash_fn(new_header, &self.block_hash, active_nbits) });
 
-        if !check_proof_of_work(block_hash, context.active_target) {
-            self.flush_pending_chain_work(context);
+        if !check_proof_of_work(block_hash, active_target) {
             return Err(ApplyFailure {
                 last_valid_state: self.clone(),
                 error_code: ValidationErrorCode::PowInsufficient,
@@ -276,16 +141,10 @@ impl State {
             });
         }
 
-        if context.pending_run_work != Some(context.active_work) {
-            self.flush_pending_chain_work(context);
-            context.pending_run_work = Some(context.active_work);
-        }
-
-        context.pending_run_count += 1;
         cycle_track!({
             self.height = candidate_height;
             self.timestamps[timestamp_slot] = new_header.timestamp;
-            self.current_nbits = context.active_nbits;
+            self.current_nbits = active_nbits;
             if candidate_height.is_multiple_of(EPOCH_LENGTH) {
                 self.epoch_start_timestamp = new_header.timestamp;
             }
@@ -306,65 +165,115 @@ impl State {
     where
         F: FnMut(&NewHeader, &BlockHash, CompactTarget) -> BlockHash,
     {
-        let mut context = HeaderApplyContext::new(self.current_nbits);
-        let warm_start = (WINDOW_SIZE - 1)
-            .saturating_sub(self.height as usize)
-            .min(headers.len());
-        let (cold_headers, warm_headers) = headers.split_at(warm_start);
+        let mut headers_consumed = 0;
 
-        for new_header in cold_headers {
-            let claimed_median = self.median_time_past_cold();
-            self.apply_header_after_median_check(
-                new_header,
-                claimed_median,
-                &mut context,
-                &mut block_hash_fn,
-            )?;
+        if self.height < (WINDOW_SIZE - 1) as u32 {
+            let cold_len = ((WINDOW_SIZE - 1) as usize - self.height as usize).min(headers.len());
+            let mut context = EpochManager::new(self);
+            for new_header in &headers[..cold_len] {
+                let median_index = (context.state.height as usize).div_ceil(2);
+                let claimed_median = context.state.timestamps[median_index];
+                if let Err(mut failure) = context.state.apply_header_after_median_check(
+                    new_header,
+                    claimed_median,
+                    context.active_nbits,
+                    context.active_target,
+                    &mut block_hash_fn,
+                ) {
+                    context.flush();
+                    failure.last_valid_state = context.state.clone();
+                    return Err(failure);
+                }
+                context.pending_run_count += 1;
+            }
+            headers_consumed = cold_len;
         }
 
-        let mut median_hint_index = 0usize;
-        let mut ordered_run_len = if warm_headers.is_empty() {
-            0
-        } else {
-            self.ordered_timestamp_suffix_len_warm()
-        };
+        let mut median_hint_iter = median_hints.iter();
 
-        for (warm_index, new_header) in warm_headers.iter().enumerate() {
-            let header_index = warm_start + warm_index;
-            let claimed_median = if ordered_run_len == WINDOW_SIZE {
-                self.median_time_past_ordered_warm()
-            } else {
-                let claimed_median = *median_hints.get(median_hint_index).unwrap_or_else(|| {
-                    panic!("missing median time past hint at header index {header_index}")
-                });
-                median_hint_index += 1;
-                assert!(
-                    self.median_time_past_hinted_warm(claimed_median),
-                    "invalid median time past hint at header index {}",
-                    header_index
-                );
-                claimed_median
-            };
-            let previous_timestamp = self.previous_timestamp();
-            self.apply_header_after_median_check(
-                new_header,
-                claimed_median,
-                &mut context,
-                &mut block_hash_fn,
-            )?;
-            Self::update_ordered_timestamp_suffix_len(
-                &mut ordered_run_len,
-                previous_timestamp,
-                new_header.timestamp,
-            );
+        if headers_consumed < headers.len() {
+            let mut ordered_run_len = 0;
+            let mut newer = cycle_track!({ self.previous_timestamp() });
+            for offset in 1..WINDOW_SIZE {
+                let older =
+                    self.timestamps[(self.height as usize + WINDOW_SIZE - offset) % WINDOW_SIZE];
+                if older > newer {
+                    break;
+                }
+                ordered_run_len += 1;
+                newer = older;
+            }
+
+            while headers_consumed < headers.len() {
+                let mut context = EpochManager::new(self);
+
+                let current_height = context.state.height;
+                let headers_to_end_of_epoch =
+                    (EPOCH_LENGTH - ((current_height + 1) % EPOCH_LENGTH)) as usize;
+
+                let chunk_len = (headers.len() - headers_consumed).min(headers_to_end_of_epoch);
+                let chunk_headers = &headers[headers_consumed..headers_consumed + chunk_len];
+
+                for (chunk_index, new_header) in chunk_headers.iter().enumerate() {
+                    let header_index = headers_consumed + chunk_index;
+                    let claimed_median = if ordered_run_len >= WINDOW_SIZE - 1 {
+                        context.state.timestamps[(context.state.height as usize + WINDOW_SIZE
+                            - (WINDOW_SIZE / 2))
+                            % WINDOW_SIZE]
+                    } else {
+                        let claimed_median = *median_hint_iter.next().unwrap_or_else(|| {
+                            panic!("missing median time past hint at header index {header_index}")
+                        });
+                        let (less_count, equal_count) = cycle_track!({
+                            let mut less_count = 0usize;
+                            let mut equal_count = 0usize;
+                            for &timestamp in &context.state.timestamps {
+                                if timestamp < claimed_median {
+                                    less_count += 1;
+                                } else if timestamp == claimed_median {
+                                    equal_count += 1;
+                                }
+                            }
+                            (less_count, equal_count)
+                        });
+                        assert!(
+                            less_count <= WINDOW_SIZE / 2
+                                && less_count + equal_count > WINDOW_SIZE / 2,
+                            "invalid median time past hint at header index {header_index}"
+                        );
+                        claimed_median
+                    };
+
+                    let previous_timestamp = cycle_track!({ context.state.previous_timestamp() });
+                    ordered_run_len = if new_header.timestamp >= previous_timestamp {
+                        ordered_run_len + 1
+                    } else {
+                        0
+                    };
+
+                    if let Err(mut failure) = context.state.apply_header_after_median_check(
+                        new_header,
+                        claimed_median,
+                        context.active_nbits,
+                        context.active_target,
+                        &mut block_hash_fn,
+                    ) {
+                        context.flush();
+                        failure.last_valid_state = context.state.clone();
+                        return Err(failure);
+                    }
+                    context.pending_run_count += 1;
+                }
+
+                headers_consumed += chunk_len;
+            }
         }
 
         assert_eq!(
-            median_hint_index,
-            median_hints.len(),
+            median_hint_iter.next(),
+            None,
             "unused sparse median time past hints"
         );
-        self.flush_pending_chain_work(&mut context);
 
         Ok(())
     }
@@ -381,5 +290,60 @@ impl Default for State {
             epoch_start_timestamp: BlockTimestamp::default(),
             timestamps: [BlockTimestamp::default(); WINDOW_SIZE],
         }
+    }
+}
+
+struct EpochManager<'a> {
+    state: &'a mut State,
+    pending_run_work: ChainWork,
+    pending_run_count: u32,
+    active_nbits: CompactTarget,
+    active_target: Target,
+}
+
+impl<'a> EpochManager<'a> {
+    fn new(state: &'a mut State) -> Self {
+        let (active_nbits, active_target, active_work);
+
+        if (state.height + 1).is_multiple_of(EPOCH_LENGTH) {
+            let previous_timestamp = cycle_track!({ state.previous_timestamp() });
+            let prepared = cycle_track!({
+                state.prepare_new_epoch(target_from_bits(state.current_nbits), previous_timestamp)
+            })
+            .expect("epoch target must not be u256::MAX — invalid blockchain data");
+            active_nbits = prepared.0;
+            active_target = prepared.1;
+            active_work = prepared.2;
+        } else {
+            active_nbits = state.current_nbits;
+            active_target = target_from_bits(active_nbits);
+            active_work = work_from_target(active_target)
+                .expect("current target must be valid blockchain data");
+        }
+
+        Self {
+            state,
+            pending_run_work: active_work,
+            pending_run_count: 0,
+            active_nbits,
+            active_target,
+        }
+    }
+
+    fn flush(&mut self) {
+        if self.pending_run_count > 0 {
+            cycle_track!({
+                let mut accumulated_work = self.pending_run_work;
+                accumulated_work *= self.pending_run_count;
+                self.state.chain_work = self.state.chain_work + accumulated_work;
+            });
+            self.pending_run_count = 0;
+        }
+    }
+}
+
+impl<'a> Drop for EpochManager<'a> {
+    fn drop(&mut self) {
+        self.flush();
     }
 }

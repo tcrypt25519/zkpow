@@ -48,9 +48,7 @@ pub use state::State;
 mod errors;
 
 pub(crate) use errors::TargetError;
-pub use errors::{
-    InputError, MedianTimePastHintError, NewHeaderHintError, ParseError, PublicValuesParseError,
-};
+pub use errors::{InputError, InputParseError, ParseError};
 
 mod input;
 
@@ -419,7 +417,7 @@ pub fn work_from_target(target: Target) -> Result<ChainWork, TargetError> {
 #[must_use]
 #[tracked]
 pub fn calculate_next_target_required(
-    old_target: Target,
+    mut old_target: Target,
     epoch_start_timestamp: BlockTimestamp,
     previous_timestamp: BlockTimestamp,
 ) -> (CompactTarget, Target) {
@@ -428,16 +426,11 @@ pub fn calculate_next_target_required(
     let clamped_timespan = actual_timespan.clamp(MIN_EPOCH_TIMESPAN, MAX_EPOCH_TIMESPAN) as u32;
 
     // Calculate the raw target value from the normalized previous target and the timespan.
-    let mut target_limbs = old_target.into_inner().into_limbs();
-    let mut carry = 0u128;
-    for limb in &mut target_limbs {
-        let product = (*limb as u128) * (clamped_timespan as u128) + carry;
-        *limb = product as u64;
-        carry = product >> 64;
-    }
+    // let mut raw_target = old_target.into_inner();
+    old_target *= clamped_timespan;
 
     let mut remainder = 0u128;
-    for limb in target_limbs.iter_mut().rev() {
+    for limb in old_target.as_limbs_mut().iter_mut().rev() {
         let value = (remainder << 64) | (*limb as u128);
         *limb = (value / (EXPECTED_EPOCH_TIMESPAN as u128)) as u64;
         remainder = value % (EXPECTED_EPOCH_TIMESPAN as u128);
@@ -445,7 +438,7 @@ pub fn calculate_next_target_required(
 
     // Normalize the new target to ensure an upper-bound (a minimum difficulty) and to handle the implicit
     // truncation that occurs when round-tripping through the nbits format.
-    let calculated_target = Target::from_limbs(target_limbs);
+    let calculated_target = Target::from_limbs(old_target.into_limbs());
     let clamped_target = calculated_target.min(GENESIS_TARGET);
     let compact_target = target_to_bits(clamped_target);
     let normalized_target = target_from_bits(compact_target);
@@ -536,7 +529,7 @@ mod tests {
         }
 
         let mut ordered_run_len = {
-            let mut len = 1usize;
+            let mut len = 0usize;
             let mut newer = state.timestamps[state.height as usize % WINDOW_SIZE];
             for offset in 1..WINDOW_SIZE {
                 let older =
@@ -551,18 +544,16 @@ mod tests {
             len
         };
         for index in warm_start..headers.len() {
-            if ordered_run_len < WINDOW_SIZE {
+            if ordered_run_len < WINDOW_SIZE - 1 {
                 hints.push(dense_hints[index]);
             }
             let previous_timestamp = state.timestamps[state.height as usize % WINDOW_SIZE];
             state.height += 1;
             state.timestamps[state.height as usize % WINDOW_SIZE] = headers[index].timestamp;
             if headers[index].timestamp >= previous_timestamp {
-                if ordered_run_len < WINDOW_SIZE {
-                    ordered_run_len += 1;
-                }
+                ordered_run_len += 1;
             } else {
-                ordered_run_len = 1;
+                ordered_run_len = 0;
             }
         }
         hints
@@ -735,7 +726,9 @@ mod tests {
     fn u256_mul_u32_scales_by_small_count() {
         let value = ChainWork::from_limbs([3, 0, 0, 0]);
 
-        assert_eq!(value * 7, ChainWork::from_limbs([21, 0, 0, 0]));
+        let mut result = value;
+        result *= 7;
+        assert_eq!(result, ChainWork::from_limbs([21, 0, 0, 0]));
     }
 
     #[test]
@@ -780,7 +773,9 @@ mod tests {
             .expect("headers should validate");
 
         let work = genesis_work();
-        let expected = (work * 2) + ChainWork::default();
+        let mut expected = work;
+        expected *= 2;
+        let expected = expected + ChainWork::default();
         assert_eq!(state.chain_work, expected);
     }
 
@@ -814,7 +809,9 @@ mod tests {
             .expect("validation should succeed");
 
         let work = genesis_work();
-        assert_eq!(state.chain_work, work * 3);
+        let mut expected = work;
+        expected *= 3;
+        assert_eq!(state.chain_work, expected);
     }
 
     #[test]
