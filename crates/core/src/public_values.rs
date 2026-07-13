@@ -1,7 +1,6 @@
 use crate::{
-    check_exact_len, BlockHash, BlockTimestamp, ChainWork, CompactTarget, ParseError,
-    PublicValuesParseError, State, CLAIM_SIZE, CONTINUATION_DATA_SIZE, MINIMAL_PV_SIZE,
-    WINDOW_SIZE,
+    check_exact_len, BlockHash, BlockTimestamp, ChainWork, CompactTarget, InputParseError,
+    ParseError, State, CLAIM_SIZE, CONTINUATION_DATA_SIZE, MINIMAL_PV_SIZE, WINDOW_SIZE,
 };
 
 /// Digest of a program verifier key.
@@ -214,7 +213,7 @@ impl core::fmt::Display for ValidationErrorCode {
 }
 
 impl TryFrom<u8> for ValidationErrorCode {
-    type Error = PublicValuesParseError;
+    type Error = InputParseError;
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
@@ -222,7 +221,7 @@ impl TryFrom<u8> for ValidationErrorCode {
             2 => Ok(Self::PowInsufficient),
             3 => Ok(Self::TimestampTooOld),
             4 => Ok(Self::GenesisHashMismatch),
-            _ => Err(PublicValuesParseError::UnknownErrorCode { code: value }),
+            _ => Err(InputParseError::UnknownErrorCode { code: value }),
         }
     }
 }
@@ -329,9 +328,10 @@ impl MinimalPublicValues {
     }
 
     /// Deserialize from exactly [`MINIMAL_PV_SIZE`] bytes.
-    pub fn parse(bytes: &[u8]) -> Result<Self, PublicValuesParseError> {
+    pub fn parse(bytes: &[u8]) -> Result<Self, InputParseError> {
         if bytes.len() != MINIMAL_PV_SIZE {
-            return Err(PublicValuesParseError::InvalidLength {
+            return Err(InputParseError::InvalidLength {
+                expected: MINIMAL_PV_SIZE,
                 actual: bytes.len(),
             });
         }
@@ -362,7 +362,7 @@ impl MinimalPublicValues {
     }
 
     /// Return the error code if this is a failure, or `None` on success.
-    pub fn error_code(&self) -> Option<Result<ValidationErrorCode, PublicValuesParseError>> {
+    pub fn error_code(&self) -> Option<Result<ValidationErrorCode, InputParseError>> {
         if self.return_code == 0 {
             None
         } else {
@@ -389,7 +389,7 @@ pub enum HeaderChainPublicValues {
 
 impl HeaderChainPublicValues {
     /// Parse committed public values from the minimal 169-byte format.
-    pub fn parse(bytes: &[u8]) -> Result<Self, PublicValuesParseError> {
+    pub fn parse(bytes: &[u8]) -> Result<Self, InputParseError> {
         let pv = MinimalPublicValues::parse(bytes)?;
         let claim = Claim {
             genesis_hash: pv.genesis_hash,

@@ -27,6 +27,11 @@ impl<Tag, T> Branded<Tag, T> {
     pub fn as_inner(&self) -> &T {
         &self.inner
     }
+
+    #[must_use]
+    pub fn as_inner_mut(&mut self) -> &mut T {
+        &mut self.inner
+    }
 }
 
 impl<Tag, T> core::ops::Deref for Branded<Tag, T> {
@@ -35,6 +40,13 @@ impl<Tag, T> core::ops::Deref for Branded<Tag, T> {
     #[inline]
     fn deref(&self) -> &Self::Target {
         &self.inner
+    }
+}
+
+impl<Tag, T> core::ops::DerefMut for Branded<Tag, T> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut T {
+        &mut self.inner
     }
 }
 

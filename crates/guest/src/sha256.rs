@@ -78,6 +78,7 @@ pub fn sha256_32bytes(data: &[u8; 32]) -> [u8; 32] {
 /// - Block 1: bytes 0–63
 /// - Block 2: bytes 64–127
 /// - Block 3: bytes 128–168 (41 data bytes) + 0x80 + zeros + 8-byte length (1352 bits = 0x548)
+#[allow(dead_code)]
 pub(crate) fn sha256_169bytes(data: &[u8; 169]) -> [u8; 32] {
     let mut state = SHA256_IV;
 

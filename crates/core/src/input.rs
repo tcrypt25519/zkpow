@@ -1,8 +1,8 @@
 //! Logic for parsing the proof-carrying state and header batch inputs to the guest.
 
 use crate::{
-    check_exact_len, slice_from_bytes, tracked, BlockTimestamp, InputError,
-    MedianTimePastHintError, NewHeader, NewHeaderHintError, VerifierKeyDigest, NEW_HEADER_SIZE,
+    check_exact_len, slice_from_bytes, tracked, BlockTimestamp, InputError, InputParseError,
+    NewHeader, VerifierKeyDigest, NEW_HEADER_SIZE,
 };
 use alloc::vec::Vec;
 use core::mem;
@@ -58,15 +58,15 @@ pub fn serialize_new_headers(headers: &[NewHeader]) -> Vec<u8> {
 
 /// Parse new headers as a zero-copy slice reference.
 #[tracked]
-pub fn parse_new_headers(bytes: &[u8]) -> Result<&[NewHeader], NewHeaderHintError> {
+pub fn parse_new_headers(bytes: &[u8]) -> Result<&[NewHeader], InputParseError> {
     if !bytes.len().is_multiple_of(NEW_HEADER_SIZE) {
-        return Err(NewHeaderHintError::PayloadLengthInvalid {
+        return Err(InputParseError::InvalidLength {
             expected: bytes.len().div_ceil(NEW_HEADER_SIZE) * NEW_HEADER_SIZE,
             actual: bytes.len(),
         });
     }
 
-    let headers = slice_from_bytes::<NewHeader>(bytes).map_err(NewHeaderHintError::Parse)?;
+    let headers = slice_from_bytes::<NewHeader>(bytes).map_err(InputParseError::Parse)?;
     Ok(headers)
 }
 
@@ -82,17 +82,16 @@ pub fn serialize_median_hints(medians: &[BlockTimestamp]) -> Vec<u8> {
 
 /// Parse median hints as a zero-copy slice reference.
 #[tracked]
-pub fn parse_median_hints(bytes: &[u8]) -> Result<&[BlockTimestamp], MedianTimePastHintError> {
+pub fn parse_median_hints(bytes: &[u8]) -> Result<&[BlockTimestamp], InputParseError> {
     let hint_size = core::mem::size_of::<BlockTimestamp>();
     if !bytes.len().is_multiple_of(hint_size) {
-        return Err(MedianTimePastHintError::PayloadLengthInvalid {
+        return Err(InputParseError::InvalidLength {
             expected: bytes.len().div_ceil(hint_size) * hint_size,
             actual: bytes.len(),
         });
     }
 
-    let medians =
-        slice_from_bytes::<BlockTimestamp>(bytes).map_err(MedianTimePastHintError::Parse)?;
+    let medians = slice_from_bytes::<BlockTimestamp>(bytes).map_err(InputParseError::Parse)?;
     Ok(medians)
 }
 
@@ -162,7 +161,7 @@ mod tests {
         let err = parse_new_headers(&bytes).unwrap_err();
         assert_eq!(
             err,
-            NewHeaderHintError::PayloadLengthInvalid {
+            InputParseError::InvalidLength {
                 expected: 44,
                 actual: 43,
             }
@@ -188,7 +187,7 @@ mod tests {
         let err = parse_median_hints(&[1, 2, 3]).unwrap_err();
         assert_eq!(
             err,
-            MedianTimePastHintError::PayloadLengthInvalid {
+            InputParseError::InvalidLength {
                 expected: 4,
                 actual: 3,
             }
