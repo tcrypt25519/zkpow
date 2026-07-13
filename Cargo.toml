@@ -47,6 +47,11 @@ anyhow = "1"
 axum = "0.8"
 rust-s3 = { version = "0.37", default-features = false, features = ["sync-rustls-tls"] }
 
+[patch."https://github.com/succinctlabs/sp1"]
+sp1-prover = { path = "../../succinctlabs/sp1-v6.1.0-compression-logging/crates/prover" }
+sp1-recursion-gnark-ffi = { path = "../../succinctlabs/sp1-v6.1.0-compression-logging/crates/recursion/gnark-ffi" }
+sp1-sdk = { path = "../../succinctlabs/sp1-v6.1.0-compression-logging/crates/sdk" }
+
 [profile.release]
 debug = true          # Keeps debug symbols for your code
 split-debuginfo = "off" # Ensures symbols stay in the binary
