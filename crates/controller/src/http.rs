@@ -1,13 +1,15 @@
 //! Binary HTTP transport for a [`Controller`].
 //!
-//! Every successful response is `application/octet-stream`. `GET /genesis_hash`
-//! returns 32 raw bytes, `GET /state/{height}` returns `STATE_SIZE` raw bytes,
-//! and `POST /batch/{num_headers}` accepts a raw state and returns:
+//! Every successful response is `application/octet-stream`. `POST /session`
+//! starts a controller-owned session, `POST /session/{id}/work/{num_headers}`
+//! returns the next batch, and `POST /session/{id}/complete` accepts guest or
+//! prover public values. Work responses contain:
 //!
 //! ```text
 //! first_new_height: u32 LE | end_height: u32 LE | median_hint_count: u32 LE
 //! headers: (end_height - first_new_height + 1) * NEW_HEADER_SIZE bytes
 //! median_hints: median_hint_count * 4 bytes
+//! current_state: STATE_SIZE bytes
 //! expected_state: STATE_SIZE bytes
 //! expected_continuation_digest: 32 bytes
 //! ```
@@ -20,10 +22,10 @@ use std::sync::{Arc, Mutex};
 use axum::body::Bytes;
 use axum::extract::{Path, State as AxumState};
 use axum::http::StatusCode;
-use axum::routing::{get, post};
+use axum::routing::post;
 use axum::Router;
 
-use crate::{BlockTimestamp, FetchedBatch, NewHeader, State, NO_HEADERS_REMAINING_PREFIX};
+use crate::{BlockTimestamp, FetchedBatch, NewHeader, SessionStart, NO_HEADERS_REMAINING_PREFIX};
 
 const BATCH_PREFIX_SIZE: usize = 12;
 
@@ -31,9 +33,15 @@ pub type SharedController = Arc<Mutex<crate::Controller>>;
 
 pub fn build_router(controller: SharedController) -> Router {
     Router::new()
-        .route("/genesis_hash", get(genesis_hash_handler))
-        .route("/state/{height}", get(state_handler))
-        .route("/batch/{num_headers}", post(batch_handler))
+        .route("/session", post(begin_session_handler))
+        .route(
+            "/session/{session_id}/work/{num_headers}",
+            post(next_work_handler),
+        )
+        .route(
+            "/session/{session_id}/complete",
+            post(complete_work_handler),
+        )
         .with_state(controller)
 }
 
@@ -50,36 +58,22 @@ fn lock_controller(controller: &SharedController) -> std::sync::MutexGuard<'_, c
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-async fn genesis_hash_handler(AxumState(controller): AxumState<SharedController>) -> Vec<u8> {
-    lock_controller(&controller)
-        .genesis_hash()
-        .into_inner()
-        .to_vec()
-}
-
-async fn state_handler(
+async fn begin_session_handler(
     AxumState(controller): AxumState<SharedController>,
-    Path(height): Path<u32>,
-) -> Vec<u8> {
-    lock_controller(&controller)
-        .state_at(height)
-        .to_bytes()
-        .to_vec()
-}
-
-async fn batch_handler(
-    AxumState(controller): AxumState<SharedController>,
-    Path(num_headers): Path<u32>,
-    current_state_bytes: Bytes,
+    start_bytes: Bytes,
 ) -> Result<Vec<u8>, (StatusCode, String)> {
-    let current_state = State::parse(&current_state_bytes).map_err(|err| {
-        (
-            StatusCode::BAD_REQUEST,
-            format!("invalid current state: {err}"),
-        )
-    })?;
+    let start = decode_session_start(&start_bytes).map_err(|err| (StatusCode::BAD_REQUEST, err))?;
+    lock_controller(&controller)
+        .begin_session(start)
+        .map(|session_id| session_id.to_le_bytes().to_vec())
+        .map_err(|err| (StatusCode::BAD_REQUEST, err.to_string()))
+}
 
-    match lock_controller(&controller).fetch_batch(&current_state, num_headers) {
+async fn next_work_handler(
+    AxumState(controller): AxumState<SharedController>,
+    Path((session_id, num_headers)): Path<(u64, u32)>,
+) -> Result<Vec<u8>, (StatusCode, String)> {
+    match lock_controller(&controller).next_work(session_id, num_headers) {
         Ok(batch) => {
             encode_batch_response(&batch).map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err))
         }
@@ -92,6 +86,49 @@ async fn batch_handler(
             };
             Err((status, message))
         }
+    }
+}
+
+async fn complete_work_handler(
+    AxumState(controller): AxumState<SharedController>,
+    Path(session_id): Path<u64>,
+    public_values: Bytes,
+) -> Result<(), (StatusCode, String)> {
+    lock_controller(&controller)
+        .complete_work(session_id, &public_values)
+        .map_err(|err| (StatusCode::BAD_REQUEST, err.to_string()))
+}
+
+/// Encode a controller session start request.
+pub fn encode_session_start(start: &SessionStart) -> Vec<u8> {
+    match start {
+        SessionStart::Genesis => vec![0],
+        SessionStart::TrustedHeight(height) => {
+            let mut bytes = Vec::with_capacity(5);
+            bytes.push(1);
+            bytes.extend_from_slice(&height.to_le_bytes());
+            bytes
+        }
+        SessionStart::PriorPublicValues(public_values) => {
+            let mut bytes = Vec::with_capacity(1 + public_values.len());
+            bytes.push(2);
+            bytes.extend_from_slice(public_values);
+            bytes
+        }
+    }
+}
+
+/// Decode a controller session start request.
+pub fn decode_session_start(bytes: &[u8]) -> Result<SessionStart, String> {
+    match bytes {
+        [0] => Ok(SessionStart::Genesis),
+        [1, height @ ..] if height.len() == 4 => Ok(SessionStart::TrustedHeight(
+            u32::from_le_bytes(height.try_into().expect("fixed 4-byte height")),
+        )),
+        [2, public_values @ ..] if !public_values.is_empty() => {
+            Ok(SessionStart::PriorPublicValues(public_values.to_vec()))
+        }
+        _ => Err("invalid controller session start request".to_string()),
     }
 }
 
@@ -114,6 +151,7 @@ pub fn encode_batch_response(batch: &FetchedBatch) -> Result<Vec<u8>, String> {
             + batch.headers.len() * zkpow_core::NEW_HEADER_SIZE
             + batch.median_hints.len() * size_of::<BlockTimestamp>()
             + zkpow_core::STATE_SIZE
+            + zkpow_core::STATE_SIZE
             + 32,
     );
     bytes.extend_from_slice(&batch.first_new_height.to_le_bytes());
@@ -125,6 +163,7 @@ pub fn encode_batch_response(batch: &FetchedBatch) -> Result<Vec<u8>, String> {
     for hint in &batch.median_hints {
         bytes.extend_from_slice(&hint.to_le_bytes());
     }
+    bytes.extend_from_slice(&batch.current_state.to_bytes());
     bytes.extend_from_slice(&batch.expected_state.to_bytes());
     bytes.extend_from_slice(&batch.expected_continuation_digest);
     Ok(bytes)
@@ -156,7 +195,14 @@ pub fn decode_batch_response(bytes: &[u8]) -> Result<FetchedBatch, String> {
     let mut cursor = BATCH_PREFIX_SIZE;
     let header_bytes = take(bytes, &mut cursor, header_bytes_len, "headers")?;
     let hint_bytes = take(bytes, &mut cursor, hint_bytes_len, "median hints")?;
-    let expected_state = State::parse(take(
+    let current_state = crate::State::parse(take(
+        bytes,
+        &mut cursor,
+        zkpow_core::STATE_SIZE,
+        "current state",
+    )?)
+    .map_err(|err| format!("invalid current state in batch response: {err}"))?;
+    let expected_state = crate::State::parse(take(
         bytes,
         &mut cursor,
         zkpow_core::STATE_SIZE,
@@ -175,6 +221,7 @@ pub fn decode_batch_response(bytes: &[u8]) -> Result<FetchedBatch, String> {
     }
 
     Ok(FetchedBatch {
+        current_state,
         headers: decode_headers(header_bytes),
         median_hints: decode_median_hints(hint_bytes),
         expected_state,
@@ -233,10 +280,12 @@ fn decode_median_hints(bytes: &[u8]) -> Vec<BlockTimestamp> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::State;
 
     #[test]
     fn binary_batch_frame_round_trips() {
         let batch = FetchedBatch {
+            current_state: State::default(),
             headers: vec![NewHeader {
                 version: 2,
                 merkle_root: [3; 32],
@@ -264,6 +313,7 @@ mod tests {
     #[test]
     fn binary_batch_frame_rejects_trailing_data() {
         let batch = FetchedBatch {
+            current_state: State::default(),
             headers: vec![NewHeader {
                 version: 0,
                 merkle_root: [0; 32],
@@ -292,14 +342,18 @@ mod tests {
         let genesis_hash = BlockHash::new(sha256d(&db.load_header_record(0).header.to_bytes()));
         let controller = Arc::new(Mutex::new(crate::Controller::new(db, genesis_hash)));
 
-        let panicked = tokio::spawn(state_handler(AxumState(controller.clone()), Path(u32::MAX)))
-            .await
-            .is_err();
+        let panicked = tokio::spawn(begin_session_handler(
+            AxumState(controller.clone()),
+            Bytes::from(encode_session_start(&SessionStart::TrustedHeight(u32::MAX))),
+        ))
+        .await
+        .is_err();
         assert!(panicked, "expected an out-of-range height to panic");
 
-        assert_eq!(
-            genesis_hash_handler(AxumState(controller)).await.len(),
-            32,
+        assert!(
+            begin_session_handler(AxumState(controller), Bytes::from(vec![0]))
+                .await
+                .is_ok(),
             "a later request should recover the poisoned lock"
         );
     }

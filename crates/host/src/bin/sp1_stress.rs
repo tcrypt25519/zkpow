@@ -18,13 +18,13 @@ use std::path::PathBuf;
 
 use memuse::{StageHistory, StageMetric};
 use zkpow_controller::db_path;
-use zkpow_controller::{Controller, HeaderStore};
+use zkpow_controller::{Controller, HeaderStore, SessionStart};
 use zkpow_host::memory_monitor;
 use zkpow_host::observability;
 use zkpow_host::pipeline::input::{
     genesis_hash, ENV_ZKPOW_BATCH_SIZE, ENV_ZKPOW_DB_PATH, ENV_ZKPOW_EXECUTE_ONLY,
 };
-use zkpow_host::pipeline::source::LocalControllerSource;
+use zkpow_host::pipeline::source::{ControllerClient, LocalControllerSource};
 use zkpow_host::pipeline::{generate_and_save_proofs, ProofGenerationConfig, ProverBackend};
 
 #[tokio::main]
@@ -66,7 +66,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .unwrap_or_else(db_path);
     let db =
         HeaderStore::open(&db_path_buf).map_err(|e| format!("failed to open database: {e}"))?;
-    let source = LocalControllerSource::new(Controller::new(db, genesis_hash()));
+    let mut source = LocalControllerSource::new(Controller::new(db, genesis_hash()));
+    source.begin_session(SessionStart::Genesis)?;
 
     let mut prev_proof_path: Option<PathBuf> = None;
     let mut baseline_rss_kb: Option<u64> = None;
@@ -102,12 +103,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let start_mem = memory_monitor::log_point("stress_iter_start", "Stress iteration start");
 
         let iter_start = std::time::Instant::now();
-        let artifacts = generate_and_save_proofs(&config, &source).await?;
+        let artifacts = generate_and_save_proofs(&config, &mut source).await?;
         let compressed_path = artifacts.compressed_path.clone();
         if !execute_only && compressed_path.is_none() {
             return Err("sp1_stress expected compressed proof but got none".into());
         }
         let before_prove_mem = artifacts.before_prove_sample;
+        source.complete_work(&artifacts.public_values)?;
         drop(artifacts);
         let iter_elapsed = iter_start.elapsed();
 

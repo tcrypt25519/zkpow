@@ -1,46 +1,47 @@
-use zkpow_controller::{Controller, FetchedBatch};
+use zkpow_controller::{Controller, FetchedBatch, SessionStart};
 
 use crate::pipeline::BoxError;
-use crate::util;
 
-/// Where a batch's headers and dry-run expected state come from. The local
-/// implementation wraps a `Controller` over SQLite; future implementations
-/// (e.g. an HTTP-backed source) can satisfy the same interface.
-pub trait BatchSource {
-    fn genesis_hash(&self) -> util::BlockHash;
-    fn state_at(&self, height: u32) -> util::State;
-    fn fetch_batch(
-        &self,
-        current_state: &util::State,
-        num_headers: u32,
-    ) -> Result<FetchedBatch, BoxError>;
+/// Controller transport used by the host. The controller owns the session
+/// cursor; the host only receives work and reports guest/prover output.
+pub trait ControllerClient {
+    fn begin_session(&mut self, start: SessionStart) -> Result<(), BoxError>;
+    fn next_work(&mut self, num_headers: u32) -> Result<FetchedBatch, BoxError>;
+    fn complete_work(&mut self, public_values: &[u8]) -> Result<(), BoxError>;
 }
 
 pub struct LocalControllerSource {
     controller: Controller,
+    session_id: Option<u64>,
 }
 
 impl LocalControllerSource {
     pub fn new(controller: Controller) -> Self {
-        Self { controller }
+        Self {
+            controller,
+            session_id: None,
+        }
     }
 }
 
-impl BatchSource for LocalControllerSource {
-    fn genesis_hash(&self) -> util::BlockHash {
-        self.controller.genesis_hash()
+impl ControllerClient for LocalControllerSource {
+    fn begin_session(&mut self, start: SessionStart) -> Result<(), BoxError> {
+        self.session_id = Some(self.controller.begin_session(start)?);
+        Ok(())
     }
 
-    fn state_at(&self, height: u32) -> util::State {
-        self.controller.state_at(height)
+    fn next_work(&mut self, num_headers: u32) -> Result<FetchedBatch, BoxError> {
+        let session_id = self
+            .session_id
+            .ok_or("controller session is not initialized")?;
+        self.controller.next_work(session_id, num_headers)
     }
 
-    fn fetch_batch(
-        &self,
-        current_state: &util::State,
-        num_headers: u32,
-    ) -> Result<FetchedBatch, BoxError> {
-        self.controller.fetch_batch(current_state, num_headers)
+    fn complete_work(&mut self, public_values: &[u8]) -> Result<(), BoxError> {
+        let session_id = self
+            .session_id
+            .ok_or("controller session is not initialized")?;
+        self.controller.complete_work(session_id, public_values)
     }
 }
 
@@ -51,6 +52,7 @@ impl BatchSource for LocalControllerSource {
 pub struct HttpControllerSource {
     base_url: String,
     client: reqwest::blocking::Client,
+    session_id: Option<u64>,
 }
 
 impl HttpControllerSource {
@@ -62,13 +64,15 @@ impl HttpControllerSource {
         Self {
             base_url,
             client: reqwest::blocking::Client::new(),
+            session_id: None,
         }
     }
 
-    fn get_bytes(&self, path: &str) -> Result<Vec<u8>, BoxError> {
+    fn post_bytes(&self, path: &str, body: Vec<u8>) -> Result<Vec<u8>, BoxError> {
         let response = self
             .client
-            .get(format!("{}{path}", self.base_url))
+            .post(format!("{}{path}", self.base_url))
+            .body(body)
             .send()
             .map_err(|err| format!("controller request {path} failed: {err}"))?;
         let status = response.status();
@@ -82,46 +86,40 @@ impl HttpControllerSource {
     }
 }
 
-impl BatchSource for HttpControllerSource {
-    fn genesis_hash(&self) -> util::BlockHash {
-        let bytes = self
-            .get_bytes("/genesis_hash")
-            .unwrap_or_else(|err| panic!("genesis_hash request failed: {err}"));
-        let array: [u8; 32] = bytes
+impl ControllerClient for HttpControllerSource {
+    fn begin_session(&mut self, start: SessionStart) -> Result<(), BoxError> {
+        let bytes = self.post_bytes(
+            "/session",
+            zkpow_controller::http::encode_session_start(&start),
+        )?;
+        let session_id: [u8; 8] = bytes
             .try_into()
-            .unwrap_or_else(|_| panic!("genesis_hash response was not 32 bytes"));
-        util::BlockHash::new(array)
+            .map_err(|_| "controller session response was not 8 bytes")?;
+        self.session_id = Some(u64::from_le_bytes(session_id));
+        Ok(())
     }
 
-    fn state_at(&self, height: u32) -> util::State {
-        let bytes = self
-            .get_bytes(&format!("/state/{height}"))
-            .unwrap_or_else(|err| panic!("state_at({height}) request failed: {err}"));
-        util::State::parse(&bytes)
-            .unwrap_or_else(|err| panic!("state_at({height}) response failed to parse: {err}"))
-    }
-
-    fn fetch_batch(
-        &self,
-        current_state: &util::State,
-        num_headers: u32,
-    ) -> Result<FetchedBatch, BoxError> {
-        let response = self
-            .client
-            .post(format!("{}/batch/{num_headers}", self.base_url))
-            .body(current_state.to_bytes().to_vec())
-            .send()
-            .map_err(|err| format!("batch request failed: {err}"))?;
-        let status = response.status();
-        let bytes = response
-            .bytes()
-            .map_err(|err| format!("batch response body read failed: {err}"))?;
-        if !status.is_success() {
-            return Err(String::from_utf8_lossy(&bytes).into_owned().into());
-        }
-
+    fn next_work(&mut self, num_headers: u32) -> Result<FetchedBatch, BoxError> {
+        let session_id = self
+            .session_id
+            .ok_or("controller session is not initialized")?;
+        let bytes = self.post_bytes(
+            &format!("/session/{session_id}/work/{num_headers}"),
+            Vec::new(),
+        )?;
         zkpow_controller::http::decode_batch_response(&bytes)
             .map_err(|err| format!("invalid binary batch response: {err}").into())
+    }
+
+    fn complete_work(&mut self, public_values: &[u8]) -> Result<(), BoxError> {
+        let session_id = self
+            .session_id
+            .ok_or("controller session is not initialized")?;
+        self.post_bytes(
+            &format!("/session/{session_id}/complete"),
+            public_values.to_vec(),
+        )?;
+        Ok(())
     }
 }
 
@@ -135,7 +133,7 @@ mod tests {
     /// dedicated OS thread with its own tokio runtime, and returns an
     /// `HttpControllerSource` pointed at it alongside a `LocalControllerSource`
     /// over a second connection to the same DB, so the two implementations of
-    /// `BatchSource` can be compared directly.
+    /// `ControllerClient` can be compared directly.
     ///
     /// The server deliberately runs outside of the calling test's runtime:
     /// `HttpControllerSource` uses `reqwest::blocking`, which cannot be
@@ -167,30 +165,15 @@ mod tests {
     }
 
     #[test]
-    fn http_source_genesis_hash_matches_local() {
-        let (local_source, http_source) = local_and_http_sources();
-        assert_eq!(local_source.genesis_hash(), http_source.genesis_hash());
-    }
+    fn http_controller_session_matches_local() {
+        let (mut local_source, mut http_source) = local_and_http_sources();
+        local_source.begin_session(SessionStart::Genesis).unwrap();
+        http_source.begin_session(SessionStart::Genesis).unwrap();
 
-    #[test]
-    fn http_source_state_at_matches_local() {
-        let (local_source, http_source) = local_and_http_sources();
-        assert_eq!(local_source.state_at(0), http_source.state_at(0));
-        assert_eq!(local_source.state_at(10), http_source.state_at(10));
-    }
+        let local_batch = local_source.next_work(13).unwrap();
+        let http_batch = http_source.next_work(13).unwrap();
 
-    #[test]
-    fn http_source_fetch_batch_matches_local() {
-        let (local_source, http_source) = local_and_http_sources();
-        let genesis_state = local_source.state_at(0);
-
-        let local_batch = local_source
-            .fetch_batch(&genesis_state, 13)
-            .expect("local fetch_batch should succeed");
-        let http_batch = http_source
-            .fetch_batch(&genesis_state, 13)
-            .expect("http fetch_batch should succeed");
-
+        assert_eq!(local_batch.current_state, http_batch.current_state);
         assert_eq!(local_batch.headers, http_batch.headers);
         assert_eq!(local_batch.median_hints, http_batch.median_hints);
         assert_eq!(local_batch.expected_state, http_batch.expected_state);
@@ -203,16 +186,13 @@ mod tests {
     }
 
     #[test]
-    fn http_source_fetch_batch_error_matches_local_prefix() {
-        let (local_source, http_source) = local_and_http_sources();
-        let genesis_state = local_source.state_at(0);
+    fn controller_session_rejects_zero_header_work_consistently() {
+        let (mut local_source, mut http_source) = local_and_http_sources();
+        local_source.begin_session(SessionStart::Genesis).unwrap();
+        http_source.begin_session(SessionStart::Genesis).unwrap();
 
-        let local_err = local_source
-            .fetch_batch(&genesis_state, 0)
-            .expect_err("local fetch_batch with 0 headers should fail");
-        let http_err = http_source
-            .fetch_batch(&genesis_state, 0)
-            .expect_err("http fetch_batch with 0 headers should fail");
+        let local_err = local_source.next_work(0).unwrap_err();
+        let http_err = http_source.next_work(0).unwrap_err();
 
         assert_eq!(local_err.to_string(), http_err.to_string());
     }
