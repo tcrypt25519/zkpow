@@ -6975,7 +6975,6 @@ dependencies = [
  "num-bigint 0.4.6",
  "reqwest",
  "rust-s3",
- "serde_json",
  "sp1-build 6.1.0 (git+https://github.com/succinctlabs/sp1?tag=v6.1.0)",
  "sp1-prover",
  "sp1-recursion-gnark-ffi",

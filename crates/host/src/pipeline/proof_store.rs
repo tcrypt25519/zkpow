@@ -30,9 +30,66 @@ pub trait ProofStore {
     ) -> Result<(), BoxError>;
 }
 
-const POINTER_FILE_NAME: &str = "latest.json";
+const POINTER_FILE_NAME: &str = "latest";
+const POINTER_VERSION: u8 = 1;
 
-/// Filesystem-backed `ProofStore`: a single pointer file (`latest.json`) in a
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct StoredPointer {
+    end_height: u32,
+    proof_reference: Option<String>,
+}
+
+fn encode_pointer(end_height: u32, proof_reference: Option<&str>) -> Result<Vec<u8>, BoxError> {
+    let proof_reference = proof_reference.unwrap_or_default().as_bytes();
+    let has_proof = !proof_reference.is_empty();
+    let length = u32::try_from(proof_reference.len())?;
+    let mut bytes = Vec::with_capacity(10 + proof_reference.len());
+    bytes.push(POINTER_VERSION);
+    bytes.push(u8::from(has_proof));
+    bytes.extend_from_slice(&end_height.to_le_bytes());
+    bytes.extend_from_slice(&length.to_le_bytes());
+    bytes.extend_from_slice(proof_reference);
+    Ok(bytes)
+}
+
+fn decode_pointer(bytes: &[u8], location: &str) -> Result<StoredPointer, BoxError> {
+    if bytes.len() < 10 || bytes[0] != POINTER_VERSION {
+        return Err(format!("malformed proof pointer {location}").into());
+    }
+    let has_proof = match bytes[1] {
+        0 => false,
+        1 => true,
+        _ => return Err(format!("malformed proof pointer {location}").into()),
+    };
+    let end_height = u32::from_le_bytes(bytes[2..6].try_into().expect("fixed-width height"));
+    let reference_len = u32::from_le_bytes(
+        bytes[6..10]
+            .try_into()
+            .expect("fixed-width reference length"),
+    ) as usize;
+    let reference = bytes
+        .get(10..)
+        .filter(|reference| reference.len() == reference_len)
+        .ok_or_else(|| format!("malformed proof pointer {location}"))?;
+    if !has_proof && !reference.is_empty() {
+        return Err(format!("malformed proof pointer {location}").into());
+    }
+    let proof_reference = if has_proof {
+        Some(
+            std::str::from_utf8(reference)
+                .map_err(|_| format!("malformed proof pointer {location}"))?
+                .to_owned(),
+        )
+    } else {
+        None
+    };
+    Ok(StoredPointer {
+        end_height,
+        proof_reference,
+    })
+}
+
+/// Filesystem-backed `ProofStore`: a single binary pointer file (`latest`) in a
 /// configured directory records the height most recently proved and, when a
 /// real proof was produced, the path to its compressed proof file.
 pub struct LocalProofStore {
@@ -62,20 +119,10 @@ impl ProofStore for LocalProofStore {
             Err(err) => return Err(err.into()),
         };
 
-        let pointer: serde_json::Value = serde_json::from_slice(&bytes)
-            .map_err(|err| format!("malformed pointer file {}: {err}", pointer_path.display()))?;
-        let end_height = pointer
-            .get("end_height")
-            .and_then(serde_json::Value::as_u64)
-            .ok_or_else(|| format!("pointer file {} missing end_height", pointer_path.display()))?
-            as u32;
-
-        match pointer
-            .get("proof_path")
-            .and_then(serde_json::Value::as_str)
-        {
+        let pointer = decode_pointer(&bytes, &pointer_path.display().to_string())?;
+        match pointer.proof_reference {
             Some(path) => Ok(ResumePoint::PreviousProof(PathBuf::from(path))),
-            None => Ok(ResumePoint::TrustedHeight(end_height)),
+            None => Ok(ResumePoint::TrustedHeight(pointer.end_height)),
         }
     }
 
@@ -86,11 +133,8 @@ impl ProofStore for LocalProofStore {
     ) -> Result<(), BoxError> {
         std::fs::create_dir_all(&self.store_dir)?;
 
-        let pointer = serde_json::json!({
-            "end_height": end_height,
-            "proof_path": compressed_path.map(|path| path.to_string_lossy().into_owned()),
-        });
-        let bytes = serde_json::to_vec_pretty(&pointer)?;
+        let proof_path = compressed_path.map(|path| path.to_string_lossy());
+        let bytes = encode_pointer(end_height, proof_path.as_deref())?;
 
         // Write-then-rename so a crash never leaves a partially written pointer file.
         let tmp_path = self.store_dir.join(format!("{POINTER_FILE_NAME}.tmp"));
@@ -101,8 +145,8 @@ impl ProofStore for LocalProofStore {
 }
 
 /// S3-compatible (e.g. DigitalOcean Spaces) `ProofStore`. Mirrors
-/// `LocalProofStore`'s pointer-file design: a JSON pointer object
-/// (`{key_prefix}/latest.json`) records the height most recently proved and,
+/// `LocalProofStore`'s pointer-file design: a binary pointer object
+/// (`{key_prefix}/latest`) records the height most recently proved and,
 /// when a real proof was produced, the key of its compressed proof object.
 /// Proof bytes needed to resume (`ResumePoint::PreviousProof`) are downloaded
 /// to `proof_cache_dir` so the rest of the pipeline can load them like any
@@ -192,17 +236,10 @@ impl ProofStore for S3ProofStore {
             .into());
         }
 
-        let pointer: serde_json::Value = serde_json::from_slice(response.as_slice())
-            .map_err(|err| format!("malformed pointer object {pointer_key}: {err}"))?;
-        let end_height = pointer
-            .get("end_height")
-            .and_then(serde_json::Value::as_u64)
-            .ok_or_else(|| format!("pointer object {pointer_key} missing end_height"))?
-            as u32;
-
-        match pointer.get("proof_key").and_then(serde_json::Value::as_str) {
-            Some(proof_key) => Ok(ResumePoint::PreviousProof(self.download_proof(proof_key)?)),
-            None => Ok(ResumePoint::TrustedHeight(end_height)),
+        let pointer = decode_pointer(response.as_slice(), &pointer_key)?;
+        match pointer.proof_reference {
+            Some(proof_key) => Ok(ResumePoint::PreviousProof(self.download_proof(&proof_key)?)),
+            None => Ok(ResumePoint::TrustedHeight(pointer.end_height)),
         }
     }
 
@@ -236,11 +273,7 @@ impl ProofStore for S3ProofStore {
             None => None,
         };
 
-        let pointer = serde_json::json!({
-            "end_height": end_height,
-            "proof_key": proof_key,
-        });
-        let bytes = serde_json::to_vec_pretty(&pointer)?;
+        let bytes = encode_pointer(end_height, proof_key.as_deref())?;
         let pointer_key = self.pointer_key();
         let response = self
             .bucket
@@ -458,7 +491,7 @@ mod s3_tests {
 
         store.record_progress(5, None).unwrap();
 
-        assert!(raw_store.lock().unwrap().contains_key("env-a/latest.json"));
+        assert!(raw_store.lock().unwrap().contains_key("env-a/latest"));
 
         std::fs::remove_dir_all(&cache_dir).ok();
     }
