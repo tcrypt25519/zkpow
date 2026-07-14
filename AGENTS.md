@@ -1,198 +1,64 @@
 # zkpow26
 
 Zero-knowledge proof system for Bitcoin header chain validation using SP1 zkVM.
-Proves that a batch of block headers are valid (PoW, chain linkage, difficulty
+Proves that a batch of block headers is valid (PoW, chain linkage, difficulty
 retargeting, median time past) and can be recursively chained to extend a proof
 from any trusted starting point.
 
 ## Quick Start
 
 ```bash
-# Build
+# Build (compiles the guest program to a RISC-V ELF as part of the build)
 cargo build --release
 
-# Run prover (genesis → block 99)
-cd script && cargo run --release --bin zkpow-host
+# Fill the header database (Bitcoin P2P by default)
+cargo run --release -p zkpow-cli -- sync --db headers.db
 
-# Run prover extending a previous proof
-PREV_PROOF=proof_height_0_to_99.bin START_HEIGHT=100 NUM_HEADERS=100 \
-  cargo run --release --bin zkpow-host
+# Run the prover
+ZKPOW_DB_PATH=headers.db ./target/release/zkpow-host   # or: ./scripts/run.sh
 
-# Run test suite (fast, no proving)
+# Fast test suite (no proving)
 cargo run --release --bin test_errors
 
-# Inspect a proof
+# Inspect a produced proof
 cargo run --release --bin inspect_proof -- proof_height_0_to_99.bin
-
-# Clippy (clean)
-cargo clippy --all-targets -- -D warnings
 ```
 
-## Project Structure
+GPU proving needs a CUDA build (`--features CUDA`) and `ZKPOW_USE_CUDA=1`; without
+it the prover runs on CPU / mock. See `contrib/infra/` for the container setup.
+
+## Where Things Live
 
 ```text
-bitcoin-header-chain/
-├── program/                    # zkVM program (constrained execution)
-│   ├── Cargo.toml              # Only sp1-zkvm (verify feature)
-│   └── src/
-│       ├── main.rs             # Header validation logic
-│       └── sha256.rs           # Specialized SHA-256 precompile calls
-└── script/                     # Host script (proving orchestration)
-    ├── Cargo.toml
-    ├── build.rs                # Compiles program to RISC-V ELF
-    └── src/
-        ├── main.rs             # Prove → verify → save (compressed + Groth16)
-        ├── util.rs             # DB loading, work calculation, PV builder
-        ├── lib.rs              # pub mod util
-        └── bin/
-            ├── test_errors.rs      # Automated tests (8/8 pass)
-            └── inspect_proof.rs    # Human-readable proof display
+crates/
+  core         shared consensus types, state machine, PoW/difficulty math
+  core-macros  #[tracked] cycle-tracking attribute
+  guest        the SP1 zkVM program (constrained execution)
+  host         proving pipeline: run guest, prove, verify, save, resume
+  controller   proving batch sessions (DB <-> prover trust boundary)
+  store        headers.db SQLite gateway
+  sync-headers header ingestion (Bitcoin P2P + Alchemy RPC)
+  cli          zkpow-cli sync command
 ```
 
-## Architecture
-
-### Data Flow
-
-```text
-Host: genesis_hash, start_height, num_headers, headers_bytes
-  ↓ stdin
-zkVM: reads inputs → validates headers → commits public values → HALT(0)
-  ↓ proof
-Host: verifies proof → verifies public values → saves proof
-```
-
-### Public Values Layout (237 bytes)
-
-| Offset | Size | Field |
-| -------- | ------ | ------- |
-| 0..32 | 32 | genesis_hash |
-| 32..64 | 32 | final_header_hash |
-| 64..72 | 8 | num_headers (total validated) |
-| 72..152 | 80 | final_header (raw bytes) |
-| 152..184 | 32 | cumulative_chain_work (u256 LE) |
-| 184..188 | 4 | last_epoch_start_timestamp |
-| 188..232 | 44 | median_timestamp_buffer (\[u32; 11]) |
-| 232..233 | 1 | success_code (0=success, 1-7=error) |
-| 233..237 | 4 | failure_height (0 on success, absolute chain height on failure) |
-
-### Median Count is Derivable
-
-Do NOT commit median_count to public values. It's computed as:
-
-```text
-count = min(11, total_validated - 1)  for total_validated > 0
-count = 0                              for total_validated == 0
-```
-
-## SHA-256 Implementation
-
-Uses direct SP1 precompile syscalls — no `sha2` crate in the program.
-
-- `sha256_32bytes(&[u8; 32])` → `[u8; 32]`: Intermediate hash. Hardcoded for exactly 1 block.
-- `sha256_52bytes(&[u8; 52])` → `[u8; 32]`: Serialized `ContinuationData` (52 bytes = 1 SHA-256 block). Used for the continuation digest.
-- `sha256_169bytes(&[u8; 169])` → `[u8; 32]`: Serialized `MinimalPublicValues` (169 bytes = 3 SHA-256 blocks).
-- `sha256d_new_header(&NewHeader, &BlockHash, CompactTarget)` → `[u8; 32]`: Double-SHA-256 of a Bitcoin block header without materializing a full `Header` or `[u8; 80]`.
-
-The host script still uses the `sha2` crate (via workspace) for
-`compute_pv_digest()` — this is appropriate since the host needs SHA-256 to
-verify it built the same public values the program committed.
-
-### State Wire Sizes
-
-| Constant | Bytes | Description |
-| -------- | ----- | ----------- |
-| `STATE_SIZE` | 152 | Full `State` (public + private, serialized for recursive chaining) |
-| `CONTINUATION_DATA_SIZE` | 52 | `ContinuationData` (current_nbits=4, epoch_ts=4, timestamps=44) |
-| `CLAIM_SIZE` | 100 | `Claim` (genesis_hash=32, tip_hash=32, chain_work=32, height=4) |
-
-## Error Codes
-
-| Code | Name | Trigger |
-| ------ | ------ | --------- |
-| 0 | Success | All headers valid |
-| 1 | Header payload length invalid | Input/header-hint payload length is malformed |
-| 2 | PoW insufficient | `SHA256d(header) > target` |
-| 3 | Timestamp too old | `timestamp ≤ median_time_past` |
-| 4 | Genesis hash mismatch | At height 0, first validated header hash ≠ expected genesis hash |
-
-Notes:
-
-- Prev-blockhash and bits-mismatch checks are not separate error codes in this design.
-  They are derived from authenticated state when materializing `Header` from `NewHeader`.
-- Not used (reserved): 5, 6, 7, 8, 9, 10.
-
-## Proof Files
-
-Each run produces two files:
-
-- `proof_height_X_to_Y.bin` — Compressed proof (~1.3 MB, for off-chain
-verification and recursive chaining)
-- `proof_height_X_to_Y_groth16.bin` — Groth16 SNARK (~200 bytes, ~100k gas on Ethereum)
-
-## Clippy Note
-
-`cargo clippy --all-targets` prints "Skipping build due to clippy invocation"
-for the script binary because the `sp1-build` dependency triggers ELF
-compilation which clippy suppresses. This is expected. Run
-`cargo build --release` to verify the script compiles.
+The guest and host share `core`; behavior that must differ between them is
+selected by cargo feature, not by caller choice.
 
 ## Debugging
 
-### Structured JSON logs
-
-Every run writes newline-delimited JSON to `logs/run.jsonl` (created automatically,
-overwritten each run). No environment variable needed — the file is always produced.
-
-**Quick queries:**
+Every run writes newline-delimited JSON to `logs/run.jsonl` (always produced, no
+env var needed). Set `RUST_LOG=info` for stderr output including the SP1 cycle
+tracker.
 
 ```bash
-# All log entries from the last run
-cat logs/run.jsonl | jq .
-
-# Errors only
 cat logs/run.jsonl | jq 'select(.level == "ERROR")'
-
-# Proof pipeline progress (info-level events)
-cat logs/run.jsonl | jq 'select(.level == "INFO") | .fields.message'
-
-# Cycle tracker / execution report entries
-cat logs/run.jsonl | jq 'select(.fields.message | test("cycle|instruction|span|gas"; "i"))'
-
-# Last N entries
-tail -n 20 logs/run.jsonl | jq .
 ```
 
-**Log entry schema:**
+## Notes
 
-```json
-{
-  "timestamp": "2026-04-29T07:00:00.000000Z",
-  "level": "INFO",
-  "fields": { "message": "Human-readable description" },
-  "target": "zkpow_host::proof_pipeline",
-  "span": { "name": "span-name" },
-  "spans": [{ "name": "parent-span" }]
-}
-```
-
-**Common debugging workflows:**
-
-- Proof failed → `cat logs/run.jsonl | jq 'select(.level == "ERROR")'`
-- Check backend/config used → `cat logs/run.jsonl | jq 'select(.fields.message | test("Starting proof|backend"))'`
-- Inspect cycle breakdown → `cat logs/run.jsonl | jq 'select(.fields.message | test("cycles|hot span|hierarchy"))'`
-- Timing summary → `cat logs/run.jsonl | jq 'select(.fields.message | test("PROVING TIME|breakdown|seconds"))'`
-
-### Cycle Tracker (stderr)
-
-Run with `RUST_LOG=info` to also see cycle tracker output on stderr:
-
-```shell
-stdout: cycle-tracker-start: parse
-stdout: cycle-tracker-end: parse
-stdout: cycle-tracker-start: sha256d
-stdout: cycle-tracker-end: sha256d
-stdout: cycle-tracker-start: retarget
-stdout: cycle-tracker-end: retarget
-```
-
-The same data appears in `logs/run.jsonl` without needing `RUST_LOG=info`.
+- `cargo clippy --all-targets` prints "Skipping build due to clippy invocation"
+  for the host binary (the `sp1-build` dependency suppresses ELF compilation under
+  clippy). This is expected; use `cargo build --release` to verify it compiles.
+- Wire formats (public-values layout, error codes, struct sizes) live in the code
+  and are still in flux — read `crates/core/src/public_values.rs` and
+  `crates/core/src/state.rs` rather than relying on a copy here.
