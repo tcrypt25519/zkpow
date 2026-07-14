@@ -81,12 +81,12 @@ structs: Data Structures {
 # ── Wire protocol ─────────────────────────────────────────────────────────────
 
 wire: Wire Protocol (stdin) {
-  pcs_wire: "stdin[0]: ProofCarryingState" {
+  verifier_key_wire: "stdin[0]: Verifier-key digest" {
     class: public_data
     shape: queue
     tooltip: |
       Verifier-key digest only.
-      Size: PROOF_CARRYING_STATE_SIZE (32 B)
+      Size: 32 B
     |
   }
 
@@ -113,7 +113,7 @@ wire: Wire Protocol (stdin) {
 # ── Guest execution ───────────────────────────────────────────────────────────
 
 guest: Guest (zkVM) {
-  parse_pcs: Parse ProofCarryingState {
+  parse_verifier_key: Parse Verifier-key digest {
     shape: hexagon
     style.fill: "#E3F2FD"
   }
@@ -225,15 +225,15 @@ crypto_chain: Cryptographic Binding Chain {
 
 # ── Wire connections ──────────────────────────────────────────────────────────
 
-wire.pcs_wire -> guest.parse_pcs
+wire.verifier_key_wire -> guest.parse_verifier_key
 wire.state_wire -> guest.parse_state
 wire.proof_wire -> guest.verify_recursive
 
 note: |md
   **Current recursive input binding**
 
-  `ProofCarryingState` carries only the verifier-key digest. The full `State`
-  remains a private witness. The guest derives the prior `Claim` and
+  The verifier-key digest is supplied directly. The full `State` remains a
+  private witness. The guest derives the prior `Claim` and
   `ContinuationData` from `State`.
 
   For recursive batches, `ContinuationData` is hashed, folded into reconstructed

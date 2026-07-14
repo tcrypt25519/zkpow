@@ -6,7 +6,7 @@
 //! directly, then validates PoW and consensus state transitions.
 //!
 //! Input protocol:
-//!   1. pcs: Vec<u8>                  (ProofCarryingState bytes)
+//!   1. verifier_key: Vec<u8>
 //!   2. state_witness: Vec<u8>        (State bytes)
 //!   3. header_hints: Vec<u8>
 //!   4. median_time_past_hints: Vec<u8>
@@ -20,8 +20,8 @@ sp1_zkvm::entrypoint!(main);
 mod sha256;
 
 use zkpow_core::{
-    cycle_track, parse_median_hints, parse_new_headers, tracked, Claim, MinimalPublicValues,
-    ProofCarryingState, State, VerifierKeyDigest, CONTINUATION_DATA_SIZE, MINIMAL_PV_SIZE,
+    cycle_track, parse_median_hints, parse_new_headers, tracked, Claim, MinimalPublicValues, State,
+    VerifierKeyDigest, CONTINUATION_DATA_SIZE, MINIMAL_PV_SIZE,
 };
 
 use sha256::{sha256_169bytes, sha256_52bytes, sha256d_new_header};
@@ -67,7 +67,11 @@ pub fn main() {
         let header_hint_bytes = sp1_zkvm::io::read_vec();
         let median_hint_bytes = sp1_zkvm::io::read_vec();
 
-        let pcs = ProofCarryingState::parse(&input_bytes).expect("input should parse");
+        let verifier_key = VerifierKeyDigest::from_bytes(
+            input_bytes
+                .try_into()
+                .expect("verifier key must be exactly 32 bytes"),
+        );
         let mut state = State::parse(&state_bytes).expect("state witness should parse");
         let header_hints =
             parse_new_headers(&header_hint_bytes).expect("new header hints should parse");
@@ -77,7 +81,7 @@ pub fn main() {
         if state.height > 0 {
             let prior_claim = state.public_claim();
             let prior_continuation_bytes: [u8; CONTINUATION_DATA_SIZE] = state.continuation_bytes();
-            verify_prior_proof(&pcs.verifier_key, &prior_claim, &prior_continuation_bytes);
+            verify_prior_proof(&verifier_key, &prior_claim, &prior_continuation_bytes);
         }
 
         // Apply headers; on failure commit minimal PV and halt.
@@ -94,13 +98,13 @@ pub fn main() {
                 failure.error_code,
                 failure.failure_height,
                 digest,
-                pcs.verifier_key,
+                verifier_key,
             );
             commit_minimal_pv(&pv);
         }
 
         let digest = compute_continuation_digest(&state);
-        let pv = MinimalPublicValues::success(&state.public_claim(), digest, pcs.verifier_key);
+        let pv = MinimalPublicValues::success(&state.public_claim(), digest, verifier_key);
         commit_minimal_pv(&pv);
     });
 }

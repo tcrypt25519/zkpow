@@ -48,13 +48,12 @@ pub use state::State;
 mod errors;
 
 pub(crate) use errors::TargetError;
-pub use errors::{InputError, InputParseError, ParseError};
+pub use errors::{InputParseError, ParseError};
 
 mod input;
 
 pub use input::{
     parse_median_hints, parse_new_headers, serialize_median_hints, serialize_new_headers,
-    ProofCarryingState,
 };
 
 mod public_values;

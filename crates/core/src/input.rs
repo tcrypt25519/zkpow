@@ -1,50 +1,9 @@
 //! Logic for parsing the proof-carrying state and header batch inputs to the guest.
 
 use crate::{
-    check_exact_len, slice_from_bytes, tracked, BlockTimestamp, InputError, InputParseError,
-    NewHeader, VerifierKeyDigest, NEW_HEADER_SIZE,
+    slice_from_bytes, tracked, BlockTimestamp, InputParseError, NewHeader, NEW_HEADER_SIZE,
 };
 use alloc::vec::Vec;
-use core::mem;
-
-/// Wire size of [`ProofCarryingState`]: `VerifierKeyDigest` → `[u32; 8]` → 32 bytes LE.
-const PCS_WIRE_SIZE: usize = mem::size_of::<ProofCarryingState>();
-
-/// Authentication context for a recursive continuation.
-///
-/// The full private chain [`State`](crate::State) is supplied separately as private witness data.
-/// Its public claim is derived by the guest when verifying the prior proof.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProofCarryingState {
-    pub verifier_key: VerifierKeyDigest,
-}
-
-impl ProofCarryingState {
-    /// Constructs a new ProofCarryingState.
-    pub fn new(verifier_key: VerifierKeyDigest) -> Self {
-        Self { verifier_key }
-    }
-
-    /// Parse and validate from the host/guest wire format.
-    #[tracked]
-    pub fn parse(bytes: &[u8]) -> Result<Self, InputError> {
-        check_exact_len(bytes, PCS_WIRE_SIZE)?;
-        let verifier_key = cycle_track!({
-            Ok::<_, InputError>(VerifierKeyDigest::from_bytes(
-                bytes.try_into().expect("bytes is exactly 32 bytes"),
-            ))
-        })?;
-        Ok(Self { verifier_key })
-    }
-
-    /// Serialize to the host/guest wire format.
-    #[must_use]
-    pub fn to_bytes(&self) -> Vec<u8> {
-        let mut bytes = Vec::with_capacity(PCS_WIRE_SIZE);
-        bytes.extend_from_slice(&self.verifier_key.to_bytes());
-        bytes
-    }
-}
 
 /// Serialize new headers.
 #[must_use]
@@ -100,29 +59,7 @@ mod tests {
     use alloc::vec;
 
     use super::*;
-    use crate::{BlockTimestamp, ParseError};
-
-    #[test]
-    fn proof_carrying_state_round_trips_verifier_key() {
-        let vk = VerifierKeyDigest::from_raw([0; 8]);
-        let bytes = ProofCarryingState::new(vk).to_bytes();
-        let pcs = ProofCarryingState::parse(&bytes).unwrap();
-
-        assert_eq!(pcs.verifier_key, vk);
-    }
-
-    #[test]
-    fn proof_carrying_state_rejects_wrong_length() {
-        let err = ProofCarryingState::parse(&[0u8; 31]).unwrap_err();
-
-        assert_eq!(
-            err,
-            InputError::Parse(ParseError::InvalidLength {
-                expected: 32,
-                actual: 31,
-            })
-        );
-    }
+    use crate::BlockTimestamp;
 
     #[test]
     fn test_new_header_hints_round_trip() {
