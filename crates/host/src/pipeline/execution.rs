@@ -9,7 +9,7 @@ use crate::pipeline::input::{build_stdin, verifier_key_digest};
 use crate::pipeline::BoxError;
 use crate::pipeline::ELF;
 use crate::util;
-use crate::util::{HeaderChainPublicValues, ProofCarryingState, VerifierKeyDigest};
+use crate::util::{HeaderChainPublicValues, VerifierKeyDigest};
 
 pub(crate) struct ExecutedBatchArtifacts {
     pub(crate) stdin: SP1Stdin,
@@ -73,10 +73,9 @@ where
     let verifier_key = timed_sync("build_verifier_key", || -> Result<_, BoxError> {
         Ok(verifier_key_digest(proving_key.verifying_key()))
     })?;
-    let pcs = ProofCarryingState::new(verifier_key);
     let stdin = timed_sync("serialize_input", || {
         build_stdin(
-            &pcs,
+            verifier_key,
             &batch.current_state,
             &batch.headers,
             &batch.median_hints,
@@ -146,10 +145,9 @@ where
     )
     .to_bytes()
     .to_vec();
-    let pcs = util::ProofCarryingState::new(verifier_key);
     let stdin = timed_sync("serialize_input", || {
         build_stdin(
-            &pcs,
+            verifier_key,
             batch.current_state,
             batch.headers,
             batch.median_hints,

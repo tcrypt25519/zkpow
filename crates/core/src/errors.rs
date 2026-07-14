@@ -20,19 +20,6 @@ pub enum TargetError {
     TargetTooLarge,
 }
 
-/// Parse and validation errors for [`ProofCarryingState`](crate::ProofCarryingState).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum InputError {
-    #[error("input parse error: {0}")]
-    Parse(ParseError),
-}
-
-impl From<ParseError> for InputError {
-    fn from(value: ParseError) -> Self {
-        Self::Parse(value)
-    }
-}
-
 /// Parse errors for witness (hints) data.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum InputParseError {

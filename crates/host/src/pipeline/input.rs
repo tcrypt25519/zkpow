@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use crate::pipeline::{BoxError, ProofGenerationConfig, ProverBackend};
 use crate::util;
-use crate::util::{ProofCarryingState, VerifierKeyDigest};
+use crate::util::VerifierKeyDigest;
 
 pub const ENV_ZKPOW_BATCH_SIZE: &str = "ZKPOW_BATCH_SIZE";
 pub const ENV_ZKPOW_BATCH_COUNT: &str = "ZKPOW_BATCH_COUNT";
@@ -258,14 +258,14 @@ pub fn verifier_key_digest(vk: &sp1_prover::SP1VerifyingKey) -> VerifierKeyDiges
 }
 
 pub fn build_stdin(
-    pcs: &ProofCarryingState,
+    verifier_key: VerifierKeyDigest,
     state: &util::State,
     headers: &[util::NewHeader],
     median_hints: &[util::BlockTimestamp],
     previous_proof: Option<(&SP1ProofWithPublicValues, &sp1_prover::SP1VerifyingKey)>,
 ) -> Result<SP1Stdin, BoxError> {
     let mut stdin = SP1Stdin::new();
-    stdin.write_vec(pcs.to_bytes());
+    stdin.write_vec(verifier_key.to_bytes().to_vec());
     stdin.write_vec(state.to_bytes().to_vec());
     stdin.write_vec(zkpow_core::serialize_new_headers(headers));
     stdin.write_vec(zkpow_core::serialize_median_hints(median_hints));
