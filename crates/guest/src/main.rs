@@ -42,7 +42,7 @@ fn commit_minimal_pv(pv: &MinimalPublicValues) -> ! {
 
 #[tracked]
 fn verify_prior_proof(
-    verifier_key: &VerifierKeyDigest,
+    verifier_key: &[u32; 8],
     prior_claim: &Claim,
     prior_continuation_bytes: &[u8; CONTINUATION_DATA_SIZE],
 ) {
@@ -50,13 +50,17 @@ fn verify_prior_proof(
     let continuation_digest = cycle_track!({ sha256_52bytes(prior_continuation_bytes) });
 
     // 2. Reconstruct the prior proof's minimal public values and hash them.
-    let prior_pv = MinimalPublicValues::success(prior_claim, continuation_digest, *verifier_key);
+    let prior_pv = MinimalPublicValues::success(
+        prior_claim,
+        continuation_digest,
+        VerifierKeyDigest::from_raw(*verifier_key),
+    );
     let prior_pv_bytes: [u8; MINIMAL_PV_SIZE] = prior_pv.to_bytes();
     let actual_pv_hash = cycle_track!({ sha256_169bytes(&prior_pv_bytes) });
 
     // 3. Verify the SP1 proof.
     cycle_track!({
-        sp1_zkvm::lib::verify::verify_sp1_proof(verifier_key.as_raw(), &actual_pv_hash);
+        sp1_zkvm::lib::verify::verify_sp1_proof(verifier_key, &actual_pv_hash);
     });
 }
 
@@ -67,11 +71,12 @@ pub fn main() {
         let header_hint_bytes = sp1_zkvm::io::read_vec();
         let median_hint_bytes = sp1_zkvm::io::read_vec();
 
-        let verifier_key = VerifierKeyDigest::from_bytes(
-            input_bytes
-                .try_into()
-                .expect("verifier key must be exactly 32 bytes"),
-        );
+        let verifier_key_bytes: &[u8; 32] = input_bytes
+            .as_slice()
+            .try_into()
+            .expect("verifier key must be exactly 32 bytes");
+        // SP1's read_vec() returns an 8-byte-aligned buffer.
+        let verifier_key = unsafe { &*verifier_key_bytes.as_ptr().cast::<[u32; 8]>() };
         let mut state = State::parse(&state_bytes).expect("state witness should parse");
         let header_hints =
             parse_new_headers(&header_hint_bytes).expect("new header hints should parse");
@@ -81,7 +86,7 @@ pub fn main() {
         if state.height > 0 {
             let prior_claim = state.public_claim();
             let prior_continuation_bytes: [u8; CONTINUATION_DATA_SIZE] = state.continuation_bytes();
-            verify_prior_proof(&verifier_key, &prior_claim, &prior_continuation_bytes);
+            verify_prior_proof(verifier_key, &prior_claim, &prior_continuation_bytes);
         }
 
         // Apply headers; on failure commit minimal PV and halt.
@@ -98,13 +103,17 @@ pub fn main() {
                 failure.error_code,
                 failure.failure_height,
                 digest,
-                verifier_key,
+                VerifierKeyDigest::from_raw(*verifier_key),
             );
             commit_minimal_pv(&pv);
         }
 
         let digest = compute_continuation_digest(&state);
-        let pv = MinimalPublicValues::success(&state.public_claim(), digest, verifier_key);
+        let pv = MinimalPublicValues::success(
+            &state.public_claim(),
+            digest,
+            VerifierKeyDigest::from_raw(*verifier_key),
+        );
         commit_minimal_pv(&pv);
     });
 }

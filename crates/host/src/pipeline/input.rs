@@ -253,10 +253,6 @@ pub fn s3_proof_store_config_from_env() -> Result<Option<S3ProofStoreConfig>, Bo
     s3_proof_store_config_from_source(&ProcessEnv)
 }
 
-pub fn verifier_key_digest(vk: &sp1_prover::SP1VerifyingKey) -> VerifierKeyDigest {
-    VerifierKeyDigest::from_raw(vk.hash_u32())
-}
-
 pub fn build_stdin(
     verifier_key: VerifierKeyDigest,
     state: &util::State,
