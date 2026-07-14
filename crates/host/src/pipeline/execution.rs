@@ -5,7 +5,7 @@ use sp1_sdk::ExecutionReport;
 use crate::memory_monitor;
 use crate::pipeline::batch::PreparedBatch;
 use crate::pipeline::diagnostics::{timed_async, timed_sync};
-use crate::pipeline::input::{build_stdin, verifier_key_digest};
+use crate::pipeline::input::build_stdin;
 use crate::pipeline::BoxError;
 use crate::pipeline::ELF;
 use crate::util;
@@ -63,16 +63,18 @@ where
     K: ProvingKey,
     P::Error: std::fmt::Display + Send + Sync + 'static,
 {
+    let verifier_key = timed_sync("build_verifier_key", || -> Result<_, BoxError> {
+        Ok(VerifierKeyDigest::from_raw(
+            proving_key.verifying_key().hash_u32(),
+        ))
+    })?;
     let expected_pv = util::MinimalPublicValues::success(
         &batch.expected_state.public_claim(),
         batch.expected_continuation_digest,
-        VerifierKeyDigest::from_raw(proving_key.verifying_key().hash_u32()),
+        verifier_key,
     )
     .to_bytes()
     .to_vec();
-    let verifier_key = timed_sync("build_verifier_key", || -> Result<_, BoxError> {
-        Ok(verifier_key_digest(proving_key.verifying_key()))
-    })?;
     let stdin = timed_sync("serialize_input", || {
         build_stdin(
             verifier_key,
