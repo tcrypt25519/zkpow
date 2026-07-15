@@ -3820,7 +3820,6 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "encoding_rs",
- "futures-channel",
  "futures-core",
  "futures-util",
  "h2",
@@ -6927,8 +6926,13 @@ name = "zkpow-controller"
 version = "0.1.0"
 dependencies = [
  "axum 0.8.9",
+ "bincode",
  "hex",
+ "rusqlite",
+ "rust-s3",
  "sha2 0.10.8",
+ "sp1-prover",
+ "sp1-sdk",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -6968,13 +6972,13 @@ name = "zkpow-host"
 version = "0.1.0"
 dependencies = [
  "axum 0.8.9",
+ "bincode",
  "console-subscriber",
  "hex",
  "humantime",
  "memuse 0.1.0",
  "num-bigint 0.4.6",
  "reqwest",
- "rust-s3",
  "sp1-build 6.1.0 (git+https://github.com/succinctlabs/sp1?tag=v6.1.0)",
  "sp1-prover",
  "sp1-recursion-gnark-ffi",

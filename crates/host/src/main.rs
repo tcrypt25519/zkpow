@@ -1,13 +1,19 @@
 //! zkpow — Host Script
 //!
-//! Proves Bitcoin header batches and saves the result.
+//! Stateless prover driver: pulls batches from the controller, runs the
+//! guest, uploads proof artifacts, and reports completions. The controller
+//! owns resume state per ZKPOW_RUN_ID, so re-running the same command
+//! continues the run where it left off.
 //!
 //! Usage:
-//!   # First run: start from genesis
+//!   # Local mode: controller runs in-process against the local headers.db
 //!   cargo run --release -p zkpow-host --bin zkpow-host
 //!
-//!   # Subsequent runs: extend from a previous proof
-//!   ZKPOW_PREV_PROOF=proof_height_1_to_100.bin cargo run --release -p zkpow-host --bin zkpow-host
+//!   # Remote mode: pull work from a zkpow-controller-serve instance
+//!   ZKPOW_CONTROLLER_URL=http://100.x.y.z:7878 cargo run --release -p zkpow-host --bin zkpow-host
+//!
+//!   # Name the IVC chain (default: "dev")
+//!   ZKPOW_RUN_ID=mainnet-01 cargo run --release -p zkpow-host --bin zkpow-host
 //!
 //!   # Also emit a Groth16-wrapped proof
 //!   ZKPOW_GENERATE_GROTH16=1 cargo run --release -p zkpow-host --bin zkpow-host

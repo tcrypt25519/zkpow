@@ -1,9 +1,8 @@
 use sp1_sdk::prelude::*;
 use tracing::Instrument;
 
-use crate::pipeline::batch::PreparedBatch;
 use crate::pipeline::diagnostics::{timed_async, timed_sync};
-use crate::pipeline::execution::{execute_batch_with_prover, verify_public_values};
+use crate::pipeline::execution::execute_batch;
 use crate::pipeline::BoxError;
 
 pub(crate) struct CompressedProofArtifacts {
@@ -17,14 +16,17 @@ pub(crate) async fn generate_compressed_proof<P, K>(
     prover_name: &str,
     prover: &P,
     proving_key: &K,
-    batch: &PreparedBatch,
+    stdin: SP1Stdin,
 ) -> Result<CompressedProofArtifacts, BoxError>
 where
     P: Prover<ProvingKey = K>,
     K: ProvingKey,
     P::Error: std::fmt::Display + Send + Sync + 'static,
 {
-    let executed = execute_batch_with_prover(prover_name, prover, proving_key, batch).await?;
+    // Execute first: catching a guest failure here costs seconds instead of
+    // a wasted GPU proving run.
+    let executed = execute_batch(prover, stdin).await?;
+    tracing::info!(prover = prover_name, "Execution completed");
 
     let compressed_proof = timed_async("prove_compressed", || async {
         async { prover.prove(proving_key, executed.stdin).compressed().await }
@@ -33,16 +35,13 @@ where
             .map_err(|err| -> BoxError { err.to_string().into() })
     })
     .await?;
-    timed_sync(
-        "verify_compressed_public_values",
-        || -> Result<(), BoxError> {
-            verify_public_values(
-                &compressed_proof.public_values.to_vec(),
-                &executed.expected_pv,
-                "compressed proof",
-            )
-        },
-    )?;
+
+    // Local integrity checks before shipping the artifact: the proof must
+    // commit exactly what execution committed, and must verify against our
+    // own verifying key. The controller independently re-validates.
+    if compressed_proof.public_values.as_slice() != executed.public_values.as_slice() {
+        return Err("compressed proof commits different public values than execution".into());
+    }
     timed_sync("verify_compressed_proof", || -> Result<(), BoxError> {
         prover
             .verify(&compressed_proof, proving_key.verifying_key(), None)

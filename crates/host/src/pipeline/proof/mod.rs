@@ -6,6 +6,7 @@ use tokio::sync::Mutex as AsyncMutex;
 
 #[cfg(feature = "CUDA")]
 use sp1_sdk::CudaProver;
+use sp1_sdk::prelude::*;
 use sp1_sdk::{CpuProver, MockProver, Prover, ProverClient, SP1ProvingKey};
 
 use crate::pipeline::diagnostics::timed_async;
@@ -38,6 +39,23 @@ pub(crate) enum PreparedProver {
         prover: CudaProver,
         proving_key: <CudaProver as Prover>::ProvingKey,
     },
+}
+
+impl PreparedProver {
+    /// The verifying key the guest recursion is pinned to.
+    pub(crate) fn verifying_key(&self) -> &sp1_prover::SP1VerifyingKey {
+        match self {
+            PreparedProver::Mock { proving_key, .. } => proving_key.verifying_key(),
+            PreparedProver::Cpu { proving_key, .. } => proving_key.verifying_key(),
+            #[cfg(feature = "CUDA")]
+            PreparedProver::Cuda { proving_key, .. } => proving_key.verifying_key(),
+        }
+    }
+
+    /// Digest of the verifying key, as committed in every proof's public values.
+    pub(crate) fn verifier_key_digest(&self) -> crate::util::VerifierKeyDigest {
+        crate::util::VerifierKeyDigest::from_raw(self.verifying_key().hash_u32())
+    }
 }
 
 fn prepared_prover_store() -> &'static AsyncMutex<Option<(PreparedProverConfig, PreparedProver)>> {
