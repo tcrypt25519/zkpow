@@ -7,8 +7,9 @@
 //!   cargo run --release -p zkpow-host --bin sp1_stress
 //!
 //! Environment:
-//!   ITERATIONS      Number of prove loops (default: 5)
+//!   ITERATIONS           Number of prove loops (default: 5)
 //!   ZKPOW_BATCH_SIZE     Headers per batch (default: 1)
+//!   ZKPOW_EXECUTE_ONLY   Skip proving (default: on for this stress test)
 //!
 //! If RSS ratchets upward across iterations with the prover cached, the leak
 //! is inside SP1. If RSS is flat, the leak is in application-level state
@@ -17,15 +18,9 @@
 use std::path::PathBuf;
 
 use memuse::{StageHistory, StageMetric};
-use zkpow_controller::db_path;
-use zkpow_controller::{Controller, HeaderStore, SessionStart};
 use zkpow_host::memory_monitor;
 use zkpow_host::observability;
-use zkpow_host::pipeline::input::{
-    genesis_hash, ENV_ZKPOW_BATCH_SIZE, ENV_ZKPOW_DB_PATH, ENV_ZKPOW_EXECUTE_ONLY,
-};
-use zkpow_host::pipeline::source::{ControllerClient, LocalControllerSource};
-use zkpow_host::pipeline::{generate_and_save_proofs, ProofGenerationConfig, ProverBackend};
+use zkpow_host::pipeline::input::{ENV_ZKPOW_BATCH_SIZE, ENV_ZKPOW_EXECUTE_ONLY};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -39,6 +34,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(1);
+    let execute_only = std::env::var(ENV_ZKPOW_EXECUTE_ONLY)
+        .ok()
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(true);
 
     std::fs::create_dir_all("logs").ok();
 
@@ -46,11 +45,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .duration_since(std::time::UNIX_EPOCH)?
         .as_secs()
         .to_string();
+    let scratch = PathBuf::from(format!("profiling/sp1/stress/{timestamp}"));
+    std::fs::create_dir_all(&scratch).ok();
 
-    let execute_only = std::env::var(ENV_ZKPOW_EXECUTE_ONLY)
-        .ok()
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(true);
+    // The stress loop runs one batch per session iteration against a
+    // throwaway run: fresh ledger and artifact store under the scratch dir,
+    // in-process controller, mock/CPU prover cached across iterations.
+    // SAFETY: single-threaded at this point; no other env readers yet.
+    unsafe {
+        std::env::set_var("ZKPOW_RUN_ID", format!("stress-{timestamp}"));
+        std::env::set_var("ZKPOW_LEDGER_PATH", scratch.join("ledger.db"));
+        std::env::set_var("ZKPOW_PROOF_STORE_DIR", scratch.join("artifacts"));
+        std::env::set_var("ZKPOW_BATCH_COUNT", "1");
+        std::env::set_var(ENV_ZKPOW_BATCH_SIZE, num_headers.to_string());
+        std::env::set_var(ENV_ZKPOW_EXECUTE_ONLY, if execute_only { "1" } else { "0" });
+        std::env::remove_var("ZKPOW_CONTROLLER_URL");
+    }
 
     tracing::info!(
         iterations,
@@ -60,57 +70,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     );
     memory_monitor::log_point("stress_session_start", "Stress session memory snapshot");
 
-    let db_path_buf = std::env::var(ENV_ZKPOW_DB_PATH)
-        .ok()
-        .map(PathBuf::from)
-        .unwrap_or_else(db_path);
-    let db =
-        HeaderStore::open(&db_path_buf).map_err(|e| format!("failed to open database: {e}"))?;
-    let mut source = LocalControllerSource::new(Controller::new(db, genesis_hash()));
-    source.begin_session(SessionStart::Genesis)?;
-
-    let mut prev_proof_path: Option<PathBuf> = None;
     let mut baseline_rss_kb: Option<u64> = None;
-    let mut history = StageHistory::new([
-        "Stage 0 (Start)",
-        "Stage 1 (Before prove)",
-        "Stage 2 (Drop)",
-    ]);
+    let mut history = StageHistory::new(["Stage 0 (Start)", "Stage 1 (End)", "Stage 2 (Drop)"]);
 
     for i in 1..=iterations {
-        let config = ProofGenerationConfig {
-            prev_proof_path: prev_proof_path.clone(),
-            trusted_start_height: None,
-            num_headers,
-            db_path: std::env::var(ENV_ZKPOW_DB_PATH)
-                .ok()
-                .map(PathBuf::from)
-                .unwrap_or_else(db_path),
-            output_dir: PathBuf::from(format!("profiling/sp1/stress/{}/iter_{}", timestamp, i)),
-            batch_count: 1,
-            generate_groth16: false,
-            execute_only,
-            prover_backend: if execute_only {
-                ProverBackend::Mock
-            } else {
-                ProverBackend::Cpu
-            },
-            cuda_device_id: None,
-        };
-
-        std::fs::create_dir_all(&config.output_dir).ok();
-
         let start_mem = memory_monitor::log_point("stress_iter_start", "Stress iteration start");
 
         let iter_start = std::time::Instant::now();
-        let artifacts = generate_and_save_proofs(&config, &mut source).await?;
-        let compressed_path = artifacts.compressed_path.clone();
-        if !execute_only && compressed_path.is_none() {
-            return Err("sp1_stress expected compressed proof but got none".into());
+        let completed = zkpow_host::pipeline::run_batch_session().await?;
+        if completed != 1 {
+            return Err(format!("stress iteration {i} completed {completed} batches").into());
         }
-        let before_prove_mem = artifacts.before_prove_sample;
-        source.complete_work(&artifacts.public_values)?;
-        drop(artifacts);
         let iter_elapsed = iter_start.elapsed();
 
         let end_mem = memory_monitor::log_point("stress_iter_end", "Stress iteration complete");
@@ -148,8 +118,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             );
         }
 
-        history.push_iteration([start_mem, before_prove_mem, end_mem])?;
-        prev_proof_path = compressed_path;
+        history.push_iteration([start_mem, end_mem, end_mem])?;
         tracing::info!(
             iteration = i,
             elapsed_secs = iter_elapsed.as_secs_f64(),

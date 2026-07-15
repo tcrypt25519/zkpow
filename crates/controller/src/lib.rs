@@ -1,5 +1,27 @@
+//! The stateful coordinator of the proving pipeline.
+//!
+//! The controller owns the header database, the persistent per-`run_id`
+//! progress ledger, and artifact storage. Hosts are stateless I/O drivers
+//! that pull batches, pipe them into the guest, upload the resulting
+//! artifacts, and report completions — all validation of results happens
+//! here, on the controller's side of the trust boundary.
+//!
+//! Module map:
+//! * [`runtime`] — run sessions, the double-buffered grant pipeline,
+//!   long-polling, completion validation.
+//! * [`protocol`] — the binary frames spoken over every transport.
+//! * [`http`] — thin axum wrapper over the runtime's byte-level handlers.
+//! * [`ledger`] — SQLite persistence of verified run progress.
+//! * [`storage`] — artifact targets (local paths or pre-signed S3 URLs).
+//! * [`verify`] — pluggable cryptographic proof verification.
+
 pub mod diagnostics;
 pub mod http;
+pub mod ledger;
+pub mod protocol;
+pub mod runtime;
+pub mod storage;
+pub mod verify;
 
 mod digest;
 mod validation;
@@ -21,208 +43,6 @@ pub use zkpow_store::{
 pub type BoxError = Box<dyn std::error::Error + Send + Sync + 'static>;
 
 pub const NO_HEADERS_REMAINING_PREFIX: &str = "no headers remaining in database";
-
-/// Controller-owned batch session state.
-struct ControllerSession {
-    current_state: State,
-    pending: Option<PendingWork>,
-}
-
-struct PendingWork {
-    expected_state: State,
-    expected_continuation_digest: [u8; 32],
-}
-
-/// Initial state selected by the controller when beginning a session.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SessionStart {
-    Genesis,
-    TrustedHeight(u32),
-    PriorPublicValues(Vec<u8>),
-}
-
-/// Controller state and its source database.
-pub struct Controller {
-    store: HeaderStore,
-    genesis_hash: BlockHash,
-    sessions: std::collections::HashMap<u64, ControllerSession>,
-    next_session_id: u64,
-}
-
-/// The data needed to build a batch's SP1 stdin witness and its controller-validated end state.
-#[derive(Debug)]
-pub struct FetchedBatch {
-    pub current_state: State,
-    pub headers: Vec<NewHeader>,
-    pub median_hints: Vec<BlockTimestamp>,
-    pub expected_state: State,
-    pub expected_continuation_digest: [u8; 32],
-    pub first_new_height: u32,
-    pub end_height: u32,
-}
-
-impl Controller {
-    pub fn new(store: HeaderStore, genesis_hash: BlockHash) -> Self {
-        Self {
-            store,
-            genesis_hash,
-            sessions: std::collections::HashMap::new(),
-            next_session_id: 1,
-        }
-    }
-
-    /// Reconstruct full consensus state at an arbitrary height.
-    pub fn state_at(&self, height: u32) -> State {
-        self.store.state_at_height(height, self.genesis_hash)
-    }
-
-    /// Begin a controller-owned proving session.
-    pub fn begin_session(&mut self, start: SessionStart) -> Result<u64, BoxError> {
-        let current_state = match start {
-            SessionStart::Genesis => self.state_at(0),
-            SessionStart::TrustedHeight(height) => self.state_at(height),
-            SessionStart::PriorPublicValues(bytes) => {
-                let prior =
-                    HeaderChainPublicValues::parse(&bytes).map_err(|err| err.to_string())?;
-                let claim = match prior {
-                    HeaderChainPublicValues::Success { claim, .. } => claim,
-                    HeaderChainPublicValues::Failure { failure, .. } => {
-                        return Err(format!(
-                            "previous proof ended in error: {} at height {}",
-                            failure.error_code, failure.failure_height
-                        )
-                        .into())
-                    }
-                };
-                if claim.genesis_hash != self.genesis_hash {
-                    return Err("previous proof genesis mismatch".into());
-                }
-                let state = self.state_at(claim.height);
-                if state.public_claim() != claim {
-                    return Err(format!(
-                        "db state mismatch at height {}:\n{}",
-                        claim.height,
-                        format_claim_mismatch(&claim, &state.public_claim())
-                    )
-                    .into());
-                }
-                state
-            }
-        };
-        let session_id = self.next_session_id;
-        self.next_session_id = self
-            .next_session_id
-            .checked_add(1)
-            .ok_or("controller session id exhausted")?;
-        self.sessions.insert(
-            session_id,
-            ControllerSession {
-                current_state,
-                pending: None,
-            },
-        );
-        Ok(session_id)
-    }
-
-    /// Return the next batch selected from the controller session's state.
-    pub fn next_work(
-        &mut self,
-        session_id: u64,
-        num_headers: u32,
-    ) -> Result<FetchedBatch, BoxError> {
-        let current_state = {
-            let session = self.session(session_id)?;
-            if session.pending.is_some() {
-                return Err("controller session has uncompleted work".into());
-            }
-            session.current_state.clone()
-        };
-        let batch = self.fetch_batch(&current_state, num_headers)?;
-        self.session_mut(session_id)?.pending = Some(PendingWork {
-            expected_state: batch.expected_state.clone(),
-            expected_continuation_digest: batch.expected_continuation_digest,
-        });
-        Ok(batch)
-    }
-
-    /// Accept guest execution or proof output and advance the controller session.
-    pub fn complete_work(&mut self, session_id: u64, public_values: &[u8]) -> Result<(), BoxError> {
-        let public_values =
-            HeaderChainPublicValues::parse(public_values).map_err(|err| err.to_string())?;
-        let session = self.session_mut(session_id)?;
-        let pending = session
-            .pending
-            .take()
-            .ok_or("controller session has no pending work")?;
-        match public_values {
-            HeaderChainPublicValues::Success {
-                claim,
-                continuation_digest,
-                ..
-            } if claim == pending.expected_state.public_claim()
-                && continuation_digest == pending.expected_continuation_digest =>
-            {
-                session.current_state = pending.expected_state;
-                Ok(())
-            }
-            HeaderChainPublicValues::Success { claim, .. } => Err(format!(
-                "guest public values mismatch:\n{}",
-                format_claim_mismatch(&pending.expected_state.public_claim(), &claim)
-            )
-            .into()),
-            HeaderChainPublicValues::Failure { failure, .. } => Err(format!(
-                "guest ended in error {} at height {}",
-                failure.error_code, failure.failure_height
-            )
-            .into()),
-        }
-    }
-
-    fn session(&self, session_id: u64) -> Result<&ControllerSession, BoxError> {
-        self.sessions
-            .get(&session_id)
-            .ok_or_else(|| format!("unknown controller session {session_id}").into())
-    }
-
-    fn session_mut(&mut self, session_id: u64) -> Result<&mut ControllerSession, BoxError> {
-        self.sessions
-            .get_mut(&session_id)
-            .ok_or_else(|| format!("unknown controller session {session_id}").into())
-    }
-
-    /// Fetch the next `num_headers` headers after `current_state`.
-    pub fn fetch_batch(
-        &self,
-        current_state: &State,
-        num_headers: u32,
-    ) -> Result<FetchedBatch, BoxError> {
-        let first_new_height = current_state.height + 1;
-        let witness = self
-            .store
-            .load_header_batch_witness(first_new_height as u64, num_headers as u64);
-        if witness.headers.is_empty() {
-            return Err(format!(
-                "{NO_HEADERS_REMAINING_PREFIX}: starting at height {first_new_height}"
-            )
-            .into());
-        }
-        let loaded_count = witness.headers.len() as u32;
-        let end_height = current_state.height + loaded_count;
-
-        let expected_state = self.state_at(end_height);
-        let expected_continuation_digest = continuation_digest_from_state(&expected_state);
-
-        Ok(FetchedBatch {
-            current_state: current_state.clone(),
-            headers: witness.headers,
-            median_hints: witness.median_time_past_hints,
-            expected_state,
-            expected_continuation_digest,
-            first_new_height,
-            end_height,
-        })
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -420,53 +240,5 @@ mod tests {
                 "{name}: chainwork"
             );
         }
-    }
-
-    #[test]
-    fn fetch_batch_starts_after_genesis() {
-        let db = open_db();
-        let genesis_hash = BlockHash::new(sha256d(&db.load_header_record(0).header.to_bytes()));
-        let controller = Controller::new(db, genesis_hash);
-        let current_state = controller.state_at(0);
-
-        let fetched = controller.fetch_batch(&current_state, 1).unwrap();
-
-        assert_eq!(fetched.first_new_height, 1);
-        assert_eq!(fetched.end_height, 1);
-        assert_eq!(fetched.expected_state.height, 1);
-    }
-
-    #[test]
-    fn fetch_batch_errors_when_headers_exhausted() {
-        let db = open_db();
-        let genesis_hash = BlockHash::new(sha256d(&db.load_header_record(0).header.to_bytes()));
-        let controller = Controller::new(db, genesis_hash);
-        let current_state = controller.state_at(2016);
-
-        let err = controller.fetch_batch(&current_state, 0).unwrap_err();
-        assert!(err.to_string().starts_with(NO_HEADERS_REMAINING_PREFIX));
-    }
-
-    #[test]
-    fn controller_session_advances_only_after_matching_public_values() {
-        let db = open_db();
-        let genesis = db.load_header_record(0);
-        let genesis_hash = BlockHash::new(sha256d(&genesis.header.to_bytes()));
-        let mut controller = Controller::new(db, genesis_hash);
-        let session = controller.begin_session(SessionStart::Genesis).unwrap();
-
-        let first = controller.next_work(session, 1).unwrap();
-        let public_values = zkpow_core::MinimalPublicValues::success(
-            &first.expected_state.public_claim(),
-            first.expected_continuation_digest,
-            zkpow_core::VerifierKeyDigest::default(),
-        )
-        .to_bytes();
-        controller.complete_work(session, &public_values).unwrap();
-
-        assert_eq!(
-            controller.next_work(session, 1).unwrap().first_new_height,
-            2
-        );
     }
 }

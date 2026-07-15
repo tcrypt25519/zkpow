@@ -1,18 +1,23 @@
+//! Host configuration (environment-driven) and guest stdin construction.
+
 use sp1_sdk::prelude::*;
 use sp1_sdk::SP1Proof;
 use std::collections::HashMap;
 use std::env::VarError;
 use std::path::PathBuf;
 
+use zkpow_controller::storage::S3Config;
+
 use crate::pipeline::{BoxError, ProofGenerationConfig, ProverBackend};
 use crate::util;
 use crate::util::VerifierKeyDigest;
 
+pub const ENV_ZKPOW_RUN_ID: &str = "ZKPOW_RUN_ID";
 pub const ENV_ZKPOW_BATCH_SIZE: &str = "ZKPOW_BATCH_SIZE";
 pub const ENV_ZKPOW_BATCH_COUNT: &str = "ZKPOW_BATCH_COUNT";
-pub const ENV_ZKPOW_OUTPUT_DIR: &str = "ZKPOW_OUTPUT_DIR";
 pub const ENV_ZKPOW_DB_PATH: &str = "ZKPOW_DB_PATH";
 pub const ENV_ZKPOW_PREV_PROOF: &str = "ZKPOW_PREV_PROOF";
+pub const ENV_ZKPOW_START_HEIGHT: &str = "ZKPOW_START_HEIGHT";
 pub const ENV_ZKPOW_PROOF_STORE_DIR: &str = "ZKPOW_PROOF_STORE_DIR";
 pub const ENV_ZKPOW_SHOW_COMPRESSED_PROOF_SPANS: &str = "ZKPOW_SHOW_COMPRESSED_PROOF_SPANS";
 pub const ENV_ZKPOW_CONTROLLER_URL: &str = "ZKPOW_CONTROLLER_URL";
@@ -23,26 +28,16 @@ pub const ENV_ZKPOW_S3_ACCESS_KEY: &str = "ZKPOW_S3_ACCESS_KEY";
 pub const ENV_ZKPOW_S3_SECRET_KEY: &str = "ZKPOW_S3_SECRET_KEY";
 pub const ENV_ZKPOW_S3_PREFIX: &str = "ZKPOW_S3_PREFIX";
 
-const DEFAULT_PROOF_STORE_DIR: &str = "proof_store";
-
 pub const ENV_ZKPOW_EXECUTE_ONLY: &str = "ZKPOW_EXECUTE_ONLY";
 pub const ENV_ZKPOW_GENERATE_GROTH16: &str = "ZKPOW_GENERATE_GROTH16";
 
 pub const ENV_ZKPOW_USE_CUDA: &str = "ZKPOW_USE_CUDA";
 pub const ENV_ZKPOW_CUDA_DEVICE_ID: &str = "ZKPOW_CUDA_DEVICE_ID";
 
+const DEFAULT_RUN_ID: &str = "dev";
+const DEFAULT_PROOF_STORE_DIR: &str = "proof_store";
 const DEFAULT_BATCH_SIZE: u32 = 2016;
 const DEFAULT_BATCH_COUNT: u32 = 500;
-
-#[derive(Debug, Clone)]
-pub struct S3ProofStoreConfig {
-    pub bucket: String,
-    pub region: String,
-    pub endpoint: String,
-    pub access_key: String,
-    pub secret_key: String,
-    pub prefix: String,
-}
 
 pub(crate) trait EnvSource {
     fn get(&self, var_name: &str) -> Result<String, VarError>;
@@ -188,14 +183,15 @@ pub(crate) fn config_from_source(
     };
 
     Ok(ProofGenerationConfig {
+        run_id: source
+            .get(ENV_ZKPOW_RUN_ID)
+            .unwrap_or_else(|_| DEFAULT_RUN_ID.to_string()),
         prev_proof_path: parse_path_env(source, ENV_ZKPOW_PREV_PROOF),
-        trusted_start_height: None,
+        start_height: parse_u32_env(source, ENV_ZKPOW_START_HEIGHT)?,
         num_headers,
         batch_count,
         db_path: parse_path_env(source, ENV_ZKPOW_DB_PATH)
             .unwrap_or_else(zkpow_controller::db_path),
-        output_dir: parse_path_env(source, ENV_ZKPOW_OUTPUT_DIR)
-            .unwrap_or_else(|| PathBuf::from(".")),
         generate_groth16,
         execute_only,
         prover_backend,
@@ -224,9 +220,9 @@ pub fn controller_url_from_env() -> Option<String> {
     controller_url_from_source(&ProcessEnv)
 }
 
-pub(crate) fn s3_proof_store_config_from_source(
+pub(crate) fn s3_storage_config_from_source(
     source: &impl EnvSource,
-) -> Result<Option<S3ProofStoreConfig>, BoxError> {
+) -> Result<Option<S3Config>, BoxError> {
     let bucket = match source.get(ENV_ZKPOW_S3_BUCKET) {
         Ok(bucket) => bucket,
         Err(VarError::NotPresent) => return Ok(None),
@@ -239,7 +235,7 @@ pub(crate) fn s3_proof_store_config_from_source(
             .map_err(|_| format!("{var_name} is required when {ENV_ZKPOW_S3_BUCKET} is set").into())
     };
 
-    Ok(Some(S3ProofStoreConfig {
+    Ok(Some(S3Config {
         bucket,
         region: require(ENV_ZKPOW_S3_REGION)?,
         endpoint: require(ENV_ZKPOW_S3_ENDPOINT)?,
@@ -249,8 +245,8 @@ pub(crate) fn s3_proof_store_config_from_source(
     }))
 }
 
-pub fn s3_proof_store_config_from_env() -> Result<Option<S3ProofStoreConfig>, BoxError> {
-    s3_proof_store_config_from_source(&ProcessEnv)
+pub fn s3_storage_config_from_env() -> Result<Option<S3Config>, BoxError> {
+    s3_storage_config_from_source(&ProcessEnv)
 }
 
 pub fn build_stdin(

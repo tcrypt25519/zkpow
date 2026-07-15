@@ -34,8 +34,9 @@ crates/
   core         shared consensus types, state machine, PoW/difficulty math
   core-macros  #[tracked] cycle-tracking attribute
   guest        the SP1 zkVM program (constrained execution)
-  host         proving pipeline: run guest, prove, verify, save, resume
-  controller   proving batch sessions (DB <-> prover trust boundary)
+  host         stateless prover driver: pull batch, run guest, prove, upload
+  controller   run coordinator: batch grants, run ledger, artifact storage,
+               result validation (DB <-> prover trust boundary; see prover.md)
   store        headers.db SQLite gateway
   sync-headers header ingestion (Bitcoin P2P + Alchemy RPC)
   cli          zkpow-cli sync command
@@ -43,6 +44,21 @@ crates/
 
 The guest and host share `core`; behavior that must differ between them is
 selected by cargo feature, not by caller choice.
+
+## Cost Discipline
+
+At every I/O, serialization, FFI, syscall, or API boundary, trace each value
+from its source to its final consumer before adding a conversion. If that
+consumer accepts a reference, retain the original backing storage and pass a
+borrow. Do not allocate, copy, deserialize, or wrap data only to borrow it
+again. A conversion must prove that it changes the representation a consumer
+requires, validates untrusted data, or extends the value's required lifetime;
+otherwise remove it.
+
+For pure computation, bind the result at the first use and reuse it. A repeated
+call on the same immutable input needs a concrete reason. Treat loops, helper
+layers, and separate call sites as suspicious until they prove they eliminate
+work or data that would otherwise be duplicated.
 
 ## Debugging
 

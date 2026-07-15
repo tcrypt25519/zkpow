@@ -1,94 +1,34 @@
+//! Guest execution in the RISC-V executor (no proof).
+//!
+//! The host performs no validation of the results — the controller is the
+//! authority on whether committed public values match its database. The one
+//! exception is a fail-fast on guest-reported failures: proving a batch the
+//! guest already rejected would waste GPU time only for the controller to
+//! reject it too.
+
 use memuse::StageSample;
 use sp1_sdk::prelude::*;
 use sp1_sdk::ExecutionReport;
 
 use crate::memory_monitor;
-use crate::pipeline::batch::PreparedBatch;
-use crate::pipeline::diagnostics::{timed_async, timed_sync};
-use crate::pipeline::input::build_stdin;
+use crate::pipeline::diagnostics::timed_async;
 use crate::pipeline::BoxError;
 use crate::pipeline::ELF;
-use crate::util;
-use crate::util::{HeaderChainPublicValues, VerifierKeyDigest};
+use crate::util::HeaderChainPublicValues;
 
-pub(crate) struct ExecutedBatchArtifacts {
+pub(crate) struct ExecutedBatch {
     pub(crate) stdin: SP1Stdin,
-    pub(crate) expected_pv: Vec<u8>,
+    pub(crate) public_values: Vec<u8>,
     pub(crate) before_prove_sample: StageSample,
     pub(crate) execution_report: ExecutionReport,
 }
 
-pub(crate) struct UnprovenBatchInput<'a> {
-    pub(crate) current_state: &'a util::State,
-    pub(crate) headers: &'a [util::NewHeader],
-    pub(crate) median_hints: &'a [util::BlockTimestamp],
-    pub(crate) expected_state: &'a util::State,
-    pub(crate) expected_continuation_digest: [u8; 32],
-}
-
-pub(crate) fn verify_public_values(
-    pv: &[u8],
-    expected_pv: &[u8],
-    label: &str,
-) -> Result<(), BoxError> {
-    let parsed = HeaderChainPublicValues::parse(pv).map_err(|err| err.to_string())?;
-    match parsed {
-        HeaderChainPublicValues::Success { .. } => {
-            if pv != expected_pv {
-                return Err(format!(
-                    "{label} public values mismatch: expected {}, got {}",
-                    hex::encode(expected_pv),
-                    hex::encode(pv),
-                )
-                .into());
-            }
-            Ok(())
-        }
-        HeaderChainPublicValues::Failure { failure, .. } => Err(format!(
-            "{label} ended in error {} at height {}",
-            failure.error_code, failure.failure_height,
-        )
-        .into()),
-    }
-}
-
-pub(crate) async fn execute_batch_with_prover<P, K>(
-    prover_name: &str,
-    prover: &P,
-    proving_key: &K,
-    batch: &PreparedBatch,
-) -> Result<ExecutedBatchArtifacts, BoxError>
+pub(crate) async fn execute_batch<P>(prover: &P, stdin: SP1Stdin) -> Result<ExecutedBatch, BoxError>
 where
-    P: Prover<ProvingKey = K>,
-    K: ProvingKey,
+    P: Prover,
     P::Error: std::fmt::Display + Send + Sync + 'static,
 {
-    let verifier_key = timed_sync("build_verifier_key", || -> Result<_, BoxError> {
-        Ok(VerifierKeyDigest::from_raw(
-            proving_key.verifying_key().hash_u32(),
-        ))
-    })?;
-    let expected_pv = util::MinimalPublicValues::success(
-        &batch.expected_state.public_claim(),
-        batch.expected_continuation_digest,
-        verifier_key,
-    )
-    .to_bytes()
-    .to_vec();
-    let stdin = timed_sync("serialize_input", || {
-        build_stdin(
-            verifier_key,
-            &batch.current_state,
-            &batch.headers,
-            &batch.median_hints,
-            batch
-                .previous_proof
-                .as_ref()
-                .map(|p| (p, proving_key.verifying_key())),
-        )
-    })?;
-
-    let (public_values, report) = timed_async("execute_program", || async {
+    let (public_values, execution_report) = timed_async("execute_program", || async {
         prover
             .execute(ELF, stdin.clone())
             .deferred_proof_verification(false)
@@ -96,21 +36,13 @@ where
             .map_err(|err| -> BoxError { err.to_string().into() })
     })
     .await?;
-    tracing::info!(prover = prover_name, "Execution completed");
 
-    let execution_public_values = public_values.to_vec();
-    match HeaderChainPublicValues::parse(&execution_public_values) {
-        Ok(HeaderChainPublicValues::Success { .. }) => {
-            timed_sync(
-                "verify_execution_public_values",
-                || -> Result<(), BoxError> {
-                    verify_public_values(&execution_public_values, &expected_pv, "execution")
-                },
-            )?;
-        }
+    let public_values = public_values.to_vec();
+    match HeaderChainPublicValues::parse(&public_values) {
+        Ok(HeaderChainPublicValues::Success { .. }) => {}
         Ok(HeaderChainPublicValues::Failure { failure, .. }) => {
             return Err(format!(
-                "execution failed with {} at height {}",
+                "guest execution failed with {} at height {}",
                 failure.error_code, failure.failure_height
             )
             .into());
@@ -123,59 +55,5 @@ where
     let before_prove_sample =
         memory_monitor::log_point("after_execute", "Memory snapshot after VM execution");
 
-    Ok(ExecutedBatchArtifacts {
-        stdin,
-        expected_pv,
-        before_prove_sample,
-        execution_report: report,
-    })
-}
-
-pub(crate) async fn execute_batch_without_proof<P>(
-    prover: &P,
-    batch: UnprovenBatchInput<'_>,
-) -> Result<ExecutedBatchArtifacts, BoxError>
-where
-    P: Prover,
-    P::Error: std::fmt::Display + Send + Sync + 'static,
-{
-    let verifier_key = VerifierKeyDigest::default();
-    let expected_pv = util::MinimalPublicValues::success(
-        &batch.expected_state.public_claim(),
-        batch.expected_continuation_digest,
-        verifier_key,
-    )
-    .to_bytes()
-    .to_vec();
-    let stdin = timed_sync("serialize_input", || {
-        build_stdin(
-            verifier_key,
-            batch.current_state,
-            batch.headers,
-            batch.median_hints,
-            None,
-        )
-    })?;
-
-    let (public_values, report) = timed_async("execute_program", || async {
-        prover
-            .execute(ELF, stdin.clone())
-            .deferred_proof_verification(false)
-            .await
-            .map_err(|err| -> BoxError { err.to_string().into() })
-    })
-    .await?;
-
-    let execution_public_values = public_values.to_vec();
-    verify_public_values(&execution_public_values, &expected_pv, "execution")?;
-
-    let before_prove_sample =
-        memory_monitor::log_point("after_execute", "Memory snapshot after VM execution");
-
-    Ok(ExecutedBatchArtifacts {
-        stdin,
-        expected_pv,
-        before_prove_sample,
-        execution_report: report,
-    })
+    Ok(ExecutedBatch { stdin, public_values, before_prove_sample, execution_report })
 }

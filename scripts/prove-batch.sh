@@ -21,7 +21,7 @@ export OUT_DIR="$PROFILE_ROOT/runs/$TIMESTAMP"
 # Set defaults for run configuration
 #OUT_DIR="${OUT_DIR:-$PROFILE_ROOT/$TIMESTAMP}"
 LATEST_LINK="${LATEST_LINK:-$PROFILE_ROOT/latest}"
-export ZKPOW_OUTPUT_DIR="${ZKPOW_OUTPUT_DIR:=$OUT_DIR/output}"
+export ZKPOW_PROOF_STORE_DIR="${ZKPOW_PROOF_STORE_DIR:=$OUT_DIR/output}"
 
 # Set defaults for the guest program
 #unset sp1_core
@@ -38,7 +38,7 @@ export ZKPOW_GUEST_PROFILING="${ZKPOW_GUEST_PROFILING:-0}"
 export ZKPOW_PROVE_COMPRESSED_SPANS="${ZKPOW_PROVE_COMPRESSED_SPANS:-0}"
 export RUST_TEST_NOCAPTURE=1
 mkdir -p "$OUT_DIR"
-mkdir -p "$ZKPOW_OUTPUT_DIR"
+mkdir -p "$ZKPOW_PROOF_STORE_DIR"
 mkdir -p "$(dirname "$LATEST_LINK")"
 ln -sfn "$OUT_DIR" "$LATEST_LINK"
 
@@ -51,7 +51,7 @@ ln -sfn "$OUT_DIR" "$LATEST_LINK"
   printf 'guest_profiling=%s\n' "$ZKPOW_GUEST_PROFILING"
   printf 'prove_compressed_spans=%s\n' "$ZKPOW_PROVE_COMPRESSED_SPANS"
   printf 'prev_proof=%s\n' "${ZKPOW_PREV_PROOF:-}"
-  printf 'output_dir=%s\n' "$ZKPOW_OUTPUT_DIR"
+  printf 'output_dir=%s\n' "$ZKPOW_PROOF_STORE_DIR"
 } >"$OUT_DIR/meta.txt"
 
 rm -f "$ZKPOW_ROOT/logs/run.jsonl"
@@ -114,7 +114,7 @@ fi
 
 printf '\n=== Run Summary ===\n'
 printf 'OUT_DIR: %s\n' "$OUT_DIR"
-printf 'OUTPUT_DIR: %s\n' "$ZKPOW_OUTPUT_DIR"
+printf 'OUTPUT_DIR: %s\n' "$ZKPOW_PROOF_STORE_DIR"
 printf 'run.log: %s\n' "$OUT_DIR/run.log"
 printf 'structured log: %s\n' "$structured"
 printf 'report: %s\n' "$report"
@@ -130,6 +130,6 @@ if [[ "$ZKPOW_PROVE_COMPRESSED_SPANS" != "1" ]]; then
   printf 'prove_compressed internal span capture is disabled by default; rerun with ZKPOW_PROVE_COMPRESSED_SPANS=1 for DEBUG-level SP1 span timing\n'
 fi
 printf 'profiling output written to %s\n' "$OUT_DIR"
-printf '\nProofs should be in: %s\n' "$ZKPOW_OUTPUT_DIR"
-ls -la "$ZKPOW_OUTPUT_DIR" 2>/dev/null || printf '(directory may be empty if proving failed)\n'
+printf '\nProofs should be in: %s\n' "$ZKPOW_PROOF_STORE_DIR"
+ls -la "$ZKPOW_PROOF_STORE_DIR" 2>/dev/null || printf '(directory may be empty if proving failed)\n'
 exit "$status"
