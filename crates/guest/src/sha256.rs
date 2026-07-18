@@ -10,6 +10,8 @@
 //! No loops, no branching on block count — the padding and block layout
 //! are hardcoded for each size.
 
+use core::mem::MaybeUninit;
+
 use sp1_zkvm::syscalls::{syscall_sha256_compress, syscall_sha256_extend};
 use zkpow_core::{
     header_first_sha256_block_words, header_second_sha256_block_words, BlockHash, CompactTarget,
@@ -19,6 +21,28 @@ use zkpow_core::{
 const SHA256_IV: [u64; 8] = [
     0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
 ];
+
+/// Run one SHA-256 block: extend the 16 message words into the 64-word
+/// schedule and compress it into `state`.
+///
+/// Only the 16 low words carry data; the message schedule fills w[16..64],
+/// so the 48-word tail is never zero-initialized — the single largest source
+/// of dead work in the per-header hash path.
+#[inline]
+fn sha256_block(low16: &[u64; 16], state: &mut [u64; 8]) {
+    let mut w = MaybeUninit::<[u64; 64]>::uninit();
+    let w = w.as_mut_ptr();
+    // SAFETY: `copy_nonoverlapping` initializes w[0..16]. `syscall_sha256_extend`
+    // writes every word of w[16..64] before it is read (each W[t] is derived
+    // from strictly-lower indices), so the whole buffer is initialized by the
+    // time `syscall_sha256_compress` reads it. Both syscalls take raw pointers,
+    // so no reference to the uninitialized tail is ever formed.
+    unsafe {
+        core::ptr::copy_nonoverlapping(low16.as_ptr(), w.cast::<u64>(), 16);
+        syscall_sha256_extend(w);
+        syscall_sha256_compress(w, state);
+    }
+}
 
 /// Extract a 32-byte hash from the SHA-256 state.
 /// The state stores 8 × u64; each contributes its low 32 bits in big-endian order.
@@ -50,25 +74,26 @@ const fn be_u64_from_slice(s: &[u8], i: usize) -> u64 {
     ((s[i] as u64) << 24) | ((s[i + 1] as u64) << 16) | ((s[i + 2] as u64) << 8) | (s[i + 3] as u64)
 }
 
-/// Compute SHA-256 of exactly 32 bytes.
+/// Second pass of a SHA-256d: the first pass leaves its digest in `prev_state`
+/// as 8 words (each a 32-bit value in its low bits). Those are exactly the
+/// first 8 message words of the second hash, so we load them straight in
+/// instead of serializing to a `[u8; 32]` and parsing it back — the byte
+/// buffer would carry the identical information in a different shape.
 ///
-/// Produces one block:
-/// bytes 0–31 (all data) + 0x80 + 23 zeros + 8-byte length (256 bits)
-pub fn sha256_32bytes(data: &[u8; 32]) -> [u8; 32] {
+/// Single block: 32 bytes of digest + 0x80 + zeros + 8-byte length (256 bits).
+fn sha256_of_prev_digest(prev_state: &[u64; 8]) -> [u8; 32] {
     let mut state = SHA256_IV;
 
-    // ── Single block: 32 bytes + padding + length ──
-    let mut w = [0u64; 64];
+    let mut w = [0u64; 16];
     for i in 0..8 {
-        w[i] = be_u64_from_slice(data, i);
+        // Keep the low 32 bits, exactly what the byte round-trip extracted.
+        w[i] = prev_state[i] & 0xFFFF_FFFF;
     }
-    // End of data; add “1” bit followed by “0” bits
+    // End of data; “1” bit then “0” bits, and the length (256 bits = 0x100).
     w[8] = 0x80000000;
-    // Add length of data in bits; 256 == 0x100
     w[15] = 0x100;
 
-    syscall_sha256_extend(&mut w);
-    syscall_sha256_compress(&mut w, &mut state);
+    sha256_block(&w, &mut state);
     state_to_hash(&state)
 }
 
@@ -83,24 +108,22 @@ pub(crate) fn sha256_169bytes(data: &[u8; 169]) -> [u8; 32] {
     let mut state = SHA256_IV;
 
     // ── Block 1: bytes 0–63 ──
-    let mut w = [0u64; 64];
+    let mut w = [0u64; 16];
     for i in 0..16 {
         w[i] = be_u64_from_slice(data, i);
     }
-    syscall_sha256_extend(&mut w);
-    syscall_sha256_compress(&mut w, &mut state);
+    sha256_block(&w, &mut state);
 
     // ── Block 2: bytes 64–127 ──
-    let mut w = [0u64; 64];
+    let mut w = [0u64; 16];
     for i in 0..16 {
         w[i] = be_u64_from_slice(data, 16 + i);
     }
-    syscall_sha256_extend(&mut w);
-    syscall_sha256_compress(&mut w, &mut state);
+    sha256_block(&w, &mut state);
 
     // ── Block 3: bytes 128–168 (41 bytes) + padding + length ──
     // 41 data bytes, then 0x80, then zeros, then 8-byte length (1352 bits = 0x548)
-    let mut w = [0u64; 64];
+    let mut w = [0u64; 16];
     for i in 0..10 {
         w[i] = be_u64_from_slice(data, 32 + i);
     }
@@ -108,8 +131,7 @@ pub(crate) fn sha256_169bytes(data: &[u8; 169]) -> [u8; 32] {
     w[10] = ((data[168] as u64) << 24) | 0x0080_0000;
     // w[15] = length in bits = 169 * 8 = 1352 = 0x548
     w[15] = 0x548;
-    syscall_sha256_extend(&mut w);
-    syscall_sha256_compress(&mut w, &mut state);
+    sha256_block(&w, &mut state);
 
     state_to_hash(&state)
 }
@@ -127,16 +149,16 @@ pub(crate) fn sha256d_new_header(
     let mut state = SHA256_IV;
 
     // ── Block 1: version + prev_blockhash + merkle_root[0..28] ──
-    let mut w = header_first_sha256_block_words(header, prev_blockhash);
-    syscall_sha256_extend(&mut w);
-    syscall_sha256_compress(&mut w, &mut state);
+    let block1 = header_first_sha256_block_words(header, prev_blockhash);
+    sha256_block(&block1, &mut state);
 
     // ── Block 2: merkle_root[28..32] + timestamp + nBits + nonce + padding ──
-    let mut w = header_second_sha256_block_words(header, compact_target);
-    syscall_sha256_extend(&mut w);
-    syscall_sha256_compress(&mut w, &mut state);
+    let block2 = header_second_sha256_block_words(header, compact_target);
+    sha256_block(&block2, &mut state);
 
-    sha256_32bytes(&state_to_hash(&state))
+    // Second SHA-256d pass straight from the digest words — no [u8; 32]
+    // serialize/reparse in between.
+    sha256_of_prev_digest(&state)
 }
 
 /// Compute SHA-256 of exactly 52 bytes.
@@ -147,7 +169,7 @@ pub(crate) fn sha256_52bytes(data: &[u8; 52]) -> [u8; 32] {
     let mut state = SHA256_IV;
 
     // ── Single block: bytes 0–51 + padding + length ──
-    let mut w = [0u64; 64];
+    let mut w = [0u64; 16];
     for i in 0..13 {
         w[i] = be_u64_from_slice(data, i);
     }
@@ -155,8 +177,7 @@ pub(crate) fn sha256_52bytes(data: &[u8; 52]) -> [u8; 32] {
     w[13] = 0x80000000;
     // w[15] = length in bits = 52 * 8 = 416 = 0x1A0
     w[15] = 0x1A0;
-    syscall_sha256_extend(&mut w);
-    syscall_sha256_compress(&mut w, &mut state);
+    sha256_block(&w, &mut state);
 
     state_to_hash(&state)
 }

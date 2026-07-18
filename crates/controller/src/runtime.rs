@@ -1,11 +1,12 @@
 //! The controller runtime: run-scoped batch coordination.
 //!
-//! One [`ControllerRuntime`] owns the header database, the persistent run
-//! ledger, artifact storage, and (optionally) a proof verifier. Hosts drive
-//! it exclusively through two pull-based operations, in encoded protocol
-//! frames ([`crate::protocol`]) regardless of transport:
+//! One [`ControllerRuntime`] owns the header database (which also holds the
+//! per-`run_id` progress ledger in its `runs` table), artifact storage, and
+//! (optionally) a proof verifier. Hosts drive it exclusively through two
+//! pull-based operations, in encoded protocol frames ([`crate::protocol`])
+//! regardless of transport:
 //!
-//! * [`ControllerRuntime::handle_pull_batch`] — grant the next batch of a
+//! * [`ControllerRuntime::handle_pull_batch`] — serve the next batch of a
 //!   run, long-polling while too much handed-out work is still unverified.
 //! * [`ControllerRuntime::handle_complete`] — accept a batch's public
 //!   values, validate them (and the uploaded proof, when a verifier is
@@ -17,15 +18,15 @@
 //! verified tip. In the steady state that is exactly the double-buffered
 //! pipeline: the guest is proving batch N, the host holds batch N+1 in RAM,
 //! and the host's pull for batch N+2 long-polls until the completion of
-//! batch N lands. After every grant the controller immediately pre-formats
-//! the following batch in memory, so a pull is answered from RAM.
+//! batch N lands. After serving each batch the controller immediately
+//! pre-formats the following one in memory, so a pull is answered from RAM.
 //!
 //! # Crash and restart behavior
 //!
-//! Only verified progress is persisted (see [`crate::ledger`]). Handed-out
-//! but unverified work lives in memory and is simply re-issued: when a host
-//! reports (via `held_tip`) that it can only resume from the verified tip,
-//! outstanding handed batches are dropped and re-served.
+//! Only verified progress is persisted. Handed-out but unverified work lives
+//! in memory and is simply re-issued: when a host reports (via `held_tip`)
+//! that it can only resume from the verified tip, outstanding handed batches
+//! are dropped and re-served.
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -34,17 +35,16 @@ use std::time::Duration;
 use tokio::sync::Notify;
 
 use zkpow_core::{
-    BlockHash, BlockTimestamp, HeaderChainPublicValues, MinimalPublicValues, NewHeader, State,
-    VerifierKeyDigest,
+    serialize_median_hints, serialize_new_headers, BlockHash, HeaderChainPublicValues,
+    MinimalPublicValues, State, VerifierKeyDigest,
 };
-use zkpow_store::HeaderStore;
+use zkpow_store::{HeaderStore, RunRecord};
 
 use crate::diagnostics::format_claim_mismatch;
 use crate::digest::continuation_digest_from_state;
-use crate::ledger::{Ledger, RunRecord};
 use crate::protocol::{
-    decode_complete_request, decode_pull_batch_request, encode_batch_grant, encode_complete_ack,
-    BatchGrant, CompleteAck, CompleteRequest, ControllerError, PullBatchRequest,
+    decode_complete_request, decode_pull_batch_request, encode_batch, encode_complete_ack, Batch,
+    CompleteAck, CompleteRequest, ControllerError, PullBatchRequest,
 };
 use crate::storage::ArtifactStore;
 use crate::verify::ProofVerifier;
@@ -73,20 +73,19 @@ impl ControllerConfig {
     }
 }
 
-/// The data needed to build one batch's SP1 stdin witness plus the
+/// One batch formatted to serve: the stdin witness payload plus the
 /// controller-only expectation for validating its completion.
-#[derive(Debug, Clone)]
-pub struct FetchedBatch {
-    pub current_state: State,
-    pub headers: Vec<NewHeader>,
-    pub median_hints: Vec<BlockTimestamp>,
-    pub expected_state: State,
-    pub expected_continuation_digest: [u8; 32],
-    pub first_new_height: u32,
-    pub end_height: u32,
+struct FetchedBatch {
+    current_state: State,
+    header_bytes: Vec<u8>,
+    median_hint_bytes: Vec<u8>,
+    expected_state: State,
+    expected_continuation_digest: [u8; 32],
+    first_new_height: u32,
+    end_height: u32,
 }
 
-/// A batch granted to the host whose completion has not been verified yet.
+/// A batch handed to the host whose completion has not been verified yet.
 struct HandedBatch {
     end_height: u32,
     expected_state: State,
@@ -128,21 +127,24 @@ impl RunSession {
 
 struct ControllerCore {
     store: HeaderStore,
-    ledger: Ledger,
     genesis_hash: BlockHash,
     runs: HashMap<String, RunSession>,
 }
 
 enum TryPull {
-    Ready(Box<ReadyGrant>),
+    Ready(Box<ReadyBatch>),
     /// Too many unverified handed-out batches; long-poll for progress.
     Wait,
 }
 
-struct ReadyGrant {
-    fetched: FetchedBatch,
+/// A batch assembled under the lock; storage targets are minted afterwards.
+struct ReadyBatch {
+    first_new_height: u32,
+    end_height: u32,
+    current_state: State,
+    header_bytes: Vec<u8>,
+    median_hint_bytes: Vec<u8>,
     proof_object: String,
-    groth16_object: String,
     /// Object name of the verified-tip proof the host must download first.
     fetch_prev: Option<String>,
 }
@@ -176,7 +178,6 @@ fn lock_core(core: &Mutex<ControllerCore>) -> MutexGuard<'_, ControllerCore> {
 impl ControllerRuntime {
     pub fn new(
         store: HeaderStore,
-        ledger: Ledger,
         storage: Box<dyn ArtifactStore>,
         verifier: Option<Box<dyn ProofVerifier>>,
         config: ControllerConfig,
@@ -184,12 +185,7 @@ impl ControllerRuntime {
         let genesis_hash = config.genesis_hash;
         Self {
             inner: Arc::new(RuntimeInner {
-                core: Mutex::new(ControllerCore {
-                    store,
-                    ledger,
-                    genesis_hash,
-                    runs: HashMap::new(),
-                }),
+                core: Mutex::new(ControllerCore { store, genesis_hash, runs: HashMap::new() }),
                 progress: Notify::new(),
                 storage,
                 verifier,
@@ -202,8 +198,8 @@ impl ControllerRuntime {
     /// the HTTP server and the host's in-process local transport.
     pub async fn handle_pull_batch(&self, request: &[u8]) -> Result<Vec<u8>, ControllerError> {
         let request = decode_pull_batch_request(request).map_err(ControllerError::bad_request)?;
-        let grant = self.pull_batch(&request).await?;
-        encode_batch_grant(&grant).map_err(ControllerError::internal)
+        let batch = self.pull_batch(&request).await?;
+        encode_batch(&batch).map_err(ControllerError::internal)
     }
 
     /// Decode, apply, and encode a completion request. Shared verbatim by
@@ -217,7 +213,7 @@ impl ControllerRuntime {
     pub async fn pull_batch(
         &self,
         request: &PullBatchRequest,
-    ) -> Result<BatchGrant, ControllerError> {
+    ) -> Result<Batch, ControllerError> {
         let deadline = tokio::time::Instant::now() + self.inner.config.pull_timeout;
         loop {
             // Register interest in progress notifications *before* checking
@@ -236,15 +232,15 @@ impl ControllerRuntime {
             };
             match attempt? {
                 TryPull::Ready(ready) => {
-                    let grant = self.build_grant(&request.run_id, *ready)?;
+                    let batch = self.build_batch(&request.run_id, *ready)?;
                     self.spawn_prepare_ahead(request.run_id.clone());
                     tracing::info!(
                         run_id = %request.run_id,
-                        first_new_height = grant.first_new_height,
-                        end_height = grant.end_height,
-                        "granted batch"
+                        first_new_height = batch.first_new_height,
+                        end_height = batch.end_height,
+                        "serving batch"
                     );
-                    return Ok(grant);
+                    return Ok(batch);
                 }
                 TryPull::Wait => {
                     if tokio::time::Instant::now() >= deadline {
@@ -343,10 +339,11 @@ impl ControllerRuntime {
                     request.run_id, request.end_height
                 )));
             }
-            let expected_state = session.handed.front().expect("front checked").expected_state.clone();
+            let expected_state =
+                session.handed.front().expect("front checked").expected_state.clone();
             let proof_object = request.has_proof.then_some(proof_object);
-            core.ledger
-                .record_progress(&request.run_id, request.end_height, proof_object.as_deref())
+            core.store
+                .record_run_progress(&request.run_id, request.end_height, proof_object.as_deref())
                 .map_err(|err| {
                     ControllerError::internal(format!("failed to persist run progress: {err}"))
                 })?;
@@ -364,11 +361,7 @@ impl ControllerRuntime {
         Ok(CompleteAck { verified_height: request.end_height })
     }
 
-    fn build_grant(
-        &self,
-        run_id: &str,
-        ready: ReadyGrant,
-    ) -> Result<BatchGrant, ControllerError> {
+    fn build_batch(&self, run_id: &str, ready: ReadyBatch) -> Result<Batch, ControllerError> {
         let storage = &self.inner.storage;
         fn internal(context: &str, err: crate::BoxError) -> ControllerError {
             ControllerError::internal(format!("storage target error ({context}): {err}"))
@@ -384,23 +377,14 @@ impl ControllerRuntime {
                 .put_target(run_id, &ready.proof_object)
                 .map_err(|err| internal("proof put", err))?,
         );
-        let groth16_put = Some(
-            storage
-                .put_target(run_id, &ready.groth16_object)
-                .map_err(|err| internal("groth16 put", err))?,
-        );
-        let FetchedBatch {
-            current_state, headers, median_hints, first_new_height, end_height, ..
-        } = ready.fetched;
-        Ok(BatchGrant {
-            first_new_height,
-            end_height,
-            current_state,
-            headers,
-            median_hints,
+        Ok(Batch {
+            first_new_height: ready.first_new_height,
+            end_height: ready.end_height,
+            current_state: ready.current_state,
+            header_bytes: ready.header_bytes,
+            median_hint_bytes: ready.median_hint_bytes,
             prev_proof_fetch,
             proof_put,
-            groth16_put,
         })
     }
 
@@ -426,57 +410,46 @@ impl ControllerCore {
         })
     }
 
-    /// Load `run_id`'s session into memory, creating the run (and its ledger
-    /// row) on first contact.
+    /// Load `run_id`'s session into memory, creating the run (and its row in
+    /// the `runs` table) on first contact. New runs start from genesis.
     fn ensure_session(&mut self, request: &PullBatchRequest) -> Result<(), ControllerError> {
         if self.runs.contains_key(&request.run_id) {
             return Ok(());
         }
         let record = self
-            .ledger
-            .load(&request.run_id)
-            .map_err(|err| ControllerError::internal(format!("ledger read failed: {err}")))?;
-        let session = match record {
+            .store
+            .load_run(&request.run_id)
+            .map_err(|err| ControllerError::internal(format!("run ledger read failed: {err}")))?;
+        let record = match record {
             Some(record) => {
                 tracing::info!(
                     run_id = %request.run_id,
                     verified_height = record.verified_height,
                     "resuming run from ledger"
                 );
-                RunSession {
-                    verifier_key: record.verifier_key,
-                    verified_state: self.state_at(record.verified_height),
-                    verified_proof_object: record.proof_object,
-                    handed: VecDeque::new(),
-                    prepared: None,
-                    batch_size: request.num_headers,
-                    halted: None,
-                }
+                record
             }
             None => {
-                let start_height = request.start_height.unwrap_or(0);
-                let verified_state = self.state_at(start_height);
-                self.ledger
-                    .create(&RunRecord {
-                        run_id: request.run_id.clone(),
-                        verifier_key: request.verifier_key,
-                        verified_height: start_height,
-                        proof_object: None,
-                    })
-                    .map_err(|err| {
-                        ControllerError::internal(format!("ledger create failed: {err}"))
-                    })?;
-                tracing::info!(run_id = %request.run_id, start_height, "created new run");
-                RunSession {
+                let record = RunRecord {
                     verifier_key: request.verifier_key,
-                    verified_state,
-                    verified_proof_object: None,
-                    handed: VecDeque::new(),
-                    prepared: None,
-                    batch_size: request.num_headers,
-                    halted: None,
-                }
+                    verified_height: 0,
+                    proof_object: None,
+                };
+                self.store.create_run(&request.run_id, &record).map_err(|err| {
+                    ControllerError::internal(format!("run ledger create failed: {err}"))
+                })?;
+                tracing::info!(run_id = %request.run_id, "created new run at genesis");
+                record
             }
+        };
+        let session = RunSession {
+            verifier_key: record.verifier_key,
+            verified_state: self.state_at(record.verified_height),
+            verified_proof_object: record.proof_object,
+            handed: VecDeque::new(),
+            prepared: None,
+            batch_size: request.num_headers,
+            halted: None,
         };
         self.runs.insert(request.run_id.clone(), session);
         Ok(())
@@ -512,7 +485,6 @@ impl ControllerCore {
                 Some(held) => held == tip_height,
                 None => tip_height == verified_height,
             };
-            let mut fetch_prev = None;
             if !holds_tip {
                 let can_reset = request.held_tip.is_none()
                     || request.held_tip == Some(verified_height);
@@ -533,9 +505,11 @@ impl ControllerCore {
                 }
                 session.prepared = None;
             }
-            if request.held_tip.is_none() && verified_height > 0 {
-                fetch_prev = session.verified_proof_object.clone();
-            }
+            let fetch_prev = if request.held_tip.is_none() && verified_height > 0 {
+                session.verified_proof_object.clone()
+            } else {
+                None
+            };
 
             if session.handed.len() >= MAX_UNVERIFIED_BATCHES {
                 return Ok(TryPull::Wait);
@@ -552,29 +526,34 @@ impl ControllerCore {
             {
                 prepared.fetched
             }
-            _ => self.fetch_batch(&tip_state, request.num_headers)?,
+            _ => self.fetch_batch(tip_state, request.num_headers)?,
         };
 
         // Phase 3: record the handed-out batch and its expectations.
-        let proof_object = format!(
-            "proof_height_{}_to_{}.bin",
-            fetched.first_new_height, fetched.end_height
-        );
-        let groth16_object = format!(
-            "proof_height_{}_to_{}_groth16.bin",
-            fetched.first_new_height, fetched.end_height
-        );
+        let FetchedBatch {
+            current_state,
+            header_bytes,
+            median_hint_bytes,
+            expected_state,
+            expected_continuation_digest,
+            first_new_height,
+            end_height,
+        } = fetched;
+        let proof_object = format!("proof_height_{first_new_height}_to_{end_height}.bin");
         let session = self.session_mut(&request.run_id)?;
         session.handed.push_back(HandedBatch {
-            end_height: fetched.end_height,
-            expected_state: fetched.expected_state.clone(),
-            expected_continuation_digest: fetched.expected_continuation_digest,
+            end_height,
+            expected_state,
+            expected_continuation_digest,
             proof_object: proof_object.clone(),
         });
-        Ok(TryPull::Ready(Box::new(ReadyGrant {
-            fetched,
+        Ok(TryPull::Ready(Box::new(ReadyBatch {
+            first_new_height,
+            end_height,
+            current_state,
+            header_bytes,
+            median_hint_bytes,
             proof_object,
-            groth16_object,
             fetch_prev,
         })))
     }
@@ -588,7 +567,7 @@ impl ControllerCore {
         let requested = session.batch_size;
         // Header exhaustion (or any fetch failure) is not an error here; the
         // next pull recomputes and reports it on the request path.
-        if let Ok(fetched) = self.fetch_batch(&tip_state, requested) {
+        if let Ok(fetched) = self.fetch_batch(tip_state, requested) {
             if let Some(session) = self.runs.get_mut(run_id) {
                 if session.prepared.is_none() {
                     session.prepared = Some(PreparedBatch { requested, fetched });
@@ -597,11 +576,11 @@ impl ControllerCore {
         }
     }
 
-    /// Fetch the `num_headers` headers after `current_state` and compute the
-    /// expected end state.
+    /// Fetch the `num_headers` headers after `current_state`, serialized for
+    /// the guest's stdin, and compute the expected end state.
     fn fetch_batch(
         &self,
-        current_state: &State,
+        current_state: State,
         num_headers: u32,
     ) -> Result<FetchedBatch, ControllerError> {
         let first_new_height = current_state.height + 1;
@@ -612,16 +591,15 @@ impl ControllerCore {
                 "{NO_HEADERS_REMAINING_PREFIX}: starting at height {first_new_height}"
             )));
         }
-        let loaded_count = witness.headers.len() as u32;
-        let end_height = current_state.height + loaded_count;
+        let end_height = current_state.height + witness.headers.len() as u32;
 
         let expected_state = self.state_at(end_height);
         let expected_continuation_digest = continuation_digest_from_state(&expected_state);
 
         Ok(FetchedBatch {
-            current_state: current_state.clone(),
-            headers: witness.headers,
-            median_hints: witness.median_time_past_hints,
+            current_state,
+            header_bytes: serialize_new_headers(&witness.headers),
+            median_hint_bytes: serialize_median_hints(&witness.median_time_past_hints),
             expected_state,
             expected_continuation_digest,
             first_new_height,
@@ -660,61 +638,67 @@ mod tests {
     use zkpow_core::sha256d;
     use zkpow_store::db_path;
 
-    fn temp_path(test_name: &str, suffix: &str) -> std::path::PathBuf {
-        let nonce = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        std::env::temp_dir().join(format!(
-            "zkpow-runtime-{test_name}-{}-{nonce}{suffix}",
-            std::process::id()
-        ))
-    }
-
     fn genesis_hash() -> BlockHash {
         let db = HeaderStore::open(db_path()).expect("failed to open test database");
         BlockHash::new(sha256d(&db.load_header_record(0).header.to_bytes()))
     }
 
+    /// Tests share the real header database, so every run id is nonce-unique
+    /// and its `runs` row is deleted again on drop.
     struct TestRuntime {
         runtime: ControllerRuntime,
-        ledger_path: std::path::PathBuf,
         artifact_root: std::path::PathBuf,
+        nonce: u128,
+        run_ids: Mutex<Vec<String>>,
     }
 
-    fn test_runtime(test_name: &str, configure: impl FnOnce(&mut ControllerConfig)) -> TestRuntime {
-        let ledger_path = temp_path(test_name, ".db");
-        let artifact_root = temp_path(test_name, "-artifacts");
+    fn test_runtime(configure: impl FnOnce(&mut ControllerConfig)) -> TestRuntime {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let artifact_root = std::env::temp_dir()
+            .join(format!("zkpow-runtime-{}-{nonce}", std::process::id()));
         TestRuntime {
-            runtime: runtime_at(&ledger_path, &artifact_root, configure),
-            ledger_path,
+            runtime: runtime_at(&artifact_root, configure),
             artifact_root,
+            nonce,
+            run_ids: Mutex::new(Vec::new()),
         }
     }
 
     fn runtime_at(
-        ledger_path: &std::path::Path,
         artifact_root: &std::path::Path,
         configure: impl FnOnce(&mut ControllerConfig),
     ) -> ControllerRuntime {
         let store = HeaderStore::open(db_path()).expect("failed to open test database");
-        let ledger = Ledger::open(ledger_path).expect("failed to open ledger");
         let mut config = ControllerConfig::new(genesis_hash());
         config.allow_unproven = true;
         config.pull_timeout = Duration::from_millis(100);
         configure(&mut config);
         ControllerRuntime::new(
             store,
-            ledger,
             Box::new(LocalArtifactStore::new(artifact_root)),
             None,
             config,
         )
     }
 
+    impl TestRuntime {
+        fn run_id(&self, name: &str) -> String {
+            let id = format!("test-{}-{name}", self.nonce);
+            self.run_ids.lock().unwrap().push(id.clone());
+            id
+        }
+    }
+
     impl Drop for TestRuntime {
         fn drop(&mut self) {
-            std::fs::remove_file(&self.ledger_path).ok();
+            if let Ok(db) = HeaderStore::open(db_path()) {
+                for run_id in self.run_ids.lock().unwrap().iter() {
+                    db.delete_run(run_id).ok();
+                }
+            }
             std::fs::remove_dir_all(&self.artifact_root).ok();
         }
     }
@@ -725,7 +709,6 @@ mod tests {
             verifier_key: VerifierKeyDigest::default(),
             num_headers,
             held_tip,
-            start_height: None,
         }
     }
 
@@ -752,49 +735,49 @@ mod tests {
 
     #[tokio::test]
     async fn new_run_starts_at_genesis_and_advances() {
-        let harness = test_runtime("advance", |_| {});
+        let harness = test_runtime(|_| {});
         let runtime = &harness.runtime;
-        let run = "run-advance";
+        let run = harness.run_id("advance");
 
-        let grant = runtime.pull_batch(&pull_request(run, 3, None)).await.unwrap();
-        assert_eq!(grant.first_new_height, 1);
-        assert_eq!(grant.end_height, 3);
-        assert_eq!(grant.current_state.height, 0);
-        assert_eq!(grant.headers.len(), 3);
-        assert!(grant.prev_proof_fetch.is_none());
-        assert!(matches!(grant.proof_put, Some(Target::Path(_))));
+        let batch = runtime.pull_batch(&pull_request(&run, 3, None)).await.unwrap();
+        assert_eq!(batch.first_new_height, 1);
+        assert_eq!(batch.end_height, 3);
+        assert_eq!(batch.current_state.height, 0);
+        assert_eq!(batch.header_bytes.len(), 3 * zkpow_core::NEW_HEADER_SIZE);
+        assert!(batch.prev_proof_fetch.is_none());
+        assert!(matches!(batch.proof_put, Some(Target::Path(_))));
 
-        let ack = runtime.complete(&complete_request(run, 3, false)).await.unwrap();
+        let ack = runtime.complete(&complete_request(&run, 3, false)).await.unwrap();
         assert_eq!(ack.verified_height, 3);
 
-        let next = runtime.pull_batch(&pull_request(run, 3, None)).await.unwrap();
+        let next = runtime.pull_batch(&pull_request(&run, 3, None)).await.unwrap();
         assert_eq!(next.first_new_height, 4);
         assert_eq!(next.current_state.height, 3);
     }
 
     #[tokio::test]
     async fn pipeline_allows_two_outstanding_batches_then_waits() {
-        let harness = test_runtime("outstanding", |_| {});
+        let harness = test_runtime(|_| {});
         let runtime = &harness.runtime;
-        let run = "run-outstanding";
+        let run = harness.run_id("outstanding");
 
-        let first = runtime.pull_batch(&pull_request(run, 2, None)).await.unwrap();
+        let first = runtime.pull_batch(&pull_request(&run, 2, None)).await.unwrap();
         let second =
-            runtime.pull_batch(&pull_request(run, 2, Some(first.end_height))).await.unwrap();
+            runtime.pull_batch(&pull_request(&run, 2, Some(first.end_height))).await.unwrap();
         assert_eq!(second.first_new_height, 3);
         assert_eq!(second.current_state.height, first.end_height);
 
         // Third pull must long-poll and time out: nothing has been verified.
         let err = runtime
-            .pull_batch(&pull_request(run, 2, Some(second.end_height)))
+            .pull_batch(&pull_request(&run, 2, Some(second.end_height)))
             .await
             .unwrap_err();
         assert_eq!(err.kind, crate::protocol::ErrorKind::Timeout);
 
         // Completing the first batch unblocks the third pull.
-        runtime.complete(&complete_request(run, 2, false)).await.unwrap();
+        runtime.complete(&complete_request(&run, 2, false)).await.unwrap();
         let third = runtime
-            .pull_batch(&pull_request(run, 2, Some(second.end_height)))
+            .pull_batch(&pull_request(&run, 2, Some(second.end_height)))
             .await
             .unwrap();
         assert_eq!(third.first_new_height, 5);
@@ -802,25 +785,26 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn long_polling_pull_wakes_on_completion() {
-        let harness = test_runtime("wake", |config| {
+        let harness = test_runtime(|config| {
             config.pull_timeout = Duration::from_secs(5);
         });
         let runtime = harness.runtime.clone();
-        let run = "run-wake";
+        let run = harness.run_id("wake");
 
-        let first = runtime.pull_batch(&pull_request(run, 1, None)).await.unwrap();
+        let first = runtime.pull_batch(&pull_request(&run, 1, None)).await.unwrap();
         let second =
-            runtime.pull_batch(&pull_request(run, 1, Some(first.end_height))).await.unwrap();
+            runtime.pull_batch(&pull_request(&run, 1, Some(first.end_height))).await.unwrap();
 
         let poller = {
             let runtime = runtime.clone();
+            let run = run.clone();
             let held = second.end_height;
-            tokio::spawn(async move {
-                runtime.pull_batch(&pull_request("run-wake", 1, Some(held))).await
-            })
+            tokio::spawn(
+                async move { runtime.pull_batch(&pull_request(&run, 1, Some(held))).await },
+            )
         };
         tokio::time::sleep(Duration::from_millis(50)).await;
-        runtime.complete(&complete_request(run, first.end_height, false)).await.unwrap();
+        runtime.complete(&complete_request(&run, first.end_height, false)).await.unwrap();
 
         let third = poller.await.unwrap().unwrap();
         assert_eq!(third.first_new_height, second.end_height + 1);
@@ -828,34 +812,34 @@ mod tests {
 
     #[tokio::test]
     async fn mismatched_public_values_halt_the_run() {
-        let harness = test_runtime("halt", |_| {});
+        let harness = test_runtime(|_| {});
         let runtime = &harness.runtime;
-        let run = "run-halt";
+        let run = harness.run_id("halt");
 
-        let grant = runtime.pull_batch(&pull_request(run, 2, None)).await.unwrap();
+        let batch = runtime.pull_batch(&pull_request(&run, 2, None)).await.unwrap();
         // Public values for the wrong height: a valid claim that does not
         // match the pending batch's expected end state.
-        let mut complete = complete_request(run, grant.end_height, false);
+        let mut complete = complete_request(&run, batch.end_height, false);
         complete.public_values = success_pv_for(1);
 
         let err = runtime.complete(&complete).await.unwrap_err();
         assert!(err.message.contains("mismatch"), "unexpected error: {err}");
 
         let err =
-            runtime.pull_batch(&pull_request(run, 2, Some(grant.end_height))).await.unwrap_err();
+            runtime.pull_batch(&pull_request(&run, 2, Some(batch.end_height))).await.unwrap_err();
         assert_eq!(err.kind, crate::protocol::ErrorKind::Conflict);
         assert!(err.message.contains("halted"), "unexpected error: {err}");
     }
 
     #[tokio::test]
     async fn verifier_key_is_pinned_per_run() {
-        let harness = test_runtime("vk-pin", |_| {});
+        let harness = test_runtime(|_| {});
         let runtime = &harness.runtime;
-        let run = "run-vk-pin";
+        let run = harness.run_id("vk-pin");
 
-        runtime.pull_batch(&pull_request(run, 1, None)).await.unwrap();
+        runtime.pull_batch(&pull_request(&run, 1, None)).await.unwrap();
 
-        let mut request = pull_request(run, 1, Some(1));
+        let mut request = pull_request(&run, 1, Some(1));
         request.verifier_key = VerifierKeyDigest::from_raw([9; 8]);
         let err = runtime.pull_batch(&request).await.unwrap_err();
         assert!(err.message.contains("verifier key"), "unexpected error: {err}");
@@ -863,127 +847,128 @@ mod tests {
 
     #[tokio::test]
     async fn unproven_completion_is_rejected_unless_allowed() {
-        let harness = test_runtime("require-proof", |config| {
+        let harness = test_runtime(|config| {
             config.allow_unproven = false;
         });
         let runtime = &harness.runtime;
-        let run = "run-require-proof";
+        let run = harness.run_id("require-proof");
 
-        runtime.pull_batch(&pull_request(run, 1, None)).await.unwrap();
-        let err = runtime.complete(&complete_request(run, 1, false)).await.unwrap_err();
+        runtime.pull_batch(&pull_request(&run, 1, None)).await.unwrap();
+        let err = runtime.complete(&complete_request(&run, 1, false)).await.unwrap_err();
         assert!(err.message.contains("requires an uploaded proof"), "unexpected error: {err}");
     }
 
     #[tokio::test]
     async fn run_resumes_from_ledger_with_proof_fetch_target() {
-        let harness = test_runtime("resume", |_| {});
-        let run = "run-resume";
+        let harness = test_runtime(|_| {});
+        let run = harness.run_id("resume");
 
-        let grant = harness.runtime.pull_batch(&pull_request(run, 2, None)).await.unwrap();
+        let batch = harness.runtime.pull_batch(&pull_request(&run, 2, None)).await.unwrap();
         harness
             .runtime
-            .complete(&complete_request(run, grant.end_height, true))
+            .complete(&complete_request(&run, batch.end_height, true))
             .await
             .unwrap();
 
-        // A fresh controller (same ledger) serves the next batch and tells
-        // the empty-handed host where to fetch the verified-tip proof.
-        let reborn = runtime_at(&harness.ledger_path, &harness.artifact_root, |_| {});
-        let next = reborn.pull_batch(&pull_request(run, 2, None)).await.unwrap();
-        assert_eq!(next.first_new_height, grant.end_height + 1);
+        // A fresh controller over the same database serves the next batch
+        // and tells the empty-handed host where to fetch the verified-tip
+        // proof.
+        let reborn = runtime_at(&harness.artifact_root, |_| {});
+        let next = reborn.pull_batch(&pull_request(&run, 2, None)).await.unwrap();
+        assert_eq!(next.first_new_height, batch.end_height + 1);
         let fetch = next.prev_proof_fetch.expect("resume should include a proof fetch target");
         let Target::Path(path) = fetch else { panic!("expected path target") };
         assert!(
-            path.contains(&format!("proof_height_1_to_{}.bin", grant.end_height)),
+            path.contains(&format!("proof_height_1_to_{}.bin", batch.end_height)),
             "unexpected fetch target: {path}"
         );
     }
 
     #[tokio::test]
     async fn host_restart_reissues_unverified_batches() {
-        let harness = test_runtime("reissue", |_| {});
+        let harness = test_runtime(|_| {});
         let runtime = &harness.runtime;
-        let run = "run-reissue";
+        let run = harness.run_id("reissue");
 
-        let first = runtime.pull_batch(&pull_request(run, 2, None)).await.unwrap();
+        let first = runtime.pull_batch(&pull_request(&run, 2, None)).await.unwrap();
         let _second =
-            runtime.pull_batch(&pull_request(run, 2, Some(first.end_height))).await.unwrap();
+            runtime.pull_batch(&pull_request(&run, 2, Some(first.end_height))).await.unwrap();
 
         // Host restarts empty-handed: outstanding work is dropped and the
         // first batch is re-served from the verified tip (genesis).
-        let reissued = runtime.pull_batch(&pull_request(run, 2, None)).await.unwrap();
+        let reissued = runtime.pull_batch(&pull_request(&run, 2, None)).await.unwrap();
         assert_eq!(reissued.first_new_height, 1);
         assert_eq!(reissued.end_height, first.end_height);
     }
 
     #[tokio::test]
     async fn foreign_held_tip_is_rejected() {
-        let harness = test_runtime("foreign-tip", |_| {});
+        let harness = test_runtime(|_| {});
         let runtime = &harness.runtime;
-        let run = "run-foreign-tip";
+        let run = harness.run_id("foreign-tip");
 
-        runtime.pull_batch(&pull_request(run, 2, None)).await.unwrap();
-        let err = runtime.pull_batch(&pull_request(run, 2, Some(999))).await.unwrap_err();
+        runtime.pull_batch(&pull_request(&run, 2, None)).await.unwrap();
+        let err = runtime.pull_batch(&pull_request(&run, 2, Some(999))).await.unwrap_err();
         assert_eq!(err.kind, crate::protocol::ErrorKind::Conflict);
     }
 
     #[tokio::test]
     async fn exhausted_headers_error_uses_stable_prefix() {
-        let harness = test_runtime("exhausted", |_| {});
-        let err = harness
-            .runtime
-            .pull_batch(&pull_request("run-exhausted", 0, None))
-            .await
-            .unwrap_err();
+        let harness = test_runtime(|_| {});
+        let run = harness.run_id("exhausted");
+        let err =
+            harness.runtime.pull_batch(&pull_request(&run, 0, None)).await.unwrap_err();
         assert_eq!(err.kind, crate::protocol::ErrorKind::Exhausted);
         assert!(err.message.starts_with(NO_HEADERS_REMAINING_PREFIX));
     }
 
-    #[tokio::test]
-    async fn trusted_start_height_seeds_new_runs() {
-        let harness = test_runtime("trusted-start", |_| {});
-        let mut request = pull_request("run-trusted-start", 1, None);
-        request.start_height = Some(2016);
-
-        let grant = harness.runtime.pull_batch(&request).await.unwrap();
-        assert_eq!(grant.first_new_height, 2017);
-        assert_eq!(grant.current_state.height, 2016);
-        // No proof exists to fetch: the run starts from a trusted state.
-        assert!(grant.prev_proof_fetch.is_none());
-    }
-
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn panicking_request_does_not_poison_the_controller() {
-        let harness = test_runtime("poison", |_| {});
+        let harness = test_runtime(|_| {});
         let runtime = harness.runtime.clone();
+        let poisoned_run = harness.run_id("poison");
 
-        let mut request = pull_request("run-poison", 1, None);
-        request.start_height = Some(u32::MAX);
+        // A ledger row pointing beyond the database tip makes session
+        // restoration panic inside a read-only `HeaderStore` query.
+        HeaderStore::open(db_path())
+            .unwrap()
+            .create_run(
+                &poisoned_run,
+                &RunRecord {
+                    verifier_key: VerifierKeyDigest::default(),
+                    verified_height: u32::MAX,
+                    proof_object: None,
+                },
+            )
+            .unwrap();
         let panicked = {
             let runtime = runtime.clone();
+            let request = pull_request(&poisoned_run, 1, None);
             tokio::spawn(async move { runtime.pull_batch(&request).await })
         }
         .await
         .is_err();
-        assert!(panicked, "expected an out-of-range start height to panic");
+        assert!(panicked, "expected an out-of-range verified height to panic");
 
         // A later request recovers the poisoned lock and succeeds.
-        runtime.pull_batch(&pull_request("run-poison-2", 1, None)).await.unwrap();
+        let healthy_run = harness.run_id("poison-recovery");
+        runtime.pull_batch(&pull_request(&healthy_run, 1, None)).await.unwrap();
     }
 
     #[tokio::test]
     async fn handle_round_trip_matches_typed_api() {
-        let harness = test_runtime("bytes", |_| {});
+        let harness = test_runtime(|_| {});
         let runtime = &harness.runtime;
+        let run = harness.run_id("bytes");
 
-        let request = pull_request("run-bytes", 2, None);
+        let request = pull_request(&run, 2, None);
         let encoded = crate::protocol::encode_pull_batch_request(&request).unwrap();
-        let grant_bytes = runtime.handle_pull_batch(&encoded).await.unwrap();
-        let grant = crate::protocol::decode_batch_grant(&grant_bytes).unwrap();
-        assert_eq!(grant.first_new_height, 1);
-        assert_eq!(grant.end_height, 2);
+        let batch_bytes = runtime.handle_pull_batch(&encoded).await.unwrap();
+        let batch = crate::protocol::decode_batch(&batch_bytes).unwrap();
+        assert_eq!(batch.first_new_height, 1);
+        assert_eq!(batch.end_height, 2);
 
-        let complete = complete_request("run-bytes", 2, false);
+        let complete = complete_request(&run, 2, false);
         let encoded = crate::protocol::encode_complete_request(&complete).unwrap();
         let ack_bytes = runtime.handle_complete(&encoded).await.unwrap();
         let ack = crate::protocol::decode_complete_ack(&ack_bytes).unwrap();

@@ -213,15 +213,16 @@ where
     let start_memory = memory_monitor::log_point(label, "proof phase started");
     let output = f().map_err(Into::into);
     let elapsed = started.elapsed();
-    let end_memory = memory_monitor::sample();
     record_phase_timing(label, elapsed);
-    memory_monitor::log_delta(
-        label,
-        start_memory,
-        end_memory,
-        elapsed,
-        "proof phase finished",
-    );
+    if memory_monitor::logging_enabled() {
+        memory_monitor::log_delta(
+            label,
+            start_memory,
+            memory_monitor::sample(),
+            elapsed,
+            "proof phase finished",
+        );
+    }
     output
 }
 
@@ -235,14 +236,15 @@ where
     let start_memory = memory_monitor::log_point(label, "proof phase started");
     let output = f().await.map_err(Into::into);
     let elapsed = started.elapsed();
-    let end_memory = memory_monitor::sample();
     record_phase_timing(label, elapsed);
-    memory_monitor::log_delta(
-        label,
-        start_memory,
-        end_memory,
-        elapsed,
-        "proof phase finished",
-    );
+    if memory_monitor::logging_enabled() {
+        memory_monitor::log_delta(
+            label,
+            start_memory,
+            memory_monitor::sample(),
+            elapsed,
+            "proof phase finished",
+        );
+    }
     output
 }

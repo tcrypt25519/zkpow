@@ -7,7 +7,7 @@
 //! [`crate::protocol`]. Error bodies are plain UTF-8 text.
 //!
 //! Routes:
-//!   POST /v1/batch     pull-batch request frame  -> batch grant frame
+//!   POST /v1/batch     pull-batch request frame  -> batch frame
 //!   POST /v1/complete  complete request frame    -> complete ack frame
 
 use axum::body::Bytes;

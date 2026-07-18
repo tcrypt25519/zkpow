@@ -9,12 +9,11 @@
 //! Errors are plain-text bodies.
 //!
 //! Environment:
-//!   ZKPOW_DB_PATH            SQLite header database (default: headers.db at workspace root)
-//!   ZKPOW_LEDGER_PATH        run-progress ledger (default: controller.db at workspace root)
+//!   ZKPOW_DB_PATH            SQLite database (default: headers.db at workspace
+//!                            root); holds both headers and run progress
 //!   ZKPOW_CONTROLLER_BIND    address to listen on (default: 0.0.0.0; set your
 //!                            private Tailscale IP to avoid public exposure)
 //!   ZKPOW_CONTROLLER_PORT    TCP port to listen on (default: 7878)
-//!   ZKPOW_PULL_TIMEOUT_SECS  long-poll bound for /v1/batch (default: 600)
 //!   ZKPOW_ALLOW_UNPROVEN     accept execute-only completions (default: off)
 //!
 //! Artifact storage (S3-compatible when ZKPOW_S3_BUCKET is set, otherwise a
@@ -29,9 +28,7 @@
 //!                            runs are pinned to this guest's verifier key.
 
 use std::net::SocketAddr;
-use std::time::Duration;
 
-use zkpow_controller::ledger::{ledger_path, Ledger};
 use zkpow_controller::runtime::{ControllerConfig, ControllerRuntime};
 use zkpow_controller::storage::{ArtifactStore, LocalArtifactStore, S3ArtifactStore, S3Config};
 use zkpow_controller::verify::ProofVerifier;
@@ -119,23 +116,13 @@ async fn main() {
     tracing_subscriber::fmt::init();
 
     let db = HeaderStore::open(db_path()).expect("failed to open database");
-    let ledger = Ledger::open(ledger_path()).expect("failed to open run ledger");
     let genesis_hash = BlockHash::new(zkpow_core::MAINNET_GENESIS_HASH_RAW);
 
     let mut config = ControllerConfig::new(genesis_hash);
     config.allow_unproven = env_flag("ZKPOW_ALLOW_UNPROVEN");
-    if let Some(secs) = env("ZKPOW_PULL_TIMEOUT_SECS") {
-        config.pull_timeout =
-            Duration::from_secs(secs.parse().expect("invalid ZKPOW_PULL_TIMEOUT_SECS"));
-    }
 
-    let runtime = ControllerRuntime::new(
-        db,
-        ledger,
-        storage_from_env(),
-        verifier_from_env().await,
-        config,
-    );
+    let runtime =
+        ControllerRuntime::new(db, storage_from_env(), verifier_from_env().await, config);
     let app = build_router(runtime);
 
     let bind = env("ZKPOW_CONTROLLER_BIND").unwrap_or_else(|| "0.0.0.0".to_string());

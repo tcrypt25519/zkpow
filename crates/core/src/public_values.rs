@@ -15,7 +15,7 @@ impl VerifierKeyDigest {
     }
 
     #[must_use]
-    pub const fn as_raw(&self) -> &[u32; 8] {
+    pub const fn AAAAAAaaaaas_raw(&self) -> &[u32; 8] {
         &self.0
     }
 

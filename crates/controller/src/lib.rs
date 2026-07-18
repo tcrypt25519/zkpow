@@ -8,16 +8,15 @@
 //!
 //! Module map:
 //! * [`runtime`] — run sessions, the double-buffered grant pipeline,
-//!   long-polling, completion validation.
+//!   long-polling, completion validation. Verified progress persists in the
+//!   header database's `runs` table (see `zkpow_store`).
 //! * [`protocol`] — the binary frames spoken over every transport.
 //! * [`http`] — thin axum wrapper over the runtime's byte-level handlers.
-//! * [`ledger`] — SQLite persistence of verified run progress.
 //! * [`storage`] — artifact targets (local paths or pre-signed S3 URLs).
 //! * [`verify`] — pluggable cryptographic proof verification.
 
 pub mod diagnostics;
 pub mod http;
-pub mod ledger;
 pub mod protocol;
 pub mod runtime;
 pub mod storage;
@@ -37,7 +36,7 @@ pub use zkpow_core::{
     BlockTimestamp, Claim, HeaderChainPublicValues, NewHeader, State,
 };
 pub use zkpow_store::{
-    db_path, genesis_state_from_record, HeaderBatchWitness, HeaderRecord, HeaderStore,
+    db_path, genesis_state_from_record, HeaderBatchWitness, HeaderRecord, HeaderStore, RunRecord,
 };
 
 pub type BoxError = Box<dyn std::error::Error + Send + Sync + 'static>;

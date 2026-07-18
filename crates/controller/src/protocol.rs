@@ -6,22 +6,25 @@
 //! so the two modes cannot drift apart. Every field is fixed-width
 //! little-endian; there is deliberately no JSON, hex, or serde layer.
 //!
+//! Header and median-hint payloads stay as raw witness bytes end to end:
+//! the database serializes them once, and the host feeds the same bytes
+//! straight into the guest's stdin without decoding — the host has no reason
+//! to look inside.
+//!
 //! ```text
 //! pull-batch request:
 //!   run_id_len: u8 | run_id: utf-8 bytes
 //!   verifier_key: 32 bytes
 //!   num_headers: u32 LE
 //!   held_tip: optional u32 (presence byte + u32 LE)
-//!   start_height: optional u32 (presence byte + u32 LE)
 //!
-//! batch grant response:
+//! batch response:
 //!   first_new_height: u32 LE | end_height: u32 LE | median_hint_count: u32 LE
-//!   headers: (end_height - first_new_height + 1) * NEW_HEADER_SIZE bytes
-//!   median_hints: median_hint_count * 4 bytes
+//!   header_bytes: (end_height - first_new_height + 1) * NEW_HEADER_SIZE bytes
+//!   median_hint_bytes: median_hint_count * 4 bytes
 //!   current_state: STATE_SIZE bytes
 //!   prev_proof_fetch: optional target
 //!   proof_put: optional target
-//!   groth16_put: optional target
 //!
 //! complete request:
 //!   run_id_len: u8 | run_id: utf-8 bytes
@@ -40,9 +43,10 @@
 //! the HTTP layer can pick a status code, but hosts only rely on the message
 //! (including the stable `NO_HEADERS_REMAINING_PREFIX` sentinel).
 
-use zkpow_core::{BlockTimestamp, NewHeader, State, VerifierKeyDigest, NEW_HEADER_SIZE, STATE_SIZE};
+use zkpow_core::{BlockTimestamp, State, VerifierKeyDigest, NEW_HEADER_SIZE, STATE_SIZE};
 
-const GRANT_PREFIX_SIZE: usize = 12;
+const BATCH_PREFIX_SIZE: usize = 12;
+const MEDIAN_HINT_SIZE: usize = size_of::<BlockTimestamp>();
 
 /// Where the host should read or write an artifact. `Path` targets are only
 /// meaningful when host and controller share a filesystem (local mode or a
@@ -69,32 +73,30 @@ pub struct PullBatchRequest {
     /// (`None` when it holds nothing, e.g. right after boot). Lets the
     /// controller decide whether to include `prev_proof_fetch`.
     pub held_tip: Option<u32>,
-    /// Trusted starting height for a brand-new run (dev/execute-only use);
-    /// ignored for runs that already exist in the ledger.
-    pub start_height: Option<u32>,
 }
 
-/// A granted batch: everything the host needs to feed the guest, plus the
-/// storage targets for uploading the resulting artifacts. Validation data
-/// (the expected end state and continuation digest) deliberately never
-/// leaves the controller.
+/// The next batch for a run: everything the host needs to feed the guest,
+/// plus where to upload the resulting proof. Validation data (the expected
+/// end state and continuation digest) deliberately never leaves the
+/// controller.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BatchGrant {
+pub struct Batch {
     pub first_new_height: u32,
     pub end_height: u32,
     pub current_state: State,
-    pub headers: Vec<NewHeader>,
-    pub median_hints: Vec<BlockTimestamp>,
+    /// Serialized `NewHeader`s, exactly as the guest reads them from stdin.
+    pub header_bytes: Vec<u8>,
+    /// Serialized median-time-past hints, exactly as the guest reads them.
+    pub median_hint_bytes: Vec<u8>,
     /// Present when the host reported a `held_tip` behind the run's verified
     /// tip: fetch this to recover the proof witness needed to continue.
     pub prev_proof_fetch: Option<Target>,
     pub proof_put: Option<Target>,
-    pub groth16_put: Option<Target>,
 }
 
-/// Host notification that a batch's artifacts are uploaded (or, for
-/// execute-only runs, that execution finished) with the guest-committed
-/// public values for the controller to validate.
+/// Host notification that a batch's proof is uploaded (or, for execute-only
+/// runs, that execution finished) with the guest-committed public values for
+/// the controller to validate.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompleteRequest {
     pub run_id: String,
@@ -162,12 +164,11 @@ impl std::fmt::Display for ControllerError {
 impl std::error::Error for ControllerError {}
 
 pub fn encode_pull_batch_request(request: &PullBatchRequest) -> Result<Vec<u8>, String> {
-    let mut bytes = Vec::with_capacity(1 + request.run_id.len() + 32 + 4 + 5 + 5);
+    let mut bytes = Vec::with_capacity(1 + request.run_id.len() + 32 + 4 + 5);
     push_run_id(&mut bytes, &request.run_id)?;
     bytes.extend_from_slice(&request.verifier_key.to_bytes());
     bytes.extend_from_slice(&request.num_headers.to_le_bytes());
     push_optional_u32(&mut bytes, request.held_tip);
-    push_optional_u32(&mut bytes, request.start_height);
     Ok(bytes)
 }
 
@@ -181,48 +182,50 @@ pub fn decode_pull_batch_request(bytes: &[u8]) -> Result<PullBatchRequest, Strin
     );
     let num_headers = read_u32(bytes, &mut cursor, "num headers")?;
     let held_tip = read_optional_u32(bytes, &mut cursor, "held tip")?;
-    let start_height = read_optional_u32(bytes, &mut cursor, "start height")?;
     expect_end(bytes, cursor, "pull-batch request")?;
-    Ok(PullBatchRequest { run_id, verifier_key, num_headers, held_tip, start_height })
+    Ok(PullBatchRequest { run_id, verifier_key, num_headers, held_tip })
 }
 
-pub fn encode_batch_grant(grant: &BatchGrant) -> Result<Vec<u8>, String> {
-    let header_count = grant
+pub fn encode_batch(batch: &Batch) -> Result<Vec<u8>, String> {
+    let header_count = batch
         .end_height
-        .checked_sub(grant.first_new_height)
+        .checked_sub(batch.first_new_height)
         .and_then(|distance| distance.checked_add(1))
         .ok_or_else(|| "batch end height precedes first new height".to_string())?;
-    if header_count as usize != grant.headers.len() {
+    if header_count as usize * NEW_HEADER_SIZE != batch.header_bytes.len() {
         return Err(format!(
-            "batch heights describe {header_count} headers, got {}",
-            grant.headers.len()
+            "batch heights describe {header_count} headers, got {} payload bytes",
+            batch.header_bytes.len()
+        ));
+    }
+    if batch.median_hint_bytes.len() % MEDIAN_HINT_SIZE != 0 {
+        return Err(format!(
+            "median-hint payload of {} bytes is not a whole number of hints",
+            batch.median_hint_bytes.len()
         ));
     }
 
     let mut bytes = Vec::with_capacity(
-        GRANT_PREFIX_SIZE
-            + grant.headers.len() * NEW_HEADER_SIZE
-            + grant.median_hints.len() * size_of::<BlockTimestamp>()
+        BATCH_PREFIX_SIZE
+            + batch.header_bytes.len()
+            + batch.median_hint_bytes.len()
             + STATE_SIZE
-            + 3 * 64,
+            + 2 * 64,
     );
-    bytes.extend_from_slice(&grant.first_new_height.to_le_bytes());
-    bytes.extend_from_slice(&grant.end_height.to_le_bytes());
-    bytes.extend_from_slice(&(grant.median_hints.len() as u32).to_le_bytes());
-    for header in &grant.headers {
-        bytes.extend_from_slice(&header.to_bytes());
-    }
-    for hint in &grant.median_hints {
-        bytes.extend_from_slice(&hint.to_le_bytes());
-    }
-    bytes.extend_from_slice(&grant.current_state.to_bytes());
-    push_optional_target(&mut bytes, grant.prev_proof_fetch.as_ref())?;
-    push_optional_target(&mut bytes, grant.proof_put.as_ref())?;
-    push_optional_target(&mut bytes, grant.groth16_put.as_ref())?;
+    bytes.extend_from_slice(&batch.first_new_height.to_le_bytes());
+    bytes.extend_from_slice(&batch.end_height.to_le_bytes());
+    bytes.extend_from_slice(
+        &((batch.median_hint_bytes.len() / MEDIAN_HINT_SIZE) as u32).to_le_bytes(),
+    );
+    bytes.extend_from_slice(&batch.header_bytes);
+    bytes.extend_from_slice(&batch.median_hint_bytes);
+    bytes.extend_from_slice(&batch.current_state.to_bytes());
+    push_optional_target(&mut bytes, batch.prev_proof_fetch.as_ref())?;
+    push_optional_target(&mut bytes, batch.proof_put.as_ref())?;
     Ok(bytes)
 }
 
-pub fn decode_batch_grant(bytes: &[u8]) -> Result<BatchGrant, String> {
+pub fn decode_batch(bytes: &[u8]) -> Result<Batch, String> {
     let mut cursor = 0;
     let first_new_height = read_u32(bytes, &mut cursor, "first new height")?;
     let end_height = read_u32(bytes, &mut cursor, "end height")?;
@@ -236,29 +239,25 @@ pub fn decode_batch_grant(bytes: &[u8]) -> Result<BatchGrant, String> {
         .checked_mul(NEW_HEADER_SIZE)
         .ok_or_else(|| "batch header payload length overflows usize".to_string())?;
     let hint_bytes_len = median_hint_count
-        .checked_mul(size_of::<BlockTimestamp>())
+        .checked_mul(MEDIAN_HINT_SIZE)
         .ok_or_else(|| "batch median-hint payload length overflows usize".to_string())?;
 
-    let header_bytes = take(bytes, &mut cursor, header_bytes_len, "headers")?;
-    let hint_bytes = take(bytes, &mut cursor, hint_bytes_len, "median hints")?;
+    let header_bytes = take(bytes, &mut cursor, header_bytes_len, "headers")?.to_vec();
+    let median_hint_bytes = take(bytes, &mut cursor, hint_bytes_len, "median hints")?.to_vec();
     let current_state = State::parse(take(bytes, &mut cursor, STATE_SIZE, "current state")?)
-        .map_err(|err| format!("invalid current state in batch grant: {err}"))?;
-    let headers = decode_headers(header_bytes);
-    let median_hints = decode_median_hints(hint_bytes);
+        .map_err(|err| format!("invalid current state in batch: {err}"))?;
     let prev_proof_fetch = read_optional_target(bytes, &mut cursor, "prev proof fetch target")?;
     let proof_put = read_optional_target(bytes, &mut cursor, "proof put target")?;
-    let groth16_put = read_optional_target(bytes, &mut cursor, "groth16 put target")?;
-    expect_end(bytes, cursor, "batch grant")?;
+    expect_end(bytes, cursor, "batch")?;
 
-    Ok(BatchGrant {
+    Ok(Batch {
         first_new_height,
         end_height,
         current_state,
-        headers,
-        median_hints,
+        header_bytes,
+        median_hint_bytes,
         prev_proof_fetch,
         proof_put,
-        groth16_put,
     })
 }
 
@@ -425,54 +424,19 @@ fn expect_end(bytes: &[u8], cursor: usize, frame: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn decode_headers(bytes: &[u8]) -> Vec<NewHeader> {
-    bytes
-        .chunks_exact(NEW_HEADER_SIZE)
-        .map(|bytes| NewHeader {
-            version: u32::from_le_bytes(bytes[0..4].try_into().expect("fixed header version")),
-            merkle_root: bytes[4..36].try_into().expect("fixed header merkle root"),
-            timestamp: BlockTimestamp::from_le_bytes(
-                bytes[36..40].try_into().expect("fixed header timestamp"),
-            ),
-            nonce: u32::from_le_bytes(bytes[40..44].try_into().expect("fixed header nonce")),
-        })
-        .collect()
-}
-
-fn decode_median_hints(bytes: &[u8]) -> Vec<BlockTimestamp> {
-    bytes
-        .chunks_exact(size_of::<BlockTimestamp>())
-        .map(|bytes| BlockTimestamp::from_le_bytes(bytes.try_into().expect("fixed median hint")))
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn sample_grant() -> BatchGrant {
-        BatchGrant {
+    fn sample_batch() -> Batch {
+        Batch {
             first_new_height: 7,
             end_height: 8,
             current_state: State::default(),
-            headers: vec![
-                NewHeader {
-                    version: 2,
-                    merkle_root: [3; 32],
-                    timestamp: BlockTimestamp::new(4),
-                    nonce: 5,
-                },
-                NewHeader {
-                    version: 6,
-                    merkle_root: [7; 32],
-                    timestamp: BlockTimestamp::new(8),
-                    nonce: 9,
-                },
-            ],
-            median_hints: vec![BlockTimestamp::new(6)],
+            header_bytes: vec![0xAB; 2 * NEW_HEADER_SIZE],
+            median_hint_bytes: vec![0xCD; MEDIAN_HINT_SIZE],
             prev_proof_fetch: Some(Target::Url("https://example.test/get".to_string())),
             proof_put: Some(Target::Path("/tmp/run/proof.bin".to_string())),
-            groth16_put: None,
         }
     }
 
@@ -483,44 +447,42 @@ mod tests {
             verifier_key: VerifierKeyDigest::from_raw([0x11223344; 8]),
             num_headers: 2016,
             held_tip: Some(4032),
-            start_height: None,
         };
         let bytes = encode_pull_batch_request(&request).unwrap();
         assert_eq!(decode_pull_batch_request(&bytes).unwrap(), request);
     }
 
     #[test]
-    fn pull_batch_request_round_trips_without_optionals() {
+    fn pull_batch_request_round_trips_without_held_tip() {
         let request = PullBatchRequest {
             run_id: "r".to_string(),
             verifier_key: VerifierKeyDigest::default(),
             num_headers: 1,
             held_tip: None,
-            start_height: Some(0),
         };
         let bytes = encode_pull_batch_request(&request).unwrap();
         assert_eq!(decode_pull_batch_request(&bytes).unwrap(), request);
     }
 
     #[test]
-    fn batch_grant_round_trips() {
-        let grant = sample_grant();
-        let bytes = encode_batch_grant(&grant).unwrap();
-        assert_eq!(decode_batch_grant(&bytes).unwrap(), grant);
+    fn batch_round_trips() {
+        let batch = sample_batch();
+        let bytes = encode_batch(&batch).unwrap();
+        assert_eq!(decode_batch(&bytes).unwrap(), batch);
     }
 
     #[test]
-    fn batch_grant_rejects_trailing_bytes() {
-        let mut bytes = encode_batch_grant(&sample_grant()).unwrap();
+    fn batch_rejects_trailing_bytes() {
+        let mut bytes = encode_batch(&sample_batch()).unwrap();
         bytes.push(0);
-        assert!(decode_batch_grant(&bytes).unwrap_err().contains("trailing bytes"));
+        assert!(decode_batch(&bytes).unwrap_err().contains("trailing bytes"));
     }
 
     #[test]
-    fn batch_grant_rejects_header_count_mismatch() {
-        let mut grant = sample_grant();
-        grant.headers.pop();
-        assert!(encode_batch_grant(&grant).is_err());
+    fn batch_rejects_header_payload_mismatch() {
+        let mut batch = sample_batch();
+        batch.header_bytes.pop();
+        assert!(encode_batch(&batch).is_err());
     }
 
     #[test]
@@ -548,7 +510,6 @@ mod tests {
             verifier_key: VerifierKeyDigest::default(),
             num_headers: 1,
             held_tip: None,
-            start_height: None,
         };
         assert!(encode_pull_batch_request(&request).is_err());
     }

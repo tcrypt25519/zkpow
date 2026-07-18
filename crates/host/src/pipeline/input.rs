@@ -17,7 +17,6 @@ pub const ENV_ZKPOW_BATCH_SIZE: &str = "ZKPOW_BATCH_SIZE";
 pub const ENV_ZKPOW_BATCH_COUNT: &str = "ZKPOW_BATCH_COUNT";
 pub const ENV_ZKPOW_DB_PATH: &str = "ZKPOW_DB_PATH";
 pub const ENV_ZKPOW_PREV_PROOF: &str = "ZKPOW_PREV_PROOF";
-pub const ENV_ZKPOW_START_HEIGHT: &str = "ZKPOW_START_HEIGHT";
 pub const ENV_ZKPOW_PROOF_STORE_DIR: &str = "ZKPOW_PROOF_STORE_DIR";
 pub const ENV_ZKPOW_SHOW_COMPRESSED_PROOF_SPANS: &str = "ZKPOW_SHOW_COMPRESSED_PROOF_SPANS";
 pub const ENV_ZKPOW_CONTROLLER_URL: &str = "ZKPOW_CONTROLLER_URL";
@@ -187,7 +186,6 @@ pub(crate) fn config_from_source(
             .get(ENV_ZKPOW_RUN_ID)
             .unwrap_or_else(|_| DEFAULT_RUN_ID.to_string()),
         prev_proof_path: parse_path_env(source, ENV_ZKPOW_PREV_PROOF),
-        start_height: parse_u32_env(source, ENV_ZKPOW_START_HEIGHT)?,
         num_headers,
         batch_count,
         db_path: parse_path_env(source, ENV_ZKPOW_DB_PATH)
@@ -249,24 +247,27 @@ pub fn s3_storage_config_from_env() -> Result<Option<S3Config>, BoxError> {
     s3_storage_config_from_source(&ProcessEnv)
 }
 
+/// Assemble the guest's stdin. Header and median-hint bytes come straight
+/// from the batch grant and the previous proof is moved in, not cloned —
+/// the host pipes witness data through without reinterpreting it.
 pub fn build_stdin(
     verifier_key: VerifierKeyDigest,
     state: &util::State,
-    headers: &[util::NewHeader],
-    median_hints: &[util::BlockTimestamp],
-    previous_proof: Option<(&SP1ProofWithPublicValues, &sp1_prover::SP1VerifyingKey)>,
+    header_bytes: Vec<u8>,
+    median_hint_bytes: Vec<u8>,
+    previous_proof: Option<(SP1ProofWithPublicValues, &sp1_prover::SP1VerifyingKey)>,
 ) -> Result<SP1Stdin, BoxError> {
     let mut stdin = SP1Stdin::new();
     stdin.write_vec(verifier_key.to_bytes().to_vec());
     stdin.write_vec(state.to_bytes().to_vec());
-    stdin.write_vec(zkpow_core::serialize_new_headers(headers));
-    stdin.write_vec(zkpow_core::serialize_median_hints(median_hints));
+    stdin.write_vec(header_bytes);
+    stdin.write_vec(median_hint_bytes);
 
     if let Some((prev_proof, vk)) = previous_proof {
-        let SP1Proof::Compressed(inner_proof) = &prev_proof.proof else {
+        let SP1Proof::Compressed(inner_proof) = prev_proof.proof else {
             return Err("previous proof is not compressed".into());
         };
-        stdin.write_proof(inner_proof.as_ref().clone(), vk.vk.clone());
+        stdin.write_proof(*inner_proof, vk.vk.clone());
     }
 
     Ok(stdin)

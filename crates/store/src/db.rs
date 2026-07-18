@@ -8,7 +8,8 @@ use rusqlite::{params, Connection, OptionalExtension};
 use sync_headers::{ConnectedHeader, Tip};
 use zkpow_core::{
     chain_work_from_db_bytes, chain_work_to_db_bytes, requires_median_hint, sha256d, BlockHash,
-    BlockTimestamp, ChainWork, Claim, CompactTarget, Header, NewHeader, State, WINDOW_SIZE,
+    BlockTimestamp, ChainWork, Claim, CompactTarget, Header, NewHeader, State, VerifierKeyDigest,
+    WINDOW_SIZE,
 };
 
 const HASH_LEN: usize = 32;
@@ -87,6 +88,14 @@ impl HeaderStore {
                 chainwork       BLOB NOT NULL,
                 median_time_past INTEGER NOT NULL DEFAULT 0,
                 ordered_timestamp_run INTEGER NOT NULL CHECK (ordered_timestamp_run >= 0)
+            );
+
+            CREATE TABLE IF NOT EXISTS runs (
+                run_id          TEXT PRIMARY KEY,
+                verifier_key    BLOB NOT NULL,
+                verified_height INTEGER NOT NULL,
+                proof_object    TEXT,
+                updated_at      INTEGER NOT NULL DEFAULT (strftime('%s','now'))
             );
             ",
         )?;
@@ -261,12 +270,14 @@ impl HeaderStore {
             .query_map(params![start_height, start_height + count], |row| {
                 let height: i64 = row.get(0)?;
                 let version: i64 = row.get(1)?;
-                let prev: Vec<u8> = row.get(2)?;
-                let merkle_root: Vec<u8> = row.get(3)?;
+                // Borrow blob columns in place; the fixed-width consumers
+                // below never need an owned Vec.
+                let prev = row.get_ref(2)?.as_blob()?;
+                let merkle_root = row.get_ref(3)?.as_blob()?;
                 let timestamp: i64 = row.get(4)?;
                 let nbits: i64 = row.get(5)?;
                 let nonce: i64 = row.get(6)?;
-                let chainwork: Vec<u8> = row.get(7)?;
+                let chainwork = row.get_ref(7)?.as_blob()?;
                 let median_time_past: i64 = row.get(8)?;
                 let ordered_timestamp_run: i64 = row.get(9)?;
                 let height = height as u64;
@@ -274,7 +285,7 @@ impl HeaderStore {
                     height,
                     header: Header {
                         version: version as u32,
-                        prev_blockhash: hash_from_bytes(&prev)?,
+                        prev_blockhash: hash_from_bytes(prev)?,
                         merkle_root: merkle_root
                             .try_into()
                             .expect("merkle_root must be 32 bytes"),
@@ -282,7 +293,7 @@ impl HeaderStore {
                         compact_target: CompactTarget::new(nbits as u32),
                         nonce: nonce as u32,
                     },
-                    chain_work: work_from_bytes(&chainwork)?,
+                    chain_work: work_from_bytes(chainwork)?,
                     median_time_past: BlockTimestamp::new(median_time_past as u32),
                     ordered_timestamp_run: ordered_timestamp_run_from_db(
                         height,
@@ -310,6 +321,17 @@ impl HeaderStore {
         self.load_header_batch_witness(start_height, count).headers
     }
 
+    /// The `ordered_timestamp_run` column of one row, without materializing
+    /// the whole record.
+    fn load_ordered_timestamp_run(&self, height: u64) -> u64 {
+        const SQL: &str = "SELECT ordered_timestamp_run FROM headers WHERE height = ?1";
+        let mut stmt = self.conn.prepare_cached(SQL).expect("prepare");
+        let raw: i64 = stmt
+            .query_row(params![height], |row| row.get(0))
+            .expect("load_ordered_timestamp_run");
+        ordered_timestamp_run_from_db(height, raw)
+    }
+
     pub fn load_header_batch_witness(&self, start_height: u64, count: u64) -> HeaderBatchWitness {
         const SQL: &str =
             "SELECT h.height, h.version, h.merkle_root, h.timestamp, h.nonce, h.median_time_past, h.ordered_timestamp_run \
@@ -321,7 +343,9 @@ impl HeaderStore {
             .query_map(params![start_height, start_height + count], |row| {
                 let height: i64 = row.get(0)?;
                 let version: i64 = row.get(1)?;
-                let merkle_root: Vec<u8> = row.get(2)?;
+                // Borrowed blob: copied once into the fixed-width array, no
+                // per-row Vec.
+                let merkle_root = row.get_ref(2)?.as_blob()?;
                 let timestamp: i64 = row.get(3)?;
                 let nonce: i64 = row.get(4)?;
                 let median_time_past: i64 = row.get(5)?;
@@ -348,8 +372,7 @@ impl HeaderStore {
         let mut previous_ordered_timestamp_run = if start_height == 0 {
             0
         } else {
-            self.load_header_record(start_height - 1)
-                .ordered_timestamp_run
+            self.load_ordered_timestamp_run(start_height - 1)
         };
         for row in rows {
             let (height, h, m, ordered_timestamp_run) = row.expect("row");
@@ -371,7 +394,6 @@ impl HeaderStore {
             return genesis_state_from_record(self.load_header_record(0), genesis_hash);
         }
 
-        let current = self.load_header_record(height as u64);
         let epoch_start_height = (height / zkpow_core::EPOCH_LENGTH) * zkpow_core::EPOCH_LENGTH;
         let epoch_start = self.load_header_record(epoch_start_height as u64);
         let window_count = (height as usize + 1).min(zkpow_core::WINDOW_SIZE) as u64;
@@ -379,9 +401,12 @@ impl HeaderStore {
         let window = self.load_header_records(window_start, window_count);
 
         let mut timestamps = [BlockTimestamp::default(); zkpow_core::WINDOW_SIZE];
-        for r in window {
+        for r in &window {
             timestamps[r.height as usize % zkpow_core::WINDOW_SIZE] = r.header.timestamp;
         }
+        // The window's last row is the requested height itself; no separate
+        // query for the current header.
+        let current = window.last().expect("window covers the requested height");
 
         State {
             block_hash: BlockHash::new(sha256d(&current.header.to_bytes())),
@@ -393,6 +418,86 @@ impl HeaderStore {
             timestamps,
         }
     }
+
+    pub fn load_run(&self, run_id: &str) -> rusqlite::Result<Option<RunRecord>> {
+        self.conn
+            .query_row(
+                "SELECT verifier_key, verified_height, proof_object FROM runs WHERE run_id = ?1",
+                [run_id],
+                |row| {
+                    let verifier_key: [u8; HASH_LEN] =
+                        row.get::<_, Vec<u8>>(0)?.try_into().map_err(|_| {
+                            rusqlite::Error::InvalidColumnType(
+                                0,
+                                "verifier_key must be 32 bytes".to_string(),
+                                rusqlite::types::Type::Blob,
+                            )
+                        })?;
+                    Ok(RunRecord {
+                        verifier_key: VerifierKeyDigest::from_bytes(verifier_key),
+                        verified_height: row.get(1)?,
+                        proof_object: row.get(2)?,
+                    })
+                },
+            )
+            .optional()
+    }
+
+    pub fn create_run(&self, run_id: &str, record: &RunRecord) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "INSERT INTO runs (run_id, verifier_key, verified_height, proof_object)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![
+                run_id,
+                record.verifier_key.to_bytes(),
+                record.verified_height,
+                record.proof_object,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Persist a newly verified height. Callers must only invoke this after
+    /// the batch's public values (and proof, when configured) have been
+    /// validated.
+    pub fn record_run_progress(
+        &self,
+        run_id: &str,
+        verified_height: u32,
+        proof_object: Option<&str>,
+    ) -> rusqlite::Result<()> {
+        let updated = self.conn.execute(
+            "UPDATE runs
+             SET verified_height = ?2,
+                 proof_object = ?3,
+                 updated_at = strftime('%s','now')
+             WHERE run_id = ?1",
+            params![run_id, verified_height, proof_object],
+        )?;
+        if updated != 1 {
+            return Err(rusqlite::Error::QueryReturnedNoRows);
+        }
+        Ok(())
+    }
+
+    /// Forget a run entirely (operator reset of a halted or abandoned chain).
+    pub fn delete_run(&self, run_id: &str) -> rusqlite::Result<()> {
+        self.conn.execute("DELETE FROM runs WHERE run_id = ?1", [run_id])?;
+        Ok(())
+    }
+}
+
+/// One IVC chain's verified progress, keyed by `run_id` in the `runs` table.
+/// Only verified progress is stored; handed-out-but-unverified work is
+/// controller memory and is simply re-issued after a restart.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunRecord {
+    /// Verifying-key digest pinned at run creation.
+    pub verifier_key: VerifierKeyDigest,
+    pub verified_height: u32,
+    /// Storage object name of the proof at `verified_height`, when one was
+    /// uploaded and verified.
+    pub proof_object: Option<String>,
 }
 
 /// A single `headers` row, decoded into typed fields.
@@ -469,6 +574,37 @@ mod tests {
         let _ = fs::remove_file(path.with_extension("sqlite-wal"));
     }
 
+    #[test]
+    fn run_ledger_round_trips_in_the_header_database() {
+        let path = temp_db_path("runs");
+        let db = HeaderStore::open(&path).unwrap();
+
+        assert_eq!(db.load_run("missing").unwrap(), None);
+
+        let record = RunRecord {
+            verifier_key: VerifierKeyDigest::from_raw([7; 8]),
+            verified_height: 0,
+            proof_object: None,
+        };
+        db.create_run("mainnet-01", &record).unwrap();
+        assert_eq!(db.load_run("mainnet-01").unwrap(), Some(record.clone()));
+        assert!(db.create_run("mainnet-01", &record).is_err(), "duplicate create");
+
+        db.record_run_progress("mainnet-01", 2016, Some("proof_height_1_to_2016.bin"))
+            .unwrap();
+        let loaded = db.load_run("mainnet-01").unwrap().unwrap();
+        assert_eq!(loaded.verified_height, 2016);
+        assert_eq!(loaded.proof_object.as_deref(), Some("proof_height_1_to_2016.bin"));
+        assert_eq!(loaded.verifier_key, record.verifier_key);
+
+        assert!(db.record_run_progress("ghost", 1, None).is_err(), "unknown run");
+
+        db.delete_run("mainnet-01").unwrap();
+        assert_eq!(db.load_run("mainnet-01").unwrap(), None);
+
+        remove_db_files(&path);
+    }
+
     fn genesis_connected_header() -> ConnectedHeader {
         let header = SyncHeader::new(zkpow_core::MAINNET_GENESIS_HEADER);
         let block_hash = header.block_hash();
@@ -516,7 +652,7 @@ mod tests {
                 .collect::<Result<_, _>>()
                 .unwrap()
         };
-        assert_eq!(table_names, vec!["headers"]);
+        assert_eq!(table_names, vec!["headers", "runs"]);
 
         let indexes: Vec<(String, bool)> = {
             let mut stmt = store.conn.prepare("PRAGMA index_list(headers)").unwrap();
