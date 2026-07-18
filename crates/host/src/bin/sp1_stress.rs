@@ -49,12 +49,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     std::fs::create_dir_all(&scratch).ok();
 
     // The stress loop runs one batch per session iteration against a
-    // throwaway run: fresh ledger and artifact store under the scratch dir,
-    // in-process controller, mock/CPU prover cached across iterations.
+    // throwaway run: artifacts under the scratch dir, in-process controller,
+    // mock/CPU prover cached across iterations. The run's ledger row is
+    // deleted again at the end.
+    let run_id = format!("stress-{timestamp}");
     // SAFETY: single-threaded at this point; no other env readers yet.
     unsafe {
-        std::env::set_var("ZKPOW_RUN_ID", format!("stress-{timestamp}"));
-        std::env::set_var("ZKPOW_LEDGER_PATH", scratch.join("ledger.db"));
+        std::env::set_var("ZKPOW_RUN_ID", &run_id);
         std::env::set_var("ZKPOW_PROOF_STORE_DIR", scratch.join("artifacts"));
         std::env::set_var("ZKPOW_BATCH_COUNT", "1");
         std::env::set_var(ENV_ZKPOW_BATCH_SIZE, num_headers.to_string());
@@ -74,7 +75,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut history = StageHistory::new(["Stage 0 (Start)", "Stage 1 (End)", "Stage 2 (Drop)"]);
 
     for i in 1..=iterations {
-        let start_mem = memory_monitor::log_point("stress_iter_start", "Stress iteration start");
+        // Sample directly: this binary's whole purpose is memory numbers,
+        // which must be real even without the memory-diagnostics feature.
+        let start_mem = memory_monitor::sample();
 
         let iter_start = std::time::Instant::now();
         let completed = zkpow_host::pipeline::run_batch_session().await?;
@@ -83,7 +86,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         }
         let iter_elapsed = iter_start.elapsed();
 
-        let end_mem = memory_monitor::log_point("stress_iter_end", "Stress iteration complete");
+        let end_mem = memory_monitor::sample();
         memory_monitor::log_delta(
             "stress_iter_end",
             start_mem,
@@ -138,6 +141,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
         memory_monitor::log_point("stress_session_end", "Stress session memory snapshot");
     }
+
+    zkpow_controller::HeaderStore::open(zkpow_controller::db_path())?.delete_run(&run_id)?;
     tracing::info!("SP1 stress test complete");
     Ok(())
 }

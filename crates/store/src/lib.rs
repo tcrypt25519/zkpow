@@ -1,6 +1,6 @@
 pub mod db;
 
-pub use db::{genesis_state_from_record, HeaderBatchWitness, HeaderRecord, HeaderStore};
+pub use db::{genesis_state_from_record, HeaderBatchWitness, HeaderRecord, HeaderStore, RunRecord};
 
 /// Resolve the SQLite header database path: `ZKPOW_DB_PATH` if set, otherwise
 /// `headers.db` at the workspace root.

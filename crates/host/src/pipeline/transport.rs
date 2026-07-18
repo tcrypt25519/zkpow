@@ -15,8 +15,8 @@
 use std::future::Future;
 
 use zkpow_controller::protocol::{
-    decode_batch_grant, decode_complete_ack, encode_complete_request, encode_pull_batch_request,
-    BatchGrant, CompleteAck, CompleteRequest, PullBatchRequest,
+    decode_batch, decode_complete_ack, encode_complete_request, encode_pull_batch_request, Batch,
+    CompleteAck, CompleteRequest, PullBatchRequest,
 };
 use zkpow_controller::runtime::ControllerRuntime;
 
@@ -26,7 +26,7 @@ pub trait ControllerTransport: Send + Sync + 'static {
     fn pull_batch(
         &self,
         request: &PullBatchRequest,
-    ) -> impl Future<Output = Result<BatchGrant, BoxError>> + Send;
+    ) -> impl Future<Output = Result<Batch, BoxError>> + Send;
 
     fn complete(
         &self,
@@ -48,11 +48,10 @@ impl LocalController {
 }
 
 impl ControllerTransport for LocalController {
-    async fn pull_batch(&self, request: &PullBatchRequest) -> Result<BatchGrant, BoxError> {
+    async fn pull_batch(&self, request: &PullBatchRequest) -> Result<Batch, BoxError> {
         let request = encode_pull_batch_request(request)?;
         let response = self.runtime.handle_pull_batch(&request).await?;
-        Ok(decode_batch_grant(&response)
-            .map_err(|err| format!("invalid batch grant frame: {err}"))?)
+        Ok(decode_batch(&response).map_err(|err| format!("invalid batch frame: {err}"))?)
     }
 
     async fn complete(&self, request: &CompleteRequest) -> Result<CompleteAck, BoxError> {
@@ -101,11 +100,10 @@ impl HttpController {
 }
 
 impl ControllerTransport for HttpController {
-    async fn pull_batch(&self, request: &PullBatchRequest) -> Result<BatchGrant, BoxError> {
+    async fn pull_batch(&self, request: &PullBatchRequest) -> Result<Batch, BoxError> {
         let request = encode_pull_batch_request(request)?;
         let response = self.post_bytes("/v1/batch", request).await?;
-        Ok(decode_batch_grant(&response)
-            .map_err(|err| format!("invalid batch grant frame: {err}"))?)
+        Ok(decode_batch(&response).map_err(|err| format!("invalid batch frame: {err}"))?)
     }
 
     async fn complete(&self, request: &CompleteRequest) -> Result<CompleteAck, BoxError> {
@@ -120,83 +118,90 @@ impl ControllerTransport for HttpController {
 mod tests {
     use super::*;
     use std::time::Duration;
-    use zkpow_controller::ledger::Ledger;
     use zkpow_controller::runtime::ControllerConfig;
     use zkpow_controller::storage::LocalArtifactStore;
     use zkpow_controller::{db_path, HeaderStore};
     use zkpow_core::VerifierKeyDigest;
 
-    fn temp_path(test_name: &str, suffix: &str) -> std::path::PathBuf {
+    /// Both transports share the real header database (including its `runs`
+    /// table) and one artifact root, so equal requests must produce
+    /// byte-identical batches — including storage targets. Drop deletes the
+    /// test's run row again.
+    struct Harness {
+        run_id: String,
+        artifact_root: std::path::PathBuf,
+    }
+
+    fn test_runtime(artifact_root: &std::path::Path) -> ControllerRuntime {
+        let store = HeaderStore::open(db_path()).expect("failed to open test database");
+        let mut config = ControllerConfig::new(crate::pipeline::input::genesis_hash());
+        config.allow_unproven = true;
+        config.pull_timeout = Duration::from_millis(200);
+        ControllerRuntime::new(store, Box::new(LocalArtifactStore::new(artifact_root)), None, config)
+    }
+
+    async fn local_and_http_transports(
+        test_name: &str,
+    ) -> (Harness, LocalController, HttpController) {
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        std::env::temp_dir().join(format!(
-            "zkpow-transport-{test_name}-{}-{nonce}{suffix}",
+        let artifact_root = std::env::temp_dir().join(format!(
+            "zkpow-transport-{test_name}-{}-{nonce}",
             std::process::id()
-        ))
-    }
+        ));
 
-    /// Both transports get their own runtime (own ledger) over the same
-    /// header database and the same artifact root, so equal requests must
-    /// produce byte-identical grants — including storage targets.
-    fn test_runtime(test_name: &str, artifact_root: &std::path::Path) -> ControllerRuntime {
-        let store = HeaderStore::open(db_path()).expect("failed to open test database");
-        let ledger = Ledger::open(temp_path(test_name, ".db")).expect("failed to open ledger");
-        let mut config = ControllerConfig::new(crate::pipeline::input::genesis_hash());
-        config.allow_unproven = true;
-        config.pull_timeout = Duration::from_millis(200);
-        ControllerRuntime::new(
-            store,
-            ledger,
-            Box::new(LocalArtifactStore::new(artifact_root)),
-            None,
-            config,
-        )
-    }
+        let local = LocalController::new(test_runtime(&artifact_root));
 
-    async fn local_and_http_transports(test_name: &str) -> (LocalController, HttpController) {
-        let artifact_root = temp_path(test_name, "-artifacts");
-
-        let local = LocalController::new(test_runtime(test_name, &artifact_root));
-
-        let http_runtime = test_runtime(&format!("{test_name}-http"), &artifact_root);
-        let app = zkpow_controller::http::build_router(http_runtime);
+        let app = zkpow_controller::http::build_router(test_runtime(&artifact_root));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
 
-        (local, HttpController::new(format!("http://127.0.0.1:{port}")))
+        let harness =
+            Harness { run_id: format!("test-{test_name}-{nonce}"), artifact_root };
+        (harness, local, HttpController::new(format!("http://127.0.0.1:{port}")))
     }
 
-    fn request(num_headers: u32) -> PullBatchRequest {
-        PullBatchRequest {
-            run_id: "transport-parity".to_string(),
-            verifier_key: VerifierKeyDigest::default(),
-            num_headers,
-            held_tip: None,
-            start_height: None,
+    impl Harness {
+        fn request(&self, num_headers: u32) -> PullBatchRequest {
+            PullBatchRequest {
+                run_id: self.run_id.clone(),
+                verifier_key: VerifierKeyDigest::default(),
+                num_headers,
+                held_tip: None,
+            }
+        }
+    }
+
+    impl Drop for Harness {
+        fn drop(&mut self) {
+            if let Ok(db) = HeaderStore::open(db_path()) {
+                db.delete_run(&self.run_id).ok();
+            }
+            std::fs::remove_dir_all(&self.artifact_root).ok();
         }
     }
 
     #[tokio::test]
-    async fn http_batch_grant_matches_local() {
-        let (local, http) = local_and_http_transports("grant-parity").await;
+    async fn http_batch_matches_local() {
+        let (harness, local, http) = local_and_http_transports("batch-parity").await;
 
-        let local_grant = local.pull_batch(&request(13)).await.unwrap();
-        let http_grant = http.pull_batch(&request(13)).await.unwrap();
+        let local_batch = local.pull_batch(&harness.request(13)).await.unwrap();
+        let http_batch = http.pull_batch(&harness.request(13)).await.unwrap();
 
-        assert_eq!(local_grant, http_grant);
-        assert_eq!(local_grant.first_new_height, 1);
-        assert_eq!(local_grant.end_height, 13);
+        assert_eq!(local_batch, http_batch);
+        assert_eq!(local_batch.first_new_height, 1);
+        assert_eq!(local_batch.end_height, 13);
     }
 
     #[tokio::test]
     async fn transport_errors_match_between_local_and_http() {
-        let (local, http) = local_and_http_transports("error-parity").await;
+        let (harness, local, http) = local_and_http_transports("error-parity").await;
 
-        let local_err = local.pull_batch(&request(0)).await.unwrap_err();
-        let http_err = http.pull_batch(&request(0)).await.unwrap_err();
+        let local_err = local.pull_batch(&harness.request(0)).await.unwrap_err();
+        let http_err = http.pull_batch(&harness.request(0)).await.unwrap_err();
 
         assert_eq!(local_err.to_string(), http_err.to_string());
         assert!(local_err

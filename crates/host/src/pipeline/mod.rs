@@ -16,13 +16,13 @@
 //! notice, and the pull for batch N+2 then run while N+1 proves.
 //!
 //! Transport selection: `ZKPOW_CONTROLLER_URL` picks the remote HTTP
-//! controller; otherwise a full controller runtime (header database, run
-//! ledger, artifact storage, proof verification) is built in-process and
+//! controller; otherwise a full controller runtime (header database with the
+//! run ledger, artifact storage, proof verification) is built in-process and
 //! spoken to over the identical binary protocol.
 
+pub mod artifacts;
 pub(crate) mod diagnostics;
 pub(crate) mod execution;
-pub mod artifacts;
 pub mod input;
 pub(crate) mod proof;
 pub mod transport;
@@ -32,7 +32,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
-use memuse::{StageHistory, StageMetric, StageSample};
+use memuse::{StageHistory, StageMetric};
 use sp1_sdk::prelude::*;
 use sp1_sdk::{ExecutionReport, MockProver, ProverClient, SP1ProofWithPublicValues};
 
@@ -46,8 +46,7 @@ use proof::groth16::generate_groth16_proof;
 use proof::{get_prepared_prover, PreparedProver};
 use transport::{ControllerTransport, HttpController, LocalController};
 
-use zkpow_controller::ledger::{ledger_path, Ledger};
-use zkpow_controller::protocol::{BatchGrant, CompleteAck, CompleteRequest, PullBatchRequest};
+use zkpow_controller::protocol::{CompleteAck, CompleteRequest, PullBatchRequest, Target};
 use zkpow_controller::runtime::{ControllerConfig, ControllerRuntime};
 use zkpow_controller::storage::{ArtifactStore, LocalArtifactStore, S3ArtifactStore};
 use zkpow_controller::verify::ProofVerifier;
@@ -72,14 +71,11 @@ pub enum ProverBackend {
 #[derive(Debug, Clone)]
 pub struct ProofGenerationConfig {
     /// The IVC chain this host extends; the controller tracks progress per
-    /// run id in its ledger.
+    /// run id in its database.
     pub run_id: String,
     /// Manual override: preload the held proof witness from this file
     /// instead of downloading the controller's verified-tip proof.
     pub prev_proof_path: Option<PathBuf>,
-    /// Trusted starting height when the controller creates a brand-new run
-    /// (dev/execute-only use); ignored for existing runs.
-    pub start_height: Option<u32>,
     pub num_headers: u32,
     pub batch_count: u32,
     pub db_path: PathBuf,
@@ -130,15 +126,13 @@ pub async fn run_batch_session() -> Result<u32, BoxError> {
     }
 }
 
-/// Build the in-process controller for local mode: same runtime, ledger,
+/// Build the in-process controller for local mode: same runtime, database,
 /// storage, and verification as `zkpow-controller-serve`, minus the socket.
 async fn build_local_controller(
     config: &ProofGenerationConfig,
 ) -> Result<ControllerRuntime, BoxError> {
     let db = HeaderStore::open(&config.db_path)
         .map_err(|err| format!("failed to open database: {err}"))?;
-    let ledger = Ledger::open(ledger_path())
-        .map_err(|err| format!("failed to open run ledger: {err}"))?;
 
     let storage: Box<dyn ArtifactStore> = match input::s3_storage_config_from_env()? {
         Some(s3) => {
@@ -163,7 +157,12 @@ async fn build_local_controller(
 
     let mut controller_config = ControllerConfig::new(genesis_hash());
     controller_config.allow_unproven = config.execute_only;
-    Ok(ControllerRuntime::new(db, ledger, storage, verifier, controller_config))
+    Ok(ControllerRuntime::new(
+        db,
+        storage,
+        verifier,
+        controller_config,
+    ))
 }
 
 /// The prover backing one session. Execute-only sessions run the RISC-V
@@ -195,8 +194,9 @@ struct BatchOutcome {
     public_values: Vec<u8>,
     compressed_proof: Option<SP1ProofWithPublicValues>,
     groth16_proof: Option<SP1ProofWithPublicValues>,
-    before_prove_sample: StageSample,
-    execution_report: ExecutionReport,
+    /// Cycle statistics, available in execute-only mode (proving does not
+    /// run a separate execution pass).
+    execution_report: Option<ExecutionReport>,
 }
 
 /// Background task handle that aborts its task when dropped, so an error
@@ -237,7 +237,6 @@ fn pull_request(
         verifier_key,
         num_headers: config.num_headers,
         held_tip,
-        start_height: config.start_height,
     }
 }
 
@@ -277,14 +276,17 @@ async fn run_batch_session_with<T: ControllerTransport>(
                 input::ENV_ZKPOW_PREV_PROOF,
                 path.display()
             );
-            Some(held_proof_from_file(path)?)
+            Some(held_proof_from_proof(
+                SP1ProofWithPublicValues::load(path)?,
+                None,
+            )?)
         }
         None => None,
     };
 
     let http = reqwest::Client::new();
     let mut completed: u32 = 0;
-    let mut inflight_pull: Option<Inflight<BatchGrant>> = None;
+    let mut inflight_pull: Option<Inflight<zkpow_controller::protocol::Batch>> = None;
     let mut inflight_io: Option<Inflight<CompleteAck>> = None;
 
     loop {
@@ -296,7 +298,7 @@ async fn run_batch_session_with<T: ControllerTransport>(
             break;
         }
 
-        // ---- 1. Take the grant prefetched during the previous prove ----
+        // ---- 1. Take the batch prefetched during the previous prove ----
         let pull_result = match inflight_pull.take() {
             Some(inflight) => inflight.join().await,
             None => {
@@ -305,8 +307,8 @@ async fn run_batch_session_with<T: ControllerTransport>(
                 transport.pull_batch(&request).await
             }
         };
-        let grant = match pull_result {
-            Ok(grant) => grant,
+        let batch = match pull_result {
+            Ok(batch) => batch,
             Err(err) if is_header_exhaustion_error(&err) => {
                 tracing::info!(
                     "No remaining headers in database; stopping continuous prover after {} batches",
@@ -324,6 +326,15 @@ async fn run_batch_session_with<T: ControllerTransport>(
                 return Err(err);
             }
         };
+        let zkpow_controller::protocol::Batch {
+            first_new_height,
+            end_height,
+            current_state,
+            header_bytes,
+            median_hint_bytes,
+            prev_proof_fetch,
+            proof_put,
+        } = batch;
 
         let start_memory = memory_monitor::log_point(
             "batch_memory_start",
@@ -331,57 +342,63 @@ async fn run_batch_session_with<T: ControllerTransport>(
         );
         let batch_started = Instant::now();
         tracing::info!(
-            "=== Starting batch {} (heights {}..={}) ===",
+            "=== Starting batch {} (heights {first_new_height}..={end_height}) ===",
             completed + 1,
-            grant.first_new_height,
-            grant.end_height
         );
 
         // ---- 2. Recover the proof witness when resuming mid-run ----
-        if let Some(target) = &grant.prev_proof_fetch {
+        if let Some(target) = &prev_proof_fetch {
             tracing::info!("Fetching verified-tip proof to resume the run");
             let bytes = artifacts::fetch_artifact(&http, target).await?;
-            held = Some(held_proof_from_bytes(&bytes, Some(grant.current_state.height))?);
+            let proof: SP1ProofWithPublicValues = bincode::deserialize(&bytes)
+                .map_err(|err| format!("resume proof does not deserialize: {err}"))?;
+            held = Some(held_proof_from_proof(proof, Some(current_state.height))?);
         }
-        if !config.execute_only && grant.current_state.height > 0 {
-            let held_end = held.as_ref().map(|h| h.end_height);
-            if held_end != Some(grant.current_state.height) {
-                return Err(format!(
-                    "cannot extend run {} from height {}: held proof witness covers {:?}",
-                    config.run_id, grant.current_state.height, held_end
-                )
-                .into());
-            }
+        let recursion = !config.execute_only && current_state.height > 0;
+        if recursion && held.as_ref().map(|h| h.end_height) != Some(current_state.height) {
+            return Err(format!(
+                "cannot extend run {} from height {}: held proof witness covers {:?}",
+                config.run_id,
+                current_state.height,
+                held.as_ref().map(|h| h.end_height)
+            )
+            .into());
         }
 
-        // ---- 3. Prefetch the next grant while the GPU is busy. The
+        // ---- 3. Prefetch the next batch while the GPU is busy. The
         // controller long-polls it until this batch's predecessor verifies.
         if completed + 1 < config.batch_count {
-            let request = pull_request(&config, verifier_key, Some(grant.end_height));
+            let request = pull_request(&config, verifier_key, Some(end_height));
             let transport = transport.clone();
-            inflight_pull =
-                Some(Inflight::spawn(async move { transport.pull_batch(&request).await }));
+            inflight_pull = Some(Inflight::spawn(async move {
+                transport.pull_batch(&request).await
+            }));
         }
 
-        // ---- 4. Feed the guest and execute/prove ----
+        // ---- 4. Feed the guest and execute/prove. The witness bytes and the
+        // held proof are moved into stdin untouched — the host never decodes
+        // or copies them.
         clear_phase_timings();
         let stdin = timed_sync("serialize_input", || {
-            let previous = match (&held, &session_prover) {
-                (Some(held), SessionProver::Prover(prepared))
-                    if grant.current_state.height > 0 =>
-                {
-                    Some((&held.proof, prepared.verifying_key()))
+            let previous = match &session_prover {
+                SessionProver::Prover(prepared) if recursion => {
+                    let witness = held.take().expect("held proof checked above");
+                    Some((witness.proof, prepared.verifying_key()))
                 }
                 _ => None,
             };
             build_stdin(
                 verifier_key,
-                &grant.current_state,
-                &grant.headers,
-                &grant.median_hints,
+                &current_state,
+                header_bytes,
+                median_hint_bytes,
                 previous,
             )
         })?;
+        let before_prove_memory = memory_monitor::log_point(
+            "batch_memory_before_prove",
+            "Batch memory snapshot before proving",
+        );
         let outcome = run_batch(&session_prover, config.mode(), stdin).await?;
 
         // ---- 5. The previous batch's upload + completion must have landed ----
@@ -389,35 +406,39 @@ async fn run_batch_session_with<T: ControllerTransport>(
             io.join().await?;
         }
 
-        // ---- 6. Stage the new witness and ship this batch in the background ----
+        // ---- 6. Stage the new witness and ship this batch's proof to the
+        // controller-chosen target in the background ----
         let proof_bytes = outcome
             .compressed_proof
             .as_ref()
             .map(|proof| bincode::serialize(proof))
             .transpose()
             .map_err(|err| format!("failed to serialize compressed proof: {err}"))?;
-        let groth16_bytes = outcome
-            .groth16_proof
-            .as_ref()
-            .map(|proof| bincode::serialize(proof))
-            .transpose()
-            .map_err(|err| format!("failed to serialize groth16 proof: {err}"))?;
 
-        log_batch_completion(&config, &outcome, batch_started.elapsed().as_secs_f64());
+        // The Groth16 wrap is a terminal on-chain artifact, not part of the
+        // IVC chain the controller tracks. When produced, save it locally.
+        if let Some(groth16) = &outcome.groth16_proof {
+            let path = format!("proof_height_{first_new_height}_to_{end_height}_groth16.bin");
+            groth16
+                .save(&path)
+                .map_err(|err| format!("failed to save groth16 proof: {err}"))?;
+            tracing::info!("Saved Groth16 proof to {path}");
+        }
 
-        let before_prove_memory = outcome.before_prove_sample;
+        log_batch_completion(&outcome, batch_started.elapsed().as_secs_f64());
+
         held = outcome
             .compressed_proof
-            .map(|proof| HeldProof { end_height: grant.end_height, proof });
+            .map(|proof| HeldProof { end_height, proof });
 
         inflight_io = Some(ship_batch(
             transport.clone(),
             http.clone(),
             config.run_id.clone(),
-            grant,
+            end_height,
+            proof_put,
             outcome.public_values,
             proof_bytes,
-            groth16_bytes,
         ));
         completed += 1;
 
@@ -452,37 +473,29 @@ async fn run_batch_session_with<T: ControllerTransport>(
     Ok(completed)
 }
 
-/// Upload this batch's artifacts to the controller-chosen targets, then
-/// report completion. Runs in the background while the next batch proves.
+/// Upload this batch's proof to the controller-chosen target, then report
+/// completion. Runs in the background while the next batch proves.
 fn ship_batch<T: ControllerTransport>(
     transport: Arc<T>,
     http: reqwest::Client,
     run_id: String,
-    grant: BatchGrant,
+    end_height: u32,
+    proof_put: Option<Target>,
     public_values: Vec<u8>,
     proof_bytes: Option<Vec<u8>>,
-    groth16_bytes: Option<Vec<u8>>,
 ) -> Inflight<CompleteAck> {
     Inflight::spawn(async move {
         let has_proof = proof_bytes.is_some();
         if let Some(bytes) = proof_bytes {
-            let target = grant
-                .proof_put
+            let target = proof_put
                 .as_ref()
-                .ok_or("controller granted no proof upload target")?;
+                .ok_or("controller returned no proof upload target")?;
             timed_upload("compressed proof", &http, target, bytes).await?;
-        }
-        if let Some(bytes) = groth16_bytes {
-            let target = grant
-                .groth16_put
-                .as_ref()
-                .ok_or("controller granted no groth16 upload target")?;
-            timed_upload("groth16 proof", &http, target, bytes).await?;
         }
         let ack = transport
             .complete(&CompleteRequest {
                 run_id,
-                end_height: grant.end_height,
+                end_height,
                 has_proof,
                 public_values,
             })
@@ -498,7 +511,7 @@ fn ship_batch<T: ControllerTransport>(
 async fn timed_upload(
     label: &str,
     http: &reqwest::Client,
-    target: &zkpow_controller::protocol::Target,
+    target: &Target,
     bytes: Vec<u8>,
 ) -> Result<(), BoxError> {
     let size = bytes.len();
@@ -519,32 +532,33 @@ async fn run_batch(
 ) -> Result<BatchOutcome, BoxError> {
     match session_prover {
         SessionProver::Executor(prover) => {
-            let executed = execute_batch(prover, stdin).await?;
+            let (public_values, execution_report) = execute_batch(prover, stdin).await?;
             Ok(BatchOutcome {
-                public_values: executed.public_values,
+                public_values,
                 compressed_proof: None,
                 groth16_proof: None,
-                before_prove_sample: executed.before_prove_sample,
-                execution_report: executed.execution_report,
+                execution_report: Some(execution_report),
             })
         }
         SessionProver::Prover(prepared) => match prepared {
-            PreparedProver::Mock { prover, proving_key } => {
-                prove_batch("mock", prover, proving_key, stdin, mode).await
-            }
-            PreparedProver::Cpu { prover, proving_key } => {
-                prove_batch("cpu", prover, proving_key, stdin, mode).await
-            }
+            PreparedProver::Mock {
+                prover,
+                proving_key,
+            } => prove_batch(prover, proving_key, stdin, mode).await,
+            PreparedProver::Cpu {
+                prover,
+                proving_key,
+            } => prove_batch(prover, proving_key, stdin, mode).await,
             #[cfg(feature = "CUDA")]
-            PreparedProver::Cuda { prover, proving_key } => {
-                prove_batch("cuda", prover, proving_key, stdin, mode).await
-            }
+            PreparedProver::Cuda {
+                prover,
+                proving_key,
+            } => prove_batch(prover, proving_key, stdin, mode).await,
         },
     }
 }
 
 async fn prove_batch<P, K>(
-    prover_name: &str,
     prover: &P,
     proving_key: &K,
     stdin: SP1Stdin,
@@ -555,43 +569,27 @@ where
     K: ProvingKey,
     P::Error: std::fmt::Display + Send + Sync + 'static,
 {
-    let compressed = generate_compressed_proof(prover_name, prover, proving_key, stdin).await?;
+    let compressed_proof = generate_compressed_proof(prover, proving_key, stdin).await?;
 
     let groth16_proof = if mode == PipelineMode::ProveCompressedAndGroth16 {
-        Some(generate_groth16_proof(&compressed.compressed_proof, &compressed.vk).await?)
+        Some(generate_groth16_proof(&compressed_proof, proving_key.verifying_key()).await?)
     } else {
         None
     };
 
     Ok(BatchOutcome {
-        public_values: compressed.compressed_proof.public_values.to_vec(),
-        compressed_proof: Some(compressed.compressed_proof),
+        public_values: compressed_proof.public_values.to_vec(),
+        compressed_proof: Some(compressed_proof),
         groth16_proof,
-        before_prove_sample: compressed.before_prove_sample,
-        execution_report: compressed.execution_report,
+        execution_report: None,
     })
-}
-
-fn held_proof_from_file(path: &std::path::Path) -> Result<HeldProof, BoxError> {
-    let proof = SP1ProofWithPublicValues::load(path)?;
-    held_proof_from_proof(proof, None)
-}
-
-fn held_proof_from_bytes(
-    bytes: &[u8],
-    expected_end_height: Option<u32>,
-) -> Result<HeldProof, BoxError> {
-    let proof: SP1ProofWithPublicValues = bincode::deserialize(bytes)
-        .map_err(|err| format!("resume proof does not deserialize: {err}"))?;
-    held_proof_from_proof(proof, expected_end_height)
 }
 
 fn held_proof_from_proof(
     proof: SP1ProofWithPublicValues,
     expected_end_height: Option<u32>,
 ) -> Result<HeldProof, BoxError> {
-    let public_values = proof.public_values.to_vec();
-    let end_height = match HeaderChainPublicValues::parse(&public_values) {
+    let end_height = match HeaderChainPublicValues::parse(proof.public_values.as_slice()) {
         Ok(HeaderChainPublicValues::Success { claim, .. }) => claim.height,
         Ok(HeaderChainPublicValues::Failure { failure, .. }) => {
             return Err(format!(
@@ -613,44 +611,40 @@ fn held_proof_from_proof(
     Ok(HeldProof { end_height, proof })
 }
 
-fn log_batch_completion(
-    config: &ProofGenerationConfig,
-    outcome: &BatchOutcome,
-    total_duration_secs: f64,
-) {
-    if config.execute_only {
-        tracing::info!("Execution completed in {total_duration_secs:.2} seconds");
-        return;
-    }
-
-    tracing::info!("========================================");
-    tracing::info!("TOTAL PROVING TIME: {total_duration_secs:.2} seconds");
-    tracing::info!("========================================");
-    let phase_timings = collected_phase_timings();
-    if phase_timings.is_empty() {
-        tracing::info!("Proving time breakdown: unavailable");
-    } else {
-        tracing::info!("Proving time breakdown:");
-        for phase in &phase_timings {
-            let pct = if total_duration_secs > 0.0 {
-                (phase.total_duration_secs * 100.0) / total_duration_secs
-            } else {
-                0.0
-            };
-            tracing::info!(
-                "  {}: {:.2}s ({:.2}%){}",
-                phase.label,
-                phase.total_duration_secs,
-                pct,
-                if phase.invocations > 1 {
-                    format!(" across {} invocations", phase.invocations)
+fn log_batch_completion(outcome: &BatchOutcome, total_duration_secs: f64) {
+    let Some(report) = &outcome.execution_report else {
+        tracing::info!("========================================");
+        tracing::info!("TOTAL PROVING TIME: {total_duration_secs:.2} seconds");
+        tracing::info!("========================================");
+        let phase_timings = collected_phase_timings();
+        if phase_timings.is_empty() {
+            tracing::info!("Proving time breakdown: unavailable");
+        } else {
+            tracing::info!("Proving time breakdown:");
+            for phase in &phase_timings {
+                let pct = if total_duration_secs > 0.0 {
+                    (phase.total_duration_secs * 100.0) / total_duration_secs
                 } else {
-                    String::new()
-                }
-            );
+                    0.0
+                };
+                tracing::info!(
+                    "  {}: {:.2}s ({:.2}%){}",
+                    phase.label,
+                    phase.total_duration_secs,
+                    pct,
+                    if phase.invocations > 1 {
+                        format!(" across {} invocations", phase.invocations)
+                    } else {
+                        String::new()
+                    }
+                );
+            }
         }
-    }
-    log_execution_report(&outcome.execution_report, total_duration_secs);
+        return;
+    };
+
+    tracing::info!("Execution completed in {total_duration_secs:.2} seconds");
+    log_execution_report(report, total_duration_secs);
 }
 
 fn log_prover_backend_selection(prover_backend: ProverBackend, cuda_device_id: Option<u32>) {
@@ -687,6 +681,7 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::OnceLock;
     use tokio::sync::Mutex;
+    use zkpow_controller::db_path;
 
     fn env_test_mutex() -> &'static Mutex<()> {
         static ENV_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
@@ -827,37 +822,42 @@ mod tests {
         }
     }
 
-    fn temp_dir(test_name: &str) -> std::path::PathBuf {
-        let nonce = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        std::env::temp_dir().join(format!(
-            "zkpow-host-session-{test_name}-{}-{nonce}",
-            std::process::id()
-        ))
-    }
-
+    /// Points the session at a scratch artifact dir and a unique run id, and
+    /// deletes the run's ledger row from the (shared, real) header database
+    /// again on drop.
     struct SessionEnv {
-        dir: std::path::PathBuf,
+        dir: PathBuf,
+        run_id: String,
     }
 
     impl SessionEnv {
         fn new(test_name: &str) -> Self {
-            let dir = temp_dir(test_name);
+            let nonce = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let dir = std::env::temp_dir().join(format!(
+                "zkpow-host-session-{test_name}-{}-{nonce}",
+                std::process::id()
+            ));
             std::fs::create_dir_all(&dir).unwrap();
-            set_env("ZKPOW_LEDGER_PATH", dir.join("ledger.db").to_str().unwrap());
-            set_env("ZKPOW_PROOF_STORE_DIR", dir.join("artifacts").to_str().unwrap());
-            set_env(ENV_ZKPOW_RUN_ID, &format!("test-{test_name}"));
+            let run_id = format!("test-{test_name}-{nonce}");
+            set_env(
+                "ZKPOW_PROOF_STORE_DIR",
+                dir.join("artifacts").to_str().unwrap(),
+            );
+            set_env(ENV_ZKPOW_RUN_ID, &run_id);
             set_env(ENV_ZKPOW_EXECUTE_ONLY, "1");
-            Self { dir }
+            Self { dir, run_id }
         }
     }
 
     impl Drop for SessionEnv {
         fn drop(&mut self) {
+            if let Ok(db) = HeaderStore::open(db_path()) {
+                db.delete_run(&self.run_id).ok();
+            }
             for name in [
-                "ZKPOW_LEDGER_PATH",
                 "ZKPOW_PROOF_STORE_DIR",
                 ENV_ZKPOW_RUN_ID,
                 ENV_ZKPOW_EXECUTE_ONLY,
@@ -878,7 +878,9 @@ mod tests {
         set_env("ZKPOW_BATCH_COUNT", "0");
         set_env(ENV_ZKPOW_BATCH_SIZE, "1");
 
-        let completed = run_batch_session().await.expect("session should exit cleanly");
+        let completed = run_batch_session()
+            .await
+            .expect("session should exit cleanly");
         assert_eq!(completed, 0);
     }
 
@@ -901,24 +903,28 @@ mod tests {
 
     /// Drives real execute-only batches end to end through the in-process
     /// controller: pull -> execute -> complete -> ledger advance, twice, with
-    /// the second session resuming from the ledger.
+    /// the second session resuming from the run ledger.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn execute_only_session_advances_and_resumes() {
         let _guard = env_test_mutex().lock().await;
-        let _env = SessionEnv::new("advance-resume");
+        let env = SessionEnv::new("advance-resume");
         set_env("ZKPOW_BATCH_COUNT", "2");
         set_env(ENV_ZKPOW_BATCH_SIZE, "3");
 
-        let completed = run_batch_session().await.expect("first session should complete");
+        let completed = run_batch_session()
+            .await
+            .expect("first session should complete");
         assert_eq!(completed, 2);
 
         // Second session must resume at height 6 and prove 2 more batches.
-        let completed = run_batch_session().await.expect("second session should complete");
+        let completed = run_batch_session()
+            .await
+            .expect("second session should complete");
         assert_eq!(completed, 2);
 
-        let ledger = Ledger::open(std::env::var("ZKPOW_LEDGER_PATH").unwrap()).unwrap();
-        let record = ledger
-            .load(&std::env::var(ENV_ZKPOW_RUN_ID).unwrap())
+        let record = HeaderStore::open(db_path())
+            .unwrap()
+            .load_run(&env.run_id)
             .unwrap()
             .expect("run should exist in ledger");
         assert_eq!(record.verified_height, 12);

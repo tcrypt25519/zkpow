@@ -20,7 +20,6 @@ CHAIN_BATCH_COUNT="${ZKPOW_BATCH_COUNT:-}"
 # One run id, ledger, and artifact store for the whole chain: the controller
 # tracks verified progress and re-serves the next batch on each invocation.
 export ZKPOW_RUN_ID="${ZKPOW_RUN_ID:-chain-$TIMESTAMP}"
-export ZKPOW_LEDGER_PATH="${ZKPOW_LEDGER_PATH:-$OUT_DIR/ledger.db}"
 export ZKPOW_PROOF_STORE_DIR="${ZKPOW_PROOF_STORE_DIR:-$OUT_DIR/proofs}"
 
 BATCH_COUNT=0

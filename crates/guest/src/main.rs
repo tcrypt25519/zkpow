@@ -78,8 +78,8 @@ pub fn main() {
         // SP1's read_vec() returns an 8-byte-aligned buffer.
         let verifier_key = unsafe { &*verifier_key_bytes.as_ptr().cast::<[u32; 8]>() };
         let mut state = State::parse(&state_bytes).expect("state witness should parse");
-        let header_hints =
-            parse_new_headers(&header_hint_bytes).expect("new header hints should parse");
+        let header_hints = <NewHeader as FixedSize>::slice_from_bytes(&header_hint_bytes)
+            .expect("new header hints should parse");
         let median_hints =
             parse_median_hints(&median_hint_bytes).expect("median time past hints should parse");
 

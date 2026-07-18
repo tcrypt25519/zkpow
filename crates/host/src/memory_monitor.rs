@@ -12,17 +12,21 @@ pub fn sample() -> StageSample {
     }
 }
 
+/// Sample and log a memory data point. When memory logging is disabled this
+/// is free: no RSS read happens and a zero sample is returned (callers that
+/// always want a real sample use [`sample`] directly).
 pub fn log_point(label: &'static str, message: &'static str) -> StageSample {
-    let sample = sample();
-    if logging_enabled() {
-        tracing::info!(
-            label,
-            rss_kb = sample.rss_kb(),
-            live_kb = sample.live_kb(),
-            peak_kb = peak_kb(),
-            "{message}"
-        );
+    if !logging_enabled() {
+        return StageSample::new(0, 0);
     }
+    let sample = sample();
+    tracing::info!(
+        label,
+        rss_kb = sample.rss_kb(),
+        live_kb = sample.live_kb(),
+        peak_kb = peak_kb(),
+        "{message}"
+    );
     sample
 }
 

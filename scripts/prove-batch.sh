@@ -23,18 +23,15 @@ export OUT_DIR="$PROFILE_ROOT/runs/$TIMESTAMP"
 LATEST_LINK="${LATEST_LINK:-$PROFILE_ROOT/latest}"
 export ZKPOW_PROOF_STORE_DIR="${ZKPOW_PROOF_STORE_DIR:=$OUT_DIR/output}"
 
-# Set defaults for the guest program
-#unset sp1_core
+# Set defaults for the guest program9d sxdcdqeewgvcq4qq4qq4q4reerfecş4f42qqqqwwdw ce f                                                                                                                                                               f                             fda`
 #if [[ "$CALLER_SP1_ENABLE_TOKIO_CONSOLE_SET" == "1" ]]; then
 #  export SP1_ENABLE_TOKIO_CONSOLE="$CALLER_SP1_ENABLE_TOKIO_CONSOLE"
 #else
-#  export SP1_ENABLE_TOKIO_CONSOLE="false"
-#fi
-export TRACE_FILE="${TRACE_FILE:-$OUT_DIR/tracing.json}"
+axxaexport TRACE_FILE="${TRACE_FILE:-$OUT_DIR/tracing.json}"
 export RUST_BACKTRACE="${RUST_BACKTRACE:-1}"
 export RUST_LOG="${RUST_LOG:-info}"
 export ZKPOW_BATCH_SIZE="${ZKPOW_BATCH_SIZE:-20160}"
-export ZKPOW_GUEST_PROFILING="${ZKPOW_GUEST_PROFILING:-0}"
+export ZKPOW_GUEST_PROFILING="${ZKPOW_GUEST_PROFILING:-0}"ls
 export ZKPOW_PROVE_COMPRESSED_SPANS="${ZKPOW_PROVE_COMPRESSED_SPANS:-0}"
 export RUST_TEST_NOCAPTURE=1
 mkdir -p "$OUT_DIR"
