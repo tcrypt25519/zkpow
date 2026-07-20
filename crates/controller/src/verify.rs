@@ -8,6 +8,8 @@
 //! from a guest ELF when compiled with the `sp1-verify` feature.
 
 pub trait ProofVerifier: Send + Sync {
+    fn verifier_key_digest(&self) -> zkpow_core::VerifierKeyDigest;
+
     /// Cryptographically verify a compressed proof artifact. The proof's
     /// committed public values must equal `expected_public_values` (which
     /// the controller has already validated against its database).
@@ -55,12 +57,16 @@ mod sp1 {
     }
 
     impl ProofVerifier for Sp1ElfVerifier {
+        fn verifier_key_digest(&self) -> zkpow_core::VerifierKeyDigest {
+            self.verifier_key_digest()
+        }
+
         fn verify_compressed(
             &self,
             proof_bytes: &[u8],
             expected_public_values: &[u8],
         ) -> Result<(), String> {
-            let proof: SP1ProofWithPublicValues = bincode::deserialize(proof_bytes)
+            let proof: SP1ProofWithPublicValues = postcard::from_bytes(proof_bytes)
                 .map_err(|err| format!("uploaded proof does not deserialize: {err}"))?;
             if proof.public_values.as_slice() != expected_public_values {
                 return Err("uploaded proof commits different public values".to_string());

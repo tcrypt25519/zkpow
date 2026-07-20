@@ -18,7 +18,7 @@ sp1_zkvm::entrypoint!(main);
 mod sha256;
 
 use sha256::sha256d_new_header;
-use zkpow_core::{BlockHash, BlockTimestamp, CompactTarget, NewHeader};
+use zkpow_core::{BlockHash, BlockTimestamp, CompactTarget, HeaderInput};
 
 const RECORD_SIZE: usize = 80;
 
@@ -37,7 +37,7 @@ pub fn main() {
         let mut merkle_root = [0u8; 32];
         merkle_root.copy_from_slice(&record[4..36]);
 
-        let header = NewHeader {
+        let header = HeaderInput {
             version: u32_from_le(&record[0..4]),
             merkle_root,
             timestamp: BlockTimestamp::new(u32_from_le(&record[36..40])),

@@ -8,7 +8,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use sync_headers::{ConnectedHeader, Tip};
 use zkpow_core::{
     chain_work_from_db_bytes, chain_work_to_db_bytes, requires_median_hint, sha256d, BlockHash,
-    BlockTimestamp, ChainWork, Claim, CompactTarget, Header, NewHeader, State, VerifierKeyDigest,
+    BlockTimestamp, ChainWork, Claim, CompactTarget, Header, HeaderInput, State, VerifierKeyDigest,
     WINDOW_SIZE,
 };
 
@@ -317,7 +317,7 @@ impl HeaderStore {
             .expect("one header record")
     }
 
-    pub fn load_new_headers(&self, start_height: u64, count: u64) -> Vec<NewHeader> {
+    pub fn load_new_headers(&self, start_height: u64, count: u64) -> Vec<HeaderInput> {
         self.load_header_batch_witness(start_height, count).headers
     }
 
@@ -353,7 +353,7 @@ impl HeaderStore {
                 let height = height as u64;
                 Ok((
                     height,
-                    NewHeader {
+                    HeaderInput {
                         version: version as u32,
                         merkle_root: merkle_root
                             .try_into()
@@ -482,7 +482,8 @@ impl HeaderStore {
 
     /// Forget a run entirely (operator reset of a halted or abandoned chain).
     pub fn delete_run(&self, run_id: &str) -> rusqlite::Result<()> {
-        self.conn.execute("DELETE FROM runs WHERE run_id = ?1", [run_id])?;
+        self.conn
+            .execute("DELETE FROM runs WHERE run_id = ?1", [run_id])?;
         Ok(())
     }
 }
@@ -524,7 +525,7 @@ impl HeaderRecord {
 /// The SP1 stdin witness for a batch: the new headers plus their median-time-past hints.
 #[derive(Debug, Clone)]
 pub struct HeaderBatchWitness {
-    pub headers: Vec<NewHeader>,
+    pub headers: Vec<HeaderInput>,
     pub median_time_past_hints: Vec<BlockTimestamp>,
 }
 
@@ -588,16 +589,25 @@ mod tests {
         };
         db.create_run("mainnet-01", &record).unwrap();
         assert_eq!(db.load_run("mainnet-01").unwrap(), Some(record.clone()));
-        assert!(db.create_run("mainnet-01", &record).is_err(), "duplicate create");
+        assert!(
+            db.create_run("mainnet-01", &record).is_err(),
+            "duplicate create"
+        );
 
         db.record_run_progress("mainnet-01", 2016, Some("proof_height_1_to_2016.bin"))
             .unwrap();
         let loaded = db.load_run("mainnet-01").unwrap().unwrap();
         assert_eq!(loaded.verified_height, 2016);
-        assert_eq!(loaded.proof_object.as_deref(), Some("proof_height_1_to_2016.bin"));
+        assert_eq!(
+            loaded.proof_object.as_deref(),
+            Some("proof_height_1_to_2016.bin")
+        );
         assert_eq!(loaded.verifier_key, record.verifier_key);
 
-        assert!(db.record_run_progress("ghost", 1, None).is_err(), "unknown run");
+        assert!(
+            db.record_run_progress("ghost", 1, None).is_err(),
+            "unknown run"
+        );
 
         db.delete_run("mainnet-01").unwrap();
         assert_eq!(db.load_run("mainnet-01").unwrap(), None);

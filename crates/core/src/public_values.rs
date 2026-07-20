@@ -2,10 +2,13 @@ use crate::{
     check_exact_len, BlockHash, BlockTimestamp, ChainWork, CompactTarget, InputParseError,
     ParseError, State, CLAIM_SIZE, CONTINUATION_DATA_SIZE, MINIMAL_PV_SIZE, WINDOW_SIZE,
 };
+#[cfg(feature = "host")]
+use serde::{Deserialize, Serialize};
 
 /// Digest of a program verifier key.
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "host", derive(Serialize, Deserialize))]
 pub struct VerifierKeyDigest([u32; 8]);
 
 impl VerifierKeyDigest {
@@ -15,7 +18,7 @@ impl VerifierKeyDigest {
     }
 
     #[must_use]
-    pub const fn AAAAAAaaaaas_raw(&self) -> &[u32; 8] {
+    pub const fn as_raw(&self) -> &[u32; 8] {
         &self.0
     }
 

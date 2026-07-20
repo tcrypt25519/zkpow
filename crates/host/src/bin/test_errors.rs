@@ -99,20 +99,20 @@ fn mainnet_genesis_state() -> util::State {
 fn build_stdin(
     verifier_key: VerifierKeyDigest,
     state: &util::State,
-    headers: &[util::NewHeader],
+    headers: &[util::HeaderInput],
     sparse_hints: &[util::BlockTimestamp],
 ) -> SP1Stdin {
     let mut stdin = SP1Stdin::new();
     stdin.write_vec(verifier_key.to_bytes().to_vec());
     stdin.write_vec(state.to_bytes().to_vec());
-    stdin.write_vec(util::serialize_new_headers(headers));
-    stdin.write_vec(util::serialize_median_hints(sparse_hints));
+    stdin.write_vec(util::serialize_inputs(headers));
+    stdin.write_vec(util::serialize_inputs(sparse_hints));
     stdin
 }
 
 fn compute_final_state_with_sparse_hints(
     initial_state: &util::State,
-    headers: &[util::NewHeader],
+    headers: &[util::HeaderInput],
     sparse_hints: &[util::BlockTimestamp],
 ) -> util::State {
     util::compute_final_state_with_hints(initial_state, headers, sparse_hints)
@@ -438,7 +438,7 @@ async fn test_error_recursive_on_tampered_state_witness() -> Result<(), String> 
 
     let verifier_key = VerifierKeyDigest::from_raw([0u32; 8]);
 
-    let mut tampered_state = state_at_5.clone();
+    let mut tampered_state = state_at_5;
     tampered_state.epoch_start_timestamp = util::BlockTimestamp::default();
 
     let empty_headers = [];

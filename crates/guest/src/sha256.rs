@@ -15,7 +15,7 @@ use core::mem::MaybeUninit;
 use sp1_zkvm::syscalls::{syscall_sha256_compress, syscall_sha256_extend};
 use zkpow_core::{
     header_first_sha256_block_words, header_second_sha256_block_words, BlockHash, CompactTarget,
-    NewHeader,
+    HeaderInput,
 };
 
 const SHA256_IV: [u64; 8] = [
@@ -142,7 +142,7 @@ pub(crate) fn sha256_169bytes(data: &[u8; 169]) -> [u8; 32] {
 /// version || prev_blockhash || merkle_root || timestamp || compact_target || nonce,
 /// but avoids materializing either a full [`zkpow_core::Header`] or `[u8; 80]`.
 pub(crate) fn sha256d_new_header(
-    header: &NewHeader,
+    header: &HeaderInput,
     prev_blockhash: &BlockHash,
     compact_target: CompactTarget,
 ) -> [u8; 32] {

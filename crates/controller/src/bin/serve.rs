@@ -2,9 +2,9 @@
 //! `zkpow-host` processes on GPU instances can pull batches, upload proof
 //! artifacts to controller-chosen storage targets, and report completions.
 //!
-//! Routes (binary frames, see `zkpow_controller::protocol`):
+//! Routes (UTF-8 run-id requests; binary batch response):
 //!   POST /v1/batch     -> batch grant
-//!   POST /v1/complete  -> complete ack
+//!   POST /v1/complete  -> empty success response
 //!
 //! Errors are plain-text bodies.
 //!
@@ -14,7 +14,7 @@
 //!   ZKPOW_CONTROLLER_BIND    address to listen on (default: 0.0.0.0; set your
 //!                            private Tailscale IP to avoid public exposure)
 //!   ZKPOW_CONTROLLER_PORT    TCP port to listen on (default: 7878)
-//!   ZKPOW_ALLOW_UNPROVEN     accept execute-only completions (default: off)
+//!   ZKPOW_BATCH_SIZE         headers per controller-selected batch (default: 2016)
 //!
 //! Artifact storage (S3-compatible when ZKPOW_S3_BUCKET is set, otherwise a
 //! local directory — the latter only works when hosts share this filesystem):
@@ -23,9 +23,8 @@
 //!   ZKPOW_PROOF_STORE_DIR    local artifact root (default: proof_store)
 //!
 //! Proof verification (requires building with `--features sp1-verify`):
-//!   ZKPOW_GUEST_ELF          path to the guest ELF; when set, uploaded
-//!                            proofs are cryptographically verified and new
-//!                            runs are pinned to this guest's verifier key.
+//!   ZKPOW_GUEST_ELF          path to the guest ELF. Required: the controller
+//!                            does not accept unverified completions.
 
 use std::net::SocketAddr;
 
@@ -36,17 +35,14 @@ use zkpow_controller::{db_path, http::build_router, BlockHash, HeaderStore};
 
 const DEFAULT_PORT: u16 = 7878;
 const DEFAULT_PROOF_STORE_DIR: &str = "proof_store";
+const DEFAULT_BATCH_SIZE: u32 = 2016;
 
 fn env(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|value| !value.is_empty())
 }
 
-fn env_flag(name: &str) -> bool {
-    matches!(env(name).as_deref(), Some("1" | "true" | "yes" | "on"))
-}
-
 fn require(name: &str) -> String {
-    env(name).unwrap_or_else(|| panic!("{name} is required when ZKPOW_S3_BUCKET is set"))
+    env(name).unwrap_or_else(|| panic!("{name} is required"))
 }
 
 fn storage_from_env() -> Box<dyn ArtifactStore> {
@@ -66,8 +62,8 @@ fn storage_from_env() -> Box<dyn ArtifactStore> {
             )
         }
         None => {
-            let root = env("ZKPOW_PROOF_STORE_DIR")
-                .unwrap_or_else(|| DEFAULT_PROOF_STORE_DIR.to_string());
+            let root =
+                env("ZKPOW_PROOF_STORE_DIR").unwrap_or_else(|| DEFAULT_PROOF_STORE_DIR.to_string());
             tracing::warn!(
                 root,
                 "using local artifact storage; hosts must share this filesystem \
@@ -78,20 +74,17 @@ fn storage_from_env() -> Box<dyn ArtifactStore> {
     }
 }
 
-async fn verifier_from_env() -> Option<Box<dyn ProofVerifier>> {
-    let Some(elf_path) = env("ZKPOW_GUEST_ELF") else {
-        tracing::warn!(
-            "ZKPOW_GUEST_ELF not set; uploaded proofs are validated against expected \
-             public values only, not cryptographically verified"
-        );
-        return None;
-    };
+async fn verifier_from_env() -> Box<dyn ProofVerifier> {
+    let elf_path = require("ZKPOW_GUEST_ELF");
 
     #[cfg(feature = "sp1-verify")]
     {
         let elf = std::fs::read(&elf_path)
             .unwrap_or_else(|err| panic!("failed to read guest ELF {elf_path}: {err}"));
-        tracing::info!(elf_path, "setting up SP1 proof verification (this can take a while)");
+        tracing::info!(
+            elf_path,
+            "setting up SP1 proof verification (this can take a while)"
+        );
         let verifier = zkpow_controller::verify::Sp1ElfVerifier::from_elf(elf)
             .await
             .expect("failed to set up SP1 verifier");
@@ -99,7 +92,7 @@ async fn verifier_from_env() -> Option<Box<dyn ProofVerifier>> {
             verifier_key = ?verifier.verifier_key_digest(),
             "SP1 proof verification enabled"
         );
-        Some(Box::new(verifier) as Box<dyn ProofVerifier>)
+        Box::new(verifier) as Box<dyn ProofVerifier>
     }
 
     #[cfg(not(feature = "sp1-verify"))]
@@ -118,11 +111,12 @@ async fn main() {
     let db = HeaderStore::open(db_path()).expect("failed to open database");
     let genesis_hash = BlockHash::new(zkpow_core::MAINNET_GENESIS_HASH_RAW);
 
-    let mut config = ControllerConfig::new(genesis_hash);
-    config.allow_unproven = env_flag("ZKPOW_ALLOW_UNPROVEN");
+    let batch_size = env("ZKPOW_BATCH_SIZE")
+        .map(|value| value.parse().expect("invalid ZKPOW_BATCH_SIZE"))
+        .unwrap_or(DEFAULT_BATCH_SIZE);
+    let config = ControllerConfig::new(genesis_hash, batch_size);
 
-    let runtime =
-        ControllerRuntime::new(db, storage_from_env(), verifier_from_env().await, config);
+    let runtime = ControllerRuntime::new(db, storage_from_env(), verifier_from_env().await, config);
     let app = build_router(runtime);
 
     let bind = env("ZKPOW_CONTROLLER_BIND").unwrap_or_else(|| "0.0.0.0".to_string());

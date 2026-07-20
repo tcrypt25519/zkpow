@@ -3,12 +3,15 @@ compile_error!("zkpow wire types require a little-endian target");
 
 use crate::{
     advance_ordered_timestamp_run, calculate_next_target_required, check_proof_of_work,
-    copy_from_bytes, copy_to_bytes, has_ordered_timestamp_window, ordered_median_timestamp_slot,
+    copy_to_bytes, has_ordered_timestamp_window, ordered_median_timestamp_slot,
     ordered_timestamp_run, target_from_bits, timestamp_slot, tracked, work_from_target,
     ApplyFailure, BlockHash, BlockTimestamp, ChainWork, Claim, CompactTarget, ContinuationData,
-    NewHeader, ParseError, Target, TargetError, ValidationErrorCode, CONTINUATION_DATA_SIZE,
-    EPOCH_LENGTH, STATE_SIZE, WINDOW_SIZE,
+    HeaderInput, Target, TargetError, ValidationErrorCode, CONTINUATION_DATA_SIZE, EPOCH_LENGTH,
+    STATE_SIZE, WINDOW_SIZE,
 };
+use bytemuck::{Pod, PodCastError, Zeroable};
+#[cfg(feature = "host")]
+use serde::{Deserialize, Serialize};
 
 #[cfg(all(target_os = "zkvm", feature = "profiling"))]
 #[inline(always)]
@@ -41,7 +44,8 @@ where
 
 /// Complete authenticated validation state, serialized between recursive iterations.
 #[repr(C)]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Pod, Zeroable)]
+#[cfg_attr(feature = "host", derive(Serialize, Deserialize))]
 pub struct State {
     pub block_hash: BlockHash,
     pub genesis_hash: BlockHash,
@@ -72,8 +76,16 @@ impl State {
 
     /// Deserialize from exactly [`STATE_SIZE`] bytes.
     #[tracked]
-    pub fn parse(bytes: &[u8]) -> Result<Self, ParseError> {
-        copy_from_bytes(bytes)
+    pub fn parse(bytes: &[u8]) -> Result<&Self, PodCastError> {
+        bytemuck::try_from_bytes::<Self>(bytes)
+    }
+
+    /// Deserialize by copy from exactly [`STATE_SIZE`] bytes.
+    ///
+    /// Unlike [`State::parse`] this has no alignment requirement, so it works
+    /// on slices taken at arbitrary offsets of a larger buffer.
+    pub fn parse_unaligned(bytes: &[u8]) -> Result<Self, PodCastError> {
+        bytemuck::try_pod_read_unaligned(bytes)
     }
 
     /// Extract the verifier-visible public claim from this state.
@@ -112,21 +124,21 @@ impl State {
     #[allow(clippy::result_large_err)]
     fn apply_header_after_median_check<F>(
         &mut self,
-        new_header: &NewHeader,
+        new_header: &HeaderInput,
         claimed_median: BlockTimestamp,
         active_nbits: CompactTarget,
         active_target: Target,
         block_hash_fn: &mut F,
     ) -> Result<(), ApplyFailure>
     where
-        F: FnMut(&NewHeader, &BlockHash, CompactTarget) -> BlockHash,
+        F: FnMut(&HeaderInput, &BlockHash, CompactTarget) -> BlockHash,
     {
         let candidate_height = cycle_track!(self.height + 1);
         let timestamp_slot = timestamp_slot(candidate_height.into());
 
         if cycle_track!({ new_header.timestamp <= claimed_median }) {
             return Err(ApplyFailure {
-                last_valid_state: self.clone(),
+                last_valid_state: *self,
                 error_code: ValidationErrorCode::TimestampTooOld,
                 failure_height: candidate_height,
             });
@@ -137,7 +149,7 @@ impl State {
 
         if !check_proof_of_work(block_hash, active_target) {
             return Err(ApplyFailure {
-                last_valid_state: self.clone(),
+                last_valid_state: *self,
                 error_code: ValidationErrorCode::PowInsufficient,
                 failure_height: candidate_height,
             });
@@ -160,12 +172,12 @@ impl State {
     #[tracked]
     pub fn apply_headers<F>(
         &mut self,
-        headers: &[NewHeader],
+        headers: &[HeaderInput],
         median_hints: &[BlockTimestamp],
         mut block_hash_fn: F,
     ) -> Result<(), ApplyFailure>
     where
-        F: FnMut(&NewHeader, &BlockHash, CompactTarget) -> BlockHash,
+        F: FnMut(&HeaderInput, &BlockHash, CompactTarget) -> BlockHash,
     {
         let mut headers_consumed = 0;
 
@@ -183,7 +195,7 @@ impl State {
                     &mut block_hash_fn,
                 ) {
                     context.flush();
-                    failure.last_valid_state = context.state.clone();
+                    failure.last_valid_state = *context.state;
                     return Err(failure);
                 }
                 context.pending_run_count += 1;
@@ -252,7 +264,7 @@ impl State {
                         &mut block_hash_fn,
                     ) {
                         context.flush();
-                        failure.last_valid_state = context.state.clone();
+                        failure.last_valid_state = *context.state;
                         return Err(failure);
                     }
                     context.pending_run_count += 1;

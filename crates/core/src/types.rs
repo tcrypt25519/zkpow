@@ -1,9 +1,13 @@
 use crate::{brand::Branded, tracked};
+use bytemuck::{Pod, Zeroable};
+#[cfg(feature = "host")]
+use serde::{Deserialize, Serialize};
 
 /// A 256-bit unsigned integer stored as four little-endian u64 limbs.
 #[allow(non_camel_case_types)]
 #[repr(transparent)]
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Pod, Zeroable)]
+#[cfg_attr(feature = "host", derive(Serialize, Deserialize))]
 pub struct u256([u64; 4]);
 
 impl u256 {
@@ -92,15 +96,20 @@ impl Ord for u256 {
 // Define our Branded newtypes
 //
 
-#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Debug, Pod, Zeroable)]
+#[repr(transparent)]
 pub struct TargetTag;
-#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Debug, Pod, Zeroable)]
+#[repr(transparent)]
 pub struct CompactTargetTag;
-#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Debug, Pod, Zeroable)]
+#[repr(transparent)]
 pub struct ChainWorkTag;
-#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Debug, Pod, Zeroable)]
+#[repr(transparent)]
 pub struct BlockTimestampTag;
-#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Debug, Pod, Zeroable)]
+#[repr(transparent)]
 pub struct BlockHashTag;
 
 pub type Target = Branded<TargetTag, u256>;
@@ -149,19 +158,3 @@ impl core::ops::MulAssign<u32> for Target {
         *self.as_inner_mut() *= rhs;
     }
 }
-
-// impl core::ops::Deref for Target {
-//     type Target = u256;
-
-//     #[inline]
-//     fn deref(&self) -> &Self::Target {
-//         &self.0
-//     }
-// }
-
-// impl core::ops::DerefMut for Target {
-//     #[inline]
-//     fn deref_mut(&mut self) -> &mut Self::Target {
-//         self.as_inner_mut()
-//     }
-// }

@@ -4,9 +4,9 @@ pub(crate) mod groth16;
 use std::sync::OnceLock;
 use tokio::sync::Mutex as AsyncMutex;
 
+use sp1_sdk::prelude::*;
 #[cfg(feature = "CUDA")]
 use sp1_sdk::CudaProver;
-use sp1_sdk::prelude::*;
 use sp1_sdk::{CpuProver, MockProver, Prover, ProverClient, SP1ProvingKey};
 
 use crate::pipeline::diagnostics::timed_async;

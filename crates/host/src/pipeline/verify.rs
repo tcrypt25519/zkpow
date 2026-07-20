@@ -23,27 +23,34 @@ impl PreparedProverVerifier {
 }
 
 impl ProofVerifier for PreparedProverVerifier {
+    fn verifier_key_digest(&self) -> zkpow_core::VerifierKeyDigest {
+        self.prepared.verifier_key_digest()
+    }
+
     fn verify_compressed(
         &self,
         proof_bytes: &[u8],
         expected_public_values: &[u8],
     ) -> Result<(), String> {
-        let proof: SP1ProofWithPublicValues = bincode::deserialize(proof_bytes)
+        let proof: SP1ProofWithPublicValues = postcard::from_bytes(proof_bytes)
             .map_err(|err| format!("uploaded proof does not deserialize: {err}"))?;
         if proof.public_values.as_slice() != expected_public_values {
             return Err("uploaded proof commits different public values".to_string());
         }
         let verified = match &self.prepared {
-            PreparedProver::Mock { prover, proving_key } => {
-                prover.verify(&proof, proving_key.verifying_key(), None)
-            }
-            PreparedProver::Cpu { prover, proving_key } => {
-                prover.verify(&proof, proving_key.verifying_key(), None)
-            }
+            PreparedProver::Mock {
+                prover,
+                proving_key,
+            } => prover.verify(&proof, proving_key.verifying_key(), None),
+            PreparedProver::Cpu {
+                prover,
+                proving_key,
+            } => prover.verify(&proof, proving_key.verifying_key(), None),
             #[cfg(feature = "CUDA")]
-            PreparedProver::Cuda { prover, proving_key } => {
-                prover.verify(&proof, proving_key.verifying_key(), None)
-            }
+            PreparedProver::Cuda {
+                prover,
+                proving_key,
+            } => prover.verify(&proof, proving_key.verifying_key(), None),
         };
         verified.map_err(|err| format!("SP1 verification failed: {err}"))
     }
