@@ -1,15 +1,19 @@
 use crate::types::u256;
+use bytemuck::{Pod, Zeroable};
 use core::marker::PhantomData;
+#[cfg(feature = "host")]
+use serde::{Deserialize, Serialize};
 
 /// Generic branded newtype wrapper providing type-safe distinction without runtime overhead.
-#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Pod, Zeroable)]
+#[cfg_attr(feature = "host", derive(Serialize, Deserialize))]
 #[repr(transparent)]
 pub struct Branded<Tag, T> {
     inner: T,
     _tag: PhantomData<fn(Tag) -> Tag>,
 }
 
-impl<Tag, T> Branded<Tag, T> {
+impl<Tag: Pod + Zeroable, T: Sized + Pod + Zeroable> Branded<Tag, T> {
     #[must_use]
     pub const fn new(inner: T) -> Self {
         Self {
@@ -31,6 +35,18 @@ impl<Tag, T> Branded<Tag, T> {
     #[must_use]
     pub fn as_inner_mut(&mut self) -> &mut T {
         &mut self.inner
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> &T {
+        bytemuck::from_bytes::<T>(bytes)
+    }
+
+    // `&[u8; Self::SIZE]` isn't expressible on stable (generic associated const
+    // as array length); N is checked against size_of::<T>() at runtime instead.
+    pub fn to_bytes<const N: usize>(&self) -> &[u8; N] {
+        bytemuck::bytes_of(&self.inner)
+            .as_array()
+            .expect("N must equal size_of::<T>()")
     }
 }
 
@@ -57,7 +73,7 @@ impl<Tag, T: core::fmt::Debug> core::fmt::Debug for Branded<Tag, T> {
 }
 
 /// Blanket implementations for `Branded<Tag, u256>`.
-impl<Tag> Branded<Tag, u256> {
+impl<Tag: Pod + Zeroable> Branded<Tag, u256> {
     #[must_use]
     pub const fn from_limbs(limbs: [u64; 4]) -> Self {
         Self::new(u256::from_limbs(limbs))
@@ -97,7 +113,7 @@ impl<Tag> Branded<Tag, u256> {
 }
 
 /// Blanket implementations for `Branded<Tag, u32>`.
-impl<Tag> Branded<Tag, u32> {
+impl<Tag: Pod + Zeroable> Branded<Tag, u32> {
     #[must_use]
     pub fn from_le_bytes(bytes: [u8; 4]) -> Self {
         Self::new(u32::from_le_bytes(bytes))
@@ -127,7 +143,7 @@ impl<Tag> Branded<Tag, u32> {
 }
 
 /// Blanket implementations for `Branded<Tag, [u8; 32]>`.
-impl<Tag> Branded<Tag, [u8; 32]> {
+impl<Tag: Pod + Zeroable> Branded<Tag, [u8; 32]> {
     #[must_use]
     pub fn from_le_bytes(bytes: [u8; 32]) -> Self {
         Self::new(bytes)

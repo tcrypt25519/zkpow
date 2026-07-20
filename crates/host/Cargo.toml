@@ -27,9 +27,8 @@ sp1-sdk = { workspace = true }
 sp1-prover = { workspace = true }
 sp1-recursion-gnark-ffi = { workspace = true, features = ["native"] }
 memuse = { workspace = true }
-bincode = { workspace = true }
+postcard = { workspace = true, features = ["alloc"] }
 hex = { workspace = true }
-humantime = { workspace = true }
 num-bigint = { workspace = true }
 reqwest = { workspace = true }
 tokio = { workspace = true }
@@ -48,5 +47,4 @@ sp1-build = { workspace = true }
 default = []
 CUDA = ["sp1-sdk/cuda"]
 memory-diagnostics = []
-# Opt in to the slow proof-generation tests.
 slow-tests = []

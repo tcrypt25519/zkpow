@@ -1,7 +1,7 @@
 //! Controller-owned artifact storage.
 //!
 //! The controller decides where proof artifacts live and hands the host
-//! opaque [`Target`]s to write to (and read from, when resuming). The host
+//! opaque [`FileLocation`]s to write to (and read from, when resuming). The host
 //! never holds storage credentials: an S3-backed store mints pre-signed
 //! URLs, a local store mints filesystem paths. The controller can also
 //! `fetch` an artifact back to verify an uploaded proof itself.
@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use s3::creds::Credentials;
 use s3::{Bucket, Region};
 
-use crate::protocol::Target;
+use crate::protocol::FileLocation;
 use crate::BoxError;
 
 /// How long a minted pre-signed URL stays valid. Generous: a URL is used
@@ -22,10 +22,10 @@ const PRESIGN_EXPIRY_SECS: u32 = 6 * 60 * 60;
 
 pub trait ArtifactStore: Send + Sync {
     /// Target the host should upload `object` to.
-    fn put_target(&self, run_id: &str, object: &str) -> Result<Target, BoxError>;
+    fn put_target(&self, run_id: &str, object: &str) -> Result<FileLocation, BoxError>;
     /// Target the host should download `object` from.
-    fn get_target(&self, run_id: &str, object: &str) -> Result<Target, BoxError>;
-    /// Read `object` back on the controller side (proof verification).
+    fn get_target(&self, run_id: &str, object: &str) -> Result<FileLocation, BoxError>;
+    /// Read `object` back on the controller side for completion verification.
     fn fetch(&self, run_id: &str, object: &str) -> Result<Vec<u8>, BoxError>;
 }
 
@@ -46,14 +46,22 @@ impl LocalArtifactStore {
 }
 
 impl ArtifactStore for LocalArtifactStore {
-    fn put_target(&self, run_id: &str, object: &str) -> Result<Target, BoxError> {
+    fn put_target(&self, run_id: &str, object: &str) -> Result<FileLocation, BoxError> {
         let dir = self.root.join(run_id);
         std::fs::create_dir_all(&dir)?;
-        Ok(Target::Path(self.object_path(run_id, object).to_string_lossy().into_owned()))
+        Ok(FileLocation::Path(
+            self.object_path(run_id, object)
+                .to_string_lossy()
+                .into_owned(),
+        ))
     }
 
-    fn get_target(&self, run_id: &str, object: &str) -> Result<Target, BoxError> {
-        Ok(Target::Path(self.object_path(run_id, object).to_string_lossy().into_owned()))
+    fn get_target(&self, run_id: &str, object: &str) -> Result<FileLocation, BoxError> {
+        Ok(FileLocation::Path(
+            self.object_path(run_id, object)
+                .to_string_lossy()
+                .into_owned(),
+        ))
     }
 
     fn fetch(&self, run_id: &str, object: &str) -> Result<Vec<u8>, BoxError> {
@@ -96,7 +104,10 @@ impl S3ArtifactStore {
             .map_err(|err| format!("failed to construct S3 bucket client: {err}"))?
             .with_path_style();
 
-        Ok(Self { bucket, key_prefix: config.prefix.trim_matches('/').to_string() })
+        Ok(Self {
+            bucket,
+            key_prefix: config.prefix.trim_matches('/').to_string(),
+        })
     }
 
     fn key(&self, run_id: &str, object: &str) -> String {
@@ -109,22 +120,22 @@ impl S3ArtifactStore {
 }
 
 impl ArtifactStore for S3ArtifactStore {
-    fn put_target(&self, run_id: &str, object: &str) -> Result<Target, BoxError> {
+    fn put_target(&self, run_id: &str, object: &str) -> Result<FileLocation, BoxError> {
         let key = self.key(run_id, object);
         let url = self
             .bucket
             .presign_put(format!("/{key}"), PRESIGN_EXPIRY_SECS, None, None)
             .map_err(|err| format!("failed to presign PUT for {key}: {err}"))?;
-        Ok(Target::Url(url))
+        Ok(FileLocation::Url(url))
     }
 
-    fn get_target(&self, run_id: &str, object: &str) -> Result<Target, BoxError> {
+    fn get_target(&self, run_id: &str, object: &str) -> Result<FileLocation, BoxError> {
         let key = self.key(run_id, object);
         let url = self
             .bucket
             .presign_get(format!("/{key}"), PRESIGN_EXPIRY_SECS, None)
             .map_err(|err| format!("failed to presign GET for {key}: {err}"))?;
-        Ok(Target::Url(url))
+        Ok(FileLocation::Url(url))
     }
 
     fn fetch(&self, run_id: &str, object: &str) -> Result<Vec<u8>, BoxError> {
@@ -165,7 +176,9 @@ mod tests {
         let store = LocalArtifactStore::new(&root);
 
         let put = store.put_target("run-a", "proof.bin").unwrap();
-        let Target::Path(path) = &put else { panic!("expected path target") };
+        let FileLocation::Path(path) = &put else {
+            panic!("expected path target")
+        };
         std::fs::write(path, b"proof bytes").unwrap();
 
         assert_eq!(store.fetch("run-a", "proof.bin").unwrap(), b"proof bytes");
@@ -179,10 +192,13 @@ mod tests {
         let root = temp_root("segments");
         let store = LocalArtifactStore::new(&root);
 
-        let Target::Path(path) = store.put_target("run-b", "proof.bin").unwrap() else {
+        let FileLocation::Path(path) = store.put_target("run-b", "proof.bin").unwrap() else {
             panic!("expected path target")
         };
-        assert!(path.contains("run-b"), "path should be segmented by run id: {path}");
+        assert!(
+            path.contains("run-b"),
+            "path should be segmented by run id: {path}"
+        );
 
         std::fs::remove_dir_all(&root).ok();
     }
@@ -199,14 +215,20 @@ mod tests {
         })
         .unwrap();
 
-        let Target::Url(url) = store.put_target("run-c", "proof.bin").unwrap() else {
+        let FileLocation::Url(url) = store.put_target("run-c", "proof.bin").unwrap() else {
             panic!("expected url target")
         };
-        assert!(url.contains("test-bucket"), "presigned url should reference the bucket: {url}");
+        assert!(
+            url.contains("test-bucket"),
+            "presigned url should reference the bucket: {url}"
+        );
         assert!(
             url.contains("proofs/run-c/proof.bin"),
             "presigned url should carry the run-scoped key: {url}"
         );
-        assert!(url.contains("X-Amz-Signature"), "presigned url should be signed: {url}");
+        assert!(
+            url.contains("X-Amz-Signature"),
+            "presigned url should be signed: {url}"
+        );
     }
 }

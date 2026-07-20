@@ -10,8 +10,8 @@
 //! * [`runtime`] — run sessions, the double-buffered grant pipeline,
 //!   long-polling, completion validation. Verified progress persists in the
 //!   header database's `runs` table (see `zkpow_store`).
-//! * [`protocol`] — the binary frames spoken over every transport.
-//! * [`http`] — thin axum wrapper over the runtime's byte-level handlers.
+//! * [`protocol`] — typed host/controller messages and their HTTP codec.
+//! * [`http`] — postcard boundary around the typed runtime API.
 //! * [`storage`] — artifact targets (local paths or pre-signed S3 URLs).
 //! * [`verify`] — pluggable cryptographic proof verification.
 
@@ -27,13 +27,14 @@ mod validation;
 
 pub use digest::{continuation_digest, continuation_digest_from_state};
 pub use validation::{
-    compute_final_state_with_hints, median_time_past_hints_from_records, records_to_new_headers,
+    compute_final_state_with_hints, median_time_past_hints_from_records, new_header_hash,
+    records_to_new_headers,
 };
 
 pub use diagnostics::format_claim_mismatch;
 pub use zkpow_core::{
-    requires_median_hint, serialize_median_hints, serialize_new_headers, sha256d, BlockHash,
-    BlockTimestamp, Claim, HeaderChainPublicValues, NewHeader, State,
+    requires_median_hint, sha256d, BlockHash, BlockTimestamp, Claim, HeaderChainPublicValues,
+    HeaderInput, State,
 };
 pub use zkpow_store::{
     db_path, genesis_state_from_record, HeaderBatchWitness, HeaderRecord, HeaderStore, RunRecord,
@@ -138,7 +139,7 @@ mod tests {
         let mut previous_ordered_run = genesis.ordered_timestamp_run;
 
         for (index, record) in records.iter().enumerate() {
-            let header = NewHeader::from_header(&record.header);
+            let header = HeaderInput::from_header(&record.header);
             let needs_hint = requires_median_hint(record.height, previous_ordered_run);
             state
                 .apply_headers(
@@ -148,10 +149,7 @@ mod tests {
                     } else {
                         &[]
                     },
-                    |new_header, prev_blockhash, compact_target| {
-                        let header = (*new_header).into_header(*prev_blockhash, compact_target);
-                        BlockHash::new(sha256d(&header.to_bytes()))
-                    },
+                    new_header_hash,
                 )
                 .expect("header should apply");
             let height = (index as u32) + 1;

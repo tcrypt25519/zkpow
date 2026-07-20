@@ -72,16 +72,7 @@ export ZKPOW_GENERATE_GROTH16="${ZKPOW_GENERATE_GROTH16:-${GENERATE_GROTH16:-0}}
     while true; do
         RUN=$((RUN + 1))
 
-        # On restart: find the latest successfully written compressed proof and resume from it.
-        # This means a crash mid-batch loses only that batch, not all prior work.
-        LATEST=$(find /workspace/profiling -name "*.bin" ! -name "*groth16*" 2>/dev/null | sort | tail -1)
-        if [[ -n "$LATEST" ]]; then
-            export ZKPOW_PREV_PROOF="$LATEST"
-            echo "[entrypoint] Run #${RUN}: resuming from ${ZKPOW_PREV_PROOF}"
-        else
-            unset ZKPOW_PREV_PROOF
-            echo "[entrypoint] Run #${RUN}: starting from genesis (no prior proof found)"
-        fi
+        echo "[entrypoint] Run #${RUN}: controller selects the persisted run position"
 
         echo "[entrypoint]   ZKPOW_USE_CUDA=${ZKPOW_USE_CUDA}  ZKPOW_CUDA_DEVICE_ID=${ZKPOW_CUDA_DEVICE_ID}  ZKPOW_BATCH_SIZE=${ZKPOW_BATCH_SIZE}"
         echo "[entrypoint]   Outputs → /workspace/profiling/   Logs → /workspace/logs/run.jsonl"

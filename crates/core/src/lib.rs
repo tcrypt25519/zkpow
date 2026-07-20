@@ -5,11 +5,8 @@
 extern crate alloc;
 extern crate self as zkpow_core;
 
-use core::{
-    mem::{align_of, size_of, MaybeUninit},
-    ptr, slice,
-};
-
+use bytemuck::Pod;
+use core::mem::size_of;
 pub use zkpow_core_macros::tracked;
 
 /// Cycle-track an expression without providing a string label.
@@ -37,7 +34,7 @@ mod header;
 #[cfg(test)]
 use header::sha256_word_from_bytes;
 pub use header::{
-    header_first_sha256_block_words, header_second_sha256_block_words, Header, NewHeader,
+    header_first_sha256_block_words, header_second_sha256_block_words, Header, HeaderInput,
 };
 
 mod state;
@@ -51,10 +48,7 @@ pub(crate) use errors::TargetError;
 pub use errors::{InputParseError, ParseError};
 
 mod input;
-
-pub use input::{
-    parse_median_hints, parse_new_headers, serialize_median_hints, serialize_new_headers,
-};
+pub use input::{parse_input, serialize_inputs};
 
 mod public_values;
 pub use public_values::{
@@ -65,8 +59,8 @@ pub use public_values::{
 /// Size of the serialized [`State`] in bytes.
 pub const STATE_SIZE: usize = size_of::<State>();
 
-/// Size of each [`NewHeader`] input from the prover.
-pub const NEW_HEADER_SIZE: usize = size_of::<NewHeader>();
+/// Size of each [`HeaderInput`] input from the prover.
+pub const NEW_HEADER_SIZE: usize = size_of::<HeaderInput>();
 
 /// Size of a serialized Bitcoin block header in bytes.
 pub const BLOCK_HEADER_SIZE: usize = size_of::<Header>();
@@ -228,49 +222,8 @@ pub(crate) fn check_exact_len(bytes: &[u8], expected: usize) -> Result<(), Parse
 }
 
 #[tracked]
-pub(crate) fn check_aligned<T>(bytes: &[u8]) -> Result<(), ParseError> {
-    let required = align_of::<T>();
-    let address = bytes.as_ptr() as usize;
-    if !address.is_multiple_of(required) {
-        return Err(ParseError::Misaligned { required });
-    }
-    Ok(())
-}
-
-#[tracked]
-pub(crate) fn copy_from_bytes<T>(bytes: &[u8]) -> Result<T, ParseError> {
-    check_exact_len(bytes, size_of::<T>())?;
-    let mut value = MaybeUninit::<T>::uninit();
-    unsafe {
-        ptr::copy_nonoverlapping(
-            bytes.as_ptr(),
-            value.as_mut_ptr() as *mut u8,
-            size_of::<T>(),
-        );
-        Ok(value.assume_init())
-    }
-}
-
-#[tracked]
-pub(crate) fn copy_to_bytes<const N: usize, T>(value: &T) -> [u8; N] {
-    assert_eq!(size_of::<T>(), N);
-    let mut bytes = [0u8; N];
-    unsafe {
-        ptr::copy_nonoverlapping(value as *const T as *const u8, bytes.as_mut_ptr(), N);
-    }
-    bytes
-}
-
-#[tracked]
-pub(crate) fn slice_from_bytes<T>(bytes: &[u8]) -> Result<&[T], ParseError> {
-    if !bytes.len().is_multiple_of(size_of::<T>()) {
-        return Err(ParseError::InvalidLength {
-            expected: bytes.len().div_ceil(size_of::<T>()) * size_of::<T>(),
-            actual: bytes.len(),
-        });
-    }
-    check_aligned::<T>(bytes)?;
-    Ok(unsafe { slice::from_raw_parts(bytes.as_ptr() as *const T, bytes.len() / size_of::<T>()) })
+pub(crate) fn copy_to_bytes<const N: usize, T: Pod>(value: &T) -> [u8; N] {
+    *bytemuck::bytes_of::<T>(value).as_array().expect("a")
 }
 
 /// Size of a serialized [`Claim`] in bytes.
@@ -284,7 +237,7 @@ pub const MINIMAL_PV_SIZE: usize = 32 + 32 + 32 + 4 + 1 + 4 + 32 + 32; // = 169
 
 /// Convert a full 256-bit target into compact `bits` encoding.
 #[must_use]
-#[tracked]
+//#[tracked]
 pub fn target_to_bits(target: Target) -> CompactTarget {
     let bytes = target.to_le_bytes();
     let mut nbytes = 32usize;
@@ -472,8 +425,6 @@ pub fn calculate_next_target_required(
     let actual_timespan = i64::from(*previous_timestamp) - i64::from(*epoch_start_timestamp);
     let clamped_timespan = actual_timespan.clamp(MIN_EPOCH_TIMESPAN, MAX_EPOCH_TIMESPAN) as u32;
 
-    // Calculate the raw target value from the normalized previous target and the timespan.
-    // let mut raw_target = old_target.into_inner();
     old_target *= clamped_timespan;
 
     let mut remainder = 0u128;
@@ -497,6 +448,7 @@ pub fn calculate_next_target_required(
 #[cfg(test)]
 mod tests {
     use alloc::vec::Vec;
+
     extern crate std;
 
     use super::*;
@@ -529,7 +481,7 @@ mod tests {
     }
 
     fn apply_header(state: &mut State, timestamp: u32) {
-        let header = NewHeader {
+        let header = HeaderInput {
             version: 1,
             merkle_root: [0x22; 32],
             timestamp: ts(timestamp),
@@ -543,9 +495,9 @@ mod tests {
 
     fn dense_median_hints_for_headers(
         initial_state: &State,
-        headers: &[NewHeader],
+        headers: &[HeaderInput],
     ) -> Vec<BlockTimestamp> {
-        let mut state = initial_state.clone();
+        let mut state = *initial_state;
         let mut medians = Vec::with_capacity(headers.len());
         for header in headers {
             medians.push(median_time_past(&state));
@@ -558,10 +510,10 @@ mod tests {
 
     fn median_hints_for_headers(
         initial_state: &State,
-        headers: &[NewHeader],
+        headers: &[HeaderInput],
     ) -> Vec<BlockTimestamp> {
         let dense_hints = dense_median_hints_for_headers(initial_state, headers);
-        let mut state = initial_state.clone();
+        let mut state = *initial_state;
         let warm_start = (WINDOW_SIZE - 1)
             .saturating_sub(state.height as usize)
             .min(headers.len());
@@ -618,30 +570,9 @@ mod tests {
         assert_eq!(CLAIM_SIZE, 100);
         assert_eq!(CONTINUATION_DATA_SIZE, 52);
         assert_eq!(MINIMAL_PV_SIZE, 169);
-        assert_eq!(core::mem::align_of::<Header>(), 4);
-        assert_eq!(core::mem::align_of::<NewHeader>(), 4);
-        assert_eq!(core::mem::align_of::<State>(), 8);
-    }
-
-    #[test]
-    fn new_header_from_header_round_trips_with_into_header() {
-        let header = Header {
-            version: 7,
-            prev_blockhash: BlockHash::new([0x11; 32]),
-            merkle_root: [0x22; 32],
-            timestamp: BlockTimestamp::new(123_456),
-            compact_target: CompactTarget::new(0x1d00ffff),
-            nonce: 99,
-        };
-
-        let new_header = NewHeader::from_header(&header);
-        assert_eq!(new_header.version, header.version);
-        assert_eq!(new_header.merkle_root, header.merkle_root);
-        assert_eq!(new_header.timestamp, header.timestamp);
-        assert_eq!(new_header.nonce, header.nonce);
-
-        let recovered = new_header.into_header(header.prev_blockhash, header.compact_target);
-        assert_eq!(recovered, header);
+        assert_eq!(align_of::<Header>(), 4);
+        assert_eq!(align_of::<HeaderInput>(), 4);
+        assert_eq!(align_of::<State>(), 8);
     }
 
     #[test]
@@ -694,12 +625,11 @@ mod tests {
         new_header_bytes[36..40].copy_from_slice(&0x7788_99aau32.to_le_bytes());
         new_header_bytes[40..44].copy_from_slice(&0xbbcc_ddeeu32.to_le_bytes());
 
-        let new_header = NewHeader::parse(&new_header_bytes).unwrap();
+        let new_header = HeaderInput::from_bytes(&new_header_bytes).unwrap();
         assert_eq!(new_header.version, 0x1122_3344);
         assert_eq!(new_header.merkle_root, [0x66; 32]);
         assert_eq!(new_header.timestamp, BlockTimestamp::new(0x7788_99aa));
         assert_eq!(new_header.nonce, 0xbbcc_ddee);
-        assert_eq!(new_header.to_bytes(), new_header_bytes);
     }
 
     #[test]
@@ -716,7 +646,7 @@ mod tests {
             compact_target: CompactTarget::new(0x1d00_ffff),
             nonce: 0xbbcc_ddee,
         };
-        let new_header = NewHeader::from_header(&header);
+        let new_header = HeaderInput::from_header(&header);
         let bytes = header.to_bytes();
 
         let first = header_first_sha256_block_words(&new_header, &header.prev_blockhash);
@@ -786,13 +716,13 @@ mod tests {
     fn apply_headers_flushes_deferred_chain_work_on_success() {
         let mut state = test_state();
         let headers = [
-            NewHeader {
+            HeaderInput {
                 version: 1,
                 merkle_root: [0x22; 32],
                 timestamp: ts(10),
                 nonce: 7,
             },
-            NewHeader {
+            HeaderInput {
                 version: 1,
                 merkle_root: [0x33; 32],
                 timestamp: ts(20),
@@ -816,19 +746,19 @@ mod tests {
     fn apply_headers_flushes_deferred_chain_work_for_longer_run() {
         let mut state = test_state();
         let headers = [
-            NewHeader {
+            HeaderInput {
                 version: 1,
                 merkle_root: [0x22; 32],
                 timestamp: ts(10),
                 nonce: 7,
             },
-            NewHeader {
+            HeaderInput {
                 version: 1,
                 merkle_root: [0x33; 32],
                 timestamp: ts(20),
                 nonce: 8,
             },
-            NewHeader {
+            HeaderInput {
                 version: 1,
                 merkle_root: [0x44; 32],
                 timestamp: ts(30),
@@ -855,7 +785,7 @@ mod tests {
             current_nbits: CompactTarget::new(GENESIS_NBITS),
             ..State::default()
         };
-        let headers = [NewHeader {
+        let headers = [HeaderInput {
             version: 1,
             merkle_root: [0x22; 32],
             timestamp: ts(1000),
@@ -876,13 +806,13 @@ mod tests {
     fn apply_headers_flushes_deferred_chain_work_before_failure() {
         let mut state = test_state();
         let headers = [
-            NewHeader {
+            HeaderInput {
                 version: 1,
                 merkle_root: [0x22; 32],
                 timestamp: ts(10),
                 nonce: 7,
             },
-            NewHeader {
+            HeaderInput {
                 version: 1,
                 merkle_root: [0x33; 32],
                 timestamp: ts(0),
@@ -908,13 +838,13 @@ mod tests {
     fn apply_headers_failure_output_includes_flushed_chain_work() {
         let mut state = test_state();
         let headers = [
-            NewHeader {
+            HeaderInput {
                 version: 1,
                 merkle_root: [0x22; 32],
                 timestamp: ts(10),
                 nonce: 7,
             },
-            NewHeader {
+            HeaderInput {
                 version: 1,
                 merkle_root: [0x33; 32],
                 timestamp: ts(0),
@@ -939,8 +869,8 @@ mod tests {
 
     #[test]
     fn apply_headers_matches_sequential_next_across_median_window_wrap() {
-        let headers: Vec<NewHeader> = (1..=23)
-            .map(|timestamp| NewHeader {
+        let headers: Vec<HeaderInput> = (1..=23)
+            .map(|timestamp| HeaderInput {
                 version: 1,
                 merkle_root: [timestamp as u8; 32],
                 timestamp: ts(timestamp),
@@ -967,8 +897,8 @@ mod tests {
 
     #[test]
     fn hinted_apply_headers_matches_sorted_apply_headers_across_window_wrap() {
-        let headers: Vec<NewHeader> = (1..=23)
-            .map(|timestamp| NewHeader {
+        let headers: Vec<HeaderInput> = (1..=23)
+            .map(|timestamp| HeaderInput {
                 version: 1,
                 merkle_root: [timestamp as u8; 32],
                 timestamp: ts(timestamp),
@@ -1005,7 +935,7 @@ mod tests {
             ],
             ..State::default()
         };
-        let headers = [NewHeader {
+        let headers = [HeaderInput {
             version: 1,
             merkle_root: [0x22; 32],
             timestamp: ts(10),
@@ -1037,7 +967,7 @@ mod tests {
             ],
             ..State::default()
         };
-        let headers = [NewHeader {
+        let headers = [HeaderInput {
             version: 1,
             merkle_root: [0x22; 32],
             timestamp: ts(12),
@@ -1059,7 +989,7 @@ mod tests {
         let mut state = test_state();
         state.genesis_hash = BlockHash::new([0x11; 32]);
         state.block_hash = BlockHash::new([0x22; 32]);
-        let headers = [NewHeader {
+        let headers = [HeaderInput {
             version: 1,
             merkle_root: [0x33; 32],
             timestamp: ts(10),
@@ -1131,7 +1061,7 @@ mod tests {
             timestamps: original,
             ..State::default()
         };
-        let header = NewHeader {
+        let header = HeaderInput {
             version: 1,
             merkle_root: [0x22; 32],
             timestamp: ts(999),
@@ -1256,7 +1186,7 @@ mod tests {
     #[test]
     fn malformed_header_pow_and_timestamp_errors() {
         let mut state = test_state();
-        let hdr1 = NewHeader {
+        let hdr1 = HeaderInput {
             version: 1,
             merkle_root: [0x22; 32],
             timestamp: ts(1),
@@ -1272,7 +1202,7 @@ mod tests {
         // TimestampTooOld on equality to median (<= median should fail).
         let mut s2 = test_state();
         // First, accept a valid header to seed the window deterministically.
-        let ok_hdr = NewHeader {
+        let ok_hdr = HeaderInput {
             version: 2,
             merkle_root: [0x33; 32],
             timestamp: ts(1),
@@ -1282,7 +1212,7 @@ mod tests {
         s2.apply_headers(&[ok_hdr], &median_hints, |_, _, _| zero_hash())
             .unwrap();
         let median_after_1 = median_time_past(&s2);
-        let bad_hdr = NewHeader {
+        let bad_hdr = HeaderInput {
             version: 42,
             merkle_root: [0x44; 32],
             timestamp: median_after_1,
@@ -1297,7 +1227,7 @@ mod tests {
         // Version field is not validated by consensus here; a weird version should still pass if PoW/timestamp do.
         let mut s3 = test_state();
         let median_start = median_time_past(&s3);
-        let odd_version_hdr = NewHeader {
+        let odd_version_hdr = HeaderInput {
             version: 0xFFFF_FFFF,
             merkle_root: [0x55; 32],
             timestamp: ts(median_start.into_inner().wrapping_add(1)),
@@ -1317,7 +1247,7 @@ mod tests {
             apply_header(&mut state, t);
         }
         let median = median_time_past(&state);
-        let hdr = NewHeader {
+        let hdr = HeaderInput {
             version: 1,
             merkle_root: [0x66; 32],
             timestamp: median,

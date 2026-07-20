@@ -1,42 +1,28 @@
 //! Host-side controller transports.
 //!
 //! The host is a dumb pipe: it never validates block data or results, it
-//! only moves protocol frames between the controller and the guest. Both
-//! transports speak the identical binary protocol from
-//! [`zkpow_controller::protocol`]:
+//! only moves protocol messages between the controller and the guest:
 //!
 //! * [`HttpController`] POSTs encoded frames to a remote
 //!   `zkpow-controller-serve` (e.g. over a Tailscale-private address).
-//! * [`LocalController`] runs the controller in-process and round-trips the
-//!   same encoded frames through the runtime's byte-level handlers — method
-//!   calls instead of sockets, but byte-identical requests, responses, and
-//!   error messages.
+//! * [`LocalController`] calls the typed runtime API directly.
 
 use std::future::Future;
 
-use zkpow_controller::protocol::{
-    decode_batch, decode_complete_ack, encode_complete_request, encode_pull_batch_request, Batch,
-    CompleteAck, CompleteRequest, PullBatchRequest,
-};
+use zkpow_controller::protocol::{decode, Batch};
 use zkpow_controller::runtime::ControllerRuntime;
 
 use crate::pipeline::BoxError;
 
 pub trait ControllerTransport: Send + Sync + 'static {
-    fn pull_batch(
-        &self,
-        request: &PullBatchRequest,
-    ) -> impl Future<Output = Result<Batch, BoxError>> + Send;
+    fn pull_batch(&self, run_id: &str) -> impl Future<Output = Result<Batch, BoxError>> + Send;
 
-    fn complete(
-        &self,
-        request: &CompleteRequest,
-    ) -> impl Future<Output = Result<CompleteAck, BoxError>> + Send;
+    fn complete(&self, run_id: &str) -> impl Future<Output = Result<(), BoxError>> + Send;
 }
 
 /// In-process controller: the "local" mode. The controller owns the header
 /// database, ledger, and storage exactly as it would behind HTTP; the host
-/// talks to it through the same encoded protocol frames.
+/// calls its typed API directly.
 pub struct LocalController {
     runtime: ControllerRuntime,
 }
@@ -48,23 +34,17 @@ impl LocalController {
 }
 
 impl ControllerTransport for LocalController {
-    async fn pull_batch(&self, request: &PullBatchRequest) -> Result<Batch, BoxError> {
-        let request = encode_pull_batch_request(request)?;
-        let response = self.runtime.handle_pull_batch(&request).await?;
-        Ok(decode_batch(&response).map_err(|err| format!("invalid batch frame: {err}"))?)
+    async fn pull_batch(&self, run_id: &str) -> Result<Batch, BoxError> {
+        Ok(self.runtime.pull_batch(run_id).await?)
     }
 
-    async fn complete(&self, request: &CompleteRequest) -> Result<CompleteAck, BoxError> {
-        let request = encode_complete_request(request)?;
-        let response = self.runtime.handle_complete(&request).await?;
-        Ok(decode_complete_ack(&response)
-            .map_err(|err| format!("invalid complete ack frame: {err}"))?)
+    async fn complete(&self, run_id: &str) -> Result<(), BoxError> {
+        Ok(self.runtime.complete(run_id).await?)
     }
 }
 
-/// Remote controller over HTTP. Raw fixed-width bytes both ways; no JSON or
-/// hex encoding layer. Pulls may long-poll, so the client has no request
-/// timeout.
+/// Remote controller over postcard-encoded HTTP. Pulls may long-poll, so the
+/// client has no request timeout.
 pub struct HttpController {
     base_url: String,
     client: reqwest::Client,
@@ -76,7 +56,10 @@ impl HttpController {
         while base_url.ends_with('/') {
             base_url.pop();
         }
-        Self { base_url, client: reqwest::Client::new() }
+        Self {
+            base_url,
+            client: reqwest::Client::new(),
+        }
     }
 
     async fn post_bytes(&self, path: &str, body: Vec<u8>) -> Result<Vec<u8>, BoxError> {
@@ -100,17 +83,21 @@ impl HttpController {
 }
 
 impl ControllerTransport for HttpController {
-    async fn pull_batch(&self, request: &PullBatchRequest) -> Result<Batch, BoxError> {
-        let request = encode_pull_batch_request(request)?;
-        let response = self.post_bytes("/v1/batch", request).await?;
-        Ok(decode_batch(&response).map_err(|err| format!("invalid batch frame: {err}"))?)
+    async fn pull_batch(&self, run_id: &str) -> Result<Batch, BoxError> {
+        let response = self
+            .post_bytes("/v1/batch", run_id.as_bytes().to_vec())
+            .await?;
+        let batch = decode::<Batch>(&response).map_err(|err| format!("invalid batch: {err}"))?;
+        batch
+            .validate()
+            .map_err(|err| format!("invalid batch: {err}"))?;
+        Ok(batch)
     }
 
-    async fn complete(&self, request: &CompleteRequest) -> Result<CompleteAck, BoxError> {
-        let request = encode_complete_request(request)?;
-        let response = self.post_bytes("/v1/complete", request).await?;
-        Ok(decode_complete_ack(&response)
-            .map_err(|err| format!("invalid complete ack frame: {err}"))?)
+    async fn complete(&self, run_id: &str) -> Result<(), BoxError> {
+        self.post_bytes("/v1/complete", run_id.as_bytes().to_vec())
+            .await?;
+        Ok(())
     }
 }
 
@@ -123,10 +110,21 @@ mod tests {
     use zkpow_controller::{db_path, HeaderStore};
     use zkpow_core::VerifierKeyDigest;
 
+    struct TestVerifier;
+
+    impl zkpow_controller::verify::ProofVerifier for TestVerifier {
+        fn verifier_key_digest(&self) -> VerifierKeyDigest {
+            VerifierKeyDigest::default()
+        }
+
+        fn verify_compressed(&self, _: &[u8], _: &[u8]) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
     /// Both transports share the real header database (including its `runs`
-    /// table) and one artifact root, so equal requests must produce
-    /// byte-identical batches — including storage targets. Drop deletes the
-    /// test's run row again.
+    /// table) and one artifact root, so equal requests must produce equal
+    /// batches. Drop deletes the test's run row again.
     struct Harness {
         run_id: String,
         artifact_root: std::path::PathBuf,
@@ -134,10 +132,14 @@ mod tests {
 
     fn test_runtime(artifact_root: &std::path::Path) -> ControllerRuntime {
         let store = HeaderStore::open(db_path()).expect("failed to open test database");
-        let mut config = ControllerConfig::new(crate::pipeline::input::genesis_hash());
-        config.allow_unproven = true;
+        let mut config = ControllerConfig::new(crate::pipeline::input::genesis_hash(), 13);
         config.pull_timeout = Duration::from_millis(200);
-        ControllerRuntime::new(store, Box::new(LocalArtifactStore::new(artifact_root)), None, config)
+        ControllerRuntime::new(
+            store,
+            Box::new(LocalArtifactStore::new(artifact_root)),
+            Box::new(TestVerifier),
+            config,
+        )
     }
 
     async fn local_and_http_transports(
@@ -159,20 +161,15 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
 
-        let harness =
-            Harness { run_id: format!("test-{test_name}-{nonce}"), artifact_root };
-        (harness, local, HttpController::new(format!("http://127.0.0.1:{port}")))
-    }
-
-    impl Harness {
-        fn request(&self, num_headers: u32) -> PullBatchRequest {
-            PullBatchRequest {
-                run_id: self.run_id.clone(),
-                verifier_key: VerifierKeyDigest::default(),
-                num_headers,
-                held_tip: None,
-            }
-        }
+        let harness = Harness {
+            run_id: format!("test-{test_name}-{nonce}"),
+            artifact_root,
+        };
+        (
+            harness,
+            local,
+            HttpController::new(format!("http://127.0.0.1:{port}")),
+        )
     }
 
     impl Drop for Harness {
@@ -188,8 +185,8 @@ mod tests {
     async fn http_batch_matches_local() {
         let (harness, local, http) = local_and_http_transports("batch-parity").await;
 
-        let local_batch = local.pull_batch(&harness.request(13)).await.unwrap();
-        let http_batch = http.pull_batch(&harness.request(13)).await.unwrap();
+        let local_batch = local.pull_batch(&harness.run_id).await.unwrap();
+        let http_batch = http.pull_batch(&harness.run_id).await.unwrap();
 
         assert_eq!(local_batch, http_batch);
         assert_eq!(local_batch.first_new_height, 1);
@@ -198,14 +195,12 @@ mod tests {
 
     #[tokio::test]
     async fn transport_errors_match_between_local_and_http() {
-        let (harness, local, http) = local_and_http_transports("error-parity").await;
+        let (_harness, local, http) = local_and_http_transports("error-parity").await;
 
-        let local_err = local.pull_batch(&harness.request(0)).await.unwrap_err();
-        let http_err = http.pull_batch(&harness.request(0)).await.unwrap_err();
+        let local_err = local.pull_batch("").await.unwrap_err();
+        let http_err = http.pull_batch("").await.unwrap_err();
 
         assert_eq!(local_err.to_string(), http_err.to_string());
-        assert!(local_err
-            .to_string()
-            .starts_with(zkpow_controller::NO_HEADERS_REMAINING_PREFIX));
+        assert_eq!(local_err.to_string(), "run id must not be empty");
     }
 }

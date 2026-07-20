@@ -20,8 +20,8 @@ sp1_zkvm::entrypoint!(main);
 mod sha256;
 
 use zkpow_core::{
-    cycle_track, parse_median_hints, parse_new_headers, tracked, Claim, MinimalPublicValues, State,
-    VerifierKeyDigest, CONTINUATION_DATA_SIZE, MINIMAL_PV_SIZE,
+    cycle_track, parse_input, tracked, BlockTimestamp, Claim, HeaderInput, MinimalPublicValues,
+    State, VerifierKeyDigest, CONTINUATION_DATA_SIZE, MINIMAL_PV_SIZE,
 };
 
 use sha256::{sha256_169bytes, sha256_52bytes, sha256d_new_header};
@@ -77,11 +77,11 @@ pub fn main() {
             .expect("verifier key must be exactly 32 bytes");
         // SP1's read_vec() returns an 8-byte-aligned buffer.
         let verifier_key = unsafe { &*verifier_key_bytes.as_ptr().cast::<[u32; 8]>() };
-        let mut state = State::parse(&state_bytes).expect("state witness should parse");
-        let header_hints = <NewHeader as FixedSize>::slice_from_bytes(&header_hint_bytes)
-            .expect("new header hints should parse");
-        let median_hints =
-            parse_median_hints(&median_hint_bytes).expect("median time past hints should parse");
+        let mut state = *State::parse(&state_bytes).expect("state witness should parse");
+        let header_hints: &[HeaderInput] =
+            parse_input(&header_hint_bytes).expect("new header hints should parse");
+        let median_hints: &[BlockTimestamp] =
+            parse_input(&median_hint_bytes).expect("median time past hints should parse");
 
         if state.height > 0 {
             let prior_claim = state.public_claim();

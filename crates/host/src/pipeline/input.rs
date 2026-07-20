@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use zkpow_controller::storage::S3Config;
 
-use crate::pipeline::{BoxError, ProofGenerationConfig, ProverBackend};
+use crate::pipeline::{BoxError, PipelineMode, ProofGenerationConfig, ProverBackend};
 use crate::util;
 use crate::util::VerifierKeyDigest;
 
@@ -16,7 +16,6 @@ pub const ENV_ZKPOW_RUN_ID: &str = "ZKPOW_RUN_ID";
 pub const ENV_ZKPOW_BATCH_SIZE: &str = "ZKPOW_BATCH_SIZE";
 pub const ENV_ZKPOW_BATCH_COUNT: &str = "ZKPOW_BATCH_COUNT";
 pub const ENV_ZKPOW_DB_PATH: &str = "ZKPOW_DB_PATH";
-pub const ENV_ZKPOW_PREV_PROOF: &str = "ZKPOW_PREV_PROOF";
 pub const ENV_ZKPOW_PROOF_STORE_DIR: &str = "ZKPOW_PROOF_STORE_DIR";
 pub const ENV_ZKPOW_SHOW_COMPRESSED_PROOF_SPANS: &str = "ZKPOW_SHOW_COMPRESSED_PROOF_SPANS";
 pub const ENV_ZKPOW_CONTROLLER_URL: &str = "ZKPOW_CONTROLLER_URL";
@@ -171,7 +170,7 @@ pub(crate) fn config_from_source(
         .into());
     }
 
-    let num_headers = parse_u32_env_or(source, ENV_ZKPOW_BATCH_SIZE, DEFAULT_BATCH_SIZE)?;
+    let local_batch_size = parse_u32_env_or(source, ENV_ZKPOW_BATCH_SIZE, DEFAULT_BATCH_SIZE)?;
     let batch_count = parse_u32_env_or(source, ENV_ZKPOW_BATCH_COUNT, DEFAULT_BATCH_COUNT)?;
 
     let configured_backend = ensure_cuda_requested_configuration(use_cuda, cuda_device_id)?;
@@ -185,13 +184,17 @@ pub(crate) fn config_from_source(
         run_id: source
             .get(ENV_ZKPOW_RUN_ID)
             .unwrap_or_else(|_| DEFAULT_RUN_ID.to_string()),
-        prev_proof_path: parse_path_env(source, ENV_ZKPOW_PREV_PROOF),
-        num_headers,
+        local_batch_size,
         batch_count,
         db_path: parse_path_env(source, ENV_ZKPOW_DB_PATH)
             .unwrap_or_else(zkpow_controller::db_path),
-        generate_groth16,
-        execute_only,
+        mode: if execute_only {
+            PipelineMode::ExecuteOnly
+        } else if generate_groth16 {
+            PipelineMode::ProveCompressedAndGroth16
+        } else {
+            PipelineMode::ProveCompressed
+        },
         prover_backend,
         cuda_device_id,
     })

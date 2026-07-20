@@ -8,11 +8,13 @@ publish = false
 path = "src/lib.rs"
 
 [features]
-host = ["dep:sha2"]
+host = ["dep:sha2", "dep:serde"]
 profiling = []
 
 [dependencies]
 sha2 = { workspace = true, optional = true }
 sp1-zkvm = { workspace = true }
 thiserror = { version = "2.0", default-features = false }
+bytemuck = { workspace = true }
+serde = { workspace = true, optional = true }
 zkpow-core-macros = { workspace = true }

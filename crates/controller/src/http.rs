@@ -1,14 +1,11 @@
 //! Binary HTTP transport for a [`ControllerRuntime`].
 //!
-//! A deliberately thin layer: each route decodes nothing itself — request
-//! bodies are handed as-is to the runtime's byte-level handlers (the same
-//! functions the host's in-process local transport calls), and the encoded
-//! response is returned as `application/octet-stream`. Frame layouts live in
-//! [`crate::protocol`]. Error bodies are plain UTF-8 text.
+//! Request bodies are the UTF-8 run id. Only batch responses need binary
+//! encoding. Error bodies are plain UTF-8 text.
 //!
 //! Routes:
-//!   POST /v1/batch     pull-batch request frame  -> batch frame
-//!   POST /v1/complete  complete request frame    -> complete ack frame
+//!   POST /v1/batch     run id -> batch frame
+//!   POST /v1/complete  run id -> empty response
 
 use axum::body::Bytes;
 use axum::extract::State as AxumState;
@@ -16,7 +13,7 @@ use axum::http::StatusCode;
 use axum::routing::post;
 use axum::Router;
 
-use crate::protocol::{ControllerError, ErrorKind};
+use crate::protocol::{encode, ControllerError, ErrorKind};
 use crate::runtime::ControllerRuntime;
 
 pub fn build_router(runtime: ControllerRuntime) -> Router {
@@ -41,12 +38,23 @@ async fn pull_batch_handler(
     AxumState(runtime): AxumState<ControllerRuntime>,
     request: Bytes,
 ) -> Result<Vec<u8>, (StatusCode, String)> {
-    runtime.handle_pull_batch(&request).await.map_err(into_response)
+    let run_id = std::str::from_utf8(&request)
+        .map_err(|err| into_response(ControllerError::bad_request(err.to_string())))?;
+    let batch = runtime.pull_batch(run_id).await.map_err(into_response)?;
+    batch
+        .validate()
+        .map_err(ControllerError::internal)
+        .map_err(into_response)?;
+    encode(&batch)
+        .map_err(ControllerError::internal)
+        .map_err(into_response)
 }
 
 async fn complete_handler(
     AxumState(runtime): AxumState<ControllerRuntime>,
     request: Bytes,
-) -> Result<Vec<u8>, (StatusCode, String)> {
-    runtime.handle_complete(&request).await.map_err(into_response)
+) -> Result<(), (StatusCode, String)> {
+    let run_id = std::str::from_utf8(&request)
+        .map_err(|err| into_response(ControllerError::bad_request(err.to_string())))?;
+    runtime.complete(run_id).await.map_err(into_response)
 }
