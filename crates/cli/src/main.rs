@@ -1,4 +1,4 @@
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand};
 
 use sync_headers::{
     connect_headers, tip_from_connected, ConnectedHeader, Header, Network, PeerStore, Tip,
@@ -15,33 +15,18 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    /// Sync block headers from a backend into the local database.
+    /// Sync block headers from the P2P network into the local database.
     Sync(SyncArgs),
-}
-
-/// Which backend to sync headers from.
-#[derive(Clone, Copy, Debug, Default, ValueEnum)]
-enum Backend {
-    /// Stream headers from the Bitcoin P2P network.
-    #[default]
-    P2p,
-    /// Fetch detailed headers from the Alchemy RPC API.
-    Alchemy,
 }
 
 #[derive(Args, Debug)]
 struct SyncArgs {
-    /// Backend to sync from.
-    #[arg(long, value_enum, default_value_t = Backend::P2p)]
-    from: Backend,
-
     #[arg(short, long, default_value = "zkpow.sqlite")]
     db: String,
 
     #[arg(short, long, default_value = "0")]
     max_headers: u64,
 
-    // --- P2P backend options (--from p2p) ---
     /// Connect to this peer address instead of discovering peers via DNS seeds.
     #[arg(long, default_value = None)]
     p2p_peer: Option<String>,
@@ -53,15 +38,6 @@ struct SyncArgs {
     /// Delete the database before syncing.
     #[arg(long)]
     p2p_reset: bool,
-
-    // --- Alchemy backend options (--from alchemy) ---
-    /// Maximum requests per second.
-    #[arg(long, default_value = "25")]
-    alchemy_rate_limit: usize,
-
-    /// Number of in-flight requests.
-    #[arg(long, default_value = "20")]
-    alchemy_concurrency: usize,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -74,17 +50,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let cli = Cli::parse();
     match cli.command {
-        Command::Sync(args) => match args.from {
-            Backend::P2p => sync_p2p(&args)?,
-            Backend::Alchemy => tokio::runtime::Runtime::new()?
-                .block_on(sync_headers::alchemy::sync(
-                    &args.db,
-                    args.max_headers,
-                    args.alchemy_rate_limit,
-                    args.alchemy_concurrency,
-                ))
-                .map_err(|e| format!("{e:?}"))?,
-        },
+        Command::Sync(args) => sync_p2p(&args)?,
     }
 
     Ok(())
