@@ -2,7 +2,7 @@
 name = "zkpow-sync-headers"
 version = "0.1.0"
 edition = "2021"
-description = "Bitcoin block-header synchronization (P2P network and Alchemy RPC backends)"
+description = "Bitcoin block-header synchronization over the Bitcoin P2P network"
 
 [lib]
 name = "sync_headers"
@@ -15,10 +15,3 @@ bitcoin-io.workspace = true
 rand.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
-# Alchemy RPC backend
-tokio.workspace = true
-reqwest.workspace = true
-serde_json.workspace = true
-anyhow.workspace = true
-rusqlite.workspace = true
-hex.workspace = true
