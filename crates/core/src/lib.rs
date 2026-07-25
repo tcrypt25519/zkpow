@@ -367,7 +367,6 @@ fn increment_target(target: &mut u256) -> Result<(), TargetError> {
 
 /// Shift `value` left by one bit in place, returning the carry (the evicted MSB).
 #[must_use]
-#[tracked]
 fn shl1_with_carry(value: &mut u256) -> bool {
     let limbs = value.as_limbs_mut();
     let mut carry = 0u64;
@@ -392,23 +391,26 @@ pub fn work_from_target(target: Target) -> Result<ChainWork, TargetError> {
 
     let mut remainder = u256::from_limbs([0u64; 4]);
     let mut quotient = [0u64; 4];
-    for bit in (0..=256u32).rev() {
-        // Shift remainder left, absorbing the next dividend bit.
-        // At bit == 256 the dividend is 2^256, so its MSB is 1; all lower bits are 0.
-        let carry = shl1_with_carry(&mut remainder);
-        if bit == 256 {
-            // Inject the implicit leading 1 of 2^256 into the LSB of the shifted remainder.
-            remainder.as_limbs_mut()[0] |= 1;
-        }
-        // If carry is set the remainder is effectively > 2^256, which is always >= divisor.
 
-        if carry || remainder >= divisor {
-            let _ = sub_assign(&mut remainder, divisor);
-            if bit < 256 {
-                quotient[(bit / 64) as usize] |= 1u64 << (bit % 64);
+    cycle_track!("zkpow_core::lib::work_from_target.loop", {
+        for bit in (0..=256u32).rev() {
+            // Shift remainder left, absorbing the next dividend bit.
+            // At bit == 256 the dividend is 2^256, so its MSB is 1; all lower bits are 0.
+            let carry = shl1_with_carry(&mut remainder);
+            if bit == 256 {
+                // Inject the implicit leading 1 of 2^256 into the LSB of the shifted remainder.
+                remainder.as_limbs_mut()[0] |= 1;
+            }
+            // If carry is set the remainder is effectively > 2^256, which is always >= divisor.
+
+            if carry || remainder >= divisor {
+                let _ = sub_assign(&mut remainder, divisor);
+                if bit < 256 {
+                    quotient[(bit / 64) as usize] |= 1u64 << (bit % 64);
+                }
             }
         }
-    }
+    });
 
     Ok(ChainWork::from_limbs(quotient))
 }
