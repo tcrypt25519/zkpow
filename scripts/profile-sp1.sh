@@ -34,7 +34,8 @@ fi
 export TRACE_FILE="${TRACE_FILE:-$RUN_DIR/tracing.json}"
 export RUST_BACKTRACE="${RUST_BACKTRACE:-1}"
 export RUST_LOG="${RUST_LOG:-trace}"
-export NUM_HEADERS="${NUM_HEADERS:-100}"
+export BATCH_SIZE="${BATCH_SIZE:-100}"
+export BATCH_COUNT="${BATCH_COUNT:-100}"
 export OUTPUT_DIR="${OUTPUT_DIR:-$PROOFS_DIR}"
 export GUEST_PROFILING="${GUEST_PROFILING:-1}"
 export PROVE_COMPRESSED_SPANS="${PROVE_COMPRESSED_SPANS:-0}"
@@ -57,7 +58,7 @@ fi
   printf 'commit=%s\n' "$(git -C "$ROOT" rev-parse HEAD)"
   printf 'timestamp=%s\n' "$TIMESTAMP"
   printf 'rust_log=%s\n' "$RUST_LOG"
-  printf 'num_headers=%s\n' "$NUM_HEADERS"
+  printf 'BATCH_SIZE=%s\n' "$BATCH_SIZE"
   printf 'guest_profiling=%s\n' "$GUEST_PROFILING"
   printf 'prove_compressed_spans=%s\n' "$PROVE_COMPRESSED_SPANS"
   printf 'prev_proof=%s\n' "${PREV_PROOF:-}"
@@ -76,7 +77,7 @@ rm -f "$ROOT/logs/run.jsonl"
 set +e
 cargo run --release \
   --manifest-path "$ROOT/crates/host/Cargo.toml" \
-  --bin zkpow-host \
+  --bin zkpow-host "${BATCH_SIZE}" "${BATCH_COUNT}" \
   2>&1 | tee "$RUN_DIR/run.log"
 status=${PIPESTATUS[0]}
 set -e
