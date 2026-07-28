@@ -8,33 +8,31 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Pod, Zeroable)]
 #[cfg_attr(feature = "host", derive(Serialize, Deserialize))]
 #[repr(transparent)]
-pub struct Branded<Tag, T> {
-    inner: T,
-    _tag: PhantomData<fn(Tag) -> Tag>,
-}
+pub struct Branded<Tag, T>(T, PhantomData<fn(Tag) -> Tag>);
+// pub struct Branded<Tag, T> {
+//     inner: T,
+//     _tag: PhantomData<fn(Tag) -> Tag>,
+// }
 
 impl<Tag: Pod + Zeroable, T: Sized + Pod + Zeroable> Branded<Tag, T> {
     #[must_use]
     pub const fn new(inner: T) -> Self {
-        Self {
-            inner,
-            _tag: PhantomData,
-        }
+        Self(inner, PhantomData)
     }
 
     #[must_use]
     pub fn into_inner(self) -> T {
-        self.inner
+        self.0
     }
 
     #[must_use]
     pub fn as_inner(&self) -> &T {
-        &self.inner
+        &self.0
     }
 
     #[must_use]
     pub fn as_inner_mut(&mut self) -> &mut T {
-        &mut self.inner
+        &mut self.0
     }
 
     pub fn from_bytes(bytes: &[u8]) -> &T {
@@ -44,7 +42,7 @@ impl<Tag: Pod + Zeroable, T: Sized + Pod + Zeroable> Branded<Tag, T> {
     // `&[u8; Self::SIZE]` isn't expressible on stable (generic associated const
     // as array length); N is checked against size_of::<T>() at runtime instead.
     pub fn to_bytes<const N: usize>(&self) -> &[u8; N] {
-        bytemuck::bytes_of(&self.inner)
+        bytemuck::bytes_of(&self.0)
             .as_array()
             .expect("N must equal size_of::<T>()")
     }
@@ -55,20 +53,20 @@ impl<Tag, T> core::ops::Deref for Branded<Tag, T> {
 
     #[inline]
     fn deref(&self) -> &Self::Target {
-        &self.inner
+        &self.0
     }
 }
 
 impl<Tag, T> core::ops::DerefMut for Branded<Tag, T> {
     #[inline]
     fn deref_mut(&mut self) -> &mut T {
-        &mut self.inner
+        &mut self.0
     }
 }
 
 impl<Tag, T: core::fmt::Debug> core::fmt::Debug for Branded<Tag, T> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        self.inner.fmt(f)
+        self.0.fmt(f)
     }
 }
 
@@ -86,13 +84,13 @@ impl<Tag: Pod + Zeroable> Branded<Tag, u256> {
 
     #[must_use]
     pub fn to_le_bytes(&self) -> [u8; 32] {
-        self.inner.to_le_bytes()
+        self.0.to_le_bytes()
     }
 
     #[must_use]
     pub fn to_le_bytes_slice(&self) -> &[u8] {
         // Safety: u256 is repr(transparent) over [u64; 4] and crate enforces LE target.
-        unsafe { core::slice::from_raw_parts(&self.inner as *const u256 as *const u8, 32) }
+        unsafe { core::slice::from_raw_parts(&self.0 as *const u256 as *const u8, 32) }
     }
 
     #[must_use]
@@ -108,7 +106,7 @@ impl<Tag: Pod + Zeroable> Branded<Tag, u256> {
 
     #[must_use]
     pub fn as_limbs(&self) -> &[u64; 4] {
-        self.inner.as_limbs()
+        self.0.as_limbs()
     }
 }
 
@@ -121,13 +119,13 @@ impl<Tag: Pod + Zeroable> Branded<Tag, u32> {
 
     #[must_use]
     pub fn to_le_bytes(&self) -> [u8; 4] {
-        self.inner.to_le_bytes()
+        self.0.to_le_bytes()
     }
 
     #[must_use]
     pub fn to_le_bytes_slice(&self) -> &[u8] {
         // Safety: u32 has no alignment padding, crate enforces LE target.
-        unsafe { core::slice::from_raw_parts(&self.inner as *const u32 as *const u8, 4) }
+        unsafe { core::slice::from_raw_parts(&self.0 as *const u32 as *const u8, 4) }
     }
 
     #[must_use]
@@ -151,12 +149,12 @@ impl<Tag: Pod + Zeroable> Branded<Tag, [u8; 32]> {
 
     #[must_use]
     pub fn to_le_bytes(&self) -> [u8; 32] {
-        self.inner
+        self.0
     }
 
     #[must_use]
     pub fn to_le_bytes_slice(&self) -> &[u8] {
-        &self.inner
+        &self.0
     }
 
     #[must_use]

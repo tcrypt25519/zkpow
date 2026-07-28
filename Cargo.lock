@@ -4818,6 +4818,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "sp1-cycle"
+version = "0.1.0"
+dependencies = [
+ "sp1-cycle-macros",
+ "sp1-zkvm",
+]
+
+[[package]]
+name = "sp1-cycle-macros"
+version = "0.1.0"
+dependencies = [
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "sp1-derive"
 version = "6.3.1"
 dependencies = [
@@ -6599,6 +6615,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "zkpow-core",
+ "zkpow-sha256",
  "zkpow-store",
 ]
 
@@ -6609,26 +6626,22 @@ dependencies = [
  "bytemuck",
  "serde",
  "sha2 0.10.8",
+ "sp1-cycle",
+ "sp1-cycle-macros",
  "sp1-zkvm",
  "thiserror 2.0.19",
- "zkpow-core-macros",
-]
-
-[[package]]
-name = "zkpow-core-macros"
-version = "0.1.0"
-dependencies = [
- "quote",
- "syn 2.0.119",
+ "zkpow-sha256",
 ]
 
 [[package]]
 name = "zkpow-guest"
 version = "0.1.0"
 dependencies = [
+ "sp1-cycle",
  "sp1-derive",
  "sp1-zkvm",
  "zkpow-core",
+ "zkpow-sha256",
 ]
 
 [[package]]
@@ -6642,6 +6655,7 @@ dependencies = [
  "num-bigint 0.4.8",
  "postcard",
  "reqwest",
+ "sha2 0.10.8",
  "sp1-build",
  "sp1-prover",
  "sp1-recursion-gnark-ffi",
@@ -6652,6 +6666,15 @@ dependencies = [
  "tracing-subscriber",
  "zkpow-controller",
  "zkpow-core",
+ "zkpow-sha256",
+]
+
+[[package]]
+name = "zkpow-sha256"
+version = "0.1.0"
+dependencies = [
+ "sha2 0.10.8",
+ "sp1-zkvm",
 ]
 
 [[package]]
@@ -6660,6 +6683,7 @@ version = "0.1.0"
 dependencies = [
  "rusqlite",
  "zkpow-core",
+ "zkpow-sha256",
  "zkpow-sync-headers",
 ]
 
@@ -6673,6 +6697,7 @@ dependencies = [
  "thiserror 2.0.19",
  "tracing",
  "zkpow-core",
+ "zkpow-sha256",
 ]
 
 [[package]]

@@ -2,7 +2,7 @@ extern crate proc_macro;
 
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, ItemFn};
+use syn::{ItemFn, parse_macro_input};
 
 /// Attribute macro that wraps a function body in a cycle-tracked span.
 ///
@@ -23,7 +23,7 @@ pub fn tracked(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let result = quote! {
         #(#attrs)*
         #vis #sig {
-            ::zkpow_core::cycle_track!(
+            ::sp1_cycle::track!(
                 concat!(module_path!(), "/", stringify!(#name)),
                 #block
             )

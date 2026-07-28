@@ -7,23 +7,7 @@ extern crate self as zkpow_core;
 
 use bytemuck::Pod;
 use core::mem::size_of;
-pub use zkpow_core_macros::tracked;
-
-/// Cycle-track an expression without providing a string label.
-///
-/// The generated label is `module_path:line`, which is unique and maps directly
-/// back to the call site. This removes the verbosity of manually naming every
-/// small span while still feeding the `cycle-tracker-report-*` data used by the
-/// host execution report.
-#[macro_export]
-macro_rules! cycle_track {
-    ($body:expr) => {
-        $crate::run_cycle_track(concat!(module_path!(), ":", line!()), || $body)
-    };
-    ($label:expr, $body:expr) => {
-        $crate::run_cycle_track($label, || $body)
-    };
-}
+pub use sp1_cycle;
 
 pub mod brand;
 pub mod types;
@@ -31,15 +15,9 @@ pub mod types;
 pub use types::{u256, BlockHash, BlockTimestamp, ChainWork, CompactTarget, Target};
 
 mod header;
-#[cfg(test)]
-use header::sha256_word_from_bytes;
-pub use header::{
-    header_first_sha256_block_words, header_second_sha256_block_words, Header, HeaderInput,
-};
+pub use header::{Header, HeaderInput};
 
 mod state;
-#[doc(hidden)]
-pub use state::run_cycle_track;
 pub use state::State;
 
 mod errors;
@@ -56,6 +34,8 @@ pub use public_values::{
     ProofFailure, PublicValuesDigest, ValidationErrorCode, VerifierKeyDigest,
 };
 
+use sha2::{Digest, Sha256};
+
 /// Size of the serialized [`State`] in bytes.
 pub const STATE_SIZE: usize = size_of::<State>();
 
@@ -67,6 +47,46 @@ pub const BLOCK_HEADER_SIZE: usize = size_of::<Header>();
 
 /// Sliding window size used for median-time-past checks.
 pub const WINDOW_SIZE: usize = 11;
+
+#[cfg(target_os = "zkvm")]
+fn hash_header(
+    version: u32,
+    prev_blockhash: &BlockHash,
+    merkle_root: [u8; 32],
+    timestamp: BlockTimestamp,
+    nbits: CompactTarget,
+    nonce: u32,
+) -> BlockHash {
+    let hash = zkpow_sha256::of_header(
+        version,
+        prev_blockhash.into_inner(),
+        merkle_root,
+        timestamp.into_inner(),
+        nbits.into_inner(),
+        nonce,
+    );
+    BlockHash::new(hash)
+}
+
+#[cfg(not(target_os = "zkvm"))]
+fn hash_header(
+    version: u32,
+    prev_blockhash: &BlockHash,
+    merkle_root: [u8; 32],
+    timestamp: BlockTimestamp,
+    nbits: CompactTarget,
+    nonce: u32,
+) -> BlockHash {
+    let mut hasher = Sha256::new();
+    hasher.update(&version.to_le_bytes());
+    hasher.update(prev_blockhash.as_inner());
+    hasher.update(&merkle_root);
+    hasher.update(&timestamp.to_le_bytes());
+    hasher.update(&nbits.to_le_bytes());
+    hasher.update(&nonce.to_le_bytes());
+    let hash = hasher.finalize();
+    BlockHash::new(*hash.as_array().expect("sha256 output is 32 bytes"))
+}
 
 /// Number of valid entries in an MTP ring buffer whose most-recently-written
 /// slot is `height` — e.g. at genesis (`height == 0`) there is exactly one
@@ -181,19 +201,6 @@ pub const MAINNET_GENESIS_HEADER: Header = Header {
     nonce: 2083236893,
 };
 
-/// Double-SHA256 (`SHA-256(SHA-256(data))`), computed on the host via the `sha2` crate.
-///
-/// This is the only SHA256d implementation outside the guest. The guest computes
-/// the same value for headers via SP1's SHA-256 precompile syscalls and direct
-/// word injection from `NewHeader` plus authenticated state fields.
-#[cfg(feature = "host")]
-#[must_use]
-pub fn sha256d(data: &[u8]) -> [u8; 32] {
-    use sha2::{Digest, Sha256};
-    let first: [u8; 32] = Sha256::digest(data).into();
-    Sha256::digest(first).into()
-}
-
 /// Big-endian byte encoding of chainwork as stored in `headers.db`'s `chainwork`
 /// column — predates `ChainWork`'s little-endian in-memory representation.
 /// Every reader and writer of that column must agree on this convention.
@@ -210,7 +217,7 @@ pub fn chain_work_from_db_bytes(bytes: &[u8]) -> Option<ChainWork> {
     Some(ChainWork::from_le_bytes(arr))
 }
 
-#[tracked]
+#[sp1_cycle::tracked]
 pub(crate) fn check_exact_len(bytes: &[u8], expected: usize) -> Result<(), ParseError> {
     if bytes.len() != expected {
         return Err(ParseError::InvalidLength {
@@ -221,7 +228,7 @@ pub(crate) fn check_exact_len(bytes: &[u8], expected: usize) -> Result<(), Parse
     Ok(())
 }
 
-#[tracked]
+#[sp1_cycle::tracked]
 pub(crate) fn copy_to_bytes<const N: usize, T: Pod>(value: &T) -> [u8; N] {
     *bytemuck::bytes_of::<T>(value).as_array().expect("a")
 }
@@ -237,7 +244,7 @@ pub const MINIMAL_PV_SIZE: usize = 32 + 32 + 32 + 4 + 1 + 4 + 32 + 32; // = 169
 
 /// Convert a full 256-bit target into compact `bits` encoding.
 #[must_use]
-//#[tracked]
+//#[sp1_cycle::tracked]
 pub fn target_to_bits(target: Target) -> CompactTarget {
     let bytes = target.to_le_bytes();
     let mut nbytes = 32usize;
@@ -270,7 +277,7 @@ pub fn target_to_bits(target: Target) -> CompactTarget {
 
 /// Expand compact Bitcoin `bits` into a normalized full 256-bit target.
 #[must_use]
-#[tracked]
+#[sp1_cycle::tracked]
 pub fn target_from_bits(compact_target: CompactTarget) -> Target {
     let bits = compact_target.into_inner();
     let size = (bits >> 24) as usize;
@@ -298,7 +305,7 @@ pub fn target_from_bits(compact_target: CompactTarget) -> Target {
 
 /// Check whether a header hash satisfies a target.
 #[must_use]
-#[tracked]
+#[sp1_cycle::tracked]
 pub fn check_proof_of_work(hash: BlockHash, target: Target) -> bool {
     u256::from_le_bytes(*hash.as_inner()) <= *target.as_inner()
 }
@@ -345,7 +352,7 @@ fn sub_assign(lhs: &mut u256, rhs: u256) -> bool {
 /// We can iterate until we find a limb < max u64, add 1 to it, and we're done. As long as we find max u64 limbs we
 /// just set them to 0 and move forward. Iterating fully without hitting a non-max u64 indicates that we have bad
 /// data; the target is invalid and we return an error.
-#[tracked]
+#[sp1_cycle::tracked]
 fn increment_target(target: &mut u256) -> Result<(), TargetError> {
     for (i, limb) in target.as_limbs_mut().iter_mut().enumerate() {
         // This limb isn't saturated so it can't carry; add 1 and we're done.
@@ -384,7 +391,7 @@ fn shl1_with_carry(value: &mut u256) -> bool {
 /// The loop processes 257 bits (indices 256 down to 0): at `bit == 256` we introduce
 /// the implicit leading 1 of the dividend `2^256`; for `bit < 256` we set the
 /// corresponding quotient bit when the remainder meets the divisor.
-#[tracked]
+#[sp1_cycle::tracked]
 pub fn work_from_target(target: Target) -> Result<ChainWork, TargetError> {
     let mut divisor = *target.as_inner();
     increment_target(&mut divisor)?;
@@ -392,7 +399,7 @@ pub fn work_from_target(target: Target) -> Result<ChainWork, TargetError> {
     let mut remainder = u256::from_limbs([0u64; 4]);
     let mut quotient = [0u64; 4];
 
-    cycle_track!("zkpow_core::lib::work_from_target.loop", {
+    sp1_cycle::track!("zkpow_core::lib::work_from_target.loop", {
         for bit in (0..=256u32).rev() {
             // Shift remainder left, absorbing the next dividend bit.
             // At bit == 256 the dividend is 2^256, so its MSB is 1; all lower bits are 0.
@@ -417,7 +424,7 @@ pub fn work_from_target(target: Target) -> Result<ChainWork, TargetError> {
 
 /// Compute the compact and normalized full target required at a difficulty boundary.
 #[must_use]
-#[tracked]
+#[sp1_cycle::tracked]
 pub fn calculate_next_target_required(
     mut old_target: Target,
     epoch_start_timestamp: BlockTimestamp,
@@ -482,7 +489,7 @@ mod tests {
         }
     }
 
-    fn apply_header(state: &mut State, timestamp: u32) {
+    fn apply_header<H: HeaderHash>(state: &mut State, timestamp: u32) {
         let header = HeaderInput {
             version: 1,
             merkle_root: [0x22; 32],
@@ -490,9 +497,7 @@ mod tests {
             nonce: 7,
         };
         let median_hints = median_hints_for_headers(state, &[header]);
-        state
-            .apply_headers(&[header], &median_hints, |_, _, _| zero_hash())
-            .unwrap();
+        state.apply_headers::<H>(&[header], &median_hints).unwrap();
     }
 
     fn dense_median_hints_for_headers(
@@ -632,37 +637,6 @@ mod tests {
         assert_eq!(new_header.merkle_root, [0x66; 32]);
         assert_eq!(new_header.timestamp, BlockTimestamp::new(0x7788_99aa));
         assert_eq!(new_header.nonce, 0xbbcc_ddee);
-    }
-
-    #[test]
-    fn header_sha256_block_words_match_serialized_header_bytes() {
-        let header = Header {
-            version: 0x1122_3344,
-            prev_blockhash: BlockHash::new([0x55; 32]),
-            merkle_root: [
-                0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d,
-                0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b,
-                0x1c, 0x1d, 0x1e, 0x1f,
-            ],
-            timestamp: BlockTimestamp::new(0x7788_99aa),
-            compact_target: CompactTarget::new(0x1d00_ffff),
-            nonce: 0xbbcc_ddee,
-        };
-        let new_header = HeaderInput::from_header(&header);
-        let bytes = header.to_bytes();
-
-        let first = header_first_sha256_block_words(&new_header, &header.prev_blockhash);
-        for (i, word) in first.iter().enumerate().take(16) {
-            assert_eq!(*word, sha256_word_from_bytes(&bytes, i));
-        }
-
-        let second = header_second_sha256_block_words(&new_header, header.compact_target);
-        for (i, word) in second.iter().enumerate().take(4) {
-            assert_eq!(*word, sha256_word_from_bytes(&bytes, 16 + i));
-        }
-        assert_eq!(second[4], 0x80000000);
-        assert_eq!(second[15], 0x280);
-        assert!(second[5..15].iter().all(|word| *word == 0));
     }
 
     #[test]

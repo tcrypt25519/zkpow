@@ -7,7 +7,7 @@ use std::path::Path;
 use rusqlite::{params, Connection, OptionalExtension};
 use sync_headers::{ConnectedHeader, Tip};
 use zkpow_core::{
-    chain_work_from_db_bytes, chain_work_to_db_bytes, requires_median_hint, sha256d, BlockHash,
+    chain_work_from_db_bytes, chain_work_to_db_bytes, requires_median_hint, BlockHash,
     BlockTimestamp, ChainWork, Claim, CompactTarget, Header, HeaderInput, State, VerifierKeyDigest,
     WINDOW_SIZE,
 };
@@ -409,7 +409,7 @@ impl HeaderStore {
         let current = window.last().expect("window covers the requested height");
 
         State {
-            block_hash: BlockHash::new(sha256d(&current.header.to_bytes())),
+            block_hash: BlockHash::new(zkpow_sha256::double(&current.header.to_bytes())),
             genesis_hash,
             current_nbits: current.header.compact_target,
             height,
@@ -515,7 +515,7 @@ impl HeaderRecord {
     pub fn public_claim(&self, genesis_hash: BlockHash) -> Claim {
         Claim {
             genesis_hash,
-            tip_hash: BlockHash::new(sha256d(&self.header.to_bytes())),
+            tip_hash: BlockHash::new(zkpow_sha256::double(&self.header.to_bytes())),
             chain_work: self.chain_work,
             height: self.height as u32,
         }
@@ -531,7 +531,7 @@ pub struct HeaderBatchWitness {
 
 /// Reconstruct the genesis state from its stored record.
 pub fn genesis_state_from_record(genesis: HeaderRecord, genesis_hash: BlockHash) -> State {
-    let block_hash = BlockHash::new(sha256d(&genesis.header.to_bytes()));
+    let block_hash = BlockHash::new(zkpow_sha256::double(&genesis.header.to_bytes()));
     assert_eq!(block_hash, genesis_hash, "genesis hash mismatch");
 
     let mut timestamps = [BlockTimestamp::default(); zkpow_core::WINDOW_SIZE];

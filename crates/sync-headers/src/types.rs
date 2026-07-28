@@ -1,9 +1,10 @@
 //! Core types for the header sync protocol.
 
 use zkpow_core::{
-    genesis_work, sha256d, target_from_bits, work_from_target, BlockHash, ChainWork, CompactTarget,
+    genesis_work, target_from_bits, work_from_target, BlockHash, ChainWork, CompactTarget,
     Header as CoreHeader, Target, GENESIS_NBITS, GENESIS_TARGET, WINDOW_SIZE,
 };
+use zkpow_sha256;
 
 /// Network selection for Bitcoin consensus.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -96,7 +97,7 @@ impl Header {
     }
 
     pub fn block_hash(&self) -> BlockHash {
-        BlockHash::new(sha256d(&self.inner.to_bytes()))
+        BlockHash::new(zkpow_sha256::double(&self.inner.to_bytes()))
     }
 
     pub fn prev_blockhash(&self) -> BlockHash {

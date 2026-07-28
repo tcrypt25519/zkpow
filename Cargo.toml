@@ -2,12 +2,14 @@
 members = [
     "crates/controller",
     "crates/core",
-    "crates/core-macros",
     "crates/guest",
     "crates/host",
+    "crates/sha256",
     "crates/store",
     "crates/sync-headers",
     "crates/cli",
+    "crates/sp1-cycle",
+    "crates/sp1-cycle-macros",
 ]
 resolver = "2"
 
@@ -15,12 +17,14 @@ resolver = "2"
 dhat = "0.3.3"
 zkpow-controller = { path = "crates/controller" }
 zkpow-core = { path = "crates/core" }
-zkpow-core-macros = { path = "crates/core-macros" }
 zkpow-guest = { path = "crates/guest" }
 zkpow-host = { path = "crates/host" }
+zkpow-sha256 = { path = "crates/sha256" }
 zkpow-store = { path = "crates/store" }
 zkpow-sync-headers = { path = "crates/sync-headers" }
 zkpow-cli = { path = "crates/cli" }
+sp1-cycle = { path = "crates/sp1-cycle" }
+sp1-cycle-macros = { path = "crates/sp1-cycle-macros" }
 sp1-zkvm = { path = "/Users/tcrypt/code/github.com/succinctlabs/sp1/crates/zkvm/entrypoint", default-features = false, features = ["lib", "verify"] }
 sp1-sdk = { path = "/Users/tcrypt/code/github.com/succinctlabs/sp1/crates/sdk", features = ["profiling"] }
 sp1-build = { path = "/Users/tcrypt/code/github.com/succinctlabs/sp1/crates/build" }

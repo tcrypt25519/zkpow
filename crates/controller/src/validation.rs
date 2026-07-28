@@ -1,4 +1,5 @@
-use zkpow_core::{sha256d, BlockHash, BlockTimestamp, CompactTarget, Header, HeaderInput, State};
+use zkpow_core::{BlockHash, BlockTimestamp, CompactTarget, Header, HeaderInput, State};
+use zkpow_sha256;
 use zkpow_store::HeaderRecord;
 
 /// Materialize the full header from prover fields plus authenticated chain
@@ -17,7 +18,7 @@ pub fn new_header_hash(
         compact_target,
         nonce: new_header.nonce,
     };
-    BlockHash::new(sha256d(&header.to_bytes()))
+    BlockHash::new(zkpow_sha256::double(&header.to_bytes()))
 }
 
 /// Apply a batch locally with its sparse median-time-past hints.
@@ -28,7 +29,7 @@ pub fn compute_final_state_with_hints(
 ) -> State {
     let mut state = *initial_state;
     state
-        .apply_headers(headers, hints, new_header_hash)
+        .apply_headers(headers, hints)
         .expect("host state transition should succeed");
     state
 }

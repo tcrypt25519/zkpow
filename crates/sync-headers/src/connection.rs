@@ -285,7 +285,7 @@ impl PeerConnection {
         buf.extend_from_slice(&self.network_magic);
         buf.extend_from_slice(&command.as_bytes());
         buf.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-        let checksum = zkpow_core::sha256d(payload);
+        let checksum = zkpow_sha256::double(payload);
         buf.extend_from_slice(&checksum[..4]);
         buf.extend_from_slice(payload);
         self.stream.write_all(&buf)
@@ -330,7 +330,7 @@ impl PeerConnection {
             self.stream.read_exact(&mut payload)?;
         }
 
-        let expected_checksum = zkpow_core::sha256d(&payload);
+        let expected_checksum = zkpow_sha256::double(&payload);
         if checksum_buf != expected_checksum[..4] {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,

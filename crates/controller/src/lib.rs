@@ -33,9 +33,10 @@ pub use validation::{
 
 pub use diagnostics::format_claim_mismatch;
 pub use zkpow_core::{
-    requires_median_hint, sha256d, BlockHash, BlockTimestamp, Claim, HeaderChainPublicValues,
-    HeaderInput, State,
+    requires_median_hint, BlockHash, BlockTimestamp, Claim, HeaderChainPublicValues, HeaderInput,
+    State,
 };
+pub use zkpow_sha256;
 pub use zkpow_store::{
     db_path, genesis_state_from_record, HeaderBatchWitness, HeaderRecord, HeaderStore, RunRecord,
 };
@@ -92,7 +93,7 @@ mod tests {
     fn db_median_time_hints_match_genesis_seeded_state() {
         let db = open_db();
         let genesis = db.load_header_record(0);
-        let genesis_hash = BlockHash::new(sha256d(&genesis.header.to_bytes()));
+        let genesis_hash = BlockHash::new(zkpow_sha256::double(&genesis.header.to_bytes()));
         let genesis_state = genesis_state_from_record(genesis, genesis_hash);
         let witness = db.load_header_batch_witness(1, 13);
 
@@ -117,7 +118,7 @@ mod tests {
     fn compute_final_state_with_hints_reaches_expected_height() {
         let db = open_db();
         let genesis = db.load_header_record(0);
-        let genesis_hash = BlockHash::new(sha256d(&genesis.header.to_bytes()));
+        let genesis_hash = BlockHash::new(zkpow_sha256::double(&genesis.header.to_bytes()));
         let genesis_state = genesis_state_from_record(genesis, genesis_hash);
         let witness = db.load_header_batch_witness(1, 128);
         let final_state = compute_final_state_with_hints(
@@ -133,7 +134,7 @@ mod tests {
     fn applying_headers_one_at_a_time_matches_db_claims() {
         let db = open_db();
         let genesis = db.load_header_record(0);
-        let genesis_hash = BlockHash::new(sha256d(&genesis.header.to_bytes()));
+        let genesis_hash = BlockHash::new(zkpow_sha256::double(&genesis.header.to_bytes()));
         let mut state = genesis_state_from_record(genesis.clone(), genesis_hash);
         let records = db.load_header_records(1, 64);
         let mut previous_ordered_run = genesis.ordered_timestamp_run;
@@ -163,7 +164,7 @@ mod tests {
     fn db_retarget_schedule_matches_height_40320() {
         let db = open_db();
         let genesis = db.load_header_record(0);
-        let genesis_hash = BlockHash::new(sha256d(&genesis.header.to_bytes()));
+        let genesis_hash = BlockHash::new(zkpow_sha256::double(&genesis.header.to_bytes()));
         let genesis_state = genesis_state_from_record(genesis, genesis_hash);
         let witness_1 = db.load_header_batch_witness(1, 40319);
         let state = compute_final_state_with_hints(
@@ -213,7 +214,7 @@ mod tests {
 
         let db = open_db();
         let genesis = db.load_header_record(0);
-        let genesis_hash = BlockHash::new(sha256d(&genesis.header.to_bytes()));
+        let genesis_hash = BlockHash::new(zkpow_sha256::double(&genesis.header.to_bytes()));
 
         for (name, initial_state, record_start, record_count, expected_height) in cases {
             let initial_state = match initial_state {

@@ -1,0 +1,15 @@
+[package]
+name = "zkpow-sha256"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+host = ["dep:sha2"]
+
+[dependencies]
+sha2 = { workspace = true, optional = true }
+sp1-zkvm = { workspace = true }

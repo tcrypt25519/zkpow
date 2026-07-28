@@ -7,6 +7,8 @@
 use sp1_sdk::prelude::*;
 use sp1_sdk::{Elf, ProverClient, SP1Stdin};
 
+use sha2::{Digest, Sha256};
+
 const ELF: Elf = include_elf!("guest_hash_vectors");
 const HEADER_SIZE: usize = 80;
 const HASH_SIZE: usize = 32;
@@ -29,17 +31,26 @@ fn decode_header(hex_header: &str) -> [u8; HEADER_SIZE] {
     header
 }
 
-fn disjoint_record(header: &[u8; HEADER_SIZE]) -> [u8; HEADER_SIZE] {
-    let mut record = [0u8; HEADER_SIZE];
+// fn disjoint_record(header: &[u8; HEADER_SIZE]) -> [u8; HEADER_SIZE] {
+//     let mut record = [0u8; HEADER_SIZE];
 
-    record[0..4].copy_from_slice(&header[0..4]); // version
-    record[4..36].copy_from_slice(&header[36..68]); // merkle_root
-    record[36..40].copy_from_slice(&header[68..72]); // timestamp
-    record[40..44].copy_from_slice(&header[76..80]); // nonce
-    record[44..76].copy_from_slice(&header[4..36]); // prev_blockhash
-    record[76..80].copy_from_slice(&header[72..76]); // compact_target
+//     record[0..4].copy_from_slice(&header[0..4]); // version
+//     record[4..36].copy_from_slice(&header[36..68]); // merkle_root
+//     record[36..40].copy_from_slice(&header[68..72]); // timestamp
+//     record[40..44].copy_from_slice(&header[76..80]); // nonce
+//     record[44..76].copy_from_slice(&header[4..36]); // prev_blockhash
+//     record[76..80].copy_from_slice(&header[72..76]); // compact_target
 
-    record
+//     record
+// }
+
+fn sha256d(header: &[u8; HEADER_SIZE]) -> [u8; HASH_SIZE] {
+    let mut hasher = Sha256::new();
+    hasher.update(header);
+    let first_hash = hasher.finalize_reset();
+    hasher.update(first_hash);
+    let second_hash = hasher.finalize();
+    *second_hash.as_array().expect("sha256 output is 32 bytes")
 }
 
 #[tokio::main]
@@ -50,8 +61,8 @@ async fn main() -> Result<(), String> {
 
     for hex_header in HEADER_HEX {
         let header = decode_header(hex_header);
-        guest_input.extend_from_slice(&disjoint_record(&header));
-        expected_hashes.extend_from_slice(&zkpow_core::sha256d(&header));
+        guest_input.extend_from_slice(&header);
+        expected_hashes.extend_from_slice(&sha256d(&header));
     }
 
     stdin.write_vec(guest_input);

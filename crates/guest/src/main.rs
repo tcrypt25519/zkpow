@@ -17,20 +17,17 @@
 #![no_main]
 sp1_zkvm::entrypoint!(main);
 
-mod sha256;
-
 use zkpow_core::{
-    cycle_track, parse_input, tracked, BlockTimestamp, Claim, HeaderInput, MinimalPublicValues,
-    State, VerifierKeyDigest, CONTINUATION_DATA_SIZE, MINIMAL_PV_SIZE,
+    parse_input, BlockTimestamp, Claim, HeaderInput, MinimalPublicValues, State, VerifierKeyDigest,
+    CONTINUATION_DATA_SIZE, MINIMAL_PV_SIZE,
 };
-
-use sha256::{sha256_169bytes, sha256_52bytes, sha256d_new_header};
+use zkpow_sha256;
 
 /// Compute the continuation digest: SHA-256 of the serialized continuation data.
-#[tracked]
+#[sp1_cycle::tracked]
 fn compute_continuation_digest(state: &State) -> [u8; 32] {
     let cd_bytes: [u8; CONTINUATION_DATA_SIZE] = state.continuation_bytes();
-    sha256_52bytes(&cd_bytes)
+    zkpow_sha256::of_52bytes(&cd_bytes)
 }
 
 /// Commit the minimal public values and halt.
@@ -40,14 +37,15 @@ fn commit_minimal_pv(pv: &MinimalPublicValues) -> ! {
     sp1_zkvm::syscalls::syscall_halt(0)
 }
 
-#[tracked]
+#[sp1_cycle::tracked]
 fn verify_prior_proof(
     verifier_key: &[u32; 8],
     prior_claim: &Claim,
     prior_continuation_bytes: &[u8; CONTINUATION_DATA_SIZE],
 ) {
     // 1. Hash the prior continuation data.
-    let continuation_digest = cycle_track!({ sha256_52bytes(prior_continuation_bytes) });
+    let continuation_digest =
+        sp1_cycle::track!({ zkpow_sha256::of_52bytes(prior_continuation_bytes) });
 
     // 2. Reconstruct the prior proof's minimal public values and hash them.
     let prior_pv = MinimalPublicValues::success(
@@ -56,16 +54,16 @@ fn verify_prior_proof(
         VerifierKeyDigest::from_raw(*verifier_key),
     );
     let prior_pv_bytes: [u8; MINIMAL_PV_SIZE] = prior_pv.to_bytes();
-    let actual_pv_hash = cycle_track!({ sha256_169bytes(&prior_pv_bytes) });
+    let actual_pv_hash = sp1_cycle::track!({ zkpow_sha256::of_169bytes(&prior_pv_bytes) });
 
     // 3. Verify the SP1 proof.
-    cycle_track!({
+    sp1_cycle::track!({
         sp1_zkvm::lib::verify::verify_sp1_proof(verifier_key, &actual_pv_hash);
     });
 }
 
 pub fn main() {
-    cycle_track!("main", {
+    sp1_cycle::track!("main", {
         let input_bytes = sp1_zkvm::io::read_vec();
         let state_bytes = sp1_zkvm::io::read_vec();
         let header_hint_bytes = sp1_zkvm::io::read_vec();
@@ -90,13 +88,7 @@ pub fn main() {
         }
 
         // Apply headers; on failure commit minimal PV and halt.
-        if let Err(failure) = state.apply_headers(
-            header_hints,
-            median_hints,
-            |header, prev_blockhash, nbits| {
-                zkpow_core::BlockHash::new(sha256d_new_header(header, prev_blockhash, nbits))
-            },
-        ) {
+        if let Err(failure) = state.apply_headers(header_hints, median_hints) {
             let digest = compute_continuation_digest(&failure.last_valid_state);
             let pv = MinimalPublicValues::failure(
                 &failure.last_valid_state.public_claim(),

@@ -3,44 +3,17 @@ compile_error!("zkpow wire types require a little-endian target");
 
 use crate::{
     advance_ordered_timestamp_run, calculate_next_target_required, check_proof_of_work,
-    copy_to_bytes, has_ordered_timestamp_window, ordered_median_timestamp_slot,
-    ordered_timestamp_run, target_from_bits, timestamp_slot, tracked, work_from_target,
-    ApplyFailure, BlockHash, BlockTimestamp, ChainWork, Claim, CompactTarget, ContinuationData,
-    HeaderInput, Target, TargetError, ValidationErrorCode, CONTINUATION_DATA_SIZE, EPOCH_LENGTH,
-    STATE_SIZE, WINDOW_SIZE,
+    copy_to_bytes, has_ordered_timestamp_window, hash_header, ordered_median_timestamp_slot,
+    ordered_timestamp_run, target_from_bits, timestamp_slot, work_from_target, ApplyFailure,
+    BlockHash, BlockTimestamp, ChainWork, Claim, CompactTarget, ContinuationData, HeaderInput,
+    Target, TargetError, ValidationErrorCode, CONTINUATION_DATA_SIZE, EPOCH_LENGTH, STATE_SIZE,
+    WINDOW_SIZE,
 };
+pub use sp1_cycle::tracked;
+
 use bytemuck::{Pod, PodCastError, Zeroable};
 #[cfg(feature = "host")]
 use serde::{Deserialize, Serialize};
-
-#[cfg(all(target_os = "zkvm", feature = "profiling"))]
-#[inline(always)]
-#[doc(hidden)]
-pub fn run_cycle_track<T, F>(label: &'static str, f: F) -> T
-where
-    F: FnOnce() -> T,
-{
-    sp1_zkvm::io::write(
-        1,
-        alloc::format!("cycle-tracker-report-start: {label}\n").as_bytes(),
-    );
-    let output = f();
-    sp1_zkvm::io::write(
-        1,
-        alloc::format!("cycle-tracker-report-end: {label}\n").as_bytes(),
-    );
-    output
-}
-
-#[cfg(not(all(target_os = "zkvm", feature = "profiling")))]
-#[inline(always)]
-#[doc(hidden)]
-pub fn run_cycle_track<T, F>(_label: &'static str, f: F) -> T
-where
-    F: FnOnce() -> T,
-{
-    f()
-}
 
 /// Complete authenticated validation state, serialized between recursive iterations.
 #[repr(C)]
@@ -122,21 +95,17 @@ impl State {
     }
 
     #[allow(clippy::result_large_err)]
-    fn apply_header_after_median_check<F>(
+    fn apply_header_after_median_check(
         &mut self,
         new_header: &HeaderInput,
         claimed_median: BlockTimestamp,
         active_nbits: CompactTarget,
         active_target: Target,
-        block_hash_fn: &mut F,
-    ) -> Result<(), ApplyFailure>
-    where
-        F: FnMut(&HeaderInput, &BlockHash, CompactTarget) -> BlockHash,
-    {
-        let candidate_height = cycle_track!(self.height + 1);
+    ) -> Result<(), ApplyFailure> {
+        let candidate_height = sp1_cycle::track!(self.height + 1);
         let timestamp_slot = timestamp_slot(candidate_height.into());
 
-        if cycle_track!({ new_header.timestamp <= claimed_median }) {
+        if sp1_cycle::track!(new_header.timestamp <= claimed_median) {
             return Err(ApplyFailure {
                 last_valid_state: *self,
                 error_code: ValidationErrorCode::TimestampTooOld,
@@ -144,8 +113,16 @@ impl State {
             });
         }
 
-        let block_hash =
-            cycle_track!({ block_hash_fn(new_header, &self.block_hash, active_nbits) });
+        let block_hash = sp1_cycle::track!({
+            hash_header(
+                new_header.version,
+                &self.block_hash,
+                new_header.merkle_root,
+                new_header.timestamp,
+                active_nbits,
+                new_header.nonce,
+            )
+        });
 
         if !check_proof_of_work(block_hash, active_target) {
             return Err(ApplyFailure {
@@ -155,7 +132,7 @@ impl State {
             });
         }
 
-        cycle_track!({
+        sp1_cycle::track!({
             self.height = candidate_height;
             self.timestamps[timestamp_slot] = new_header.timestamp;
             self.current_nbits = active_nbits;
@@ -170,15 +147,11 @@ impl State {
 
     #[allow(clippy::result_large_err)]
     #[tracked]
-    pub fn apply_headers<F>(
+    pub fn apply_headers(
         &mut self,
         headers: &[HeaderInput],
         median_hints: &[BlockTimestamp],
-        mut block_hash_fn: F,
-    ) -> Result<(), ApplyFailure>
-    where
-        F: FnMut(&HeaderInput, &BlockHash, CompactTarget) -> BlockHash,
-    {
+    ) -> Result<(), ApplyFailure> {
         let mut headers_consumed = 0;
 
         if self.height < (WINDOW_SIZE - 1) as u32 {
@@ -192,7 +165,6 @@ impl State {
                     claimed_median,
                     context.active_nbits,
                     context.active_target,
-                    &mut block_hash_fn,
                 ) {
                     context.flush();
                     failure.last_valid_state = *context.state;
@@ -207,7 +179,7 @@ impl State {
 
         if headers_consumed < headers.len() {
             let mut ordered_run_len =
-                cycle_track!({ ordered_timestamp_run(&self.timestamps, self.height.into()) })
+                sp1_cycle::track!({ ordered_timestamp_run(&self.timestamps, self.height.into()) })
                     as usize;
 
             while headers_consumed < headers.len() {
@@ -229,7 +201,7 @@ impl State {
                         let claimed_median = *median_hint_iter.next().unwrap_or_else(|| {
                             panic!("missing median time past hint at header index {header_index}")
                         });
-                        let (less_count, equal_count) = cycle_track!({
+                        let (less_count, equal_count) = sp1_cycle::track!({
                             let mut less_count = 0usize;
                             let mut equal_count = 0usize;
                             for &timestamp in &context.state.timestamps {
@@ -249,7 +221,8 @@ impl State {
                         claimed_median
                     };
 
-                    let previous_timestamp = cycle_track!({ context.state.previous_timestamp() });
+                    let previous_timestamp =
+                        sp1_cycle::track!({ context.state.previous_timestamp() });
                     ordered_run_len = advance_ordered_timestamp_run(
                         ordered_run_len as u64,
                         previous_timestamp.into_inner(),
@@ -261,7 +234,6 @@ impl State {
                         claimed_median,
                         context.active_nbits,
                         context.active_target,
-                        &mut block_hash_fn,
                     ) {
                         context.flush();
                         failure.last_valid_state = *context.state;
@@ -311,8 +283,8 @@ impl<'a> EpochManager<'a> {
         let (active_nbits, active_target, active_work);
 
         if (state.height + 1).is_multiple_of(EPOCH_LENGTH) {
-            let previous_timestamp = cycle_track!({ state.previous_timestamp() });
-            let prepared = cycle_track!({
+            let previous_timestamp = sp1_cycle::track!({ state.previous_timestamp() });
+            let prepared = sp1_cycle::track!({
                 state.prepare_new_epoch(target_from_bits(state.current_nbits), previous_timestamp)
             })
             .expect("epoch target must not be u256::MAX — invalid blockchain data");
@@ -337,7 +309,7 @@ impl<'a> EpochManager<'a> {
 
     fn flush(&mut self) {
         if self.pending_run_count > 0 {
-            cycle_track!({
+            sp1_cycle::track!({
                 let mut accumulated_work = self.pending_run_work;
                 accumulated_work *= self.pending_run_count;
                 self.state.chain_work = self.state.chain_work + accumulated_work;

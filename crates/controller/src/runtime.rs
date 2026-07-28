@@ -479,7 +479,7 @@ mod tests {
     use super::*;
     use crate::protocol::FileLocation;
     use crate::storage::LocalArtifactStore;
-    use zkpow_core::sha256d;
+    use zkpow_sha256::sha256d;
     use zkpow_store::db_path;
 
     struct BytesArePublicValues(VerifierKeyDigest);

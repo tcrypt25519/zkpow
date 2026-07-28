@@ -1,4 +1,4 @@
-use crate::{brand::Branded, tracked};
+use crate::brand::Branded;
 use bytemuck::{Pod, Zeroable};
 #[cfg(feature = "host")]
 use serde::{Deserialize, Serialize};
@@ -59,7 +59,7 @@ impl u256 {
 }
 
 impl core::ops::MulAssign<u32> for u256 {
-    #[tracked]
+    #[sp1_cycle::tracked]
     fn mul_assign(&mut self, rhs: u32) {
         let multiplier = rhs as u128;
         let mut carry = 0u128;
@@ -132,7 +132,7 @@ impl core::fmt::Display for BlockHash {
 impl core::ops::Add for ChainWork {
     type Output = Self;
 
-    #[tracked]
+    #[sp1_cycle::tracked]
     fn add(self, rhs: Self) -> Self::Output {
         let a = self.as_limbs();
         let b = rhs.as_limbs();
