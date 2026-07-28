@@ -1,7 +1,8 @@
-use crate::brand::Branded;
 use bytemuck::{Pod, Zeroable};
 #[cfg(feature = "host")]
 use serde::{Deserialize, Serialize};
+
+use crate::brand::Branded;
 
 /// A 256-bit unsigned integer stored as four little-endian u64 limbs.
 #[allow(non_camel_case_types)]
@@ -104,6 +105,9 @@ pub struct TargetTag;
 pub struct CompactTargetTag;
 #[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Debug, Pod, Zeroable)]
 #[repr(transparent)]
+pub struct BlockWorkTag;
+#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Debug, Pod, Zeroable)]
+#[repr(transparent)]
 pub struct ChainWorkTag;
 #[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Debug, Pod, Zeroable)]
 #[repr(transparent)]
@@ -112,11 +116,12 @@ pub struct BlockTimestampTag;
 #[repr(transparent)]
 pub struct BlockHashTag;
 
-pub type Target = Branded<TargetTag, u256>;
-pub type ChainWork = Branded<ChainWorkTag, u256>;
-pub type BlockTimestamp = Branded<BlockTimestampTag, u32>;
-pub type CompactTarget = Branded<CompactTargetTag, u32>;
 pub type BlockHash = Branded<BlockHashTag, [u8; 32]>;
+pub type BlockTimestamp = Branded<BlockTimestampTag, u32>;
+pub type Target = Branded<TargetTag, u256>;
+pub type CompactTarget = Branded<CompactTargetTag, u32>;
+pub type BlockWork = Branded<BlockWorkTag, u128>;
+pub type ChainWork = Branded<ChainWorkTag, u256>;
 
 impl core::fmt::Display for BlockHash {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {

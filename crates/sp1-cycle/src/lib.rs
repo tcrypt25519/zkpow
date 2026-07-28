@@ -14,15 +14,9 @@ pub fn run_track<T, F>(label: &'static str, f: F) -> T
 where
     F: FnOnce() -> T,
 {
-    sp1_zkvm::io::write(
-        1,
-        alloc::format!("cycle-tracker-report-start: {label}\n").as_bytes(),
-    );
+    sp1_zkvm::io::write(1, alloc::format!("cycle-tracker-report-start: {label}\n").as_bytes());
     let output = f();
-    sp1_zkvm::io::write(
-        1,
-        alloc::format!("cycle-tracker-report-end: {label}\n").as_bytes(),
-    );
+    sp1_zkvm::io::write(1, alloc::format!("cycle-tracker-report-end: {label}\n").as_bytes());
     output
 }
 

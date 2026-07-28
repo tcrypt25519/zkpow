@@ -66,10 +66,7 @@ const fn word_from_le_u32(value: u32) -> u64 {
 #[inline]
 const fn word_from_bytes(bytes: &[u8], word_index: usize) -> u64 {
     let i = word_index * 4;
-    ((bytes[i] as u64) << 24)
-        | ((bytes[i + 1] as u64) << 16)
-        | ((bytes[i + 2] as u64) << 8)
-        | (bytes[i + 3] as u64)
+    ((bytes[i] as u64) << 24) | ((bytes[i + 1] as u64) << 16) | ((bytes[i + 2] as u64) << 8) | (bytes[i + 3] as u64)
 }
 
 /// Run one SHA-256 block: extend the 16 message words into the 64-word
@@ -192,12 +189,7 @@ fn header_first_block(version: u32, prev_blockhash: [u8; 32], merkle_root: [u8; 
 /// Build the second SHA-256 block words for a Bitcoin header represented by
 /// disjoint prover/header-state fields.
 #[inline]
-fn header_second_block(
-    merkle_root: [u8; 32],
-    timestamp: u32,
-    compact_target: u32,
-    nonce: u32,
-) -> [u64; 16] {
+fn header_second_block(merkle_root: [u8; 32], timestamp: u32, compact_target: u32, nonce: u32) -> [u64; 16] {
     // Live words only (data + padding + length); w[5..15] stay zero as SHA
     // padding, w[16..64] are filled by the message schedule.
     let mut words = [0u64; 16];

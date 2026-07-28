@@ -1,6 +1,6 @@
 use zkpow_core::{
-    advance_ordered_timestamp_run, check_proof_of_work, has_ordered_timestamp_window,
-    ordered_median_timestamp_slot, timestamp_slot, EPOCH_LENGTH, WINDOW_SIZE,
+    advance_ordered_timestamp_run, check_proof_of_work, has_ordered_timestamp_window, ordered_median_timestamp_slot,
+    timestamp_slot, EPOCH_LENGTH, WINDOW_SIZE,
 };
 
 use crate::types::{current_difficulty, ConnectedHeader, Header, Tip};
@@ -88,8 +88,7 @@ pub fn tip_from_connected(anchor: &Tip, connected: &[ConnectedHeader]) -> Tip {
         timestamps[timestamp_slot(ch.height)] = ch.header.inner.timestamp.into_inner();
     }
 
-    let (current_nbits, current_target, current_work) =
-        current_difficulty(last.header.inner.compact_target);
+    let (current_nbits, current_target, current_work) = current_difficulty(last.header.inner.compact_target);
 
     Tip::new(
         last.block_hash,
@@ -105,10 +104,9 @@ pub fn tip_from_connected(anchor: &Tip, connected: &[ConnectedHeader]) -> Tip {
 
 #[cfg(test)]
 mod tests {
+    use zkpow_core::{target_from_bits, BlockHash, BlockTimestamp, CompactTarget, Header as CoreHeader, Target};
+
     use super::*;
-    use zkpow_core::{
-        target_from_bits, BlockHash, BlockTimestamp, CompactTarget, Header as CoreHeader, Target,
-    };
 
     // The compact form's mantissa is masked to 23 bits (0x007fffff), so the
     // loosest target it can represent has only its single most-significant
@@ -134,12 +132,7 @@ mod tests {
     /// validation uses the cached target rather than the header's own claim.
     /// At the (very loose, ~99.6%-of-hashes-pass) test targets this takes
     /// ~1 attempt, never more than a handful.
-    fn mine_header_against(
-        prev: BlockHash,
-        claimed_nbits: u32,
-        validate_target: Target,
-        timestamp: u32,
-    ) -> Header {
+    fn mine_header_against(prev: BlockHash, claimed_nbits: u32, validate_target: Target, timestamp: u32) -> Header {
         (0u32..)
             .map(|nonce| make_header(prev, claimed_nbits, timestamp, nonce))
             .find(|header| check_proof_of_work(header.block_hash(), validate_target))
@@ -147,12 +140,7 @@ mod tests {
     }
 
     fn mine_header(prev: BlockHash, nbits: u32, timestamp: u32) -> Header {
-        mine_header_against(
-            prev,
-            nbits,
-            target_from_bits(CompactTarget::new(nbits)),
-            timestamp,
-        )
+        mine_header_against(prev, nbits, target_from_bits(CompactTarget::new(nbits)), timestamp)
     }
 
     fn build_chain(anchor: &Tip, count: u32, nbits_at: impl Fn(u32) -> u32) -> Vec<Header> {
@@ -174,8 +162,7 @@ mod tests {
     /// would carry after validating its way there, without having to mine
     /// `height` real headers to construct one.
     fn synthetic_anchor(height: u64, nbits: u32) -> Tip {
-        let (current_nbits, current_target, current_work) =
-            current_difficulty(CompactTarget::new(nbits));
+        let (current_nbits, current_target, current_work) = current_difficulty(CompactTarget::new(nbits));
         Tip::new(
             BlockHash::new([0xAB; 32]),
             height,
@@ -196,11 +183,7 @@ mod tests {
         let headers = build_chain(&anchor, total, |_| TRIVIAL_NBITS_A);
 
         let connected = connect_headers(&anchor, &headers);
-        assert_eq!(
-            connected.len(),
-            total as usize,
-            "every header should connect"
-        );
+        assert_eq!(connected.len(), total as usize, "every header should connect");
         for (i, ch) in connected.iter().enumerate() {
             assert_eq!(ch.height, anchor.height + 1 + i as u64);
         }
@@ -233,11 +216,7 @@ mod tests {
         // exactly the `height % EPOCH_LENGTH == 0` case.
         let boundary_header = mine_header(anchor.hash, TRIVIAL_NBITS_B, 2_000_010_000);
         let connected = connect_headers(&anchor, std::slice::from_ref(&boundary_header));
-        assert_eq!(
-            connected.len(),
-            1,
-            "boundary header should validate under its own (new) bits"
-        );
+        assert_eq!(connected.len(), 1, "boundary header should validate under its own (new) bits");
 
         let (_, target_b, work_b) = current_difficulty(CompactTarget::new(TRIVIAL_NBITS_B));
         assert_eq!(
@@ -256,8 +235,7 @@ mod tests {
         // actually govern), not A's (what it dishonestly claims), so the
         // assertion below can only pass if the cache — not the header's own
         // bits — is what's actually checked.
-        let mid_epoch_header =
-            mine_header_against(tip.hash, TRIVIAL_NBITS_A, target_b, 2_000_020_000);
+        let mid_epoch_header = mine_header_against(tip.hash, TRIVIAL_NBITS_A, target_b, 2_000_020_000);
         let connected_mid = connect_headers(&tip, std::slice::from_ref(&mid_epoch_header));
         assert_eq!(connected_mid.len(), 1);
         assert_eq!(
@@ -277,8 +255,7 @@ mod tests {
     #[test]
     fn median_time_past_matches_hand_computed_values_through_a_wrap() {
         let base = 2_000_000_000u32;
-        let (current_nbits, current_target, current_work) =
-            current_difficulty(CompactTarget::new(TRIVIAL_NBITS_A));
+        let (current_nbits, current_target, current_work) = current_difficulty(CompactTarget::new(TRIVIAL_NBITS_A));
         let mut timestamps = [0u32; WINDOW_SIZE];
         timestamps[0] = base;
         let anchor = Tip::new(
@@ -324,15 +301,8 @@ mod tests {
 
         for (i, ch) in connected.iter().enumerate() {
             let height = i as u64 + 1;
-            assert_eq!(
-                ch.median_time_past,
-                expected_mtp(height),
-                "height {height}: median_time_past"
-            );
-            assert_eq!(
-                ch.ordered_timestamp_run, height,
-                "height {height}: ordered timestamp run"
-            );
+            assert_eq!(ch.median_time_past, expected_mtp(height), "height {height}: median_time_past");
+            assert_eq!(ch.ordered_timestamp_run, height, "height {height}: ordered timestamp run");
         }
 
         // Spot-check the exact wrap boundary by hand, not just via the closed
@@ -349,8 +319,7 @@ mod tests {
     #[test]
     fn connect_headers_resets_ordered_timestamp_run_on_timestamp_regression() {
         let base = 2_000_000_000u32;
-        let (current_nbits, current_target, current_work) =
-            current_difficulty(CompactTarget::new(TRIVIAL_NBITS_A));
+        let (current_nbits, current_target, current_work) = current_difficulty(CompactTarget::new(TRIVIAL_NBITS_A));
         let anchor = Tip::new(
             BlockHash::new([0xEF; 32]),
             10,
@@ -385,8 +354,7 @@ mod tests {
     #[test]
     fn ordered_window_uses_ring_median_without_changing_result() {
         let base = 2_000_000_000u32;
-        let (current_nbits, current_target, current_work) =
-            current_difficulty(CompactTarget::new(TRIVIAL_NBITS_A));
+        let (current_nbits, current_target, current_work) = current_difficulty(CompactTarget::new(TRIVIAL_NBITS_A));
         let anchor = Tip::new(
             BlockHash::new([0x9A; 32]),
             10,

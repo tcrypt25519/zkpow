@@ -11,11 +11,7 @@ use zkpow_controller::protocol::FileLocation;
 
 use crate::pipeline::BoxError;
 
-pub async fn put_artifact(
-    client: &reqwest::Client,
-    target: &FileLocation,
-    bytes: Vec<u8>,
-) -> Result<(), BoxError> {
+pub async fn put_artifact(client: &reqwest::Client, target: &FileLocation, bytes: Vec<u8>) -> Result<(), BoxError> {
     match target {
         FileLocation::Path(path) => {
             let path = Path::new(path);
@@ -25,7 +21,7 @@ pub async fn put_artifact(
             tokio::fs::write(path, &bytes)
                 .await
                 .map_err(|err| format!("failed to write artifact {}: {err}", path.display()))?;
-        }
+        },
         FileLocation::Url(url) => {
             let response = client
                 .put(url.clone())
@@ -34,19 +30,14 @@ pub async fn put_artifact(
                 .await
                 .map_err(|err| format!("artifact upload failed: {err}"))?;
             if !response.status().is_success() {
-                return Err(
-                    format!("artifact upload returned status {}", response.status()).into(),
-                );
+                return Err(format!("artifact upload returned status {}", response.status()).into());
             }
-        }
+        },
     }
     Ok(())
 }
 
-pub async fn fetch_artifact(
-    client: &reqwest::Client,
-    target: &FileLocation,
-) -> Result<Vec<u8>, BoxError> {
+pub async fn fetch_artifact(client: &reqwest::Client, target: &FileLocation) -> Result<Vec<u8>, BoxError> {
     match target {
         FileLocation::Path(path) => Ok(tokio::fs::read(path)
             .await
@@ -58,16 +49,14 @@ pub async fn fetch_artifact(
                 .await
                 .map_err(|err| format!("artifact download failed: {err}"))?;
             if !response.status().is_success() {
-                return Err(
-                    format!("artifact download returned status {}", response.status()).into(),
-                );
+                return Err(format!("artifact download returned status {}", response.status()).into());
             }
             Ok(response
                 .bytes()
                 .await
                 .map_err(|err| format!("artifact download body read failed: {err}"))?
                 .to_vec())
-        }
+        },
     }
 }
 
@@ -86,13 +75,8 @@ mod tests {
         let target = FileLocation::Path(path.to_string_lossy().into_owned());
         let client = reqwest::Client::new();
 
-        put_artifact(&client, &target, b"proof bytes".to_vec())
-            .await
-            .unwrap();
-        assert_eq!(
-            fetch_artifact(&client, &target).await.unwrap(),
-            b"proof bytes"
-        );
+        put_artifact(&client, &target, b"proof bytes".to_vec()).await.unwrap();
+        assert_eq!(fetch_artifact(&client, &target).await.unwrap(), b"proof bytes");
 
         std::fs::remove_dir_all(&root).ok();
     }

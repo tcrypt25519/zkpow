@@ -24,8 +24,7 @@
 //!   # Run multiple batches in one process
 //!   ZKPOW_BATCH_COUNT=10 cargo run --release -p zkpow-host --bin zkpow-host
 
-use zkpow_host::observability;
-use zkpow_host::pipeline::run_batch_session;
+use zkpow_host::{observability, pipeline::run_batch_session};
 
 #[tokio::main]
 async fn main() {

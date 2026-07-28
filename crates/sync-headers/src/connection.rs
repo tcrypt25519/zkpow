@@ -1,11 +1,15 @@
 //! Minimal Bitcoin P2P client.
 
-use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpStream};
+use std::{
+    io::{Read, Write},
+    net::{SocketAddr, TcpStream},
+};
 
-use bitcoin::block::Header as BitcoinHeader;
-use bitcoin::consensus::{encode, Decodable, Encodable};
-use bitcoin::hashes::Hash;
+use bitcoin::{
+    block::Header as BitcoinHeader,
+    consensus::{encode, Decodable, Encodable},
+    hashes::Hash,
+};
 use zkpow_core::{BlockHash, BlockTimestamp, CompactTarget, Header as CoreHeader};
 
 use crate::types::{Header, Network};
@@ -94,25 +98,23 @@ impl Command {
 /// Simplified version message structure.
 #[derive(Debug)]
 pub struct VersionMessage {
-    pub version: i32,
+    pub version:           i32,
     #[allow(dead_code)]
-    pub services: u64,
+    pub services:          u64,
     #[allow(dead_code)]
-    pub timestamp: i64,
+    pub timestamp:         i64,
     #[allow(dead_code)]
     pub receiver_services: u64,
     #[allow(dead_code)]
-    pub sender_services: u64,
+    pub sender_services:   u64,
     #[allow(dead_code)]
-    pub nonce: u64,
-    pub user_agent: String,
-    pub starting_height: i32,
+    pub nonce:             u64,
+    pub user_agent:        String,
+    pub starting_height:   i32,
 }
 
 impl Decodable for VersionMessage {
-    fn consensus_decode<D: bitcoin::io::Read + ?Sized>(
-        d: &mut D,
-    ) -> std::result::Result<Self, encode::Error> {
+    fn consensus_decode<D: bitcoin::io::Read + ?Sized>(d: &mut D) -> std::result::Result<Self, encode::Error> {
         use bitcoin::io::Read as BitcoinRead;
         let version = Decodable::consensus_decode(d)?;
         let services = Decodable::consensus_decode(d)?;
@@ -155,7 +157,7 @@ impl Decodable for VersionMessage {
 
 /// A P2P connection to a Bitcoin peer.
 pub struct PeerConnection {
-    stream: TcpStream,
+    stream:        TcpStream,
     network_magic: [u8; 4],
 }
 
@@ -171,10 +173,7 @@ impl PeerConnection {
             Network::Regtest => [0xFA, 0xBF, 0xB5, 0xDA],
         };
 
-        let mut conn = Self {
-            stream,
-            network_magic,
-        };
+        let mut conn = Self { stream, network_magic };
         conn.handshake(start_height)?;
         Ok(conn)
     }
@@ -191,10 +190,7 @@ impl PeerConnection {
     fn send_version(&mut self, start_height: i32) -> std::io::Result<()> {
         use std::time::{SystemTime, UNIX_EPOCH};
 
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
 
         let mut payload = Vec::new();
         payload.extend_from_slice(&PROTOCOL_VERSION.to_le_bytes());
@@ -245,11 +241,7 @@ impl PeerConnection {
         self.write_message(Command::SendHeaders, &[])
     }
 
-    pub fn send_getheaders(
-        &mut self,
-        locators: &[BlockHash],
-        stop_hash: BlockHash,
-    ) -> std::io::Result<()> {
+    pub fn send_getheaders(&mut self, locators: &[BlockHash], stop_hash: BlockHash) -> std::io::Result<()> {
         let mut payload = Vec::new();
         payload.extend_from_slice(&PROTOCOL_VERSION.to_le_bytes());
         encode::VarInt(locators.len() as u64)
@@ -271,8 +263,7 @@ impl PeerConnection {
         let mut headers = Vec::with_capacity(count.0 as usize);
         for _ in 0..count.0 {
             let bh: BitcoinHeader = Decodable::consensus_decode(&mut cursor).map_err(io_error)?;
-            let _tx_count: encode::VarInt =
-                Decodable::consensus_decode(&mut cursor).map_err(io_error)?;
+            let _tx_count: encode::VarInt = Decodable::consensus_decode(&mut cursor).map_err(io_error)?;
             headers.push(Header::new(bitcoin_to_core(bh)));
         }
 
@@ -307,10 +298,7 @@ impl PeerConnection {
         if magic != self.network_magic {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!(
-                    "Invalid magic bytes: {:02x?} (expected {:02x?})",
-                    magic, self.network_magic
-                ),
+                format!("Invalid magic bytes: {:02x?} (expected {:02x?})", magic, self.network_magic),
             ));
         }
 
@@ -345,12 +333,12 @@ impl PeerConnection {
 /// Convert a bitcoin-crate header (decoded from wire) to our core type.
 fn bitcoin_to_core(bh: BitcoinHeader) -> CoreHeader {
     CoreHeader {
-        version: bh.version.to_consensus() as u32,
+        version:        bh.version.to_consensus() as u32,
         prev_blockhash: BlockHash::new(bh.prev_blockhash.to_raw_hash().to_byte_array()),
-        merkle_root: bh.merkle_root.to_raw_hash().to_byte_array(),
-        timestamp: BlockTimestamp::new(bh.time),
+        merkle_root:    bh.merkle_root.to_raw_hash().to_byte_array(),
+        timestamp:      BlockTimestamp::new(bh.time),
         compact_target: CompactTarget::new(bh.bits.to_consensus()),
-        nonce: bh.nonce,
+        nonce:          bh.nonce,
     }
 }
 

@@ -3,14 +3,16 @@
 //! The host is a dumb pipe: it never validates block data or results, it
 //! only moves protocol messages between the controller and the guest:
 //!
-//! * [`HttpController`] POSTs encoded frames to a remote
-//!   `zkpow-controller-serve` (e.g. over a Tailscale-private address).
+//! * [`HttpController`] POSTs encoded frames to a remote `zkpow-controller-serve` (e.g. over a Tailscale-private
+//!   address).
 //! * [`LocalController`] calls the typed runtime API directly.
 
 use std::future::Future;
 
-use zkpow_controller::protocol::{decode, Batch};
-use zkpow_controller::runtime::ControllerRuntime;
+use zkpow_controller::{
+    protocol::{decode, Batch},
+    runtime::ControllerRuntime,
+};
 
 use crate::pipeline::BoxError;
 
@@ -47,7 +49,7 @@ impl ControllerTransport for LocalController {
 /// client has no request timeout.
 pub struct HttpController {
     base_url: String,
-    client: reqwest::Client,
+    client:   reqwest::Client,
 }
 
 impl HttpController {
@@ -84,31 +86,26 @@ impl HttpController {
 
 impl ControllerTransport for HttpController {
     async fn pull_batch(&self, run_id: &str) -> Result<Batch, BoxError> {
-        let response = self
-            .post_bytes("/v1/batch", run_id.as_bytes().to_vec())
-            .await?;
+        let response = self.post_bytes("/v1/batch", run_id.as_bytes().to_vec()).await?;
         let batch = decode::<Batch>(&response).map_err(|err| format!("invalid batch: {err}"))?;
-        batch
-            .validate()
-            .map_err(|err| format!("invalid batch: {err}"))?;
+        batch.validate().map_err(|err| format!("invalid batch: {err}"))?;
         Ok(batch)
     }
 
     async fn complete(&self, run_id: &str) -> Result<(), BoxError> {
-        self.post_bytes("/v1/complete", run_id.as_bytes().to_vec())
-            .await?;
+        self.post_bytes("/v1/complete", run_id.as_bytes().to_vec()).await?;
         Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::time::Duration;
-    use zkpow_controller::runtime::ControllerConfig;
-    use zkpow_controller::storage::LocalArtifactStore;
-    use zkpow_controller::{db_path, HeaderStore};
+
+    use zkpow_controller::{db_path, runtime::ControllerConfig, storage::LocalArtifactStore, HeaderStore};
     use zkpow_core::VerifierKeyDigest;
+
+    use super::*;
 
     struct TestVerifier;
 
@@ -126,7 +123,7 @@ mod tests {
     /// table) and one artifact root, so equal requests must produce equal
     /// batches. Drop deletes the test's run row again.
     struct Harness {
-        run_id: String,
+        run_id:        String,
         artifact_root: std::path::PathBuf,
     }
 
@@ -142,17 +139,13 @@ mod tests {
         )
     }
 
-    async fn local_and_http_transports(
-        test_name: &str,
-    ) -> (Harness, LocalController, HttpController) {
+    async fn local_and_http_transports(test_name: &str) -> (Harness, LocalController, HttpController) {
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let artifact_root = std::env::temp_dir().join(format!(
-            "zkpow-transport-{test_name}-{}-{nonce}",
-            std::process::id()
-        ));
+        let artifact_root =
+            std::env::temp_dir().join(format!("zkpow-transport-{test_name}-{}-{nonce}", std::process::id()));
 
         let local = LocalController::new(test_runtime(&artifact_root));
 
@@ -165,11 +158,7 @@ mod tests {
             run_id: format!("test-{test_name}-{nonce}"),
             artifact_root,
         };
-        (
-            harness,
-            local,
-            HttpController::new(format!("http://127.0.0.1:{port}")),
-        )
+        (harness, local, HttpController::new(format!("http://127.0.0.1:{port}")))
     }
 
     impl Drop for Harness {

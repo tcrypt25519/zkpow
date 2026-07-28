@@ -13,11 +13,7 @@ pub trait ProofVerifier: Send + Sync {
     /// Cryptographically verify a compressed proof artifact. The proof's
     /// committed public values must equal `expected_public_values` (which
     /// the controller has already validated against its database).
-    fn verify_compressed(
-        &self,
-        proof_bytes: &[u8],
-        expected_public_values: &[u8],
-    ) -> Result<(), String>;
+    fn verify_compressed(&self, proof_bytes: &[u8], expected_public_values: &[u8]) -> Result<(), String>;
 }
 
 #[cfg(feature = "sp1-verify")]
@@ -25,8 +21,7 @@ pub use sp1::Sp1ElfVerifier;
 
 #[cfg(feature = "sp1-verify")]
 mod sp1 {
-    use sp1_sdk::prelude::*;
-    use sp1_sdk::{CpuProver, ProverClient, SP1ProofWithPublicValues};
+    use sp1_sdk::{prelude::*, CpuProver, ProverClient, SP1ProofWithPublicValues};
 
     use super::ProofVerifier;
     use crate::BoxError;
@@ -36,7 +31,7 @@ mod sp1 {
     /// guest program a run may extend.
     pub struct Sp1ElfVerifier {
         prover: CpuProver,
-        vk: sp1_prover::SP1VerifyingKey,
+        vk:     sp1_prover::SP1VerifyingKey,
     }
 
     impl Sp1ElfVerifier {
@@ -61,11 +56,7 @@ mod sp1 {
             self.verifier_key_digest()
         }
 
-        fn verify_compressed(
-            &self,
-            proof_bytes: &[u8],
-            expected_public_values: &[u8],
-        ) -> Result<(), String> {
+        fn verify_compressed(&self, proof_bytes: &[u8], expected_public_values: &[u8]) -> Result<(), String> {
             let proof: SP1ProofWithPublicValues = postcard::from_bytes(proof_bytes)
                 .map_err(|err| format!("uploaded proof does not deserialize: {err}"))?;
             if proof.public_values.as_slice() != expected_public_values {

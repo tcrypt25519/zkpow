@@ -1,9 +1,11 @@
 //! Peer discovery and management via DNS seeds.
 
-use std::collections::{HashMap, HashSet};
-use std::fmt;
-use std::net::{SocketAddr, ToSocketAddrs};
-use std::time::SystemTime;
+use std::{
+    collections::{HashMap, HashSet},
+    fmt,
+    net::{SocketAddr, ToSocketAddrs},
+    time::SystemTime,
+};
 
 use rand::seq::SliceRandom;
 
@@ -52,9 +54,9 @@ impl fmt::Display for PeerStatus {
 /// A known peer address with its current status and a timestamp.
 #[derive(Debug, Clone)]
 pub struct PeerEntry {
-    pub addr: SocketAddr,
+    pub addr:   SocketAddr,
     pub status: PeerStatus,
-    pub since: SystemTime,
+    pub since:  SystemTime,
 }
 
 impl PeerEntry {
@@ -90,25 +92,17 @@ impl PeerStore {
                 Ok(addrs) => {
                     let count = addrs
                         .filter(|a| match a.ip() {
-                            std::net::IpAddr::V4(ip) => {
-                                !ip.is_loopback() && !ip.is_private() && !ip.is_link_local()
-                            }
+                            std::net::IpAddr::V4(ip) => !ip.is_loopback() && !ip.is_private() && !ip.is_link_local(),
                             std::net::IpAddr::V6(ip) => !ip.is_loopback() && !ip.is_unspecified(),
                         })
-                        .filter_map(|a| {
-                            if seen.insert(a) {
-                                Some(PeerEntry::new(a))
-                            } else {
-                                None
-                            }
-                        })
+                        .filter_map(|a| if seen.insert(a) { Some(PeerEntry::new(a)) } else { None })
                         .collect::<Vec<_>>();
                     tracing::debug!(seed = %seed, resolved = count.len(), "DNS seed resolved");
                     entries.extend(count);
-                }
+                },
                 Err(e) => {
                     tracing::warn!(seed = %seed, error = %e, "Failed to resolve DNS seed");
-                }
+                },
             }
         }
 

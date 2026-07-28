@@ -1,8 +1,10 @@
-use crate::types::u256;
-use bytemuck::{Pod, Zeroable};
 use core::marker::PhantomData;
+
+use bytemuck::{Pod, Zeroable};
 #[cfg(feature = "host")]
 use serde::{Deserialize, Serialize};
+
+use crate::types::u256;
 
 /// Generic branded newtype wrapper providing type-safe distinction without runtime overhead.
 #[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Pod, Zeroable)]
@@ -38,9 +40,7 @@ impl<Tag: Pod + Zeroable, T: Sized + Pod + Zeroable> Branded<Tag, T> {
     // `&[u8; Self::SIZE]` isn't expressible on stable (generic associated const
     // as array length); N is checked against size_of::<T>() at runtime instead.
     pub fn to_bytes<const N: usize>(&self) -> &[u8; N] {
-        bytemuck::bytes_of(&self.0)
-            .as_array()
-            .expect("N must equal size_of::<T>()")
+        bytemuck::bytes_of(&self.0).as_array().expect("N must equal size_of::<T>()")
     }
 }
 
@@ -91,11 +91,7 @@ impl<Tag: Pod + Zeroable> Branded<Tag, u256> {
 
     #[must_use]
     pub fn from_le_bytes_slice(slice: &[u8]) -> Self {
-        assert!(
-            slice.len() == 32,
-            "from_le_bytes_slice: expected 32 bytes, got {}",
-            slice.len()
-        );
+        assert!(slice.len() == 32, "from_le_bytes_slice: expected 32 bytes, got {}", slice.len());
         let bytes: [u8; 32] = slice.try_into().unwrap();
         Self::from_le_bytes(bytes)
     }
@@ -126,11 +122,7 @@ impl<Tag: Pod + Zeroable> Branded<Tag, u32> {
 
     #[must_use]
     pub fn from_le_bytes_slice(slice: &[u8]) -> Self {
-        assert!(
-            slice.len() == 4,
-            "from_le_bytes_slice: expected 4 bytes, got {}",
-            slice.len()
-        );
+        assert!(slice.len() == 4, "from_le_bytes_slice: expected 4 bytes, got {}", slice.len());
         let bytes: [u8; 4] = slice.try_into().unwrap();
         Self::from_le_bytes(bytes)
     }
@@ -155,11 +147,7 @@ impl<Tag: Pod + Zeroable> Branded<Tag, [u8; 32]> {
 
     #[must_use]
     pub fn from_le_bytes_slice(slice: &[u8]) -> Self {
-        assert!(
-            slice.len() == 32,
-            "from_le_bytes_slice: expected 32 bytes, got {}",
-            slice.len()
-        );
+        assert!(slice.len() == 32, "from_le_bytes_slice: expected 32 bytes, got {}", slice.len());
         let bytes: [u8; 32] = slice.try_into().unwrap();
         Self::new(bytes)
     }

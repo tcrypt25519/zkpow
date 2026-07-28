@@ -1,8 +1,5 @@
 use clap::{Args, Parser, Subcommand};
-
-use sync_headers::{
-    connect_headers, tip_from_connected, ConnectedHeader, Header, Network, PeerStore, Tip,
-};
+use sync_headers::{connect_headers, tip_from_connected, ConnectedHeader, Header, Network, PeerStore, Tip};
 use zkpow_store::HeaderStore;
 
 #[derive(Parser, Debug)]
@@ -43,8 +40,7 @@ struct SyncArgs {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "zkpow_cli=info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "zkpow_cli=info".into()),
         )
         .init();
 
@@ -76,13 +72,13 @@ fn sync_p2p(args: &SyncArgs) -> Result<(), Box<dyn std::error::Error>> {
         Some(tip) => {
             tracing::info!(height = tip.height, hash = %tip.hash, "Resuming from existing tip");
             tip
-        }
+        },
         None => {
             tracing::info!("Initializing database with genesis block");
             let genesis = genesis_connected_header();
             store.insert_genesis(&genesis)?;
             Tip::genesis(genesis.block_hash())
-        }
+        },
     };
 
     let mut peer_store = if let Some(addr_str) = &args.p2p_peer {
@@ -135,8 +131,6 @@ fn parse_network(s: &str) -> Result<Network, Box<dyn std::error::Error>> {
         "testnet" | "test" => Ok(Network::Testnet),
         "signet" => Ok(Network::Signet),
         "regtest" | "reg" => Ok(Network::Regtest),
-        other => {
-            Err(format!("unknown network '{other}'; use: bitcoin, testnet, signet, regtest").into())
-        }
+        other => Err(format!("unknown network '{other}'; use: bitcoin, testnet, signet, regtest").into()),
     }
 }

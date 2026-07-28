@@ -14,13 +14,10 @@ fn main() {
     } else {
         Vec::new()
     };
-    sp1_build::build_program_with_args(
-        GUEST_CRATE_PATH,
-        sp1_build::BuildArgs {
-            docker: use_docker,
-            features,
-            ignore_rust_version: true,
-            ..Default::default()
-        },
-    );
+    sp1_build::build_program_with_args(GUEST_CRATE_PATH, sp1_build::BuildArgs {
+        docker: use_docker,
+        features,
+        ignore_rust_version: true,
+        ..Default::default()
+    });
 }

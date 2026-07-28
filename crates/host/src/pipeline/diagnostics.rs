@@ -1,23 +1,25 @@
-use std::collections::{BTreeMap, HashMap};
-use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::{Mutex, OnceLock},
+    time::{Duration, Instant},
+};
 
-use crate::memory_monitor;
-use crate::pipeline::BoxError;
 use sp1_sdk::ExecutionReport;
+
+use crate::{memory_monitor, pipeline::BoxError};
 
 static PHASE_TIMINGS: OnceLock<Mutex<HashMap<&'static str, PhaseTimingAccum>>> = OnceLock::new();
 
 #[derive(Debug, Clone)]
 pub struct PhaseTiming {
-    pub label: String,
+    pub label:               String,
     pub total_duration_secs: f64,
-    pub invocations: u32,
+    pub invocations:         u32,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
 struct PhaseTimingAccum {
-    total: Duration,
+    total:       Duration,
     invocations: u32,
 }
 
@@ -44,9 +46,9 @@ pub(crate) fn collected_phase_timings() -> Vec<PhaseTiming> {
         timings
             .iter()
             .map(|(label, accum)| PhaseTiming {
-                label: (*label).to_string(),
+                label:               (*label).to_string(),
                 total_duration_secs: accum.total.as_secs_f64(),
-                invocations: accum.invocations,
+                invocations:         accum.invocations,
             })
             .collect::<Vec<_>>()
     } else {
@@ -63,10 +65,10 @@ pub(crate) fn collected_phase_timings() -> Vec<PhaseTiming> {
 
 #[derive(Debug, Default)]
 struct CycleTreeNode {
-    self_cycles: u64,
+    self_cycles:      u64,
     self_invocations: u64,
-    total_cycles: u64,
-    children: BTreeMap<String, CycleTreeNode>,
+    total_cycles:     u64,
+    children:         BTreeMap<String, CycleTreeNode>,
 }
 
 impl CycleTreeNode {
@@ -92,10 +94,7 @@ impl CycleTreeNode {
 fn emit_cycle_tree(node: &CycleTreeNode, total_cycles: u64, depth: usize) {
     let mut children: Vec<_> = node.children.iter().collect();
     children.sort_unstable_by(|(name_a, node_a), (name_b, node_b)| {
-        node_b
-            .total_cycles
-            .cmp(&node_a.total_cycles)
-            .then_with(|| name_a.cmp(name_b))
+        node_b.total_cycles.cmp(&node_a.total_cycles).then_with(|| name_a.cmp(name_b))
     });
 
     for (name, child) in children {
@@ -145,11 +144,7 @@ pub fn log_execution_report(report: &ExecutionReport, total_proving_time_secs: f
 
     tracing::info!("  top hot spans:");
     for (label, cycles) in entries.iter().take(12) {
-        let invocations = report
-            .invocation_tracker
-            .get((*label).as_str())
-            .copied()
-            .unwrap_or(1);
+        let invocations = report.invocation_tracker.get((*label).as_str()).copied().unwrap_or(1);
         let percent = if total_tracked_cycles == 0 {
             0.0
         } else {
@@ -170,11 +165,7 @@ pub fn log_execution_report(report: &ExecutionReport, total_proving_time_secs: f
 
     let mut tree = CycleTreeNode::default();
     for (label, cycles) in &entries {
-        let invocations = report
-            .invocation_tracker
-            .get((*label).as_str())
-            .copied()
-            .unwrap_or(1);
+        let invocations = report.invocation_tracker.get((*label).as_str()).copied().unwrap_or(1);
         tree.insert(label, **cycles, invocations);
     }
     tree.finalize_totals();
@@ -215,13 +206,7 @@ where
     let elapsed = started.elapsed();
     record_phase_timing(label, elapsed);
     if memory_monitor::logging_enabled() {
-        memory_monitor::log_delta(
-            label,
-            start_memory,
-            memory_monitor::sample(),
-            elapsed,
-            "proof phase finished",
-        );
+        memory_monitor::log_delta(label, start_memory, memory_monitor::sample(), elapsed, "proof phase finished");
     }
     output
 }
@@ -238,13 +223,7 @@ where
     let elapsed = started.elapsed();
     record_phase_timing(label, elapsed);
     if memory_monitor::logging_enabled() {
-        memory_monitor::log_delta(
-            label,
-            start_memory,
-            memory_monitor::sample(),
-            elapsed,
-            "proof phase finished",
-        );
+        memory_monitor::log_delta(label, start_memory, memory_monitor::sample(), elapsed, "proof phase finished");
     }
     output
 }

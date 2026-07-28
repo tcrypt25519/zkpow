@@ -1,9 +1,11 @@
 use sp1_sdk::prelude::*;
 use tracing::Instrument;
 
-use crate::pipeline::diagnostics::{timed_async, timed_sync};
-use crate::pipeline::execution::check_guest_success;
-use crate::pipeline::BoxError;
+use crate::pipeline::{
+    diagnostics::{timed_async, timed_sync},
+    execution::check_guest_success,
+    BoxError,
+};
 
 /// Prove a batch directly from its stdin. The prover executes the guest
 /// itself, so there is deliberately no separate execution pass first.

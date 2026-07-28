@@ -4,10 +4,8 @@
 //! computes SHA256d over those canonical bytes, then sends only the disjoint
 //! representation used by the optimized guest hash path.
 
-use sp1_sdk::prelude::*;
-use sp1_sdk::{Elf, ProverClient, SP1Stdin};
-
 use sha2::{Digest, Sha256};
+use sp1_sdk::{prelude::*, Elf, ProverClient, SP1Stdin};
 
 const ELF: Elf = include_elf!("guest_hash_vectors");
 const HEADER_SIZE: usize = 80;

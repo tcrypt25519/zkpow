@@ -6,17 +6,17 @@
 //! the updated chain tip (or an error), keeping persistence and validation in
 //! the caller so this crate stays free of any storage dependency.
 
-use std::net::SocketAddr;
-use std::thread;
-use std::time::Duration;
+use std::{net::SocketAddr, thread, time::Duration};
 
 use rand::thread_rng;
 use zkpow_core::{BlockHash, MAINNET_GENESIS_HASH_RAW};
 
-use crate::connection::PeerConnection;
-use crate::error::SyncHeadersError;
-use crate::peers::PeerStore;
-use crate::types::{Header, Network, Tip};
+use crate::{
+    connection::PeerConnection,
+    error::SyncHeadersError,
+    peers::PeerStore,
+    types::{Header, Network, Tip},
+};
 
 /// How many times to retry a connection attempt to the same peer.
 const CONNECT_RETRIES: u32 = 3;
@@ -60,7 +60,7 @@ where
                 return Err(SyncHeadersError::NoCandidates {
                     latest_tip: Box::new(current_tip),
                 });
-            }
+            },
         };
 
         tracing::info!(peer = %peer_addr, tip_height = current_tip.height, "Starting sync run with peer");
@@ -77,29 +77,25 @@ where
             Ok(()) => {
                 tracing::info!(height = current_tip.height, "Sync completed");
                 break;
-            }
+            },
             Err(e) => {
                 current_tip = e.latest_tip().clone();
                 match &e {
                     SyncHeadersError::Connect { peer, source, .. } => {
                         tracing::warn!(peer = %peer, error = %source, "Connection failed, trying different peer");
-                    }
+                    },
                     SyncHeadersError::Peer { source, synced, .. } => {
                         tracing::warn!(error = %source, synced, "Peer error during sync, trying different peer");
-                    }
-                    SyncHeadersError::Callback {
-                        source: _,
-                        synced: _,
-                        ..
-                    } => {
+                    },
+                    SyncHeadersError::Callback { source: _, synced: _, .. } => {
                         return Err(e);
-                    }
+                    },
                     SyncHeadersError::NoCandidates { .. } => {
                         return Err(e);
-                    }
+                    },
                 }
                 peer_store.mark_unreachable(&peer_addr);
-            }
+            },
         }
     }
 
@@ -125,7 +121,7 @@ where
             Ok(c) => {
                 p2p_conn = Some(c);
                 break;
-            }
+            },
             Err(e) => {
                 if attempt + 1 < CONNECT_RETRIES {
                     let backoff = Duration::from_secs(2u64.pow(attempt + 1));
@@ -137,7 +133,7 @@ where
                 } else {
                     tracing::warn!(peer = %peer_addr, error = %e, "All connection retries exhausted");
                 }
-            }
+            },
         }
     }
 
@@ -145,14 +141,14 @@ where
         Some(c) => c,
         None => {
             return Err(SyncHeadersError::Connect {
-                peer: peer_addr,
-                source: Box::new(std::io::Error::new(
+                peer:       peer_addr,
+                source:     Box::new(std::io::Error::new(
                     std::io::ErrorKind::ConnectionRefused,
                     "all connection retries exhausted",
                 )),
                 latest_tip: Box::new(current_tip.clone()),
             });
-        }
+        },
     };
 
     loop {
@@ -165,9 +161,9 @@ where
 
         if let Err(e) = p2p_conn.send_getheaders(&locators, stop_hash) {
             return Err(SyncHeadersError::Peer {
-                source: Box::new(e),
+                source:     Box::new(e),
                 latest_tip: Box::new(current_tip.clone()),
-                synced: *total_synced,
+                synced:     *total_synced,
             });
         }
 
@@ -175,37 +171,30 @@ where
             Ok(h) => h,
             Err(e) => {
                 return Err(SyncHeadersError::Peer {
-                    source: Box::new(e),
+                    source:     Box::new(e),
                     latest_tip: Box::new(current_tip.clone()),
-                    synced: *total_synced,
+                    synced:     *total_synced,
                 });
-            }
+            },
         };
 
         if raw_headers.is_empty() {
-            tracing::info!(
-                height = current_tip.height,
-                "Peer has no more headers — we're at the tip"
-            );
+            tracing::info!(height = current_tip.height, "Peer has no more headers, we're at the tip");
             break;
         }
 
         *batch += 1;
-        tracing::info!(
-            batch,
-            received = raw_headers.len(),
-            "Received headers from peer"
-        );
+        tracing::info!(batch, received = raw_headers.len(), "Received headers from peer");
 
         let new_tip = match on_headers(&raw_headers, current_tip) {
             Ok(tip) => tip,
             Err(e) => {
                 return Err(SyncHeadersError::Callback {
-                    source: Box::new(e),
+                    source:     Box::new(e),
                     latest_tip: Box::new(current_tip.clone()),
-                    synced: *total_synced,
+                    synced:     *total_synced,
                 });
-            }
+            },
         };
 
         let valid_count = new_tip.height - current_tip.height;

@@ -12,10 +12,7 @@ static mut LOG_GUARD: Option<WorkerGuard> = None;
 
 fn env_truthy(name: &str) -> bool {
     matches!(
-        std::env::var(name)
-            .unwrap_or_default()
-            .to_ascii_lowercase()
-            .as_str(),
+        std::env::var(name).unwrap_or_default().to_ascii_lowercase().as_str(),
         "1" | "true" | "yes" | "on"
     )
 }
@@ -23,9 +20,9 @@ fn env_truthy(name: &str) -> bool {
 /// Initialise tracing.
 ///
 /// Two layers are registered:
-/// - **stderr** — compact human-readable output, filtered by `RUST_LOG` (default: off).
-/// - **`logs/run.jsonl`** — newline-delimited JSON, always written at `info` level and above.
-///   Agents can query this file directly; see the Debugging section in AGENTS.md.
+/// - **stderr**: compact human-readable output, filtered by `RUST_LOG` (default: off).
+/// - **`logs/run.jsonl`**: newline-delimited JSON, always written at `info` level and above. Agents can query this
+///   file directly; see the Debugging section in AGENTS.md.
 pub fn init() {
     INIT.call_once(|| {
         let show_detailed_spans = env_truthy(ENV_ZKPOW_SHOW_COMPRESSED_PROOF_SPANS);
@@ -87,8 +84,7 @@ pub fn init() {
             .init();
 
         if enable_console {
-            let console_bind = std::env::var("TOKIO_CONSOLE_BIND")
-                .unwrap_or_else(|_| "127.0.0.1:6669".to_string());
+            let console_bind = std::env::var("TOKIO_CONSOLE_BIND").unwrap_or_else(|_| "127.0.0.1:6669".to_string());
             println!("Tokio Console subscriber initialized on {console_bind}");
         }
         println!("Structured JSON logs → logs/run.jsonl");

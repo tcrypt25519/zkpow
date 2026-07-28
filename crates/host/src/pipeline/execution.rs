@@ -5,18 +5,14 @@
 //! exception is surfacing a guest-reported failure as an error instead of
 //! completing with failure public values the controller would reject anyway.
 
-use sp1_sdk::prelude::*;
-use sp1_sdk::ExecutionReport;
+use sp1_sdk::{prelude::*, ExecutionReport};
 
-use crate::pipeline::diagnostics::timed_async;
-use crate::pipeline::BoxError;
-use crate::pipeline::ELF;
-use crate::util::HeaderChainPublicValues;
+use crate::{
+    pipeline::{diagnostics::timed_async, BoxError, ELF},
+    util::HeaderChainPublicValues,
+};
 
-pub(crate) async fn execute_batch<P>(
-    prover: &P,
-    stdin: SP1Stdin,
-) -> Result<(Vec<u8>, ExecutionReport), BoxError>
+pub(crate) async fn execute_batch<P>(prover: &P, stdin: SP1Stdin) -> Result<(Vec<u8>, ExecutionReport), BoxError>
 where
     P: Prover,
     P::Error: std::fmt::Display + Send + Sync + 'static,

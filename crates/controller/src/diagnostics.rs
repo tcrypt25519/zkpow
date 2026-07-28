@@ -41,11 +41,7 @@ impl ClaimHex for Claim {
 fn format_claim_pretty(claim: &Claim) -> String {
     let mut output = String::new();
     output.push_str("    Claim {\n");
-    push_claim_field(
-        &mut output,
-        "genesis_hash",
-        &claim.genesis_hash_display_hex(),
-    );
+    push_claim_field(&mut output, "genesis_hash", &claim.genesis_hash_display_hex());
     push_claim_field(&mut output, "tip_hash", &claim.tip_hash_display_hex());
     push_claim_field(&mut output, "chain_work", &claim.chain_work_display_hex());
     push_claim_field(&mut output, "height", &claim.height_display_hex());
@@ -73,11 +69,7 @@ pub fn format_claim_mismatch(actual: &Claim, expected: &Claim) -> String {
     format_claim_mismatch_with_mode(actual, expected, highlight_mode_from_env())
 }
 
-pub fn format_claim_mismatch_with_mode(
-    actual: &Claim,
-    expected: &Claim,
-    mode: HighlightMode,
-) -> String {
+pub fn format_claim_mismatch_with_mode(actual: &Claim, expected: &Claim, mode: HighlightMode) -> String {
     let mut output = String::new();
     output.push_str("  actual claim:\n");
     output.push_str("    Claim {\n");
@@ -115,19 +107,12 @@ pub fn format_claim_mismatch_with_mode(
     output
 }
 
-fn push_claim_mismatch_field(
-    output: &mut String,
-    name: &str,
-    actual: &str,
-    expected: &str,
-    mode: HighlightMode,
-) {
+fn push_claim_mismatch_field(output: &mut String, name: &str, actual: &str, expected: &str, mode: HighlightMode) {
     if actual.len() == 64 {
         push_wide_claim_mismatch_field(output, name, actual, expected, mode);
     } else {
         let has_mismatch = actual != expected;
-        let (actual, expected) =
-            highlight_with_expected_mode(expected, actual, mode, actual.len() == 8);
+        let (actual, expected) = highlight_with_expected_mode(expected, actual, mode, actual.len() == 8);
         output.push_str(&field_prefix(name));
         output.push_str(&actual);
         output.push_str(",\n");
@@ -139,13 +124,7 @@ fn push_claim_mismatch_field(
     }
 }
 
-fn push_wide_claim_mismatch_field(
-    output: &mut String,
-    name: &str,
-    actual: &str,
-    expected: &str,
-    mode: HighlightMode,
-) {
+fn push_wide_claim_mismatch_field(output: &mut String, name: &str, actual: &str, expected: &str, mode: HighlightMode) {
     let first_actual = &actual[..32];
     let first_expected = &expected[..32];
     let second_actual = &actual[32..];
@@ -154,10 +133,8 @@ fn push_wide_claim_mismatch_field(
     let second_mismatch = second_actual != second_expected;
     let has_mismatch = first_mismatch || second_mismatch;
 
-    let (first_actual, first_expected) =
-        highlight_with_expected_mode(first_expected, first_actual, mode, false);
-    let (second_actual, second_expected) =
-        highlight_with_expected_mode(second_expected, second_actual, mode, false);
+    let (first_actual, first_expected) = highlight_with_expected_mode(first_expected, first_actual, mode, false);
+    let (second_actual, second_expected) = highlight_with_expected_mode(second_expected, second_actual, mode, false);
 
     output.push_str(&field_prefix(name));
     output.push_str(&first_actual);
@@ -291,8 +268,9 @@ fn display_hex_32(mut bytes: [u8; 32]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use zkpow_core::{BlockHash, ChainWork};
+
+    use super::*;
 
     #[test]
     fn highlight_marks_mismatches_and_zero_padding() {
@@ -326,24 +304,14 @@ mod tests {
             ),
         ];
 
-        for (
-            name,
-            expected_value,
-            actual_value,
-            mode,
-            highlight_zeroes,
-            expected_actual_row,
-            expected_expected_row,
-        ) in cases
+        for (name, expected_value, actual_value, mode, highlight_zeroes, expected_actual_row, expected_expected_row) in
+            cases
         {
             let (actual_output, expected_output) =
                 highlight_with_expected_mode(expected_value, actual_value, mode, highlight_zeroes);
 
             assert_eq!(actual_output, expected_actual_row, "{name}: actual row");
-            assert_eq!(
-                expected_output, expected_expected_row,
-                "{name}: expected row"
-            );
+            assert_eq!(expected_output, expected_expected_row, "{name}: expected row");
         }
     }
 
@@ -351,9 +319,9 @@ mod tests {
     fn claim_mismatch_splits_32_byte_fields_and_pairs_corrections() {
         let actual = Claim {
             genesis_hash: BlockHash::from_le_bytes([0x11; 32]),
-            tip_hash: BlockHash::from_le_bytes([0x22; 32]),
-            chain_work: ChainWork::from_le_bytes([0x33; 32]),
-            height: 1,
+            tip_hash:     BlockHash::from_le_bytes([0x22; 32]),
+            chain_work:   ChainWork::from_le_bytes([0x33; 32]),
+            height:       1,
         };
         let expected = Claim {
             tip_hash: BlockHash::from_le_bytes([0x44; 32]),
@@ -367,24 +335,21 @@ mod tests {
         assert!(output.contains(
             &format!("tip_hash: [22222222222222222222222222222222]\n{tip_hash_value_prefix}[44444444444444444444444444444444]\n\n{tip_hash_value_prefix}[22222222222222222222222222222222]")
         ));
-        assert!(output.contains(&format!(
-            "{tip_hash_value_prefix}[44444444444444444444444444444444]"
-        )));
+        assert!(output.contains(&format!("{tip_hash_value_prefix}[44444444444444444444444444444444]")));
         assert!(output.contains("height: 000000[01]"));
         assert!(output.contains(&format!("{}[02]", value_prefix("height"))));
         assert!(output.contains("expected claim:"));
-        assert!(output.contains(
-            "tip_hash: 44444444444444444444444444444444\n                44444444444444444444444444444444"
-        ));
+        assert!(output
+            .contains("tip_hash: 44444444444444444444444444444444\n                44444444444444444444444444444444"));
     }
 
     #[test]
     fn claim_mismatch_keeps_matching_32_byte_fields_to_two_lines() {
         let claim = Claim {
             genesis_hash: BlockHash::from_le_bytes([0x11; 32]),
-            tip_hash: BlockHash::from_le_bytes([0x22; 32]),
-            chain_work: ChainWork::from_le_bytes([0x33; 32]),
-            height: 1,
+            tip_hash:     BlockHash::from_le_bytes([0x22; 32]),
+            chain_work:   ChainWork::from_le_bytes([0x33; 32]),
+            height:       1,
         };
 
         let output = format_claim_mismatch_with_mode(&claim, &claim, HighlightMode::Brackets);

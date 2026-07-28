@@ -25,16 +25,16 @@ struct ComputeCapability {
 
 #[derive(Debug, Clone)]
 struct CudaGpuInfo {
-    name: String,
+    name:               String,
     compute_capability: ComputeCapability,
-    memory_total_mib: u32,
+    memory_total_mib:   u32,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct CudaPreflightReport {
-    selected_device_id: u32,
-    gpu_count: usize,
-    selected_gpu: CudaGpuInfo,
+    selected_device_id:    u32,
+    gpu_count:             usize,
+    selected_gpu:          CudaGpuInfo,
     reported_cuda_version: Option<NumericVersion>,
 }
 
@@ -59,13 +59,10 @@ pub(crate) fn run_preflight(cuda_device_id: Option<u32>) -> Result<CudaPreflight
         .into());
     }
 
-    let gpu_query = run_command_stdout(
-        "nvidia-smi",
-        &[
-            "--query-gpu=name,compute_cap,memory.total",
-            "--format=csv,noheader,nounits",
-        ],
-    )?;
+    let gpu_query = run_command_stdout("nvidia-smi", &[
+        "--query-gpu=name,compute_cap,memory.total",
+        "--format=csv,noheader,nounits",
+    ])?;
     let gpus = parse_nvidia_smi_gpu_query(&gpu_query)?;
     if gpus.is_empty() {
         return Err("`nvidia-smi` reported no NVIDIA GPUs".into());
@@ -86,10 +83,7 @@ pub(crate) fn run_preflight(cuda_device_id: Option<u32>) -> Result<CudaPreflight
     if selected_gpu.compute_capability < MIN_CUDA_COMPUTE_CAPABILITY {
         return Err(format!(
             "GPU {} (`{}`) reports compute capability {}; SP1 requires >= {}",
-            selected_device_id,
-            selected_gpu.name,
-            selected_gpu.compute_capability,
-            MIN_CUDA_COMPUTE_CAPABILITY,
+            selected_device_id, selected_gpu.name, selected_gpu.compute_capability, MIN_CUDA_COMPUTE_CAPABILITY,
         )
         .into());
     }
@@ -98,11 +92,7 @@ pub(crate) fn run_preflight(cuda_device_id: Option<u32>) -> Result<CudaPreflight
     let reported_cuda_version = parse_cuda_version_from_nvidia_smi_output(&nvidia_smi_output)?;
     if let Some(version) = reported_cuda_version {
         if version < MIN_REPORTED_CUDA_VERSION {
-            return Err(format!(
-                "reported CUDA runtime {} is too old; SP1 requires at least 12.5.1",
-                version
-            )
-            .into());
+            return Err(format!("reported CUDA runtime {} is too old; SP1 requires at least 12.5.1", version).into());
         }
     } else {
         tracing::warn!(
@@ -177,9 +167,7 @@ fn run_command_stdout(program: &str, args: &[&str]) -> Result<String, BoxError> 
     Ok(String::from_utf8(output.stdout)?)
 }
 
-fn parse_cuda_version_from_nvidia_smi_output(
-    output: &str,
-) -> Result<Option<NumericVersion>, BoxError> {
+fn parse_cuda_version_from_nvidia_smi_output(output: &str) -> Result<Option<NumericVersion>, BoxError> {
     let marker = "CUDA Version:";
     let Some(start) = output.find(marker) else {
         return Ok(None);
@@ -204,9 +192,9 @@ fn parse_nvidia_smi_gpu_query(output: &str) -> Result<Vec<CudaGpuInfo>, BoxError
                 .into());
             }
             let compute_capability = parse_compute_capability(parts[1])?;
-            let memory_total_mib = parts[2].parse::<u32>().map_err(|err| {
-                format!("invalid GPU memory value `{}` in `nvidia-smi` output: {err}", parts[2])
-            })?;
+            let memory_total_mib = parts[2]
+                .parse::<u32>()
+                .map_err(|err| format!("invalid GPU memory value `{}` in `nvidia-smi` output: {err}", parts[2]))?;
             Ok(CudaGpuInfo {
                 name: parts[0].to_owned(),
                 compute_capability,
@@ -232,11 +220,7 @@ fn parse_numeric_version(input: &str) -> Result<NumericVersion, BoxError> {
         .unwrap_or("0")
         .parse::<u32>()
         .map_err(|err| format!("invalid patch version in `{input}`: {err}"))?;
-    Ok(NumericVersion {
-        major,
-        minor,
-        patch,
-    })
+    Ok(NumericVersion { major, minor, patch })
 }
 
 fn parse_compute_capability(input: &str) -> Result<ComputeCapability, BoxError> {
@@ -260,14 +244,11 @@ mod tests {
         let parsed = parse_cuda_version_from_nvidia_smi_output(banner)
             .expect("banner should parse")
             .expect("banner should contain a CUDA version");
-        assert_eq!(
-            parsed,
-            NumericVersion {
-                major: 12,
-                minor: 6,
-                patch: 0
-            }
-        );
+        assert_eq!(parsed, NumericVersion {
+            major: 12,
+            minor: 6,
+            patch: 0,
+        });
     }
 
     #[test]
@@ -279,10 +260,7 @@ NVIDIA RTX 3090, 8.6, 24268\n";
         let parsed = parse_nvidia_smi_gpu_query(query).expect("query output should parse");
         assert_eq!(parsed.len(), 2);
         assert_eq!(parsed[0].name, "NVIDIA RTX 4090");
-        assert_eq!(
-            parsed[0].compute_capability,
-            ComputeCapability { major: 8, minor: 9 }
-        );
+        assert_eq!(parsed[0].compute_capability, ComputeCapability { major: 8, minor: 9 });
         assert_eq!(parsed[1].memory_total_mib, 24268);
     }
 }

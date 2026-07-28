@@ -28,10 +28,14 @@
 
 use std::net::SocketAddr;
 
-use zkpow_controller::runtime::{ControllerConfig, ControllerRuntime};
-use zkpow_controller::storage::{ArtifactStore, LocalArtifactStore, S3ArtifactStore, S3Config};
-use zkpow_controller::verify::ProofVerifier;
-use zkpow_controller::{db_path, http::build_router, BlockHash, HeaderStore};
+use zkpow_controller::{
+    db_path,
+    http::build_router,
+    runtime::{ControllerConfig, ControllerRuntime},
+    storage::{ArtifactStore, LocalArtifactStore, S3ArtifactStore, S3Config},
+    verify::ProofVerifier,
+    BlockHash, HeaderStore,
+};
 
 const DEFAULT_PORT: u16 = 7878;
 const DEFAULT_PROOF_STORE_DIR: &str = "proof_store";
@@ -60,17 +64,16 @@ fn storage_from_env() -> Box<dyn ArtifactStore> {
                 })
                 .expect("failed to construct S3 artifact store"),
             )
-        }
+        },
         None => {
-            let root =
-                env("ZKPOW_PROOF_STORE_DIR").unwrap_or_else(|| DEFAULT_PROOF_STORE_DIR.to_string());
+            let root = env("ZKPOW_PROOF_STORE_DIR").unwrap_or_else(|| DEFAULT_PROOF_STORE_DIR.to_string());
             tracing::warn!(
                 root,
                 "using local artifact storage; hosts must share this filesystem \
                  (set ZKPOW_S3_* for remote hosts)"
             );
             Box::new(LocalArtifactStore::new(root))
-        }
+        },
     }
 }
 
@@ -79,12 +82,8 @@ async fn verifier_from_env() -> Box<dyn ProofVerifier> {
 
     #[cfg(feature = "sp1-verify")]
     {
-        let elf = std::fs::read(&elf_path)
-            .unwrap_or_else(|err| panic!("failed to read guest ELF {elf_path}: {err}"));
-        tracing::info!(
-            elf_path,
-            "setting up SP1 proof verification (this can take a while)"
-        );
+        let elf = std::fs::read(&elf_path).unwrap_or_else(|err| panic!("failed to read guest ELF {elf_path}: {err}"));
+        tracing::info!(elf_path, "setting up SP1 proof verification (this can take a while)");
         let verifier = zkpow_controller::verify::Sp1ElfVerifier::from_elf(elf)
             .await
             .expect("failed to set up SP1 verifier");

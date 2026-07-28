@@ -1,16 +1,15 @@
 //! Host configuration (environment-driven) and guest stdin construction.
 
-use sp1_sdk::prelude::*;
-use sp1_sdk::SP1Proof;
-use std::collections::HashMap;
-use std::env::VarError;
-use std::path::PathBuf;
+use std::{collections::HashMap, env::VarError, path::PathBuf};
 
+use sp1_sdk::{prelude::*, SP1Proof};
 use zkpow_controller::storage::S3Config;
 
-use crate::pipeline::{BoxError, PipelineMode, ProofGenerationConfig, ProverBackend};
-use crate::util;
-use crate::util::VerifierKeyDigest;
+use crate::{
+    pipeline::{BoxError, PipelineMode, ProofGenerationConfig, ProverBackend},
+    util,
+    util::VerifierKeyDigest,
+};
 
 pub const ENV_ZKPOW_RUN_ID: &str = "ZKPOW_RUN_ID";
 pub const ENV_ZKPOW_BATCH_SIZE: &str = "ZKPOW_BATCH_SIZE";
@@ -63,10 +62,7 @@ impl MapEnvSource {
 
 impl EnvSource for MapEnvSource {
     fn get(&self, var_name: &str) -> Result<String, VarError> {
-        self.values
-            .get(var_name)
-            .cloned()
-            .ok_or(VarError::NotPresent)
+        self.values.get(var_name).cloned().ok_or(VarError::NotPresent)
     }
 }
 
@@ -74,10 +70,7 @@ pub fn genesis_hash() -> util::BlockHash {
     util::BlockHash::new(zkpow_core::MAINNET_GENESIS_HASH_RAW)
 }
 
-pub(crate) fn parse_bool_env(
-    source: &impl EnvSource,
-    var_name: &'static str,
-) -> Result<bool, BoxError> {
+pub(crate) fn parse_bool_env(source: &impl EnvSource, var_name: &'static str) -> Result<bool, BoxError> {
     parse_bool_env_or(source, var_name, false)
 }
 
@@ -90,36 +83,28 @@ pub(crate) fn parse_bool_env_or(
         Ok(value) => match value.to_ascii_lowercase().as_str() {
             "1" | "true" | "yes" | "on" => Ok(true),
             "0" | "false" | "no" | "off" => Ok(false),
-            _ => Err(format!(
-                "invalid {var_name} value `{value}`; expected one of 1,true,yes,on,0,false,no,off"
-            )
-            .into()),
+            _ => {
+                Err(format!("invalid {var_name} value `{value}`; expected one of 1,true,yes,on,0,false,no,off").into())
+            },
         },
         Err(VarError::NotPresent) => Ok(default),
         Err(err) => Err(err.into()),
     }
 }
 
-pub(crate) fn parse_u32_env(
-    source: &impl EnvSource,
-    var_name: &'static str,
-) -> Result<Option<u32>, BoxError> {
+pub(crate) fn parse_u32_env(source: &impl EnvSource, var_name: &'static str) -> Result<Option<u32>, BoxError> {
     match source.get(var_name) {
-        Ok(value) => {
-            Ok(Some(value.parse().map_err(|err| {
-                format!("invalid {var_name} value `{value}`: {err}")
-            })?))
-        }
+        Ok(value) => Ok(Some(
+            value
+                .parse()
+                .map_err(|err| format!("invalid {var_name} value `{value}`: {err}"))?,
+        )),
         Err(VarError::NotPresent) => Ok(None),
         Err(err) => Err(err.into()),
     }
 }
 
-fn parse_u32_env_or(
-    source: &impl EnvSource,
-    var_name: &'static str,
-    default: u32,
-) -> Result<u32, BoxError> {
+fn parse_u32_env_or(source: &impl EnvSource, var_name: &'static str, default: u32) -> Result<u32, BoxError> {
     Ok(parse_u32_env(source, var_name)?.unwrap_or(default))
 }
 
@@ -133,10 +118,7 @@ pub(crate) fn ensure_cuda_requested_configuration(
 ) -> Result<ProverBackend, BoxError> {
     if !use_cuda {
         if cuda_device_id.is_some() {
-            return Err(format!(
-                "{ENV_ZKPOW_CUDA_DEVICE_ID} is only valid when {ENV_ZKPOW_USE_CUDA}=1"
-            )
-            .into());
+            return Err(format!("{ENV_ZKPOW_CUDA_DEVICE_ID} is only valid when {ENV_ZKPOW_USE_CUDA}=1").into());
         }
         return Ok(ProverBackend::Cpu);
     }
@@ -149,25 +131,17 @@ pub(crate) fn ensure_cuda_requested_configuration(
     #[cfg(not(feature = "CUDA"))]
     let _ = cuda_device_id;
     #[cfg(not(feature = "CUDA"))]
-    Err(
-        format!("{ENV_ZKPOW_USE_CUDA}=1 requires building zkpow-host with `--features CUDA`")
-            .into(),
-    )
+    Err(format!("{ENV_ZKPOW_USE_CUDA}=1 requires building zkpow-host with `--features CUDA`").into())
 }
 
-pub(crate) fn config_from_source(
-    source: &impl EnvSource,
-) -> Result<ProofGenerationConfig, BoxError> {
+pub(crate) fn config_from_source(source: &impl EnvSource) -> Result<ProofGenerationConfig, BoxError> {
     let use_cuda = parse_bool_env(source, ENV_ZKPOW_USE_CUDA)?;
     let cuda_device_id = parse_u32_env(source, ENV_ZKPOW_CUDA_DEVICE_ID)?;
 
     let execute_only = parse_bool_env(source, ENV_ZKPOW_EXECUTE_ONLY)?;
     let generate_groth16 = parse_bool_env(source, ENV_ZKPOW_GENERATE_GROTH16)?;
     if execute_only && generate_groth16 {
-        return Err(format!(
-            "{ENV_ZKPOW_GENERATE_GROTH16} cannot be enabled when {ENV_ZKPOW_EXECUTE_ONLY}=1"
-        )
-        .into());
+        return Err(format!("{ENV_ZKPOW_GENERATE_GROTH16} cannot be enabled when {ENV_ZKPOW_EXECUTE_ONLY}=1").into());
     }
 
     let local_batch_size = parse_u32_env_or(source, ENV_ZKPOW_BATCH_SIZE, DEFAULT_BATCH_SIZE)?;
@@ -181,13 +155,10 @@ pub(crate) fn config_from_source(
     };
 
     Ok(ProofGenerationConfig {
-        run_id: source
-            .get(ENV_ZKPOW_RUN_ID)
-            .unwrap_or_else(|_| DEFAULT_RUN_ID.to_string()),
+        run_id: source.get(ENV_ZKPOW_RUN_ID).unwrap_or_else(|_| DEFAULT_RUN_ID.to_string()),
         local_batch_size,
         batch_count,
-        db_path: parse_path_env(source, ENV_ZKPOW_DB_PATH)
-            .unwrap_or_else(zkpow_controller::db_path),
+        db_path: parse_path_env(source, ENV_ZKPOW_DB_PATH).unwrap_or_else(zkpow_controller::db_path),
         mode: if execute_only {
             PipelineMode::ExecuteOnly
         } else if generate_groth16 {
@@ -205,8 +176,7 @@ pub fn config_from_env() -> Result<ProofGenerationConfig, BoxError> {
 }
 
 pub(crate) fn proof_store_dir_from_source(source: &impl EnvSource) -> PathBuf {
-    parse_path_env(source, ENV_ZKPOW_PROOF_STORE_DIR)
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_PROOF_STORE_DIR))
+    parse_path_env(source, ENV_ZKPOW_PROOF_STORE_DIR).unwrap_or_else(|| PathBuf::from(DEFAULT_PROOF_STORE_DIR))
 }
 
 pub fn proof_store_dir_from_env() -> PathBuf {
@@ -221,9 +191,7 @@ pub fn controller_url_from_env() -> Option<String> {
     controller_url_from_source(&ProcessEnv)
 }
 
-pub(crate) fn s3_storage_config_from_source(
-    source: &impl EnvSource,
-) -> Result<Option<S3Config>, BoxError> {
+pub(crate) fn s3_storage_config_from_source(source: &impl EnvSource) -> Result<Option<S3Config>, BoxError> {
     let bucket = match source.get(ENV_ZKPOW_S3_BUCKET) {
         Ok(bucket) => bucket,
         Err(VarError::NotPresent) => return Ok(None),
