@@ -1,7 +1,7 @@
 //! Core types for the header sync protocol.
 
 use zkpow_core::{
-    genesis_work, target_from_bits, work_from_target, BlockHash, ChainWork, CompactTarget,
+    block_work_from_target, genesis_work, target_from_bits, BlockHash, BlockWork, ChainWork, CompactTarget,
     Header as CoreHeader, Target, GENESIS_NBITS, GENESIS_TARGET, WINDOW_SIZE,
 };
 use zkpow_sha256;
@@ -32,7 +32,7 @@ pub struct Tip {
     /// carried forward unchanged otherwise.
     pub current_nbits: CompactTarget,
     pub current_target: Target,
-    pub current_work: ChainWork,
+    pub current_work: BlockWork,
 }
 
 impl Tip {
@@ -45,7 +45,7 @@ impl Tip {
         ordered_timestamp_run: u64,
         current_nbits: CompactTarget,
         current_target: Target,
-        current_work: ChainWork,
+        current_work: BlockWork,
     ) -> Self {
         Self {
             hash,
@@ -63,6 +63,8 @@ impl Tip {
         let mut timestamps = [0u32; WINDOW_SIZE];
         timestamps[0] = zkpow_core::MAINNET_GENESIS_HEADER.timestamp.into_inner();
         let genesis_work = genesis_work();
+        let genesis_block_work =
+            block_work_from_target(GENESIS_TARGET).expect("genesis target is valid blockchain data");
         Self {
             hash,
             height: 0,
@@ -71,7 +73,7 @@ impl Tip {
             ordered_timestamp_run: 0,
             current_nbits: CompactTarget::new(GENESIS_NBITS),
             current_target: GENESIS_TARGET,
-            current_work: genesis_work,
+            current_work: genesis_block_work,
         }
     }
 }
@@ -79,9 +81,9 @@ impl Tip {
 /// Derive `(nbits, target, work)` for a tip whose latest header carries `bits`
 /// — the one place outside a retarget boundary check that expands compact
 /// bits, used to seed/refresh a `Tip`'s cached fields from a header's own bits.
-pub fn current_difficulty(bits: CompactTarget) -> (CompactTarget, Target, ChainWork) {
+pub fn current_difficulty(bits: CompactTarget) -> (CompactTarget, Target, BlockWork) {
     let target = target_from_bits(bits);
-    let work = work_from_target(target).expect("target from valid compact bits is always valid");
+    let work = block_work_from_target(target).expect("target from valid compact bits is always valid");
     (bits, target, work)
 }
 

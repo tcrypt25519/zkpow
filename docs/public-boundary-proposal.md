@@ -51,7 +51,7 @@ The public values should describe the claim a verifier actually checks:
 ```text
 genesis_hash:         [u8; 32]
 tip_hash:             [u8; 32]
-chain_work:           [u8; 32]
+chain_work:           [u8; 16]
 height:               u32
 return_code:          u8   // 0 = success, nonzero = validation failure
 failure_height:       u32  // 0 on success, absolute chain height on failure

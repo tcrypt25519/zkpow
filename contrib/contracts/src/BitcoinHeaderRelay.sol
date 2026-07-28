@@ -18,7 +18,7 @@ contract BitcoinHeaderRelay {
         bytes32 currentBlockHash;
         bytes32 prevBlockHash;
         uint32 height;
-        uint256 cumulativeChainWork;
+        uint128 cumulativeChainWork;
         uint32 timestamp;
         uint32 nBits;
         uint32 nonce;
@@ -34,7 +34,7 @@ contract BitcoinHeaderRelay {
         bytes32 currentBlockHash;
         bytes32 prevBlockHash;
         bytes32 merkleRoot;
-        uint256 cumulativeChainWork;
+        uint128 cumulativeChainWork;
         uint32 height;
         uint32 timestamp;
         uint32 nBits;
@@ -46,7 +46,7 @@ contract BitcoinHeaderRelay {
     error UnsupportedSchemaVersion(uint32 version);
     error GenesisHashMismatch(bytes32 expected, bytes32 actual);
     error NonIncreasingHeight(uint32 currentHeight, uint32 newHeight);
-    error NonIncreasingChainWork(uint256 currentChainWork, uint256 newChainWork);
+    error NonIncreasingChainWork(uint128 currentChainWork, uint128 newChainWork);
     error PrevHashMismatch(bytes32 expected, bytes32 actual);
     error CapacityZero();
     error ZeroAddress();
@@ -59,7 +59,7 @@ contract BitcoinHeaderRelay {
         bytes32 indexed currentBlockHash,
         bytes32 prevBlockHash,
         bytes32 genesisBlockHash,
-        uint256 cumulativeChainWork,
+        uint128 cumulativeChainWork,
         bytes32 proofHash
     );
 
@@ -157,7 +157,7 @@ contract BitcoinHeaderRelay {
     }
 
     function _decodePublicValues(bytes calldata publicValues) internal pure returns (PublicValuesV1 memory summary) {
-        if (publicValues.length != 228) {
+        if (publicValues.length != 212) {
             revert InvalidPublicValuesLength(publicValues.length);
         }
 
@@ -174,8 +174,8 @@ contract BitcoinHeaderRelay {
         offset += 32;
         summary.height = _readU32(publicValues, offset);
         offset += 4;
-        summary.cumulativeChainWork = _readU256(publicValues, offset);
-        offset += 32;
+        summary.cumulativeChainWork = _readU128(publicValues, offset);
+        offset += 16;
         summary.timestamp = _readU32(publicValues, offset);
         offset += 4;
         summary.nBits = _readU32(publicValues, offset);
@@ -223,9 +223,9 @@ contract BitcoinHeaderRelay {
         }
     }
 
-    function _readU256(bytes calldata data, uint256 offset) private pure returns (uint256 value) {
+    function _readU128(bytes calldata data, uint256 offset) private pure returns (uint128 value) {
         assembly {
-            value := calldataload(add(data.offset, offset))
+            value := shr(128, calldataload(add(data.offset, offset)))
         }
     }
 }

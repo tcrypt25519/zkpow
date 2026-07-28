@@ -22,15 +22,15 @@ trait ClaimHex {
 
 impl ClaimHex for Claim {
     fn genesis_hash_display_hex(&self) -> String {
-        display_hex_32(self.genesis_hash.to_le_bytes())
+        display_hex(self.genesis_hash.to_le_bytes())
     }
 
     fn tip_hash_display_hex(&self) -> String {
-        display_hex_32(self.tip_hash.to_le_bytes())
+        display_hex(self.tip_hash.to_le_bytes())
     }
 
     fn chain_work_display_hex(&self) -> String {
-        display_hex_32(self.chain_work.to_le_bytes())
+        display_hex(self.chain_work.to_le_bytes())
     }
 
     fn height_display_hex(&self) -> String {
@@ -261,7 +261,7 @@ pub fn value_prefix(name: &str) -> String {
     format!("      {}  ", " ".repeat(name.len()))
 }
 
-fn display_hex_32(mut bytes: [u8; 32]) -> String {
+fn display_hex<const N: usize>(mut bytes: [u8; N]) -> String {
     bytes.reverse();
     hex::encode(bytes)
 }
@@ -319,9 +319,9 @@ mod tests {
     fn claim_mismatch_splits_32_byte_fields_and_pairs_corrections() {
         let actual = Claim {
             genesis_hash: BlockHash::from_le_bytes([0x11; 32]),
-            tip_hash:     BlockHash::from_le_bytes([0x22; 32]),
-            chain_work:   ChainWork::from_le_bytes([0x33; 32]),
-            height:       1,
+            tip_hash: BlockHash::from_le_bytes([0x22; 32]),
+            chain_work: ChainWork::from_le_bytes([0x33; 16]),
+            height: 1,
         };
         let expected = Claim {
             tip_hash: BlockHash::from_le_bytes([0x44; 32]),
@@ -347,9 +347,9 @@ mod tests {
     fn claim_mismatch_keeps_matching_32_byte_fields_to_two_lines() {
         let claim = Claim {
             genesis_hash: BlockHash::from_le_bytes([0x11; 32]),
-            tip_hash:     BlockHash::from_le_bytes([0x22; 32]),
-            chain_work:   ChainWork::from_le_bytes([0x33; 32]),
-            height:       1,
+            tip_hash: BlockHash::from_le_bytes([0x22; 32]),
+            chain_work: ChainWork::from_le_bytes([0x33; 16]),
+            height: 1,
         };
 
         let output = format_claim_mismatch_with_mode(&claim, &claim, HighlightMode::Brackets);

@@ -1,6 +1,7 @@
 //! Error types for the header sync protocol.
 
 use std::net::SocketAddr;
+
 use thiserror::Error;
 
 use crate::types::Tip;

@@ -7,14 +7,15 @@ extern crate self as zkpow_core;
 #[cfg(all(not(target_os = "zkvm"), test))]
 extern crate std;
 
-use bytemuck::Pod;
 use core::mem::size_of;
+
+use bytemuck::Pod;
 pub use sp1_cycle;
 
 pub mod brand;
 pub mod types;
 
-pub use types::{u256, BlockHash, BlockTimestamp, ChainWork, CompactTarget, Target};
+pub use types::{u256, BlockHash, BlockTimestamp, BlockWork, ChainWork, CompactTarget, Target};
 
 mod header;
 pub use header::{Header, HeaderInput};
@@ -99,14 +100,7 @@ fn hash_header(
     nbits: CompactTarget,
     nonce: u32,
 ) -> BlockHash {
-    host_hash_header(
-        version,
-        prev_blockhash,
-        merkle_root,
-        timestamp,
-        nbits,
-        nonce,
-    )
+    host_hash_header(version, prev_blockhash, merkle_root, timestamp, nbits, nonce)
 }
 
 #[cfg(all(not(target_os = "zkvm"), test))]
@@ -144,10 +138,7 @@ mod test_hash_mock {
 
     fn set(hash: [u8; 32]) -> MockHashGuard {
         MOCK_HEADER_HASH.with(|mock_hash| {
-            assert!(
-                mock_hash.get().is_none(),
-                "hash mock already set in this thread"
-            );
+            assert!(mock_hash.get().is_none(), "hash mock already set in this thread");
             mock_hash.set(Some(hash));
         });
         MockHashGuard
@@ -172,14 +163,7 @@ fn hash_header(
     if let Some(hash) = test_hash_mock::get() {
         return BlockHash::new(hash);
     }
-    host_hash_header(
-        version,
-        prev_blockhash,
-        merkle_root,
-        timestamp,
-        nbits,
-        nonce,
-    )
+    host_hash_header(version, prev_blockhash, merkle_root, timestamp, nbits, nonce)
 }
 
 /// Number of valid entries in an MTP ring buffer whose most-recently-written
@@ -204,11 +188,7 @@ pub const fn has_ordered_timestamp_window(ordered_timestamp_run: u64) -> bool {
 }
 
 #[must_use]
-pub const fn advance_ordered_timestamp_run(
-    ordered_timestamp_run: u64,
-    previous_timestamp: u32,
-    timestamp: u32,
-) -> u64 {
+pub const fn advance_ordered_timestamp_run(ordered_timestamp_run: u64, previous_timestamp: u32, timestamp: u32) -> u64 {
     if timestamp >= previous_timestamp {
         ordered_timestamp_run.saturating_add(1)
     } else {
@@ -266,7 +246,7 @@ pub const GENESIS_NBITS: u32 = 0x1d00ffff;
 /// In LE limbs: limbs[3] = 0xFFFF0000, limbs[0..2] = 0.
 pub const GENESIS_TARGET: Target = Target::from_limbs([0, 0, 0, 0x0000_0000_FFFF_0000]);
 
-pub const GENESIS_WORK: ChainWork = ChainWork::from_limbs([0x0000_0001_0001_0001, 0, 0, 0]);
+pub const GENESIS_WORK: ChainWork = ChainWork::new(0x0000_0001_0001_0001);
 
 #[must_use]
 pub const fn genesis_work() -> ChainWork {
@@ -275,8 +255,8 @@ pub const fn genesis_work() -> ChainWork {
 
 /// Raw little-endian mainnet genesis block hash.
 pub const MAINNET_GENESIS_HASH_RAW: [u8; 32] = [
-    0x6f, 0xe2, 0x8c, 0x0a, 0xb6, 0xf1, 0xb3, 0x72, 0xc1, 0xa6, 0xa2, 0x46, 0xae, 0x63, 0xf7, 0x4f,
-    0x93, 0x1e, 0x83, 0x65, 0xe1, 0x5a, 0x08, 0x9c, 0x68, 0xd6, 0x19, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x6f, 0xe2, 0x8c, 0x0a, 0xb6, 0xf1, 0xb3, 0x72, 0xc1, 0xa6, 0xa2, 0x46, 0xae, 0x63, 0xf7, 0x4f, 0x93, 0x1e, 0x83,
+    0x65, 0xe1, 0x5a, 0x08, 0x9c, 0x68, 0xd6, 0x19, 0x00, 0x00, 0x00, 0x00, 0x00,
 ];
 
 /// The mainnet genesis block header (height 0). `prev_blockhash` is the zero
@@ -286,9 +266,8 @@ pub const MAINNET_GENESIS_HEADER: Header = Header {
     version: 1,
     prev_blockhash: BlockHash::new([0u8; 32]),
     merkle_root: [
-        0x3b, 0xa3, 0xed, 0xfd, 0x7a, 0x7b, 0x12, 0xb2, 0x7a, 0xc7, 0x2c, 0x3e, 0x67, 0x76, 0x8f,
-        0x61, 0x7f, 0xc8, 0x1b, 0xc3, 0x88, 0x8a, 0x51, 0x32, 0x3a, 0x9f, 0xb8, 0xaa, 0x4b, 0x1e,
-        0x5e, 0x4a,
+        0x3b, 0xa3, 0xed, 0xfd, 0x7a, 0x7b, 0x12, 0xb2, 0x7a, 0xc7, 0x2c, 0x3e, 0x67, 0x76, 0x8f, 0x61, 0x7f, 0xc8,
+        0x1b, 0xc3, 0x88, 0x8a, 0x51, 0x32, 0x3a, 0x9f, 0xb8, 0xaa, 0x4b, 0x1e, 0x5e, 0x4a,
     ],
     timestamp: BlockTimestamp::new(1231006505),
     compact_target: CompactTarget::new(GENESIS_NBITS),
@@ -298,15 +277,15 @@ pub const MAINNET_GENESIS_HEADER: Header = Header {
 /// Big-endian byte encoding of chainwork as stored in `headers.db`'s `chainwork`
 /// column — predates `ChainWork`'s little-endian in-memory representation.
 /// Every reader and writer of that column must agree on this convention.
-pub fn chain_work_to_db_bytes(work: ChainWork) -> [u8; 32] {
+pub fn chain_work_to_db_bytes(work: ChainWork) -> [u8; 16] {
     let mut bytes = work.to_le_bytes();
     bytes.reverse();
     bytes
 }
 
-/// Inverse of [`chain_work_to_db_bytes`]. Returns `None` if `bytes` isn't exactly 32 bytes.
+/// Inverse of [`chain_work_to_db_bytes`]. Returns `None` if `bytes` isn't exactly 16 bytes.
 pub fn chain_work_from_db_bytes(bytes: &[u8]) -> Option<ChainWork> {
-    let mut arr: [u8; 32] = bytes.try_into().ok()?;
+    let mut arr: [u8; 16] = bytes.try_into().ok()?;
     arr.reverse();
     Some(ChainWork::from_le_bytes(arr))
 }
@@ -486,7 +465,7 @@ fn shl1_with_carry(value: &mut u256) -> bool {
 /// the implicit leading 1 of the dividend `2^256`; for `bit < 256` we set the
 /// corresponding quotient bit when the remainder meets the divisor.
 #[sp1_cycle::tracked]
-pub fn work_from_target(target: Target) -> Result<ChainWork, TargetError> {
+pub fn block_work_from_target(target: Target) -> Result<BlockWork, TargetError> {
     let mut divisor = *target.as_inner();
     increment_target(&mut divisor)?;
 
@@ -513,7 +492,8 @@ pub fn work_from_target(target: Target) -> Result<ChainWork, TargetError> {
         }
     });
 
-    Ok(ChainWork::from_limbs(quotient))
+    let work: u128 = quotient[0] as u128 | ((quotient[1] as u128) << 64);
+    Ok(BlockWork::new(work))
 }
 
 /// Compute the compact and normalized full target required at a difficulty boundary.
@@ -679,13 +659,13 @@ mod tests {
     #[test]
     fn fixed_width_wire_sizes_match_protocol() {
         assert_eq!(NEW_HEADER_SIZE, 44);
-        assert_eq!(STATE_SIZE, 152);
-        assert_eq!(CLAIM_SIZE, 100);
+        assert_eq!(STATE_SIZE, 144);
+        assert_eq!(CLAIM_SIZE, 84);
         assert_eq!(CONTINUATION_DATA_SIZE, 52);
-        assert_eq!(MINIMAL_PV_SIZE, 169);
+        assert_eq!(MINIMAL_PV_SIZE, 153);
         assert_eq!(align_of::<Header>(), 4);
-        assert_eq!(align_of::<HeaderInput>(), 4);
-        assert_eq!(align_of::<State>(), 8);
+        assert_eq!(align_of::<HeaderEntropy>(), 4);
+        assert_eq!(align_of::<State>(), 16);
     }
 
     #[test]
@@ -693,7 +673,7 @@ mod tests {
         let state: State = State {
             block_hash: BlockHash::new([0xAB; 32]),
             genesis_hash: BlockHash::new([0xCD; 32]),
-            chain_work: ChainWork::from_limbs([1, 2, 3, 4]),
+            chain_work: ChainWork::from_limbs([1, 2]),
             height: 42,
             ..State::default()
         };
@@ -746,18 +726,18 @@ mod tests {
     }
 
     #[test]
-    fn u256_add_handles_carry_and_wrap_cases() {
+    fn chain_work_adds_block_work_with_u128_carry_and_wrap() {
         let cases = [
             (
                 "carry propagation",
-                ChainWork::from_limbs([u64::MAX, 0, 0, 0]),
-                ChainWork::from_limbs([1, 0, 0, 0]),
-                ChainWork::from_limbs([0, 1, 0, 0]),
+                ChainWork::from_limbs([u64::MAX, 0]),
+                BlockWork::from_limbs([1, 0]),
+                ChainWork::from_limbs([0, 1]),
             ),
             (
-                "wrap at 256 bits",
-                ChainWork::from_limbs([u64::MAX; 4]),
-                ChainWork::from_limbs([1, 0, 0, 0]),
+                "wrap at 128 bits",
+                ChainWork::from_limbs([u64::MAX; 2]),
+                BlockWork::from_limbs([1, 0]),
                 ChainWork::default(),
             ),
         ];
@@ -768,12 +748,12 @@ mod tests {
     }
 
     #[test]
-    fn u256_mul_u32_scales_by_small_count() {
-        let value = ChainWork::from_limbs([3, 0, 0, 0]);
+    fn block_work_mul_u32_scales_by_small_count() {
+        let value = BlockWork::from_limbs([3, 0]);
 
         let mut result = value;
         result *= 7;
-        assert_eq!(result, ChainWork::from_limbs([21, 0, 0, 0]));
+        assert_eq!(result, BlockWork::from_limbs([21, 0]));
     }
 
     #[test]
@@ -843,14 +823,12 @@ mod tests {
         ];
 
         let hints = median_hints_for_headers(&state, &headers);
-        state
-            .apply_headers(&headers, &hints)
-            .expect("headers should validate");
+        state.apply_headers(&headers, &hints).expect("headers should validate");
 
-        let work = genesis_work();
+        let work = block_work_from_target(GENESIS_TARGET).expect("genesis target is valid");
         let mut expected = work;
         expected *= 2;
-        let expected = expected + ChainWork::default();
+        let expected = ChainWork::default() + expected + BlockWork::default();
         assert_eq!(state.chain_work, expected);
     }
 
@@ -880,13 +858,12 @@ mod tests {
         ];
 
         let hints = median_hints_for_headers(&state, &headers);
-        state
-            .apply_headers(&headers, &hints)
-            .expect("validation should succeed");
+        state.apply_headers(&headers, &hints).expect("validation should succeed");
 
-        let work = genesis_work();
+        let work = block_work_from_target(GENESIS_TARGET).expect("genesis target is valid");
         let mut expected = work;
         expected *= 3;
+        let expected = ChainWork::default() + expected;
         assert_eq!(state.chain_work, expected);
     }
 
@@ -907,9 +884,7 @@ mod tests {
         }];
         let hints = median_hints_for_headers(&state, &headers);
         // Use a hash that exceeds the target to trigger PowInsufficient.
-        let failure = state
-            .apply_headers(&headers, &hints)
-            .expect_err("should fail PoW");
+        let failure = state.apply_headers(&headers, &hints).expect_err("should fail PoW");
 
         assert_eq!(failure.error_code, ValidationErrorCode::PowInsufficient);
         assert_eq!(failure.failure_height, 6); // last_valid_state.height(5) + 1
@@ -941,11 +916,8 @@ mod tests {
             .apply_headers(&headers, &hints)
             .expect_err("second header should fail timestamp validation");
 
-        let work = genesis_work();
-        assert_eq!(
-            failure.last_valid_state.chain_work,
-            ChainWork::default() + work
-        );
+        let work = block_work_from_target(GENESIS_TARGET).expect("genesis target is valid");
+        assert_eq!(failure.last_valid_state.chain_work, ChainWork::default() + work);
         assert_eq!(failure.failure_height, 2);
     }
 
@@ -1132,11 +1104,7 @@ mod tests {
             let mut state = test_state();
 
             if start_height == 0 {
-                assert_eq!(
-                    median_time_past(&state),
-                    expected_upper_median(0),
-                    "{name}: height 0"
-                );
+                assert_eq!(median_time_past(&state), expected_upper_median(0), "{name}: height 0");
             }
 
             for height in 1..=end_height {
@@ -1220,16 +1188,14 @@ mod tests {
         let claim = Claim {
             genesis_hash: BlockHash::new([1; 32]),
             tip_hash: BlockHash::new([2; 32]),
-            chain_work: ChainWork::from_limbs([3, 4, 5, 6]),
+            chain_work: ChainWork::from_limbs([3, 4]),
             height: 99,
         };
         let bytes = claim.to_bytes();
         assert_eq!(bytes.len(), CLAIM_SIZE);
         assert_eq!(bytes[64..72], 3u64.to_le_bytes());
         assert_eq!(bytes[72..80], 4u64.to_le_bytes());
-        assert_eq!(bytes[80..88], 5u64.to_le_bytes());
-        assert_eq!(bytes[88..96], 6u64.to_le_bytes());
-        assert_eq!(bytes[96..100], 99u32.to_le_bytes());
+        assert_eq!(bytes[80..84], 99u32.to_le_bytes());
         let parsed = Claim::parse(&bytes).unwrap();
         assert_eq!(parsed, claim);
     }
@@ -1245,21 +1211,9 @@ mod tests {
         }
 
         let cases = [
-            (
-                "expected timespan",
-                EXPECTED_EPOCH_TIMESPAN,
-                ExpectedDirection::Equal,
-            ),
-            (
-                "shorter timespan",
-                EXPECTED_EPOCH_TIMESPAN / 4,
-                ExpectedDirection::NotGreater,
-            ),
-            (
-                "longer timespan",
-                EXPECTED_EPOCH_TIMESPAN * 4,
-                ExpectedDirection::NotLess,
-            ),
+            ("expected timespan", EXPECTED_EPOCH_TIMESPAN, ExpectedDirection::Equal),
+            ("shorter timespan", EXPECTED_EPOCH_TIMESPAN / 4, ExpectedDirection::NotGreater),
+            ("longer timespan", EXPECTED_EPOCH_TIMESPAN * 4, ExpectedDirection::NotLess),
             (
                 "minimum clamped timespan",
                 MIN_EPOCH_TIMESPAN as u32,
@@ -1280,13 +1234,13 @@ mod tests {
                 ExpectedDirection::Equal => {
                     assert_eq!(bits, CompactTarget::new(GENESIS_NBITS), "{name}: bits");
                     assert_eq!(new, old, "{name}: target");
-                }
+                },
                 ExpectedDirection::NotGreater => {
                     assert!(new <= old, "{name}: target should be <= old");
-                }
+                },
                 ExpectedDirection::NotLess => {
                     assert!(new >= old, "{name}: target should be >= old");
-                }
+                },
             }
         }
     }

@@ -13,26 +13,26 @@ use zkpow_core::{
 };
 
 const HASH_LEN: usize = 32;
+const WORK_LEN: usize = 16;
 
 fn hash_to_bytes(hash: &BlockHash) -> [u8; HASH_LEN] {
     *hash.as_inner()
 }
 
 fn hash_from_bytes(bytes: &[u8]) -> rusqlite::Result<BlockHash> {
-    let arr: [u8; HASH_LEN] = bytes.try_into().map_err(|_| {
-        rusqlite::Error::InvalidColumnType(0, "blob".into(), rusqlite::types::Type::Blob)
-    })?;
+    let arr: [u8; HASH_LEN] = bytes
+        .try_into()
+        .map_err(|_| rusqlite::Error::InvalidColumnType(0, "blob".into(), rusqlite::types::Type::Blob))?;
     Ok(BlockHash::new(arr))
 }
 
-fn work_to_bytes(work: &ChainWork) -> [u8; HASH_LEN] {
+fn work_to_bytes(work: &ChainWork) -> [u8; WORK_LEN] {
     chain_work_to_db_bytes(*work)
 }
 
 fn work_from_bytes(bytes: &[u8]) -> rusqlite::Result<ChainWork> {
-    chain_work_from_db_bytes(bytes).ok_or_else(|| {
-        rusqlite::Error::InvalidColumnType(0, "blob".into(), rusqlite::types::Type::Blob)
-    })
+    chain_work_from_db_bytes(bytes)
+        .ok_or_else(|| rusqlite::Error::InvalidColumnType(0, "blob".into(), rusqlite::types::Type::Blob))
 }
 
 fn ordered_timestamp_run_from_db(height: u64, value: i64) -> u64 {
@@ -139,14 +139,13 @@ impl HeaderStore {
             Some(row) => {
                 let hash = hash_from_bytes(&row.hash_bytes)?;
                 let chainwork = work_from_bytes(&row.chainwork_bytes)?;
-                let ordered_timestamp_run =
-                    ordered_timestamp_run_from_db(row.height as u64, row.ordered_timestamp_run);
+                let ordered_timestamp_run = ordered_timestamp_run_from_db(row.height as u64, row.ordered_timestamp_run);
                 let (current_nbits, current_target, current_work) =
                     sync_headers::current_difficulty(CompactTarget::new(row.n_bits as u32));
 
-                let mut stmt = self.conn.prepare(
-                    "SELECT height, timestamp FROM headers ORDER BY height DESC LIMIT ?1",
-                )?;
+                let mut stmt = self
+                    .conn
+                    .prepare("SELECT height, timestamp FROM headers ORDER BY height DESC LIMIT ?1")?;
                 let mut timestamps = [0u32; WINDOW_SIZE];
                 let rows = stmt.query_map(params![WINDOW_SIZE as i64], |row| {
                     let row_height: i64 = row.get(0)?;
@@ -168,7 +167,7 @@ impl HeaderStore {
                     current_target,
                     current_work,
                 )))
-            }
+            },
             None => Ok(None),
         }
     }
@@ -203,9 +202,7 @@ impl HeaderStore {
     }
 
     pub fn header_count(&self) -> rusqlite::Result<u64> {
-        let count: i64 = self
-            .conn
-            .query_row("SELECT COUNT(*) FROM headers", [], |row| row.get(0))?;
+        let count: i64 = self.conn.query_row("SELECT COUNT(*) FROM headers", [], |row| row.get(0))?;
         Ok(count as u64)
     }
 
@@ -260,8 +257,7 @@ impl HeaderStore {
     }
 
     pub fn load_header_records(&self, start_height: u64, count: u64) -> Vec<HeaderRecord> {
-        const SQL: &str =
-            "SELECT height, version, prev, merkle_root, timestamp, n_bits, nonce, chainwork, \
+        const SQL: &str = "SELECT height, version, prev, merkle_root, timestamp, n_bits, nonce, chainwork, \
              median_time_past, ordered_timestamp_run FROM headers \
              WHERE height >= ?1 AND height < ?2 ORDER BY height ASC";
 
@@ -286,19 +282,14 @@ impl HeaderStore {
                     header: Header {
                         version: version as u32,
                         prev_blockhash: hash_from_bytes(prev)?,
-                        merkle_root: merkle_root
-                            .try_into()
-                            .expect("merkle_root must be 32 bytes"),
+                        merkle_root: merkle_root.try_into().expect("merkle_root must be 32 bytes"),
                         timestamp: BlockTimestamp::new(timestamp as u32),
                         compact_target: CompactTarget::new(nbits as u32),
                         nonce: nonce as u32,
                     },
                     chain_work: work_from_bytes(chainwork)?,
                     median_time_past: BlockTimestamp::new(median_time_past as u32),
-                    ordered_timestamp_run: ordered_timestamp_run_from_db(
-                        height,
-                        ordered_timestamp_run,
-                    ),
+                    ordered_timestamp_run: ordered_timestamp_run_from_db(height, ordered_timestamp_run),
                 })
             })
             .expect("query");
@@ -416,6 +407,7 @@ impl HeaderStore {
             chain_work: current.chain_work,
             epoch_start_timestamp: epoch_start.header.timestamp,
             timestamps,
+            _padding: [0; 8],
         }
     }
 
@@ -425,14 +417,13 @@ impl HeaderStore {
                 "SELECT verifier_key, verified_height, proof_object FROM runs WHERE run_id = ?1",
                 [run_id],
                 |row| {
-                    let verifier_key: [u8; HASH_LEN] =
-                        row.get::<_, Vec<u8>>(0)?.try_into().map_err(|_| {
-                            rusqlite::Error::InvalidColumnType(
-                                0,
-                                "verifier_key must be 32 bytes".to_string(),
-                                rusqlite::types::Type::Blob,
-                            )
-                        })?;
+                    let verifier_key: [u8; HASH_LEN] = row.get::<_, Vec<u8>>(0)?.try_into().map_err(|_| {
+                        rusqlite::Error::InvalidColumnType(
+                            0,
+                            "verifier_key must be 32 bytes".to_string(),
+                            rusqlite::types::Type::Blob,
+                        )
+                    })?;
                     Ok(RunRecord {
                         verifier_key: VerifierKeyDigest::from_bytes(verifier_key),
                         verified_height: row.get(1)?,
@@ -482,8 +473,7 @@ impl HeaderStore {
 
     /// Forget a run entirely (operator reset of a halted or abandoned chain).
     pub fn delete_run(&self, run_id: &str) -> rusqlite::Result<()> {
-        self.conn
-            .execute("DELETE FROM runs WHERE run_id = ?1", [run_id])?;
+        self.conn.execute("DELETE FROM runs WHERE run_id = ?1", [run_id])?;
         Ok(())
     }
 }
@@ -545,28 +535,26 @@ pub fn genesis_state_from_record(genesis: HeaderRecord, genesis_hash: BlockHash)
         chain_work: genesis.chain_work,
         epoch_start_timestamp: genesis.header.timestamp,
         timestamps,
+        _padding: [0; 8],
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::fs;
-    use std::path::PathBuf;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::{
+        fs,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     use sync_headers::Header as SyncHeader;
-    use zkpow_core::{target_from_bits, work_from_target, BlockTimestamp};
+    use zkpow_core::{block_work_from_target, target_from_bits, BlockTimestamp};
+
+    use super::*;
 
     fn temp_db_path(test_name: &str) -> PathBuf {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        std::env::temp_dir().join(format!(
-            "zkpow-{test_name}-{}-{nonce}.sqlite",
-            std::process::id()
-        ))
+        let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        std::env::temp_dir().join(format!("zkpow-{test_name}-{}-{nonce}.sqlite", std::process::id()))
     }
 
     fn remove_db_files(path: &std::path::Path) {
@@ -589,25 +577,16 @@ mod tests {
         };
         db.create_run("mainnet-01", &record).unwrap();
         assert_eq!(db.load_run("mainnet-01").unwrap(), Some(record.clone()));
-        assert!(
-            db.create_run("mainnet-01", &record).is_err(),
-            "duplicate create"
-        );
+        assert!(db.create_run("mainnet-01", &record).is_err(), "duplicate create");
 
         db.record_run_progress("mainnet-01", 2016, Some("proof_height_1_to_2016.bin"))
             .unwrap();
         let loaded = db.load_run("mainnet-01").unwrap().unwrap();
         assert_eq!(loaded.verified_height, 2016);
-        assert_eq!(
-            loaded.proof_object.as_deref(),
-            Some("proof_height_1_to_2016.bin")
-        );
+        assert_eq!(loaded.proof_object.as_deref(), Some("proof_height_1_to_2016.bin"));
         assert_eq!(loaded.verifier_key, record.verifier_key);
 
-        assert!(
-            db.record_run_progress("ghost", 1, None).is_err(),
-            "unknown run"
-        );
+        assert!(db.record_run_progress("ghost", 1, None).is_err(), "unknown run");
 
         db.delete_run("mainnet-01").unwrap();
         assert_eq!(db.load_run("mainnet-01").unwrap(), None);
@@ -666,12 +645,10 @@ mod tests {
 
         let indexes: Vec<(String, bool)> = {
             let mut stmt = store.conn.prepare("PRAGMA index_list(headers)").unwrap();
-            stmt.query_map([], |row| {
-                Ok((row.get::<_, String>(1)?, row.get::<_, bool>(2)?))
-            })
-            .unwrap()
-            .collect::<Result<_, _>>()
-            .unwrap()
+            stmt.query_map([], |row| Ok((row.get::<_, String>(1)?, row.get::<_, bool>(2)?)))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap()
         };
         assert!(indexes.contains(&("idx_headers_height".to_string(), true)));
 
@@ -725,10 +702,7 @@ mod tests {
         assert_eq!(row.10, 0);
 
         assert_eq!(store.header_count().unwrap(), 1);
-        assert_eq!(
-            store.get_best_tip().unwrap().unwrap().hash,
-            genesis.block_hash()
-        );
+        assert_eq!(store.get_best_tip().unwrap().unwrap().hash, genesis.block_hash());
 
         drop(store);
         remove_db_files(&path);
@@ -743,14 +717,8 @@ mod tests {
         let genesis = genesis_connected_header();
 
         store.insert_genesis(&genesis).unwrap();
-        store
-            .conn
-            .execute("PRAGMA ignore_check_constraints = ON", [])
-            .unwrap();
-        store
-            .conn
-            .execute("UPDATE headers SET ordered_timestamp_run = 1", [])
-            .unwrap();
+        store.conn.execute("PRAGMA ignore_check_constraints = ON", []).unwrap();
+        store.conn.execute("UPDATE headers SET ordered_timestamp_run = 1", []).unwrap();
 
         let _ = store.load_header_batch_witness(0, 1);
     }
@@ -769,8 +737,7 @@ mod tests {
         let mut headers = Vec::new();
         let mut prev_hash = genesis.block_hash();
         let mut cumulative_work = genesis.chainwork;
-        let mut window: Vec<u32> =
-            tip.timestamps[..zkpow_core::timestamp_count(tip.height)].to_vec();
+        let mut window: Vec<u32> = tip.timestamps[..zkpow_core::timestamp_count(tip.height)].to_vec();
         let base_time = genesis.header.inner.timestamp.into_inner();
 
         for i in 1u32..=12 {
@@ -783,19 +750,11 @@ mod tests {
             let mtp = tmp_win[tmp_win.len() / 2];
 
             let header = SyncHeader::new(inner);
-            let work =
-                work_from_target(target_from_bits(inner.compact_target)).expect("valid target");
+            let work = block_work_from_target(target_from_bits(inner.compact_target)).expect("valid target");
             cumulative_work = cumulative_work + work;
             let ordered_timestamp_run = u64::from(i);
             let block_hash = header.block_hash();
-            let ch = ConnectedHeader::new(
-                header,
-                block_hash,
-                i.into(),
-                cumulative_work,
-                mtp,
-                ordered_timestamp_run,
-            );
+            let ch = ConnectedHeader::new(header, block_hash, i.into(), cumulative_work, mtp, ordered_timestamp_run);
             headers.push(ch);
 
             window.push(inner.timestamp.into_inner());
@@ -810,31 +769,19 @@ mod tests {
 
         let mtp1: i64 = store
             .conn
-            .query_row(
-                "SELECT median_time_past FROM headers WHERE height = 1",
-                [],
-                |row| row.get(0),
-            )
+            .query_row("SELECT median_time_past FROM headers WHERE height = 1", [], |row| row.get(0))
             .unwrap();
         assert_eq!(mtp1, base_time as i64);
 
         let mtp2: i64 = store
             .conn
-            .query_row(
-                "SELECT median_time_past FROM headers WHERE height = 2",
-                [],
-                |row| row.get(0),
-            )
+            .query_row("SELECT median_time_past FROM headers WHERE height = 2", [], |row| row.get(0))
             .unwrap();
         assert_eq!(mtp2, (base_time + 600) as i64);
 
         let mtp11: i64 = store
             .conn
-            .query_row(
-                "SELECT median_time_past FROM headers WHERE height = 11",
-                [],
-                |row| row.get(0),
-            )
+            .query_row("SELECT median_time_past FROM headers WHERE height = 11", [], |row| row.get(0))
             .unwrap();
         assert_eq!(mtp11, (base_time + 3000) as i64);
 
