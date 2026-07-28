@@ -462,6 +462,8 @@ mod tests {
 
     use super::*;
 
+    use bytemuck::PodCastError;
+
     fn ts(seconds: u32) -> BlockTimestamp {
         BlockTimestamp::new(seconds)
     }
@@ -489,7 +491,7 @@ mod tests {
         }
     }
 
-    fn apply_header<H: HeaderHash>(state: &mut State, timestamp: u32) {
+    fn apply_header(state: &mut State, timestamp: u32) {
         let header = HeaderInput {
             version: 1,
             merkle_root: [0x22; 32],
@@ -497,7 +499,7 @@ mod tests {
             nonce: 7,
         };
         let median_hints = median_hints_for_headers(state, &[header]);
-        state.apply_headers::<H>(&[header], &median_hints).unwrap();
+        state.apply_headers(&[header], &median_hints).unwrap();
     }
 
     fn dense_median_hints_for_headers(
@@ -708,7 +710,7 @@ mod tests {
 
         let hints = median_hints_for_headers(&state, &headers);
         state
-            .apply_headers(&headers, &hints, |_, _, _| zero_hash())
+            .apply_headers(&headers, &hints)
             .expect("headers should validate");
 
         let work = genesis_work();
@@ -744,7 +746,7 @@ mod tests {
 
         let hints = median_hints_for_headers(&state, &headers);
         state
-            .apply_headers(&headers, &hints, |_, _, _| zero_hash())
+            .apply_headers(&headers, &hints)
             .expect("validation should succeed");
 
         let work = genesis_work();
@@ -770,7 +772,7 @@ mod tests {
         let hints = median_hints_for_headers(&state, &headers);
         // Use a hash that exceeds the target to trigger PowInsufficient.
         let failure = state
-            .apply_headers(&headers, &hints, |_, _, _| BlockHash::new([0xFF; 32]))
+            .apply_headers(&headers, &hints)
             .expect_err("should fail PoW");
 
         assert_eq!(failure.error_code, ValidationErrorCode::PowInsufficient);
@@ -799,7 +801,7 @@ mod tests {
         let hints = median_hints_for_headers(&state, &headers);
 
         let failure = state
-            .apply_headers(&headers, &hints, |_, _, _| zero_hash())
+            .apply_headers(&headers, &hints)
             .expect_err("second header should fail timestamp validation");
 
         let work = genesis_work();
@@ -830,7 +832,7 @@ mod tests {
 
         let hints = median_hints_for_headers(&state, &headers);
         let failure = state
-            .apply_headers(&headers, &hints, |_, _, _| zero_hash())
+            .apply_headers(&headers, &hints)
             .expect_err("validation should fail on the second header");
 
         let public_values = failure_public_value_bytes(&failure);
@@ -858,14 +860,14 @@ mod tests {
         for header in headers.iter().copied() {
             let median_hints = median_hints_for_headers(&sequential, &[header]);
             sequential
-                .apply_headers(&[header], &median_hints, |_, _, _| zero_hash())
+                .apply_headers(&[header], &median_hints)
                 .expect("sequential validation should succeed");
         }
 
         let hints = median_hints_for_headers(&test_state(), &headers);
         let mut batched = test_state();
         batched
-            .apply_headers(&headers, &hints, |_, _, _| zero_hash())
+            .apply_headers(&headers, &hints)
             .expect("batched validation should succeed");
 
         assert_eq!(batched, sequential);
@@ -886,7 +888,7 @@ mod tests {
 
         let mut hinted = state;
         hinted
-            .apply_headers(&headers, &hints, |_, _, _| zero_hash())
+            .apply_headers(&headers, &hints)
             .expect("hinted validation should succeed");
         assert_eq!(hinted.height, 23);
     }
@@ -919,7 +921,7 @@ mod tests {
         }];
 
         state
-            .apply_headers(&headers, &[ts(6)], |_, _, _| zero_hash())
+            .apply_headers(&headers, &[ts(6)])
             .expect("duplicate median values should be accepted");
     }
 
@@ -952,9 +954,7 @@ mod tests {
 
         let result = std::panic::catch_unwind(|| {
             let mut state = state;
-            state
-                .apply_headers(&headers, &[ts(4)], |_, _, _| zero_hash())
-                .unwrap();
+            state.apply_headers(&headers, &[ts(4)]).unwrap();
         });
 
         assert!(result.is_err());
@@ -972,12 +972,9 @@ mod tests {
             nonce: 7,
         }];
         let hints = median_hints_for_headers(&state, &headers);
-        let mut materialized_prev = BlockHash::default();
+        let materialized_prev = BlockHash::default();
         state
-            .apply_headers(&headers, &hints, |_, prev_blockhash, _| {
-                materialized_prev = *prev_blockhash;
-                zero_hash()
-            })
+            .apply_headers(&headers, &hints)
             .expect("height-zero anchor should already be trusted");
 
         assert_eq!(state.height, 1);
@@ -1045,11 +1042,7 @@ mod tests {
         };
         let median_hints = median_hints_for_headers(&state, &[header]);
         state
-            .apply_headers(
-                &[header],
-                &median_hints,
-                |_, _, _| BlockHash::new([0; 32]), // Use zero hash which meets any target
-            )
+            .apply_headers(&[header], &median_hints) // Use zero hash which meets any target)
             .unwrap();
 
         let mut expected = original;
@@ -1172,7 +1165,7 @@ mod tests {
 
         // PowInsufficient on first header using a deliberately large hash value (> target).
         state
-            .apply_headers(&[hdr1], &hints, |_, _, _| BlockHash::new([0xFF; 32]))
+            .apply_headers(&[hdr1], &hints)
             .expect_err("expected PoW failure");
 
         // TimestampTooOld on equality to median (<= median should fail).
@@ -1185,8 +1178,7 @@ mod tests {
             nonce: 9,
         };
         let median_hints = median_hints_for_headers(&s2, &[ok_hdr]);
-        s2.apply_headers(&[ok_hdr], &median_hints, |_, _, _| zero_hash())
-            .unwrap();
+        s2.apply_headers(&[ok_hdr], &median_hints).unwrap();
         let median_after_1 = median_time_past(&s2);
         let bad_hdr = HeaderInput {
             version: 42,
@@ -1196,7 +1188,7 @@ mod tests {
         };
         let median_hints = median_hints_for_headers(&s2, &[bad_hdr]);
         let failure = s2
-            .apply_headers(&[bad_hdr], &median_hints, |_, _, _| zero_hash())
+            .apply_headers(&[bad_hdr], &median_hints)
             .expect_err("timestamp equal to median must fail");
         assert_eq!(failure.error_code, ValidationErrorCode::TimestampTooOld);
 
@@ -1210,7 +1202,7 @@ mod tests {
             nonce: 1,
         };
         let median_hints = median_hints_for_headers(&s3, &[odd_version_hdr]);
-        s3.apply_headers(&[odd_version_hdr], &median_hints, |_, _, _| zero_hash())
+        s3.apply_headers(&[odd_version_hdr], &median_hints)
             .expect("unexpected failure due to version only");
     }
 
@@ -1231,7 +1223,7 @@ mod tests {
         };
         let median_hints = median_hints_for_headers(&state, &[hdr]);
         let failure = state
-            .apply_headers(&[hdr], &median_hints, |_, _, _| zero_hash())
+            .apply_headers(&[hdr], &median_hints)
             .expect_err("timestamp equal to median must fail");
         assert_eq!(failure.error_code, ValidationErrorCode::TimestampTooOld);
     }

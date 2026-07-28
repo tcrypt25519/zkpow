@@ -13,7 +13,6 @@
 #![no_main]
 sp1_zkvm::entrypoint!(main);
 
-use zkpow_core::{BlockHash, BlockTimestamp, CompactTarget, HeaderInput};
 use zkpow_sha256;
 
 const RECORD_SIZE: usize = 80;

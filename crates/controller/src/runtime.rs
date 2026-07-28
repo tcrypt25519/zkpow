@@ -479,7 +479,7 @@ mod tests {
     use super::*;
     use crate::protocol::FileLocation;
     use crate::storage::LocalArtifactStore;
-    use zkpow_sha256::sha256d;
+    use zkpow_sha256;
     use zkpow_store::db_path;
 
     struct BytesArePublicValues(VerifierKeyDigest);
@@ -511,8 +511,9 @@ mod tests {
                 .as_nanos();
             let root = std::env::temp_dir().join(format!("zkpow-runtime-{nonce}"));
             let store = HeaderStore::open(db_path()).unwrap();
-            let genesis_hash =
-                BlockHash::new(sha256d(&store.load_header_record(0).header.to_bytes()));
+            let genesis_hash = BlockHash::new(zkpow_sha256::double(
+                &store.load_header_record(0).header.to_bytes(),
+            ));
             let mut config = ControllerConfig::new(genesis_hash, 2);
             config.pull_timeout = Duration::from_millis(100);
             let runtime = ControllerRuntime::new(
@@ -558,7 +559,9 @@ mod tests {
 
         fn genesis_hash(&self) -> BlockHash {
             let store = HeaderStore::open(db_path()).unwrap();
-            BlockHash::new(sha256d(&store.load_header_record(0).header.to_bytes()))
+            BlockHash::new(zkpow_sha256::double(
+                &store.load_header_record(0).header.to_bytes(),
+            ))
         }
     }
 

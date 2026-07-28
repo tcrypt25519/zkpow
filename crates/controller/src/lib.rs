@@ -27,8 +27,7 @@ mod validation;
 
 pub use digest::{continuation_digest, continuation_digest_from_state};
 pub use validation::{
-    compute_final_state_with_hints, median_time_past_hints_from_records, new_header_hash,
-    records_to_new_headers,
+    compute_final_state_with_hints, median_time_past_hints_from_records, records_to_new_headers,
 };
 
 pub use diagnostics::format_claim_mismatch;
@@ -150,7 +149,6 @@ mod tests {
                     } else {
                         &[]
                     },
-                    new_header_hash,
                 )
                 .expect("header should apply");
             let height = (index as u32) + 1;

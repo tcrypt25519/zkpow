@@ -9,10 +9,6 @@ use serde::{Deserialize, Serialize};
 #[cfg_attr(feature = "host", derive(Serialize, Deserialize))]
 #[repr(transparent)]
 pub struct Branded<Tag, T>(T, PhantomData<fn(Tag) -> Tag>);
-// pub struct Branded<Tag, T> {
-//     inner: T,
-//     _tag: PhantomData<fn(Tag) -> Tag>,
-// }
 
 impl<Tag: Pod + Zeroable, T: Sized + Pod + Zeroable> Branded<Tag, T> {
     #[must_use]
