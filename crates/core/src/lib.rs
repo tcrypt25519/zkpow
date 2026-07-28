@@ -4,6 +4,8 @@
 
 extern crate alloc;
 extern crate self as zkpow_core;
+#[cfg(all(not(target_os = "zkvm"), test))]
+extern crate std;
 
 use bytemuck::Pod;
 use core::mem::size_of;
@@ -69,7 +71,7 @@ fn hash_header(
 }
 
 #[cfg(not(target_os = "zkvm"))]
-fn hash_header(
+fn host_hash_header(
     version: u32,
     prev_blockhash: &BlockHash,
     merkle_root: [u8; 32],
@@ -78,14 +80,106 @@ fn hash_header(
     nonce: u32,
 ) -> BlockHash {
     let mut hasher = Sha256::new();
-    hasher.update(&version.to_le_bytes());
+    hasher.update(version.to_le_bytes());
     hasher.update(prev_blockhash.as_inner());
-    hasher.update(&merkle_root);
-    hasher.update(&timestamp.to_le_bytes());
-    hasher.update(&nbits.to_le_bytes());
-    hasher.update(&nonce.to_le_bytes());
+    hasher.update(merkle_root);
+    hasher.update(timestamp.to_le_bytes());
+    hasher.update(nbits.to_le_bytes());
+    hasher.update(nonce.to_le_bytes());
     let hash = hasher.finalize();
     BlockHash::new(*hash.as_array().expect("sha256 output is 32 bytes"))
+}
+
+#[cfg(all(not(target_os = "zkvm"), not(test)))]
+fn hash_header(
+    version: u32,
+    prev_blockhash: &BlockHash,
+    merkle_root: [u8; 32],
+    timestamp: BlockTimestamp,
+    nbits: CompactTarget,
+    nonce: u32,
+) -> BlockHash {
+    host_hash_header(
+        version,
+        prev_blockhash,
+        merkle_root,
+        timestamp,
+        nbits,
+        nonce,
+    )
+}
+
+#[cfg(all(not(target_os = "zkvm"), test))]
+#[must_use]
+fn set_hash_success() -> test_hash_mock::MockHashGuard {
+    test_hash_mock::set_success()
+}
+
+#[cfg(all(not(target_os = "zkvm"), test))]
+#[must_use]
+fn set_hash_fail() -> test_hash_mock::MockHashGuard {
+    test_hash_mock::set_fail()
+}
+
+#[cfg(all(not(target_os = "zkvm"), test))]
+mod test_hash_mock {
+    std::thread_local! {
+        static MOCK_HEADER_HASH: std::cell::Cell<Option<[u8; 32]>> =
+            const { std::cell::Cell::new(None) };
+    }
+
+    pub(super) struct MockHashGuard;
+
+    pub(super) fn get() -> Option<[u8; 32]> {
+        MOCK_HEADER_HASH.with(|mock_hash| mock_hash.get())
+    }
+
+    pub(super) fn set_success() -> MockHashGuard {
+        set([0; 32])
+    }
+
+    pub(super) fn set_fail() -> MockHashGuard {
+        set([0xFF; 32])
+    }
+
+    fn set(hash: [u8; 32]) -> MockHashGuard {
+        MOCK_HEADER_HASH.with(|mock_hash| {
+            assert!(
+                mock_hash.get().is_none(),
+                "hash mock already set in this thread"
+            );
+            mock_hash.set(Some(hash));
+        });
+        MockHashGuard
+    }
+
+    impl Drop for MockHashGuard {
+        fn drop(&mut self) {
+            MOCK_HEADER_HASH.with(|mock_hash| mock_hash.set(None));
+        }
+    }
+}
+
+#[cfg(all(not(target_os = "zkvm"), test))]
+fn hash_header(
+    version: u32,
+    prev_blockhash: &BlockHash,
+    merkle_root: [u8; 32],
+    timestamp: BlockTimestamp,
+    nbits: CompactTarget,
+    nonce: u32,
+) -> BlockHash {
+    if let Some(hash) = test_hash_mock::get() {
+        return BlockHash::new(hash);
+    }
+    host_hash_header(
+        version,
+        prev_blockhash,
+        merkle_root,
+        timestamp,
+        nbits,
+        nonce,
+    )
 }
 
 /// Number of valid entries in an MTP ring buffer whose most-recently-written
@@ -462,14 +556,23 @@ mod tests {
 
     use super::*;
 
-    use bytemuck::PodCastError;
-
     fn ts(seconds: u32) -> BlockTimestamp {
         BlockTimestamp::new(seconds)
     }
 
     fn zero_hash() -> BlockHash {
         BlockHash::new([0; 32])
+    }
+
+    fn hash_sample_header() -> BlockHash {
+        hash_header(
+            1,
+            &BlockHash::new([0x11; 32]),
+            [0x22; 32],
+            ts(10),
+            CompactTarget::new(GENESIS_NBITS),
+            7,
+        )
     }
 
     fn test_state() -> State {
@@ -492,6 +595,7 @@ mod tests {
     }
 
     fn apply_header(state: &mut State, timestamp: u32) {
+        let _hash_guard = set_hash_success();
         let header = HeaderInput {
             version: 1,
             merkle_root: [0x22; 32],
@@ -691,7 +795,37 @@ mod tests {
     }
 
     #[test]
+    fn scoped_hash_mock_overrides_and_restores_host_hashing() {
+        let real_hash = hash_sample_header();
+        {
+            let _hash_guard = set_hash_success();
+            assert_eq!(hash_sample_header(), zero_hash());
+        }
+        assert_eq!(hash_sample_header(), real_hash);
+
+        {
+            let _hash_guard = set_hash_fail();
+            assert_eq!(hash_sample_header(), BlockHash::new([0xFF; 32]));
+        }
+        assert_eq!(hash_sample_header(), real_hash);
+    }
+
+    #[test]
+    fn scoped_hash_mock_rejects_nested_override() {
+        let real_hash = hash_sample_header();
+        let hash_guard = set_hash_success();
+
+        let result = std::panic::catch_unwind(set_hash_fail);
+        assert!(result.is_err());
+        assert_eq!(hash_sample_header(), zero_hash());
+
+        drop(hash_guard);
+        assert_eq!(hash_sample_header(), real_hash);
+    }
+
+    #[test]
     fn apply_headers_flushes_deferred_chain_work_on_success() {
+        let _hash_guard = set_hash_success();
         let mut state = test_state();
         let headers = [
             HeaderInput {
@@ -722,6 +856,7 @@ mod tests {
 
     #[test]
     fn apply_headers_flushes_deferred_chain_work_for_longer_run() {
+        let _hash_guard = set_hash_success();
         let mut state = test_state();
         let headers = [
             HeaderInput {
@@ -757,6 +892,7 @@ mod tests {
 
     #[test]
     fn failure_height_is_absolute_chain_height() {
+        let _hash_guard = set_hash_fail();
         // Start at height 5 and fail on the first new header → failure_height = 6.
         let mut state: State = State {
             height: 5,
@@ -782,6 +918,7 @@ mod tests {
 
     #[test]
     fn apply_headers_flushes_deferred_chain_work_before_failure() {
+        let _hash_guard = set_hash_success();
         let mut state = test_state();
         let headers = [
             HeaderInput {
@@ -814,6 +951,7 @@ mod tests {
 
     #[test]
     fn apply_headers_failure_output_includes_flushed_chain_work() {
+        let _hash_guard = set_hash_success();
         let mut state = test_state();
         let headers = [
             HeaderInput {
@@ -847,6 +985,7 @@ mod tests {
 
     #[test]
     fn apply_headers_matches_sequential_next_across_median_window_wrap() {
+        let _hash_guard = set_hash_success();
         let headers: Vec<HeaderInput> = (1..=23)
             .map(|timestamp| HeaderInput {
                 version: 1,
@@ -875,6 +1014,7 @@ mod tests {
 
     #[test]
     fn hinted_apply_headers_matches_sorted_apply_headers_across_window_wrap() {
+        let _hash_guard = set_hash_success();
         let headers: Vec<HeaderInput> = (1..=23)
             .map(|timestamp| HeaderInput {
                 version: 1,
@@ -895,6 +1035,7 @@ mod tests {
 
     #[test]
     fn hinted_median_validation_accepts_duplicate_median_values() {
+        let _hash_guard = set_hash_success();
         let mut state: State = State {
             height: WINDOW_SIZE as u32,
             current_nbits: CompactTarget::new(GENESIS_NBITS),
@@ -953,6 +1094,7 @@ mod tests {
         }];
 
         let result = std::panic::catch_unwind(|| {
+            let _hash_guard = set_hash_success();
             let mut state = state;
             state.apply_headers(&headers, &[ts(4)]).unwrap();
         });
@@ -962,6 +1104,7 @@ mod tests {
 
     #[test]
     fn apply_headers_treats_height_zero_state_as_trusted_anchor() {
+        let _hash_guard = set_hash_success();
         let mut state = test_state();
         state.genesis_hash = BlockHash::new([0x11; 32]);
         state.block_hash = BlockHash::new([0x22; 32]);
@@ -972,14 +1115,12 @@ mod tests {
             nonce: 7,
         }];
         let hints = median_hints_for_headers(&state, &headers);
-        let materialized_prev = BlockHash::default();
         state
             .apply_headers(&headers, &hints)
             .expect("height-zero anchor should already be trusted");
 
         assert_eq!(state.height, 1);
         assert_eq!(state.genesis_hash, BlockHash::new([0x11; 32]));
-        assert_eq!(materialized_prev, BlockHash::new([0x22; 32]));
         assert_eq!(state.block_hash, zero_hash());
     }
 
@@ -1014,6 +1155,7 @@ mod tests {
 
     #[test]
     fn next_overwrites_only_the_next_ring_slot() {
+        let _hash_guard = set_hash_success();
         let original = [
             ts(10),
             ts(20),
@@ -1041,9 +1183,7 @@ mod tests {
             nonce: 7,
         };
         let median_hints = median_hints_for_headers(&state, &[header]);
-        state
-            .apply_headers(&[header], &median_hints) // Use zero hash which meets any target)
-            .unwrap();
+        state.apply_headers(&[header], &median_hints).unwrap();
 
         let mut expected = original;
         expected[1] = ts(999);
@@ -1164,11 +1304,15 @@ mod tests {
         let hints = median_hints_for_headers(&state, &[hdr1]);
 
         // PowInsufficient on first header using a deliberately large hash value (> target).
-        state
-            .apply_headers(&[hdr1], &hints)
-            .expect_err("expected PoW failure");
+        {
+            let _hash_guard = set_hash_fail();
+            state
+                .apply_headers(&[hdr1], &hints)
+                .expect_err("expected PoW failure");
+        }
 
         // TimestampTooOld on equality to median (<= median should fail).
+        let _hash_guard = set_hash_success();
         let mut s2 = test_state();
         // First, accept a valid header to seed the window deterministically.
         let ok_hdr = HeaderInput {
