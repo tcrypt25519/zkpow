@@ -1,9 +1,10 @@
-use crate::{
-    check_exact_len, BlockHash, BlockTimestamp, ChainWork, CompactTarget, InputParseError,
-    ParseError, State, CLAIM_SIZE, CONTINUATION_DATA_SIZE, MINIMAL_PV_SIZE, WINDOW_SIZE,
-};
 #[cfg(feature = "host")]
 use serde::{Deserialize, Serialize};
+
+use crate::{
+    check_exact_len, BlockHash, BlockTimestamp, ChainWork, CompactTarget, InputParseError, ParseError, State,
+    CLAIM_SIZE, CONTINUATION_DATA_SIZE, MINIMAL_PV_SIZE, WINDOW_SIZE,
+};
 
 /// Digest of a program verifier key.
 #[repr(transparent)]
@@ -12,6 +13,8 @@ use serde::{Deserialize, Serialize};
 pub struct VerifierKeyDigest([u32; 8]);
 
 impl VerifierKeyDigest {
+    pub const SIZE: usize = 32;
+
     #[must_use]
     pub const fn from_raw(raw: [u32; 8]) -> Self {
         Self(raw)
@@ -108,8 +111,8 @@ impl Claim {
         let mut out = [0u8; CLAIM_SIZE];
         out[0..32].copy_from_slice(self.genesis_hash.to_le_bytes_slice());
         out[32..64].copy_from_slice(self.tip_hash.to_le_bytes_slice());
-        out[64..96].copy_from_slice(self.chain_work.to_le_bytes_slice());
-        out[96..100].copy_from_slice(&self.height.to_le_bytes());
+        out[64..80].copy_from_slice(self.chain_work.to_le_bytes_slice());
+        out[80..84].copy_from_slice(&self.height.to_le_bytes());
         out
     }
 
@@ -117,8 +120,8 @@ impl Claim {
         check_exact_len(bytes, CLAIM_SIZE)?;
         let genesis_hash = BlockHash::new(bytes[0..32].try_into().unwrap());
         let tip_hash = BlockHash::new(bytes[32..64].try_into().unwrap());
-        let chain_work = ChainWork::from_le_bytes(bytes[64..96].try_into().unwrap());
-        let height = u32::from_le_bytes(bytes[96..100].try_into().unwrap());
+        let chain_work = ChainWork::from_le_bytes(bytes[64..80].try_into().unwrap());
+        let height = u32::from_le_bytes(bytes[80..84].try_into().unwrap());
         Ok(Self {
             genesis_hash,
             tip_hash,
@@ -174,9 +177,7 @@ impl ContinuationData {
         let epoch_start_timestamp = BlockTimestamp::from_le_bytes(bytes[4..8].try_into().unwrap());
         let mut timestamps = [BlockTimestamp::default(); WINDOW_SIZE];
         for (i, ts) in timestamps.iter_mut().enumerate() {
-            *ts = BlockTimestamp::from_le_bytes(
-                bytes[8 + i * 4..8 + (i + 1) * 4].try_into().unwrap(),
-            );
+            *ts = BlockTimestamp::from_le_bytes(bytes[8 + i * 4..8 + (i + 1) * 4].try_into().unwrap());
         }
         Ok(Self {
             current_nbits,
@@ -229,7 +230,6 @@ impl TryFrom<u8> for ValidationErrorCode {
     }
 }
 
-/// Failure payload returned by [`State::apply_headers`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApplyFailure {
     pub last_valid_state: State,
@@ -248,25 +248,25 @@ pub struct ProofFailure {
 
 /// Wire layout of the minimal public values committed by the prover.
 ///
-/// Layout (169 bytes, little-endian):
+/// Layout (153 bytes, little-endian):
 /// ```text
 ///  0.. 32  genesis_hash        [u8; 32]
 /// 32.. 64  tip_hash            [u8; 32]
-/// 64.. 96  chain_work          [u8; 32]  (u256 LE)
-/// 96..100  height              u32 LE
-/// 100      return_code         u8  (0 = success, nonzero = failure)
-/// 101..105 failure_height      u32 LE  (0 on success)
-/// 105..137 continuation_digest [u8; 32]
-/// 137..169 verifier_key         [u8; 32]  ([u32; 8] LE words)
+/// 64.. 80  chain_work          [u8; 16]  (two little-endian u64 limbs)
+/// 80.. 84  height              u32 LE
+/// 84       return_code         u8  (0 = success, nonzero = failure)
+/// 85.. 89  failure_height      u32 LE  (0 on success)
+/// 89..121  continuation_digest [u8; 32]
+/// 121..153 verifier_key         [u8; 32]  ([u32; 8] LE words)
 /// ```
 ///
-/// Serialized manually to avoid struct padding; use [`MinimalPublicValues::to_bytes`]
-/// and [`MinimalPublicValues::parse`] rather than transmuting.
+/// Serialized manually to avoid struct padding; use [`PublicValues::to_bytes`]
+/// and [`PublicValues::parse`] rather than transmuting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MinimalPublicValues {
     pub genesis_hash: BlockHash,
     pub tip_hash: BlockHash,
-    pub chain_work: [u8; 32],
+    pub chain_work: ChainWork,
     pub height: u32,
     pub return_code: u8,
     pub failure_height: u32,
@@ -277,15 +277,11 @@ pub struct MinimalPublicValues {
 impl MinimalPublicValues {
     /// Build success public values from a public claim and continuation digest.
     #[must_use]
-    pub fn success(
-        claim: &Claim,
-        continuation_digest: [u8; 32],
-        verifier_key: VerifierKeyDigest,
-    ) -> Self {
+    pub fn success(claim: &Claim, continuation_digest: [u8; 32], verifier_key: VerifierKeyDigest) -> Self {
         Self {
             genesis_hash: claim.genesis_hash,
             tip_hash: claim.tip_hash,
-            chain_work: claim.chain_work.to_le_bytes(),
+            chain_work: claim.chain_work,
             height: claim.height,
             return_code: 0,
             failure_height: 0,
@@ -306,7 +302,7 @@ impl MinimalPublicValues {
         Self {
             genesis_hash: claim.genesis_hash,
             tip_hash: claim.tip_hash,
-            chain_work: claim.chain_work.to_le_bytes(),
+            chain_work: claim.chain_work,
             height: claim.height,
             return_code: error_code.as_byte(),
             failure_height,
@@ -321,7 +317,7 @@ impl MinimalPublicValues {
         let mut out = [0u8; MINIMAL_PV_SIZE];
         out[0..32].copy_from_slice(self.genesis_hash.to_le_bytes_slice());
         out[32..64].copy_from_slice(self.tip_hash.to_le_bytes_slice());
-        out[64..96].copy_from_slice(&self.chain_work);
+        out[64..96].copy_from_slice(&self.chain_work.to_le_bytes());
         out[96..100].copy_from_slice(&self.height.to_le_bytes());
         out[100] = self.return_code;
         out[101..105].copy_from_slice(&self.failure_height.to_le_bytes());
@@ -340,7 +336,7 @@ impl MinimalPublicValues {
         }
         let genesis_hash = BlockHash::new(bytes[0..32].try_into().unwrap());
         let tip_hash = BlockHash::new(bytes[32..64].try_into().unwrap());
-        let chain_work: [u8; 32] = bytes[64..96].try_into().unwrap();
+        let chain_work = ChainWork::new(bytes[64..96].try_into().unwrap());
         let height = u32::from_le_bytes(bytes[96..100].try_into().unwrap());
         let return_code = bytes[100];
         let failure_height = u32::from_le_bytes(bytes[101..105].try_into().unwrap());
@@ -356,12 +352,6 @@ impl MinimalPublicValues {
             continuation_digest,
             verifier_key,
         })
-    }
-
-    /// Extract the chain work as a [`ChainWork`].
-    #[must_use]
-    pub fn chain_work(&self) -> ChainWork {
-        ChainWork::from_le_bytes(self.chain_work)
     }
 
     /// Return the error code if this is a failure, or `None` on success.
@@ -391,13 +381,13 @@ pub enum HeaderChainPublicValues {
 }
 
 impl HeaderChainPublicValues {
-    /// Parse committed public values from the minimal 169-byte format.
+    /// Parse committed public values from the minimal 153-byte format.
     pub fn parse(bytes: &[u8]) -> Result<Self, InputParseError> {
         let pv = MinimalPublicValues::parse(bytes)?;
         let claim = Claim {
             genesis_hash: pv.genesis_hash,
             tip_hash: pv.tip_hash,
-            chain_work: pv.chain_work(),
+            chain_work: pv.chain_work,
             height: pv.height,
         };
         if pv.return_code == 0 {
@@ -425,9 +415,7 @@ impl HeaderChainPublicValues {
     pub fn claim(&self) -> &Claim {
         match self {
             Self::Success { claim, .. } => claim,
-            Self::Failure {
-                last_valid_claim, ..
-            } => last_valid_claim,
+            Self::Failure { last_valid_claim, .. } => last_valid_claim,
         }
     }
 
@@ -435,14 +423,8 @@ impl HeaderChainPublicValues {
     #[must_use]
     pub fn continuation_digest(&self) -> &[u8; 32] {
         match self {
-            Self::Success {
-                continuation_digest,
-                ..
-            } => continuation_digest,
-            Self::Failure {
-                continuation_digest,
-                ..
-            } => continuation_digest,
+            Self::Success { continuation_digest, .. } => continuation_digest,
+            Self::Failure { continuation_digest, .. } => continuation_digest,
         }
     }
 

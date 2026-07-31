@@ -12,11 +12,10 @@ use core::mem::size_of;
 use bytemuck::Pod;
 pub use sp1_cycle;
 
-pub mod brand;
-pub mod types;
+pub mod primitives;
+pub use primitives::u256;
 
-pub use types::{u256, BlockHash, BlockTimestamp, BlockWork, ChainWork, CompactTarget, Target};
-
+pub use primitives::{BlockHash, BlockTimestamp, BlockWork, ChainWork, CompactTarget, Target};
 mod header;
 pub use header::{Header, HeaderInput};
 
@@ -29,14 +28,13 @@ pub(crate) use errors::TargetError;
 pub use errors::{InputParseError, ParseError};
 
 mod input;
-pub use input::{parse_input, serialize_inputs};
+pub use input::{cast_slice, serialize_inputs};
 
 mod public_values;
 pub use public_values::{
-    ApplyFailure, Claim, ContinuationData, HeaderChainPublicValues, MinimalPublicValues,
-    ProofFailure, PublicValuesDigest, ValidationErrorCode, VerifierKeyDigest,
+    ApplyFailure, Claim, ContinuationData, HeaderChainPublicValues, MinimalPublicValues, ProofFailure,
+    PublicValuesDigest, ValidationErrorCode, VerifierKeyDigest,
 };
-
 use sha2::{Digest, Sha256};
 
 /// Size of the serialized [`State`] in bytes.
@@ -246,7 +244,7 @@ pub const GENESIS_NBITS: u32 = 0x1d00ffff;
 /// In LE limbs: limbs[3] = 0xFFFF0000, limbs[0..2] = 0.
 pub const GENESIS_TARGET: Target = Target::from_limbs([0, 0, 0, 0x0000_0000_FFFF_0000]);
 
-pub const GENESIS_WORK: ChainWork = ChainWork::new(0x0000_0001_0001_0001);
+pub const GENESIS_WORK: ChainWork = ChainWork::from_limbs([0x0000_0001_0001_0001, 0,0,0]);
 
 #[must_use]
 pub const fn genesis_work() -> ChainWork {
@@ -274,22 +272,6 @@ pub const MAINNET_GENESIS_HEADER: Header = Header {
     nonce: 2083236893,
 };
 
-/// Big-endian byte encoding of chainwork as stored in `headers.db`'s `chainwork`
-/// column — predates `ChainWork`'s little-endian in-memory representation.
-/// Every reader and writer of that column must agree on this convention.
-pub fn chain_work_to_db_bytes(work: ChainWork) -> [u8; 16] {
-    let mut bytes = work.to_le_bytes();
-    bytes.reverse();
-    bytes
-}
-
-/// Inverse of [`chain_work_to_db_bytes`]. Returns `None` if `bytes` isn't exactly 16 bytes.
-pub fn chain_work_from_db_bytes(bytes: &[u8]) -> Option<ChainWork> {
-    let mut arr: [u8; 16] = bytes.try_into().ok()?;
-    arr.reverse();
-    Some(ChainWork::from_le_bytes(arr))
-}
-
 #[sp1_cycle::tracked]
 pub(crate) fn check_exact_len(bytes: &[u8], expected: usize) -> Result<(), ParseError> {
     if bytes.len() != expected {
@@ -307,13 +289,13 @@ pub(crate) fn copy_to_bytes<const N: usize, T: Pod>(value: &T) -> [u8; N] {
 }
 
 /// Size of a serialized [`Claim`] in bytes.
-pub const CLAIM_SIZE: usize = 32 + 32 + 32 + 4;
+pub const CLAIM_SIZE: usize = 32 + 32 + 16 + 4;
 
 /// Size of the serialized [`ContinuationData`] in bytes (no padding).
 pub const CONTINUATION_DATA_SIZE: usize = 4 + 4 + 4 * WINDOW_SIZE;
 
-/// Size of the serialized [`MinimalPublicValues`] in bytes.
-pub const MINIMAL_PV_SIZE: usize = 32 + 32 + 32 + 4 + 1 + 4 + 32 + 32; // = 169
+/// Size of the serialized [`PublicValues`] in bytes.
+pub const MINIMAL_PV_SIZE: usize = 32 + 32 + 16 + 4 + 1 + 4 + 32 + 32; // = 153
 
 /// Convert a full 256-bit target into compact `bits` encoding.
 #[must_use]
@@ -335,9 +317,7 @@ pub fn target_to_bits(target: Target) -> CompactTarget {
         }
         value << (8 * (3 - nbytes))
     } else {
-        ((bytes[nbytes - 1] as u32) << 16)
-            | ((bytes[nbytes - 2] as u32) << 8)
-            | (bytes[nbytes - 3] as u32)
+        ((bytes[nbytes - 1] as u32) << 16) | ((bytes[nbytes - 2] as u32) << 8) | (bytes[nbytes - 3] as u32)
     };
 
     if (compact & 0x0080_0000) != 0 {
@@ -492,8 +472,7 @@ pub fn block_work_from_target(target: Target) -> Result<BlockWork, TargetError> 
         }
     });
 
-    let work: u128 = quotient[0] as u128 | ((quotient[1] as u128) << 64);
-    Ok(BlockWork::new(work))
+    Ok(BlockWork::from_limbs(quotient))
 }
 
 /// Compute the compact and normalized full target required at a difficulty boundary.
@@ -508,7 +487,7 @@ pub fn calculate_next_target_required(
     let actual_timespan = i64::from(*previous_timestamp) - i64::from(*epoch_start_timestamp);
     let clamped_timespan = actual_timespan.clamp(MIN_EPOCH_TIMESPAN, MAX_EPOCH_TIMESPAN) as u32;
 
-    old_target *= clamped_timespan;
+    *old_target.as_inner_mut() *= clamped_timespan;
 
     let mut remainder = 0u128;
     for limb in old_target.as_limbs_mut().iter_mut().rev() {
@@ -586,10 +565,7 @@ mod tests {
         state.apply_headers(&[header], &median_hints).unwrap();
     }
 
-    fn dense_median_hints_for_headers(
-        initial_state: &State,
-        headers: &[HeaderInput],
-    ) -> Vec<BlockTimestamp> {
+    fn dense_median_hints_for_headers(initial_state: &State, headers: &[HeaderInput]) -> Vec<BlockTimestamp> {
         let mut state = *initial_state;
         let mut medians = Vec::with_capacity(headers.len());
         for header in headers {
@@ -601,15 +577,10 @@ mod tests {
         medians
     }
 
-    fn median_hints_for_headers(
-        initial_state: &State,
-        headers: &[HeaderInput],
-    ) -> Vec<BlockTimestamp> {
+    fn median_hints_for_headers(initial_state: &State, headers: &[HeaderInput]) -> Vec<BlockTimestamp> {
         let dense_hints = dense_median_hints_for_headers(initial_state, headers);
         let mut state = *initial_state;
-        let warm_start = (WINDOW_SIZE - 1)
-            .saturating_sub(state.height as usize)
-            .min(headers.len());
+        let warm_start = (WINDOW_SIZE - 1).saturating_sub(state.height as usize).min(headers.len());
         for header in &headers[..warm_start] {
             state.height += 1;
             state.timestamps[state.height as usize % WINDOW_SIZE] = header.timestamp;
@@ -664,8 +635,10 @@ mod tests {
         assert_eq!(CONTINUATION_DATA_SIZE, 52);
         assert_eq!(MINIMAL_PV_SIZE, 153);
         assert_eq!(align_of::<Header>(), 4);
-        assert_eq!(align_of::<HeaderEntropy>(), 4);
-        assert_eq!(align_of::<State>(), 16);
+        assert_eq!(align_of::<HeaderInput>(), 4);
+        assert_eq!(align_of::<BlockWork>(), 8);
+        assert_eq!(align_of::<ChainWork>(), 8);
+        assert_eq!(align_of::<State>(), 8);
     }
 
     #[test]
@@ -673,7 +646,7 @@ mod tests {
         let state: State = State {
             block_hash: BlockHash::new([0xAB; 32]),
             genesis_hash: BlockHash::new([0xCD; 32]),
-            chain_work: ChainWork::from_limbs([1, 2]),
+            chain_work: ChainWork::from_limbs([1, 2, 3, 4]),
             height: 42,
             ..State::default()
         };
@@ -682,7 +655,7 @@ mod tests {
         let pv = MinimalPublicValues::success(&state.public_claim(), digest, verifier_key);
         let bytes = pv.to_bytes();
         assert_eq!(bytes.len(), MINIMAL_PV_SIZE);
-        assert_eq!(bytes[137..169], verifier_key.to_bytes());
+        assert_eq!(bytes[121..153], verifier_key.to_bytes());
         let parsed = MinimalPublicValues::parse(&bytes).unwrap();
         assert_eq!(parsed.genesis_hash, state.genesis_hash);
         assert_eq!(parsed.tip_hash, state.block_hash);
@@ -726,18 +699,18 @@ mod tests {
     }
 
     #[test]
-    fn chain_work_adds_block_work_with_u128_carry_and_wrap() {
+    fn chain_work_adds_block_work_with_two_limb_carry_and_wrap() {
         let cases = [
             (
                 "carry propagation",
-                ChainWork::from_limbs([u64::MAX, 0]),
-                BlockWork::from_limbs([1, 0]),
-                ChainWork::from_limbs([0, 1]),
+                ChainWork::from_limbs([u64::MAX, 0, 0, 0]),
+                BlockWork::from_limbs([1, 0, 0, 0]),
+                ChainWork::from_limbs([0, 1, 0, 0]),
             ),
             (
                 "wrap at 128 bits",
-                ChainWork::from_limbs([u64::MAX; 2]),
-                BlockWork::from_limbs([1, 0]),
+                ChainWork::from_limbs([u64::MAX; 4]),
+                BlockWork::from_limbs([1, 0, 0, 0]),
                 ChainWork::default(),
             ),
         ];
@@ -749,11 +722,11 @@ mod tests {
 
     #[test]
     fn block_work_mul_u32_scales_by_small_count() {
-        let value = BlockWork::from_limbs([3, 0]);
+        let value = BlockWork::from_limbs([3, 0, 0, 0]);
 
         let mut result = value;
         result *= 7;
-        assert_eq!(result, BlockWork::from_limbs([21, 0]));
+        assert_eq!(result, BlockWork::from_limbs([21, 0, 0, 0]));
     }
 
     #[test]
@@ -947,12 +920,9 @@ mod tests {
 
         let public_values = failure_public_value_bytes(&failure);
         let parsed = MinimalPublicValues::parse(&public_values).unwrap();
-        assert_eq!(
-            parsed.return_code,
-            ValidationErrorCode::TimestampTooOld.as_byte()
-        );
+        assert_eq!(parsed.return_code, ValidationErrorCode::TimestampTooOld.as_byte());
         assert_eq!(parsed.failure_height, 2);
-        assert_eq!(parsed.chain_work(), failure.last_valid_state.chain_work);
+        assert_eq!(parsed.chain_work, failure.last_valid_state.chain_work);
     }
 
     #[test]
@@ -1011,19 +981,7 @@ mod tests {
         let mut state: State = State {
             height: WINDOW_SIZE as u32,
             current_nbits: CompactTarget::new(GENESIS_NBITS),
-            timestamps: [
-                ts(1),
-                ts(2),
-                ts(3),
-                ts(4),
-                ts(5),
-                ts(6),
-                ts(6),
-                ts(6),
-                ts(7),
-                ts(8),
-                ts(9),
-            ],
+            timestamps: [ts(1), ts(2), ts(3), ts(4), ts(5), ts(6), ts(6), ts(6), ts(7), ts(8), ts(9)],
             ..State::default()
         };
         let headers = [HeaderInput {
@@ -1043,19 +1001,7 @@ mod tests {
         let state: State = State {
             height: WINDOW_SIZE as u32,
             current_nbits: CompactTarget::new(GENESIS_NBITS),
-            timestamps: [
-                ts(1),
-                ts(2),
-                ts(3),
-                ts(4),
-                ts(5),
-                ts(6),
-                ts(7),
-                ts(8),
-                ts(9),
-                ts(10),
-                ts(11),
-            ],
+            timestamps: [ts(1), ts(2), ts(3), ts(4), ts(5), ts(6), ts(7), ts(8), ts(9), ts(10), ts(11)],
             ..State::default()
         };
         let headers = [HeaderInput {
@@ -1188,7 +1134,7 @@ mod tests {
         let claim = Claim {
             genesis_hash: BlockHash::new([1; 32]),
             tip_hash: BlockHash::new([2; 32]),
-            chain_work: ChainWork::from_limbs([3, 4]),
+            chain_work: ChainWork::from_limbs([3, 4, 0, 0]),
             height: 99,
         };
         let bytes = claim.to_bytes();
@@ -1260,9 +1206,7 @@ mod tests {
         // PowInsufficient on first header using a deliberately large hash value (> target).
         {
             let _hash_guard = set_hash_fail();
-            state
-                .apply_headers(&[hdr1], &hints)
-                .expect_err("expected PoW failure");
+            state.apply_headers(&[hdr1], &hints).expect_err("expected PoW failure");
         }
 
         // TimestampTooOld on equality to median (<= median should fail).

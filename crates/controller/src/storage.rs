@@ -10,11 +10,9 @@
 
 use std::path::PathBuf;
 
-use s3::creds::Credentials;
-use s3::{Bucket, Region};
+use s3::{creds::Credentials, Bucket, Region};
 
-use crate::protocol::FileLocation;
-use crate::BoxError;
+use crate::{protocol::FileLocation, BoxError};
 
 /// How long a minted pre-signed URL stays valid. Generous: a URL is used
 /// within one batch cycle, but proving a large batch can take a while.
@@ -50,17 +48,13 @@ impl ArtifactStore for LocalArtifactStore {
         let dir = self.root.join(run_id);
         std::fs::create_dir_all(&dir)?;
         Ok(FileLocation::Path(
-            self.object_path(run_id, object)
-                .to_string_lossy()
-                .into_owned(),
+            self.object_path(run_id, object).to_string_lossy().into_owned(),
         ))
     }
 
     fn get_target(&self, run_id: &str, object: &str) -> Result<FileLocation, BoxError> {
         Ok(FileLocation::Path(
-            self.object_path(run_id, object)
-                .to_string_lossy()
-                .into_owned(),
+            self.object_path(run_id, object).to_string_lossy().into_owned(),
         ))
     }
 
@@ -92,14 +86,8 @@ impl S3ArtifactStore {
             region: config.region.clone(),
             endpoint: config.endpoint.clone(),
         };
-        let credentials = Credentials::new(
-            Some(&config.access_key),
-            Some(&config.secret_key),
-            None,
-            None,
-            None,
-        )
-        .map_err(|err| format!("invalid S3 credentials: {err}"))?;
+        let credentials = Credentials::new(Some(&config.access_key), Some(&config.secret_key), None, None, None)
+            .map_err(|err| format!("invalid S3 credentials: {err}"))?;
         let bucket = Bucket::new(&config.bucket, region, credentials)
             .map_err(|err| format!("failed to construct S3 bucket client: {err}"))?
             .with_path_style();
@@ -145,11 +133,7 @@ impl ArtifactStore for S3ArtifactStore {
             .get_object(&key)
             .map_err(|err| format!("failed to fetch artifact {key}: {err}"))?;
         if response.status_code() != 200 {
-            return Err(format!(
-                "unexpected status {} fetching artifact {key}",
-                response.status_code()
-            )
-            .into());
+            return Err(format!("unexpected status {} fetching artifact {key}", response.status_code()).into());
         }
         Ok(response.to_vec())
     }
@@ -164,10 +148,7 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        std::env::temp_dir().join(format!(
-            "zkpow-artifact-store-{test_name}-{}-{nonce}",
-            std::process::id()
-        ))
+        std::env::temp_dir().join(format!("zkpow-artifact-store-{test_name}-{}-{nonce}", std::process::id()))
     }
 
     #[test]
@@ -195,10 +176,7 @@ mod tests {
         let FileLocation::Path(path) = store.put_target("run-b", "proof.bin").unwrap() else {
             panic!("expected path target")
         };
-        assert!(
-            path.contains("run-b"),
-            "path should be segmented by run id: {path}"
-        );
+        assert!(path.contains("run-b"), "path should be segmented by run id: {path}");
 
         std::fs::remove_dir_all(&root).ok();
     }
@@ -218,17 +196,11 @@ mod tests {
         let FileLocation::Url(url) = store.put_target("run-c", "proof.bin").unwrap() else {
             panic!("expected url target")
         };
-        assert!(
-            url.contains("test-bucket"),
-            "presigned url should reference the bucket: {url}"
-        );
+        assert!(url.contains("test-bucket"), "presigned url should reference the bucket: {url}");
         assert!(
             url.contains("proofs/run-c/proof.bin"),
             "presigned url should carry the run-scoped key: {url}"
         );
-        assert!(
-            url.contains("X-Amz-Signature"),
-            "presigned url should be signed: {url}"
-        );
+        assert!(url.contains("X-Amz-Signature"), "presigned url should be signed: {url}");
     }
 }

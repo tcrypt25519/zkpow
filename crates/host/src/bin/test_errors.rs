@@ -7,17 +7,15 @@
 //!   stdin: verifier key(Vec<u8>) + state witness(Vec<u8>) + header witness(Vec<u8>)
 //!          + median-time-past witness(Vec<u8>)
 //!          → [compressed SP1 proof witness when state.height > 0]
-//!   output: MinimalPublicValues (169 bytes)
+//!   output: MinimalPublicValues (153 bytes)
 
-use sp1_sdk::prelude::*;
-use sp1_sdk::{Elf, HashableKey, Prover, ProverClient, SP1Stdin};
-
+use sp1_sdk::{prelude::*, Elf, HashableKey, Prover, ProverClient, SP1Stdin};
 use zkpow_controller::db_path;
-use zkpow_host::pipeline::input::genesis_hash;
-use zkpow_host::{observability, util};
-
-use zkpow_host::util::{
-    HeaderChainPublicValues, MinimalPublicValues, ValidationErrorCode, VerifierKeyDigest,
+use zkpow_host::{
+    observability,
+    pipeline::input::genesis_hash,
+    util,
+    util::{HeaderChainPublicValues, MinimalPublicValues, ValidationErrorCode, VerifierKeyDigest},
 };
 
 const ELF: Elf = include_elf!("zkpow-guest");
@@ -33,8 +31,7 @@ async fn run_and_get_pv(stdin: SP1Stdin) -> Result<Vec<u8>, String> {
 }
 
 fn expect_success(pv: &[u8]) -> Result<util::Claim, String> {
-    let parsed =
-        HeaderChainPublicValues::parse(pv).map_err(|err| format!("failed to parse PV: {err}"))?;
+    let parsed = HeaderChainPublicValues::parse(pv).map_err(|err| format!("failed to parse PV: {err}"))?;
     match parsed {
         HeaderChainPublicValues::Success { claim, .. } => Ok(claim),
         HeaderChainPublicValues::Failure { failure, .. } => Err(format!(
@@ -44,13 +41,8 @@ fn expect_success(pv: &[u8]) -> Result<util::Claim, String> {
     }
 }
 
-fn expect_failure(
-    pv: &[u8],
-    expected_code: ValidationErrorCode,
-    expected_failure_height: u32,
-) -> Result<(), String> {
-    let parsed =
-        HeaderChainPublicValues::parse(pv).map_err(|err| format!("failed to parse PV: {err}"))?;
+fn expect_failure(pv: &[u8], expected_code: ValidationErrorCode, expected_failure_height: u32) -> Result<(), String> {
+    let parsed = HeaderChainPublicValues::parse(pv).map_err(|err| format!("failed to parse PV: {err}"))?;
 
     match parsed {
         HeaderChainPublicValues::Success { claim, .. } => Err(format!(
@@ -59,10 +51,7 @@ fn expect_failure(
         )),
         HeaderChainPublicValues::Failure { failure, .. } => {
             if failure.error_code != expected_code {
-                return Err(format!(
-                    "expected error {}, got {}",
-                    expected_code, failure.error_code,
-                ));
+                return Err(format!("expected error {}, got {}", expected_code, failure.error_code,));
             }
             if failure.failure_height != expected_failure_height {
                 return Err(format!(
@@ -71,7 +60,7 @@ fn expect_failure(
                 ));
             }
             Ok(())
-        }
+        },
     }
 }
 
@@ -125,32 +114,17 @@ async fn main() {
 
     // === Success cases ===
     check("success_100_headers", test_success_100_headers().await);
-    check(
-        "retarget_boundary_schedule",
-        test_retarget_boundary_schedule().await,
-    );
-    check(
-        "recursive_chain_success",
-        test_recursive_chain_success().await,
-    );
+    check("retarget_boundary_schedule", test_retarget_boundary_schedule().await);
+    check("recursive_chain_success", test_recursive_chain_success().await);
 
     // === Timestamp validation errors ===
-    check(
-        "error_timestamp_too_old",
-        test_error_timestamp_too_old().await,
-    );
+    check("error_timestamp_too_old", test_error_timestamp_too_old().await);
 
     // === PoW errors ===
-    check(
-        "error_pow_insufficient",
-        test_error_pow_insufficient().await,
-    );
+    check("error_pow_insufficient", test_error_pow_insufficient().await);
 
     // === Recursive hardening ===
-    check(
-        "error_recursive_on_failed_proof",
-        test_error_recursive_on_failed_proof().await,
-    );
+    check("error_recursive_on_failed_proof", test_error_recursive_on_failed_proof().await);
     check(
         "error_recursive_on_tampered_state_witness",
         test_error_recursive_on_tampered_state_witness().await,
@@ -196,9 +170,7 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
         first_epoch_state.height,
         consensus_bits(first_epoch_state.current_nbits),
     );
-    let first_retarget_bits = db
-        .load_compact_target((FIRST_BOUNDARY_TIP_HEIGHT + 1) as u64)
-        .into_inner();
+    let first_retarget_bits = db.load_compact_target((FIRST_BOUNDARY_TIP_HEIGHT + 1) as u64).into_inner();
     if consensus_bits(first_epoch_state.current_nbits) != first_retarget_bits {
         return Err(format!(
             "expected first retarget boundary bits {:#x}, got {:#x}",
@@ -220,9 +192,7 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
         consensus_bits(state.current_nbits),
     );
 
-    let previous_epoch_bits = db
-        .load_compact_target(RETARGET_TIP_HEIGHT as u64)
-        .into_inner();
+    let previous_epoch_bits = db.load_compact_target(RETARGET_TIP_HEIGHT as u64).into_inner();
     let next_header_bits = db.load_compact_target(RETARGET_HEIGHT as u64).into_inner();
 
     println!(
@@ -328,10 +298,7 @@ async fn test_error_pow_insufficient() -> Result<(), String> {
 
 async fn test_recursive_chain_success() -> Result<(), String> {
     let client = ProverClient::from_env().await;
-    let pk = client
-        .setup(ELF)
-        .await
-        .map_err(|e| format!("setup: {}", e))?;
+    let pk = client.setup(ELF).await.map_err(|e| format!("setup: {}", e))?;
     let vk = pk.verifying_key();
     let db = open_db();
 
@@ -370,12 +337,7 @@ async fn test_recursive_chain_success() -> Result<(), String> {
     );
 
     let witness2 = db.load_header_batch_witness(11, 10);
-    let mut stdin2 = build_stdin(
-        verifier_key,
-        &state1,
-        &witness2.headers,
-        &witness2.median_time_past_hints,
-    );
+    let mut stdin2 = build_stdin(verifier_key, &state1, &witness2.headers, &witness2.median_time_past_hints);
     let sp1_sdk::SP1Proof::Compressed(inner_proof) = &proof1.proof else {
         return Err("Run 1 proof is not compressed".to_string());
     };
@@ -394,11 +356,8 @@ async fn test_error_recursive_on_failed_proof() -> Result<(), String> {
     let genesis_state = mainnet_genesis_state();
     let witness = open_db().load_header_batch_witness(1, 5);
 
-    let state_at_5 = compute_final_state_with_sparse_hints(
-        &genesis_state,
-        &witness.headers,
-        &witness.median_time_past_hints,
-    );
+    let state_at_5 =
+        compute_final_state_with_sparse_hints(&genesis_state, &witness.headers, &witness.median_time_past_hints);
 
     let stdin = build_stdin(
         VerifierKeyDigest::from_raw([0u32; 8]),
@@ -415,13 +374,12 @@ async fn test_error_recursive_on_failed_proof() -> Result<(), String> {
         Ok((pv, _)) => {
             let pv_bytes = pv.to_vec();
             match HeaderChainPublicValues::parse(&pv_bytes) {
-                Ok(HeaderChainPublicValues::Success { .. }) => Err(
-                    "expected guest to reject failed prior proof, but got a success state"
-                        .to_string(),
-                ),
+                Ok(HeaderChainPublicValues::Success { .. }) => {
+                    Err("expected guest to reject failed prior proof, but got a success state".to_string())
+                },
                 _ => Ok(()),
             }
-        }
+        },
     }
 }
 
@@ -430,11 +388,8 @@ async fn test_error_recursive_on_failed_proof() -> Result<(), String> {
 async fn test_error_recursive_on_tampered_state_witness() -> Result<(), String> {
     let genesis_state = mainnet_genesis_state();
     let witness = open_db().load_header_batch_witness(1, 5);
-    let state_at_5 = compute_final_state_with_sparse_hints(
-        &genesis_state,
-        &witness.headers,
-        &witness.median_time_past_hints,
-    );
+    let state_at_5 =
+        compute_final_state_with_sparse_hints(&genesis_state, &witness.headers, &witness.median_time_past_hints);
 
     let verifier_key = VerifierKeyDigest::from_raw([0u32; 8]);
 
@@ -453,17 +408,16 @@ async fn test_error_recursive_on_tampered_state_witness() -> Result<(), String> 
         Ok((pv, _)) => {
             let pv_bytes = pv.to_vec();
             match HeaderChainPublicValues::parse(&pv_bytes) {
-                Ok(HeaderChainPublicValues::Success { .. }) => Err(
-                    "expected guest to reject tampered continuation state, but got success"
-                        .to_string(),
-                ),
+                Ok(HeaderChainPublicValues::Success { .. }) => {
+                    Err("expected guest to reject tampered continuation state, but got success".to_string())
+                },
                 _ => Ok(()),
             }
-        }
+        },
     }
 }
 
-/// Verify the public-value format is the minimal 169-byte layout.
+/// Verify the public-value format is the minimal 153-byte layout.
 async fn test_pv_minimal_format() -> Result<(), String> {
     use zkpow_core::MINIMAL_PV_SIZE;
 
@@ -492,8 +446,7 @@ async fn test_pv_minimal_format() -> Result<(), String> {
     }
 
     // Parse as MinimalPublicValues and verify continuation digest is non-zero.
-    let mpv =
-        MinimalPublicValues::parse(&pv).map_err(|e| format!("MinimalPublicValues::parse: {e}"))?;
+    let mpv = MinimalPublicValues::parse(&pv).map_err(|e| format!("MinimalPublicValues::parse: {e}"))?;
     if mpv.continuation_digest == [0u8; 32] {
         return Err("continuation digest is all zeros".to_string());
     }
@@ -503,11 +456,8 @@ async fn test_pv_minimal_format() -> Result<(), String> {
 
     // Host-computed continuation digest must match.
     let genesis_state2 = mainnet_genesis_state();
-    let final_state = compute_final_state_with_sparse_hints(
-        &genesis_state2,
-        &witness.headers,
-        &witness.median_time_past_hints,
-    );
+    let final_state =
+        compute_final_state_with_sparse_hints(&genesis_state2, &witness.headers, &witness.median_time_past_hints);
     let host_digest = util::continuation_digest_from_state(&final_state);
     if host_digest != mpv.continuation_digest {
         return Err(format!(

@@ -2,8 +2,6 @@ use bytemuck::{Pod, Zeroable};
 #[cfg(feature = "host")]
 use serde::{Deserialize, Serialize};
 
-use crate::brand::Branded;
-
 /// A 256-bit unsigned integer stored as four little-endian u64 limbs.
 #[allow(non_camel_case_types)]
 #[repr(transparent)]
@@ -59,6 +57,22 @@ impl u256 {
     }
 }
 
+impl core::ops::Add for u256 {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        let mut result = [0u64; 4];
+        let mut carry = 0u64;
+        for i in 0..4 {
+            let (sum, overflow) = self.0[i].overflowing_add(rhs.0[i]);
+            let (sum_with_carry, overflow2) = sum.overflowing_add(carry);
+            result[i] = sum_with_carry;
+            carry = (overflow as u64) + (overflow2 as u64);
+        }
+        Self(result)
+    }
+}
+
 impl core::ops::MulAssign<u32> for u256 {
     #[sp1_cycle::tracked]
     fn mul_assign(&mut self, rhs: u32) {
@@ -72,6 +86,15 @@ impl core::ops::MulAssign<u32> for u256 {
     }
 }
 
+impl core::ops::Mul<u32> for u256 {
+    type Output = Self;
+
+    fn mul(mut self, rhs: u32) -> Self::Output {
+        self *= rhs;
+        self
+    }
+}
+
 impl PartialOrd for u256 {
     #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
@@ -79,7 +102,6 @@ impl PartialOrd for u256 {
     }
 }
 
-/// Magnitude-correct ordering: compare from most-significant limb (index 3) down.
 impl Ord for u256 {
     #[inline]
     fn cmp(&self, other: &Self) -> core::cmp::Ordering {
@@ -93,71 +115,15 @@ impl Ord for u256 {
     }
 }
 
-//
-// Define our Branded newtypes
-//
+impl TryFrom<&[u8]> for u256 {
+    type Error = &'static str;
 
-#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Debug, Pod, Zeroable)]
-#[repr(transparent)]
-pub struct TargetTag;
-#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Debug, Pod, Zeroable)]
-#[repr(transparent)]
-pub struct CompactTargetTag;
-#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Debug, Pod, Zeroable)]
-#[repr(transparent)]
-pub struct BlockWorkTag;
-#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Debug, Pod, Zeroable)]
-#[repr(transparent)]
-pub struct ChainWorkTag;
-#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Debug, Pod, Zeroable)]
-#[repr(transparent)]
-pub struct BlockTimestampTag;
-#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Debug, Pod, Zeroable)]
-#[repr(transparent)]
-pub struct BlockHashTag;
-
-pub type BlockHash = Branded<BlockHashTag, [u8; 32]>;
-pub type BlockTimestamp = Branded<BlockTimestampTag, u32>;
-pub type Target = Branded<TargetTag, u256>;
-pub type CompactTarget = Branded<CompactTargetTag, u32>;
-pub type BlockWork = Branded<BlockWorkTag, u128>;
-pub type ChainWork = Branded<ChainWorkTag, u128>;
-
-impl core::ops::Add<BlockWork> for ChainWork {
-    type Output = Self;
-
-    fn add(self, rhs: BlockWork) -> Self::Output {
-        Self::new(self.into_inner().wrapping_add(rhs.into_inner()))
-    }
-}
-
-impl core::ops::AddAssign<BlockWork> for ChainWork {
-    fn add_assign(&mut self, rhs: BlockWork) {
-        *self = *self + rhs;
-    }
-}
-
-impl core::ops::Mul<u32> for BlockWork {
-    type Output = Self;
-
-    fn mul(self, rhs: u32) -> Self::Output {
-        Self::new(self.into_inner().wrapping_mul(rhs as u128))
-    }
-}
-
-impl core::ops::MulAssign<u32> for BlockWork {
-    fn mul_assign(&mut self, rhs: u32) {
-        *self = *self * rhs;
-    }
-}
-
-impl core::fmt::Display for BlockHash {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let mut bytes = self.to_le_bytes();
-        bytes.reverse();
-        for byte in bytes {
-            write!(f, "{byte:02x}")?;
+    fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
+        if value.len() != 32 {
+            return Err("Invalid length");
         }
-        Ok(())
+        let mut arr = [0u8; 32];
+        arr.copy_from_slice(value);
+        Ok(Self::from_le_bytes(arr))
     }
 }

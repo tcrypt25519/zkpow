@@ -7,9 +7,8 @@
 //! here, on the controller's side of the trust boundary.
 //!
 //! Module map:
-//! * [`runtime`] — run sessions, the double-buffered grant pipeline,
-//!   long-polling, completion validation. Verified progress persists in the
-//!   header database's `runs` table (see `zkpow_store`).
+//! * [`runtime`] — run sessions, the double-buffered grant pipeline, long-polling, completion validation. Verified
+//!   progress persists in the header database's `runs` table (see `zkpow_store`).
 //! * [`protocol`] — typed host/controller messages and their HTTP codec.
 //! * [`http`] — postcard boundary around the typed runtime API.
 //! * [`storage`] — artifact targets (local paths or pre-signed S3 URLs).
@@ -25,20 +24,14 @@ pub mod verify;
 mod digest;
 mod validation;
 
-pub use digest::{continuation_digest, continuation_digest_from_state};
-pub use validation::{
-    compute_final_state_with_hints, median_time_past_hints_from_records, records_to_new_headers,
-};
-
 pub use diagnostics::format_claim_mismatch;
+pub use digest::{continuation_digest, continuation_digest_from_state};
+pub use validation::{compute_final_state_with_hints, records_to_new_headers};
 pub use zkpow_core::{
-    requires_median_hint, BlockHash, BlockTimestamp, Claim, HeaderChainPublicValues, HeaderInput,
-    State,
+    requires_median_hint, BlockHash, BlockTimestamp, Claim, HeaderChainPublicValues, HeaderInput, State,
 };
 pub use zkpow_sha256;
-pub use zkpow_store::{
-    db_path, genesis_state_from_record, HeaderBatchWitness, HeaderRecord, HeaderStore, RunRecord,
-};
+pub use zkpow_store::{db_path, genesis_state_from_record, HeaderBatchWitness, HeaderRecord, HeaderStore, RunRecord};
 
 pub type BoxError = Box<dyn std::error::Error + Send + Sync + 'static>;
 
@@ -46,10 +39,9 @@ pub const NO_HEADERS_REMAINING_PREFIX: &str = "no headers remaining in database"
 
 #[cfg(test)]
 mod tests {
+    use zkpow_core::{BlockTimestamp as BTimestamp, CompactTarget, ContinuationData, GENESIS_NBITS, WINDOW_SIZE};
+
     use super::*;
-    use zkpow_core::{
-        BlockTimestamp as BTimestamp, CompactTarget, ContinuationData, GENESIS_NBITS, WINDOW_SIZE,
-    };
 
     fn open_db() -> HeaderStore {
         HeaderStore::open(db_path()).expect("failed to open test database")
@@ -74,10 +66,7 @@ mod tests {
             mutated[i] ^= 0xFF;
             if let Ok(pcs2) = ContinuationData::parse(&mutated) {
                 let digest2 = continuation_digest(&pcs2);
-                assert_ne!(
-                    base_digest, digest2,
-                    "digest unchanged after mutating byte {i}"
-                );
+                assert_ne!(base_digest, digest2, "digest unchanged after mutating byte {i}");
             }
         }
     }
@@ -96,11 +85,7 @@ mod tests {
         let genesis_state = genesis_state_from_record(genesis, genesis_hash);
         let witness = db.load_header_batch_witness(1, 13);
 
-        compute_final_state_with_hints(
-            &genesis_state,
-            &witness.headers,
-            &witness.median_time_past_hints,
-        );
+        compute_final_state_with_hints(&genesis_state, &witness.headers, &witness.median_time_past_hints);
     }
 
     #[test]
@@ -120,11 +105,8 @@ mod tests {
         let genesis_hash = BlockHash::new(zkpow_sha256::double(&genesis.header.to_bytes()));
         let genesis_state = genesis_state_from_record(genesis, genesis_hash);
         let witness = db.load_header_batch_witness(1, 128);
-        let final_state = compute_final_state_with_hints(
-            &genesis_state,
-            &witness.headers,
-            &witness.median_time_past_hints,
-        );
+        let final_state =
+            compute_final_state_with_hints(&genesis_state, &witness.headers, &witness.median_time_past_hints);
 
         assert_eq!(final_state.height, 128);
     }
@@ -165,22 +147,16 @@ mod tests {
         let genesis_hash = BlockHash::new(zkpow_sha256::double(&genesis.header.to_bytes()));
         let genesis_state = genesis_state_from_record(genesis, genesis_hash);
         let witness_1 = db.load_header_batch_witness(1, 40319);
-        let state = compute_final_state_with_hints(
-            &genesis_state,
-            &witness_1.headers,
-            &witness_1.median_time_past_hints,
-        );
+        let state =
+            compute_final_state_with_hints(&genesis_state, &witness_1.headers, &witness_1.median_time_past_hints);
         let pre_boundary_nbits = db.load_compact_target(40319);
 
         assert_eq!(state.height, 40319);
         assert_eq!(state.current_nbits, pre_boundary_nbits);
 
         let witness_2 = db.load_header_batch_witness(40320, 1);
-        let boundary_state = compute_final_state_with_hints(
-            &state,
-            &witness_2.headers,
-            &witness_2.median_time_past_hints,
-        );
+        let boundary_state =
+            compute_final_state_with_hints(&state, &witness_2.headers, &witness_2.median_time_past_hints);
         assert_eq!(boundary_state.height, 40320);
         let boundary_nbits = db.load_compact_target(40320);
         assert_eq!(boundary_state.current_nbits, boundary_nbits);
@@ -194,20 +170,8 @@ mod tests {
         }
 
         let cases = [
-            (
-                "genesis-started batch",
-                InitialState::Genesis,
-                1,
-                4096,
-                4096,
-            ),
-            (
-                "retarget-boundary batch",
-                InitialState::DbHeight(30240),
-                30241,
-                2016,
-                32256,
-            ),
+            ("genesis-started batch", InitialState::Genesis, 1, 4096, 4096),
+            ("retarget-boundary batch", InitialState::DbHeight(30240), 30241, 2016, 32256),
         ];
 
         let db = open_db();
@@ -220,21 +184,15 @@ mod tests {
                 InitialState::DbHeight(height) => db.state_at_height(height, genesis_hash),
             };
             let witness = db.load_header_batch_witness(record_start, record_count);
-            let final_state = compute_final_state_with_hints(
-                &initial_state,
-                &witness.headers,
-                &witness.median_time_past_hints,
-            );
+            let final_state =
+                compute_final_state_with_hints(&initial_state, &witness.headers, &witness.median_time_past_hints);
             let db_claim = db.load_public_claim(expected_height as u64, genesis_hash);
             let db_nbits = db.load_compact_target(expected_height as u64);
 
             assert_eq!(final_state.height, expected_height, "{name}: height");
             assert_eq!(final_state.public_claim(), db_claim, "{name}: claim");
             assert_eq!(final_state.current_nbits, db_nbits, "{name}: nbits");
-            assert_eq!(
-                final_state.chain_work, db_claim.chain_work,
-                "{name}: chainwork"
-            );
+            assert_eq!(final_state.chain_work, db_claim.chain_work, "{name}: chainwork");
         }
     }
 }

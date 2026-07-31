@@ -8,7 +8,6 @@
 
 use std::{net::SocketAddr, thread, time::Duration};
 
-use rand::thread_rng;
 use zkpow_core::{BlockHash, MAINNET_GENESIS_HASH_RAW};
 
 use crate::{
@@ -46,7 +45,7 @@ where
     let mut current_tip = anchor.clone();
     let mut total_synced: u64 = 0;
     let mut batch: u64 = 0;
-    let mut rng = thread_rng();
+    let mut rng = rand::rng();
 
     loop {
         if max_headers > 0 && total_synced >= max_headers {

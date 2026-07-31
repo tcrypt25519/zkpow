@@ -18,6 +18,8 @@ zkpow-sha256 = { workspace = true }
 sp1-zkvm = { workspace = true, features = ["lib", "verify"] }
 sp1-derive = { workspace = true }
 sp1-cycle = { workspace = true }
+bytemuck = "1.15.2"
+thiserror = { workspace = true }
 
 [features]
 default = []

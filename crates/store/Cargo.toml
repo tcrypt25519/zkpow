@@ -9,3 +9,5 @@ zkpow-core = { workspace = true, features = ["host"] }
 zkpow-sha256 = { workspace = true, features = ["host"] }
 zkpow-sync-headers.workspace = true
 rusqlite.workspace = true
+thiserror.workspace = true
+

@@ -1,11 +1,9 @@
+use bytemuck::{Pod, PodCastError, Zeroable};
+use sp1_cycle_macros::tracked;
+
 #[cfg(test)]
 use crate::{check_exact_len, ParseError};
-use crate::{
-    copy_to_bytes, BlockHash, BlockTimestamp, CompactTarget, BLOCK_HEADER_SIZE, NEW_HEADER_SIZE,
-};
-#[cfg(test)]
-use bytemuck::PodCastError;
-use bytemuck::{Pod, Zeroable};
+use crate::{copy_to_bytes, BlockHash, BlockTimestamp, CompactTarget, BLOCK_HEADER_SIZE, NEW_HEADER_SIZE};
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Pod, Zeroable)]
@@ -59,8 +57,7 @@ impl HeaderInput {
     }
 
     /// Parse a [`HeaderInput`] from exactly [`NEW_HEADER_SIZE`] bytes.
-    #[cfg(test)]
-    //#[tracked]
+    #[tracked]
     pub fn from_bytes(bytes: &[u8]) -> Result<&Self, PodCastError> {
         bytemuck::try_from_bytes::<Self>(bytes)
     }

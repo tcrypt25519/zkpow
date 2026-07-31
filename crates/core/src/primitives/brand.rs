@@ -4,7 +4,7 @@ use bytemuck::{Pod, Zeroable};
 #[cfg(feature = "host")]
 use serde::{Deserialize, Serialize};
 
-use crate::types::u256;
+use super::u256;
 
 /// Generic branded newtype wrapper providing type-safe distinction without runtime overhead.
 #[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Pod, Zeroable)]
@@ -13,6 +13,8 @@ use crate::types::u256;
 pub struct Branded<Tag, T>(T, PhantomData<fn(Tag) -> Tag>);
 
 impl<Tag: Pod + Zeroable, T: Sized + Pod + Zeroable> Branded<Tag, T> {
+    pub const SIZE: usize = core::mem::size_of::<T>();
+
     #[must_use]
     pub const fn new(inner: T) -> Self {
         Self(inner, PhantomData)
@@ -66,6 +68,22 @@ impl<Tag, T: core::fmt::Debug> core::fmt::Debug for Branded<Tag, T> {
     }
 }
 
+/// `Branded<Tag, T> + Branded<Tag, T> = Branded<Tag, T>` whenever `T` itself supports addition.
+/// The `Tag` must match on both sides, so this never lets two different branded types combine.
+impl<Tag, T: core::ops::Add<Output = T>> core::ops::Add for Branded<Tag, T> {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Self(self.0 + rhs.0, PhantomData)
+    }
+}
+
+impl<Tag, T: Copy + core::ops::Add<Output = T>> core::ops::AddAssign for Branded<Tag, T> {
+    fn add_assign(&mut self, rhs: Self) {
+        self.0 = self.0 + rhs.0;
+    }
+}
+
 /// Blanket implementations for `Branded<Tag, u256>`.
 impl<Tag: Pod + Zeroable> Branded<Tag, u256> {
     #[must_use]
@@ -99,42 +117,6 @@ impl<Tag: Pod + Zeroable> Branded<Tag, u256> {
     #[must_use]
     pub fn as_limbs(&self) -> &[u64; 4] {
         self.0.as_limbs()
-    }
-}
-
-/// Blanket implementations for `Branded<Tag, u128>`.
-impl<Tag: Pod + Zeroable> Branded<Tag, u128> {
-    #[must_use]
-    pub const fn from_limbs(limbs: [u64; 2]) -> Self {
-        Self::new((limbs[0] as u128) | ((limbs[1] as u128) << 64))
-    }
-
-    #[must_use]
-    pub const fn as_limbs(&self) -> [u64; 2] {
-        [self.0 as u64, (self.0 >> 64) as u64]
-    }
-
-    #[must_use]
-    pub fn from_le_bytes(bytes: [u8; 16]) -> Self {
-        Self::new(u128::from_le_bytes(bytes))
-    }
-
-    #[must_use]
-    pub fn to_le_bytes(&self) -> [u8; 16] {
-        self.0.to_le_bytes()
-    }
-
-    #[must_use]
-    pub fn to_le_bytes_slice(&self) -> &[u8] {
-        // Safety: u128 has no alignment padding, crate enforces LE target.
-        unsafe { core::slice::from_raw_parts(&self.0 as *const u128 as *const u8, 16) }
-    }
-
-    #[must_use]
-    pub fn from_le_bytes_slice(slice: &[u8]) -> Self {
-        assert!(slice.len() == 16, "from_le_bytes_slice: expected 16 bytes, got {}", slice.len());
-        let bytes: [u8; 16] = slice.try_into().unwrap();
-        Self::from_le_bytes(bytes)
     }
 }
 

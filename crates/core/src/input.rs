@@ -1,9 +1,10 @@
-//! Logic for parsing the proof-carrying state and header batch inputs to the guest.
+//! Reading the proof-carrying state, header batch, and hint inputs to the guest.
 
 use alloc::vec::Vec;
-use bytemuck::{self, Pod, PodCastError};
 
-pub fn parse_input<B: Pod>(bytes: &[u8]) -> Result<&[B], PodCastError> {
+use bytemuck::{Pod, PodCastError};
+
+pub fn cast_slice<B: Pod>(bytes: &[u8]) -> Result<&[B], PodCastError> {
     bytemuck::try_cast_slice(bytes)
 }
 
@@ -13,10 +14,12 @@ pub fn serialize_inputs<B: Pod>(values: &[B]) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
+    use alloc::vec;
+
+    use bytemuck::PodCastError;
+
     use super::*;
     use crate::{BlockTimestamp, HeaderInput};
-    use alloc::vec;
-    use bytemuck::PodCastError;
 
     #[test]
     fn test_new_header_hints_round_trip() {
@@ -36,7 +39,7 @@ mod tests {
         ];
 
         let bytes = serialize_inputs(&headers);
-        let parsed: &[HeaderInput] = parse_input(&bytes).expect("a");
+        let parsed: &[HeaderInput] = cast_slice(&bytes).expect("a");
         assert_eq!(parsed, headers.as_slice());
     }
 
@@ -51,20 +54,16 @@ mod tests {
         let mut bytes = serialize_inputs(&headers);
         bytes.pop();
 
-        let err: PodCastError = parse_input::<HeaderInput>(&bytes).expect_err("a");
+        let err: PodCastError = cast_slice::<HeaderInput>(&bytes).expect_err("a");
         assert_eq!(err, PodCastError::OutputSliceWouldHaveSlop)
     }
 
     #[test]
     fn median_time_past_hints_round_trip() {
-        let hints = vec![
-            BlockTimestamp::new(0),
-            BlockTimestamp::new(123),
-            BlockTimestamp::new(456),
-        ];
+        let hints = vec![BlockTimestamp::new(0), BlockTimestamp::new(123), BlockTimestamp::new(456)];
 
         let bytes = serialize_inputs(&hints);
-        let parsed: &[BlockTimestamp] = parse_input(&bytes).unwrap();
+        let parsed: &[BlockTimestamp] = cast_slice(&bytes).unwrap();
         assert_eq!(parsed, hints.as_slice());
     }
 
@@ -72,6 +71,6 @@ mod tests {
     fn median_time_past_hints_reject_invalid_lengths() {
         // Variant is placement-dependent (alignment is checked before length),
         // so only assert that a 3-byte payload is rejected.
-        assert!(parse_input::<BlockTimestamp>(&[1, 2, 3]).is_err());
+        assert!(cast_slice::<BlockTimestamp>(&[1, 2, 3]).is_err());
     }
 }

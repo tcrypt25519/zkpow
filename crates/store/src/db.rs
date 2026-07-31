@@ -4,35 +4,54 @@
 
 use std::path::Path;
 
-use rusqlite::{params, Connection, OptionalExtension};
 use sync_headers::{ConnectedHeader, Tip};
 use zkpow_core::{
-    chain_work_from_db_bytes, chain_work_to_db_bytes, requires_median_hint, BlockHash,
-    BlockTimestamp, ChainWork, Claim, CompactTarget, Header, HeaderInput, State, VerifierKeyDigest,
-    WINDOW_SIZE,
+    requires_median_hint, BlockHash, BlockTimestamp, ChainWork,
+    Claim, CompactTarget, Header, HeaderInput, State, VerifierKeyDigest, WINDOW_SIZE,
 };
 
-const HASH_LEN: usize = 32;
-const WORK_LEN: usize = 16;
+use rusqlite::{params, Connection, OptionalExtension};
 
-fn hash_to_bytes(hash: &BlockHash) -> [u8; HASH_LEN] {
+#[derive(thiserror::Error, Debug)] 
+pub enum Error {
+    #[error("data failed to convert")]
+    ConversionError(#[from] std::array::TryFromSliceError),
+    #[error("rusqlite error")]
+    RusqliteError(#[from] rusqlite::Error),
+}
+
+impl From<Error> for rusqlite::Error {
+    fn from(err: Error) -> Self {
+        match err {
+            Error::ConversionError(e) => rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e)),
+            Error::RusqliteError(e) => e,
+        }
+    }
+}
+
+
+fn hash_to_bytes(hash: &BlockHash) -> [u8; BlockHash::SIZE] {
     *hash.as_inner()
 }
 
-fn hash_from_bytes(bytes: &[u8]) -> rusqlite::Result<BlockHash> {
-    let arr: [u8; HASH_LEN] = bytes
-        .try_into()
-        .map_err(|_| rusqlite::Error::InvalidColumnType(0, "blob".into(), rusqlite::types::Type::Blob))?;
-    Ok(BlockHash::new(arr))
+fn hash_from_bytes(bytes: &[u8]) -> Result<BlockHash, Error> {
+    Ok(BlockHash::new(bytes.try_into()?))
 }
 
-fn work_to_bytes(work: &ChainWork) -> [u8; WORK_LEN] {
-    chain_work_to_db_bytes(*work)
+/// Big-endian byte encoding of chainwork as stored in `headers.db`'s `chainwork`
+/// column. It predates `ChainWork`'s little-endian in-memory representation.
+/// Every reader and writer of that column must agree on this convention.
+fn work_to_bytes(work: &ChainWork) -> [u8; ChainWork::SIZE] {
+    let mut bytes = work.to_le_bytes();
+    bytes.reverse();
+    bytes
 }
 
-fn work_from_bytes(bytes: &[u8]) -> rusqlite::Result<ChainWork> {
-    chain_work_from_db_bytes(bytes)
-        .ok_or_else(|| rusqlite::Error::InvalidColumnType(0, "blob".into(), rusqlite::types::Type::Blob))
+/// Inverse of [`work_to_bytes`]. Returns `None` if `bytes` isn't exactly 32 bytes.
+fn work_from_bytes(bytes: &[u8]) -> Result<ChainWork, Error> {
+    let mut arr: [u8; ChainWork::SIZE] = bytes.try_into()?;
+    arr.reverse();
+    Ok(ChainWork::from_le_bytes(arr))
 }
 
 fn ordered_timestamp_run_from_db(height: u64, value: i64) -> u64 {
@@ -45,8 +64,8 @@ fn ordered_timestamp_run_from_db(height: u64, value: i64) -> u64 {
 
 struct HeaderFields {
     version: u32,
-    prev: [u8; HASH_LEN],
-    merkle_root: [u8; HASH_LEN],
+    prev: [u8; BlockHash::SIZE],
+    merkle_root: [u8; BlockHash::SIZE],
     timestamp: u32,
     n_bits: u32,
     nonce: u32,
@@ -346,9 +365,7 @@ impl HeaderStore {
                     height,
                     HeaderInput {
                         version: version as u32,
-                        merkle_root: merkle_root
-                            .try_into()
-                            .expect("merkle_root must be 32 bytes"),
+                        merkle_root: merkle_root.try_into().expect("merkle_root must be 32 bytes"),
                         timestamp: BlockTimestamp::new(timestamp as u32),
                         nonce: nonce as u32,
                     },
@@ -417,10 +434,10 @@ impl HeaderStore {
                 "SELECT verifier_key, verified_height, proof_object FROM runs WHERE run_id = ?1",
                 [run_id],
                 |row| {
-                    let verifier_key: [u8; HASH_LEN] = row.get::<_, Vec<u8>>(0)?.try_into().map_err(|_| {
+                    let verifier_key: [u8; VerifierKeyDigest::SIZE] = row.get::<_, Vec<u8>>(0)?.try_into().map_err(|_| {
                         rusqlite::Error::InvalidColumnType(
                             0,
-                            "verifier_key must be 32 bytes".to_string(),
+                            format!("verifier_key must be {} bytes", VerifierKeyDigest::SIZE),
                             rusqlite::types::Type::Blob,
                         )
                     })?;

@@ -1,8 +1,10 @@
+
+
 /// Parse errors for fixed-width serialized core types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum ParseError {
     #[error("invalid length: expected {expected}, got {actual}")]
-    #[from(PodCastError::SizeMismatch)]
+    #[from(TestErr::SizeMismatch)]
     InvalidLength { expected: usize, actual: usize },
     #[error("misaligned input requires {required}-byte alignment")]
     Misaligned { required: usize },
@@ -19,6 +21,8 @@ pub enum ParseError {
 pub enum TargetError {
     #[error("invalid target: can not be max u256")]
     TargetTooLarge,
+    //     #[error("invalid target: can not be max u256")]
+    //     PodCastError(TestErrAA),
 }
 
 /// Parse errors for witness (hints) data.

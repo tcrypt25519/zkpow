@@ -1,19 +1,18 @@
 #[cfg(not(target_endian = "little"))]
 compile_error!("zkpow wire types require a little-endian target");
 
-use crate::{
-    advance_ordered_timestamp_run, calculate_next_target_required, check_proof_of_work,
-    copy_to_bytes, has_ordered_timestamp_window, hash_header, ordered_median_timestamp_slot,
-    ordered_timestamp_run, target_from_bits, timestamp_slot, work_from_target, ApplyFailure,
-    BlockHash, BlockTimestamp, ChainWork, Claim, CompactTarget, ContinuationData, HeaderInput,
-    Target, TargetError, ValidationErrorCode, CONTINUATION_DATA_SIZE, EPOCH_LENGTH, STATE_SIZE,
-    WINDOW_SIZE,
-};
-pub use sp1_cycle::tracked;
-
 use bytemuck::{Pod, PodCastError, Zeroable};
 #[cfg(feature = "host")]
 use serde::{Deserialize, Serialize};
+pub use sp1_cycle::tracked;
+
+use crate::{
+    advance_ordered_timestamp_run, block_work_from_target, calculate_next_target_required, check_proof_of_work,
+    copy_to_bytes, has_ordered_timestamp_window, hash_header, ordered_median_timestamp_slot, ordered_timestamp_run,
+    target_from_bits, timestamp_slot, ApplyFailure, BlockHash, BlockTimestamp, BlockWork, ChainWork, Claim,
+    CompactTarget, ContinuationData, HeaderInput, Target, TargetError, ValidationErrorCode, CONTINUATION_DATA_SIZE,
+    EPOCH_LENGTH, STATE_SIZE, WINDOW_SIZE,
+};
 
 /// Complete authenticated validation state, serialized between recursive iterations.
 #[repr(C)]
@@ -22,14 +21,16 @@ use serde::{Deserialize, Serialize};
 pub struct State {
     pub block_hash: BlockHash,
     pub genesis_hash: BlockHash,
+    pub chain_work: ChainWork,
     pub current_nbits: CompactTarget,
     pub height: u32,
-    pub chain_work: ChainWork,
     pub epoch_start_timestamp: BlockTimestamp,
     pub timestamps: [BlockTimestamp; WINDOW_SIZE],
+    pub _padding: [u8; 8],
 }
 
 impl State {
+    pub const SIZE: usize = size_of::<Self>();
     /// The circular-buffer slot containing the current tip timestamp.
     #[must_use]
     fn current_timestamp_slot(&self) -> usize {
@@ -84,14 +85,11 @@ impl State {
         &self,
         current_target: Target,
         previous_timestamp: BlockTimestamp,
-    ) -> Result<(CompactTarget, Target, ChainWork), TargetError> {
-        let (current_nbits, current_target) = calculate_next_target_required(
-            current_target,
-            self.epoch_start_timestamp,
-            previous_timestamp,
-        );
-        let current_work = work_from_target(current_target)?;
-        Ok((current_nbits, current_target, current_work))
+    ) -> Result<(CompactTarget, Target, BlockWork), TargetError> {
+        let (current_nbits, current_target) =
+            calculate_next_target_required(current_target, self.epoch_start_timestamp, previous_timestamp);
+        let block_work = block_work_from_target(current_target)?;
+        Ok((current_nbits, current_target, block_work))
     }
 
     #[allow(clippy::result_large_err)]
@@ -158,8 +156,7 @@ impl State {
             let cold_len = (WINDOW_SIZE - 1 - self.height as usize).min(headers.len());
             let mut context = EpochManager::new(self);
             for new_header in &headers[..cold_len] {
-                let claimed_median =
-                    context.state.timestamps[(context.state.height as usize).div_ceil(2)];
+                let claimed_median = context.state.timestamps[(context.state.height as usize).div_ceil(2)];
                 if let Err(mut failure) = context.state.apply_header_after_median_check(
                     new_header,
                     claimed_median,
@@ -179,15 +176,13 @@ impl State {
 
         if headers_consumed < headers.len() {
             let mut ordered_run_len =
-                sp1_cycle::track!({ ordered_timestamp_run(&self.timestamps, self.height.into()) })
-                    as usize;
+                sp1_cycle::track!({ ordered_timestamp_run(&self.timestamps, self.height.into()) }) as usize;
 
             while headers_consumed < headers.len() {
                 let mut context = EpochManager::new(self);
 
                 let current_height = context.state.height;
-                let headers_to_end_of_epoch =
-                    (EPOCH_LENGTH - ((current_height + 1) % EPOCH_LENGTH)) as usize;
+                let headers_to_end_of_epoch = (EPOCH_LENGTH - ((current_height + 1) % EPOCH_LENGTH)) as usize;
 
                 let chunk_len = (headers.len() - headers_consumed).min(headers_to_end_of_epoch);
                 let chunk_headers = &headers[headers_consumed..headers_consumed + chunk_len];
@@ -195,12 +190,11 @@ impl State {
                 for (chunk_index, new_header) in chunk_headers.iter().enumerate() {
                     let header_index = headers_consumed + chunk_index;
                     let claimed_median = if has_ordered_timestamp_window(ordered_run_len as u64) {
-                        context.state.timestamps
-                            [ordered_median_timestamp_slot(context.state.height.into())]
+                        context.state.timestamps[ordered_median_timestamp_slot(context.state.height.into())]
                     } else {
-                        let claimed_median = *median_hint_iter.next().unwrap_or_else(|| {
-                            panic!("missing median time past hint at header index {header_index}")
-                        });
+                        let claimed_median = *median_hint_iter
+                            .next()
+                            .unwrap_or_else(|| panic!("missing median time past hint at header index {header_index}"));
                         let (less_count, equal_count) = sp1_cycle::track!({
                             let mut less_count = 0usize;
                             let mut equal_count = 0usize;
@@ -214,15 +208,13 @@ impl State {
                             (less_count, equal_count)
                         });
                         assert!(
-                            less_count <= WINDOW_SIZE / 2
-                                && less_count + equal_count > WINDOW_SIZE / 2,
+                            less_count <= WINDOW_SIZE / 2 && less_count + equal_count > WINDOW_SIZE / 2,
                             "invalid median time past hint at header index {header_index}"
                         );
                         claimed_median
                     };
 
-                    let previous_timestamp =
-                        sp1_cycle::track!({ context.state.previous_timestamp() });
+                    let previous_timestamp = sp1_cycle::track!({ context.state.previous_timestamp() });
                     ordered_run_len = advance_ordered_timestamp_run(
                         ordered_run_len as u64,
                         previous_timestamp.into_inner(),
@@ -246,11 +238,7 @@ impl State {
             }
         }
 
-        assert_eq!(
-            median_hint_iter.next(),
-            None,
-            "unused sparse median time past hints"
-        );
+        assert_eq!(median_hint_iter.next(), None, "unused sparse median time past hints");
 
         Ok(())
     }
@@ -266,14 +254,15 @@ impl Default for State {
             chain_work: ChainWork::default(),
             epoch_start_timestamp: BlockTimestamp::default(),
             timestamps: [BlockTimestamp::default(); WINDOW_SIZE],
+            _padding: [0; 8],
         }
     }
 }
 
 struct EpochManager<'a> {
     state: &'a mut State,
-    pending_run_work: ChainWork,
     pending_run_count: u32,
+    active_block_work: BlockWork,
     active_nbits: CompactTarget,
     active_target: Target,
 }
@@ -294,13 +283,12 @@ impl<'a> EpochManager<'a> {
         } else {
             active_nbits = state.current_nbits;
             active_target = target_from_bits(active_nbits);
-            active_work = work_from_target(active_target)
-                .expect("current target must be valid blockchain data");
+            active_work = block_work_from_target(active_target).expect("current target must be valid blockchain data");
         }
 
         Self {
             state,
-            pending_run_work: active_work,
+            active_block_work: active_work,
             pending_run_count: 0,
             active_nbits,
             active_target,
@@ -310,9 +298,8 @@ impl<'a> EpochManager<'a> {
     fn flush(&mut self) {
         if self.pending_run_count > 0 {
             sp1_cycle::track!({
-                let mut accumulated_work = self.pending_run_work;
-                accumulated_work *= self.pending_run_count;
-                self.state.chain_work = self.state.chain_work + accumulated_work;
+                let new_chain_work: ChainWork = self.active_block_work * self.pending_run_count;
+                self.state.chain_work = self.state.chain_work + new_chain_work;
             });
             self.pending_run_count = 0;
         }

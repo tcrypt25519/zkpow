@@ -3,11 +3,8 @@
 //! Both controller operations accept only a run id. HTTP encodes the batch
 //! response with postcard; local mode passes the value directly.
 
-use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
-use zkpow_core::{
-    BlockTimestamp, State, VerifierKeyDigest, CONTINUATION_DATA_SIZE, NEW_HEADER_SIZE,
-};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use zkpow_core::{BlockTimestamp, State, VerifierKeyDigest, CONTINUATION_DATA_SIZE, NEW_HEADER_SIZE};
 
 const MEDIAN_HINT_SIZE: usize = size_of::<BlockTimestamp>();
 
@@ -108,11 +105,7 @@ impl Batch {
                 self.header_bytes.len()
             ));
         }
-        if !self
-            .median_hint_bytes
-            .len()
-            .is_multiple_of(MEDIAN_HINT_SIZE)
-        {
+        if !self.median_hint_bytes.len().is_multiple_of(MEDIAN_HINT_SIZE) {
             return Err(format!(
                 "median-hint payload of {} bytes is not a whole number of hints",
                 self.median_hint_bytes.len()

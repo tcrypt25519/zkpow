@@ -4,19 +4,23 @@
 //! batch, verifier key, recursive witness, artifact names, and expected public
 //! values. Completion means the selected proof has already been uploaded.
 
-use std::collections::{HashMap, VecDeque};
-use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::Duration;
+use std::{
+    collections::{HashMap, VecDeque},
+    sync::{Arc, Mutex, MutexGuard},
+    time::Duration,
+};
 
 use tokio::sync::Notify;
 use zkpow_core::{serialize_inputs, BlockHash, MinimalPublicValues, State, VerifierKeyDigest};
 use zkpow_store::{HeaderStore, RunRecord};
 
-use crate::digest::continuation_digest_from_state;
-use crate::protocol::{Batch, ControllerError};
-use crate::storage::ArtifactStore;
-use crate::verify::ProofVerifier;
-use crate::NO_HEADERS_REMAINING_PREFIX;
+use crate::{
+    digest::continuation_digest_from_state,
+    protocol::{Batch, ControllerError},
+    storage::ArtifactStore,
+    verify::ProofVerifier,
+    NO_HEADERS_REMAINING_PREFIX,
+};
 
 pub const MAX_OUTSTANDING_BATCHES: usize = 2;
 const DEFAULT_PULL_TIMEOUT: Duration = Duration::from_secs(600);
@@ -177,35 +181,27 @@ impl ControllerRuntime {
                         "serving batch"
                     );
                     return Ok(batch);
-                }
+                },
                 Pull::Wait if tokio::time::Instant::now() >= deadline => {
                     return Err(ControllerError::timeout(format!(
                         "run {run_id} did not verify its oldest pending proof within {:?}",
                         self.inner.pull_timeout
                     )));
-                }
+                },
                 Pull::Wait => {
                     let _ = tokio::time::timeout_at(deadline, notified).await;
-                }
+                },
             }
         }
     }
 
     pub async fn complete(&self, run_id: &str) -> Result<(), ControllerError> {
         validate_run_id(run_id)?;
-        let (
-            end_height,
-            proof_object,
-            expected_public_values,
-            continuation_object,
-            expected_continuation,
-        ) = {
+        let (end_height, proof_object, expected_public_values, continuation_object, expected_continuation) = {
             let mut core = lock_core(&self.inner.core);
             let session = core.session_mut(run_id)?;
             let pending = session.pending.front().ok_or_else(|| {
-                ControllerError::bad_request(format!(
-                    "run {run_id} has no pending batch to complete"
-                ))
+                ControllerError::bad_request(format!("run {run_id} has no pending batch to complete"))
             })?;
             (
                 pending.end_height,
@@ -225,9 +221,7 @@ impl ControllerRuntime {
             let continuation = storage
                 .fetch(&verification_run, &verification_continuation_object)
                 .map_err(|err| {
-                    format!(
-                        "failed to fetch continuation data {verification_continuation_object}: {err}"
-                    )
+                    format!("failed to fetch continuation data {verification_continuation_object}: {err}")
                 })?;
             if continuation != expected_continuation {
                 return Err(format!(
@@ -236,9 +230,7 @@ impl ControllerRuntime {
             }
             storage
                 .fetch(&verification_run, &verification_object)
-                .map_err(|err| {
-                    format!("failed to fetch uploaded proof {verification_object}: {err}")
-                })
+                .map_err(|err| format!("failed to fetch uploaded proof {verification_object}: {err}"))
                 .and_then(|proof| verifier.verify_compressed(&proof, &expected_public_values))
         })
         .await
@@ -260,16 +252,10 @@ impl ControllerRuntime {
                     "pending batch for run {run_id} changed while verifying"
                 )));
             }
-            let expected_state = session
-                .pending
-                .front()
-                .expect("front checked")
-                .expected_state;
+            let expected_state = session.pending.front().expect("front checked").expected_state;
             core.store
                 .record_run_progress(run_id, end_height, Some(&proof_object))
-                .map_err(|err| {
-                    ControllerError::internal(format!("failed to persist run progress: {err}"))
-                })?;
+                .map_err(|err| ControllerError::internal(format!("failed to persist run progress: {err}")))?;
             let session = core.session_mut(run_id)?;
             session.pending.pop_front();
             session.verified_state = expected_state;
@@ -333,9 +319,9 @@ impl ControllerCore {
     }
 
     fn session_mut(&mut self, run_id: &str) -> Result<&mut RunSession, ControllerError> {
-        self.runs.get_mut(run_id).ok_or_else(|| {
-            ControllerError::bad_request(format!("run {run_id} has no active session"))
-        })
+        self.runs
+            .get_mut(run_id)
+            .ok_or_else(|| ControllerError::bad_request(format!("run {run_id} has no active session")))
     }
 
     fn ensure_session(&mut self, run_id: &str) -> Result<(), ControllerError> {
@@ -351,7 +337,7 @@ impl ControllerCore {
                 return Err(ControllerError::conflict(format!(
                     "run {run_id} belongs to a different controller verifier key"
                 )));
-            }
+            },
             Some(record) => record,
             None => {
                 let record = RunRecord {
@@ -359,11 +345,11 @@ impl ControllerCore {
                     verified_height: 0,
                     proof_object: None,
                 };
-                self.store.create_run(run_id, &record).map_err(|err| {
-                    ControllerError::internal(format!("run ledger create failed: {err}"))
-                })?;
+                self.store
+                    .create_run(run_id, &record)
+                    .map_err(|err| ControllerError::internal(format!("run ledger create failed: {err}")))?;
                 record
-            }
+            },
         };
         self.runs.insert(
             run_id.to_owned(),
@@ -383,18 +369,12 @@ impl ControllerCore {
         let (tip_state, previous_proof_object, prepared) = {
             let session = self.session_mut(run_id)?;
             if let Some(reason) = &session.halted {
-                return Err(ControllerError::conflict(format!(
-                    "run {run_id} is halted: {reason}"
-                )));
+                return Err(ControllerError::conflict(format!("run {run_id} is halted: {reason}")));
             }
             if session.pending.len() >= MAX_OUTSTANDING_BATCHES {
                 return Ok(Pull::Wait);
             }
-            (
-                session.tip_state(),
-                session.tip_proof_object(),
-                session.prepared.take(),
-            )
+            (session.tip_state(), session.tip_proof_object(), session.prepared.take())
         };
 
         let mut fetched = match prepared {
@@ -431,18 +411,13 @@ impl ControllerCore {
         let current_state = session.tip_state();
         let result = self.fetch_batch(current_state);
         if let Some(session) = self.runs.get_mut(run_id) {
-            session.prepared = Some(PreparedBatch {
-                current_state,
-                result,
-            });
+            session.prepared = Some(PreparedBatch { current_state, result });
         }
     }
 
     fn fetch_batch(&self, current_state: State) -> Result<FetchedBatch, ControllerError> {
         if self.batch_size == 0 {
-            return Err(ControllerError::bad_request(
-                "controller batch size must be nonzero",
-            ));
+            return Err(ControllerError::bad_request("controller batch size must be nonzero"));
         }
         let first_new_height = current_state.height + 1;
         let witness = self
@@ -476,11 +451,11 @@ impl ControllerCore {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::protocol::FileLocation;
-    use crate::storage::LocalArtifactStore;
     use zkpow_sha256;
     use zkpow_store::db_path;
+
+    use super::*;
+    use crate::{protocol::FileLocation, storage::LocalArtifactStore};
 
     struct BytesArePublicValues(VerifierKeyDigest);
 
@@ -511,9 +486,7 @@ mod tests {
                 .as_nanos();
             let root = std::env::temp_dir().join(format!("zkpow-runtime-{nonce}"));
             let store = HeaderStore::open(db_path()).unwrap();
-            let genesis_hash = BlockHash::new(zkpow_sha256::double(
-                &store.load_header_record(0).header.to_bytes(),
-            ));
+            let genesis_hash = BlockHash::new(zkpow_sha256::double(&store.load_header_record(0).header.to_bytes()));
             let mut config = ControllerConfig::new(genesis_hash, 2);
             config.pull_timeout = Duration::from_millis(100);
             let runtime = ControllerRuntime::new(
@@ -559,9 +532,7 @@ mod tests {
 
         fn genesis_hash(&self) -> BlockHash {
             let store = HeaderStore::open(db_path()).unwrap();
-            BlockHash::new(zkpow_sha256::double(
-                &store.load_header_record(0).header.to_bytes(),
-            ))
+            BlockHash::new(zkpow_sha256::double(&store.load_header_record(0).header.to_bytes()))
         }
     }
 

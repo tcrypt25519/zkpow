@@ -47,9 +47,9 @@ runs a preflight (`nvidia-smi` parse: compute capability, VRAM, CUDA version).
 ### 1. Batch Preparation
 
 **What happens.** The host asks the [controller](../.wiki/features/controller-service.md)
-for the next batch (`fetch_batch`): a slice of `HeaderInput`s (default 2016), the sparse median-time-past hints, and the
-**expected** end-state + continuation digest the controller derived independently from the DB. If continuing a chain,
-the previous compressed proof is loaded (`load_optional_proof`). Everything is serialized into `SP1Stdin`
+for the next batch (`fetch_batch`): a slice of `HeaderInput`s (default 2016), the sparse median-time-past hints, and
+the **expected** end-state + continuation digest the controller derived independently from the DB. If continuing a
+chain, the previous compressed proof is loaded (`load_optional_proof`). Everything is serialized into `SP1Stdin`
 (`serialize_input`) in the exact order the guest reads it (verifier key, state, headers, median hints, optional prior
 proof via `write_proof`).
 
@@ -137,11 +137,11 @@ one deferred `flush` (on chunk end, on
 - **Failure modes.** `TimestampTooOld` (3), `PowInsufficient` (2); a missing or mis-ranked median hint **panics** (a
   witness/DB bug, not a consensus error).
 - **Novel / unique.**
-    - Deferred work accumulation: the flush **must** run before returning a failure, or `last_valid_state.chain_work`
-      would be understated. This is a load-bearing invariant (`EpochManager::flush`/`Drop`).
-    - Median hints are *validated by rank*, never trusted — the host supplies them only when the guest can't cheaply
-      derive the median, trading a small witness for fewer guest cycles.
-    - Building the header hash from disjoint fields avoids ever materializing an 80-byte buffer, saving cycles.
+  - Deferred work accumulation: the flush **must** run before returning a failure, or `last_valid_state.chain_work`
+    would be understated. This is a load-bearing invariant (`EpochManager::flush`/`Drop`).
+  - Median hints are *validated by rank*, never trusted — the host supplies them only when the guest can't cheaply
+    derive the median, trading a small witness for fewer guest cycles.
+  - Building the header hash from disjoint fields avoids ever materializing an 80-byte buffer, saving cycles.
 
 ### 6. Epoch Retarget ⟳
 

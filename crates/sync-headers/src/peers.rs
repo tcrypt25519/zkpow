@@ -7,7 +7,8 @@ use std::{
     time::SystemTime,
 };
 
-use rand::seq::SliceRandom;
+use rand::seq::IndexedRandom;
+
 
 /// Known Bitcoin mainnet DNS seeds.
 const DNS_SEEDS: &[&str] = &[
