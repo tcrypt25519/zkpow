@@ -1,9 +1,7 @@
+use crate::{BlockHash, BlockTimestamp, CompactTarget};
 use bytemuck::{Pod, PodCastError, Zeroable};
 use sp1_cycle_macros::tracked;
 
-#[cfg(test)]
-use crate::{check_exact_len, ParseError};
-use crate::{copy_to_bytes, BlockHash, BlockTimestamp, CompactTarget, BLOCK_HEADER_SIZE, NEW_HEADER_SIZE};
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Pod, Zeroable)]
@@ -19,19 +17,14 @@ pub struct Header {
 }
 
 impl Header {
+    const SIZE: usize = 80;
+
     /// Serialize to exactly [`BLOCK_HEADER_SIZE`] bytes.
     #[must_use]
-    pub fn to_bytes(&self) -> [u8; BLOCK_HEADER_SIZE] {
-        copy_to_bytes(self)
+    pub fn to_bytes(&self) -> [u8; Header::SIZE] {
+        *bytemuck::bytes_of(self).as_array().expect("header is 80 bytes")
     }
 
-    /// Deserialize from exactly [`BLOCK_HEADER_SIZE`] bytes.
-    #[cfg(test)]
-    #[sp1_cycle::tracked]
-    pub fn parse(bytes: &[u8]) -> Result<Self, ParseError> {
-        check_exact_len(bytes, BLOCK_HEADER_SIZE)?;
-        Ok(bytemuck::pod_read_unaligned(bytes))
-    }
 }
 
 /// Prover-supplied fields for a new header.
@@ -45,6 +38,8 @@ pub struct HeaderInput {
 }
 
 impl HeaderInput {
+    const SIZE: usize = 44;
+    
     /// Extract the prover-supplied subset of fields from a full [`Header`].
     #[must_use]
     pub fn from_header(header: &Header) -> Self {
@@ -64,8 +59,10 @@ impl HeaderInput {
 
     /// Serialize to exactly [`NEW_HEADER_SIZE`] bytes.
     #[must_use]
-    pub fn to_bytes(&self) -> &[u8; NEW_HEADER_SIZE] {
+    pub fn to_bytes(&self) -> &[u8; Self::SIZE] {
         let byte_slice = bytemuck::bytes_of(self);
         byte_slice.as_array().expect("a")
     }
 }
+
+

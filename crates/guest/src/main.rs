@@ -146,7 +146,44 @@ fn inner_main() -> Result<(), ProgramError> {
     // timestamps
     let state_bytes = read_byte_slice_mut()?;
 
-    let vk_bytes = read_fixed_size_input::<[u32; 8]>()?;
+/*
+
+- First data used is prior_claim which is extraced, parsed, from state, and then immediately serizlized back to bytes (wtf?)
+- Then vk_bytes, prior_claim, and prior_continuation_bytes are used; passed into in verify_prior_proof.
+- vk_bytes are used again; in a converstion to VerifierKeyDigest
+
+- Then state is used; the apply_headers method is called on it
+- headers and medians are used in the call to apply_headers
+
+That should be the end of input data usage; afer there it's all output data.
+
+
+So:
+
+Read:
+ - verifier_key and leave as bytes
+ - state and parse it into a State struct
+ - headers and parse them into HeaderInput structs
+ - medians and parse them into BlockTimestamp structs
+
+Check:
+ - Get parsed prior_claim from parsed State
+ - Get un-parsed prior_continuation_bytes from parsed State
+ - Hash prior_continuation_bytes
+ - Instatiate a MinimalPublicValues with parsed prior_claim, hashed prior_continuation_bytes, and a parsed-inline verifier_key
+ - Serialize the MinimalPublicValues THAT WE JUST MADE back into bytes
+ - Hash the bytes of the MinimalPublicValues
+ - Call verify_pverify_sp1_proof with un-parsed verifier_key and hashed MinimalPublicValues
+ - Parse the verifier_key bytes *again* into a VerifierKeyDigest
+ - Call apply_headers on parsed State, passing in parsed headers and parsed medians
+
+Execute:
+   // TBD
+
+
+*/
+
+    let verifier_key = read_fixed_size_input::<[u32; 8]>()?;
     let state: &mut State = read_fixed_size_input_mut::<State>()?;
     let headers: &[HeaderInput] = read_slice_of_fixed_size_elements_input::<HeaderInput>()?;
     let medians: &[BlockTimestamp] = read_slice_of_fixed_size_elements_input::<BlockTimestamp>()?;
@@ -154,10 +191,24 @@ fn inner_main() -> Result<(), ProgramError> {
     if state.height > 0 {
         let prior_claim = state.public_claim();
         let prior_continuation_bytes: [u8; CONTINUATION_DATA_SIZE] = state.continuation_bytes();
-        verify_prior_proof(vk_bytes, &prior_claim, &prior_continuation_bytes);
+        // verify_prior_proof(vk_bytes, &prior_claim, &prior_continuation_bytes);
+
+        // 1. Hash the prior continuation data.
+        let continuation_digest = sp1_cycle::track!({ zkpow_sha256::of_52bytes(&prior_continuation_bytes) });
+
+        // 2. Reconstruct the prior proof's minimal public values and hash them.
+        let prior_pv =
+            MinimalPublicValues::success(&prior_claim, continuation_digest, VerifierKeyDigest::from_raw(*verifier_key));
+        let prior_pv_bytes: [u8; MINIMAL_PV_SIZE] = prior_pv.to_bytes();
+        let actual_pv_hash = sp1_cycle::track!({ zkpow_sha256::of_153bytes(&prior_pv_bytes) });
+
+        // 3. Verify the SP1 proof.
+        sp1_cycle::track!({
+            sp1_zkvm::lib::verify::verify_sp1_proof(verifier_key, &actual_pv_hash);
+        });
     }
 
-    let vk_digest = VerifierKeyDigest::from_raw(*vk_bytes);
+    let vk_digest = VerifierKeyDigest::from_raw(*verifier_key);
 
     // Apply headers; on failure commit minimal PV and halt.
     if let Err(failure) = state.apply_headers(headers, medians) {

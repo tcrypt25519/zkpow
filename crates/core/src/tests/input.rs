@@ -1,0 +1,66 @@
+use alloc::vec;
+
+use bytemuck::PodCastError;
+
+use super::*;
+use crate::{check_exact_len, ParseError};
+use crate::{copy_to_bytes, BlockHash, BlockTimestamp, CompactTarget,HeaderInput,  BLOCK_HEADER_SIZE, NEW_HEADER_SIZE};
+
+pub fn parse_header(bytes: &[u8]) -> Result<Header, ParseError> {
+    check_exact_len(bytes, BLOCK_HEADER_SIZE)?;
+    Ok(bytemuck::pod_read_unaligned(bytes))
+}
+
+#[test]
+fn test_new_header_hints_round_trip() {
+    let headers: Vec<HeaderInput> = vec![
+        HeaderInput {
+            version: 1,
+            merkle_root: [4; 32],
+            timestamp: BlockTimestamp::new(100),
+            nonce: 0,
+        },
+        HeaderInput {
+            version: 2,
+            merkle_root: [5; 32],
+            timestamp: BlockTimestamp::new(200),
+            nonce: 1,
+        },
+    ];
+
+    let bytes = serialize_inputs(&headers);
+    let parsed: &[HeaderInput] = cast_slice(&bytes).expect("a");
+    assert_eq!(parsed, headers.as_slice());
+}
+
+#[test]
+fn test_new_header_hints_reject_truncated_payload() {
+    let headers = vec![HeaderInput {
+        version: 1,
+        merkle_root: [4; 32],
+        timestamp: BlockTimestamp::new(100),
+        nonce: 0,
+    }];
+    let mut bytes = serialize_inputs(&headers);
+    bytes.pop();
+
+    let err: PodCastError = cast_slice::<HeaderInput>(&bytes).expect_err("a");
+    assert_eq!(err, PodCastError::OutputSliceWouldHaveSlop)
+}
+
+#[test]
+fn median_time_past_hints_round_trip() {
+    let hints = vec![BlockTimestamp::new(0), BlockTimestamp::new(123), BlockTimestamp::new(456)];
+
+    let bytes = serialize_inputs(&hints);
+    let parsed: &[BlockTimestamp] = cast_slice(&bytes).unwrap();
+    assert_eq!(parsed, hints.as_slice());
+}
+
+#[test]
+fn median_time_past_hints_reject_invalid_lengths() {
+    // Variant is placement-dependent (alignment is checked before length),
+    // so only assert that a 3-byte payload is rejected.
+    assert!(cast_slice::<BlockTimestamp>(&[1, 2, 3]).is_err());
+}
+
