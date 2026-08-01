@@ -32,16 +32,17 @@ fn into_response(err: ControllerError) -> (StatusCode, String) {
     (status, err.message)
 }
 
-async fn pull_batch_handler(
-    AxumState(runtime): AxumState<ControllerRuntime>,
-    request: Bytes,
-) -> Result<Vec<u8>, (StatusCode, String)> {
-    let run_id =
-        std::str::from_utf8(&request).map_err(|err| into_response(ControllerError::bad_request(err.to_string())))?;
-    let batch = runtime.pull_batch(run_id).await.map_err(into_response)?;
-    batch.validate().map_err(ControllerError::internal).map_err(into_response)?;
-    encode(&batch).map_err(ControllerError::internal).map_err(into_response)
-}
+    async fn pull_batch_handler(
+        AxumState(runtime): AxumState<ControllerRuntime>,
+        request: Bytes,
+    ) -> Result<Vec<u8>, (StatusCode, String)> {
+        // let run_id =
+        //     std::str::from_utf8(&request).map_err(|err| into_response(ControllerError::bad_request(err.to_string())))?;
+        // let batch = runtime.pull_batch(run_id).await.map_err(into_response)?;
+        // batch.validate().map_err(ControllerError::internal).map_err(into_response)?;
+        // // encode(&batch).map_err(ControllerError::internal).map_err(into_response)
+        Ok(Vec::new())
+    }
 
 async fn complete_handler(
     AxumState(runtime): AxumState<ControllerRuntime>,

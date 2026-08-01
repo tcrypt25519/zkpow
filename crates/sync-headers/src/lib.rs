@@ -4,6 +4,9 @@
 //! peer discovery and the `getheaders`/`headers` cycle, handing each batch to
 //! a caller-provided callback (the caller owns validation and persistence).
 
+#[cfg(test)]
+mod tests;
+
 mod connection;
 mod error;
 mod peers;

@@ -15,6 +15,7 @@ pub use sp1_cycle;
 
 pub mod primitives;
 pub use primitives::u256;
+pub use primitives::ByteInfo;
 
 pub use primitives::{BlockHash, BlockTimestamp, BlockWork, ChainWork, CompactTarget, Target};
 mod header;
@@ -36,6 +37,7 @@ pub use public_values::{
     ApplyFailure, Claim, ContinuationData, HeaderChainPublicValues, MinimalPublicValues, ProofFailure,
     PublicValuesDigest, ValidationErrorCode, VerifierKeyDigest,
 };
+#[cfg(not(target_os = "zkvm"))]
 use sha2::{Digest, Sha256};
 
 /// Size of the serialized [`State`] in bytes.

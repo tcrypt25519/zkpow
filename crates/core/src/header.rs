@@ -1,7 +1,7 @@
 use crate::{BlockHash, BlockTimestamp, CompactTarget};
 use bytemuck::{Pod, PodCastError, Zeroable};
 use sp1_cycle_macros::tracked;
-
+use zkpow_core::primitives::ByteInfo;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Pod, Zeroable)]
@@ -38,7 +38,7 @@ pub struct HeaderInput {
 }
 
 impl HeaderInput {
-    const SIZE: usize = 44;
+    // const SIZE: usize = 44;
     
     /// Extract the prover-supplied subset of fields from a full [`Header`].
     #[must_use]

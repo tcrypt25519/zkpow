@@ -176,6 +176,58 @@ Check:
  - Call verify_pverify_sp1_proof with un-parsed verifier_key and hashed MinimalPublicValues
  - Parse the verifier_key bytes *again* into a VerifierKeyDigest
  - Call apply_headers on parsed State, passing in parsed headers and parsed medians
+ - There is one more use of input data after apply_headers: the now twice-parsed Verification Key is added to a new MinimalPublicValues which
+   is then IMMEDIATE SERIZLIED BACK TO BYTES, AGAIN.
+
+Notes from observations:
+
+Both the VK and genesis hash should be checked by the verifying system.
+We should make the Host act in that capacity for now. Allow setting them by env vars and for any 
+batch inputs (which necessariliy must be > 0) we should require them to be correct.
+
+
+Logic Pieces
+
+- VK
+  - [u32; 8]                                             ; Used for proof verification, committed
+- State
+  - Claim
+        pub genesis_hash: BlockHash,
+        pub tip_hash: BlockHash,
+        pub chain_work: ChainWork,
+        pub height: u32,
+  - Continuation
+        pub current_nbits: CompactTarget,
+        pub epoch_start_timestamp: BlockTimestamp,
+        pub timestamps: [BlockTimestamp; WINDOW_SIZE],
+- Headers
+    pub version: u32,
+    pub merkle_root: [u8; 32],
+    pub timestamp: BlockTimestamp,
+    pub nonce: u32,
+- Median
+    pub timestamp: BlockTimestamp,
+
+
+
+- *MinimalPublicValues
+  - A reformulation of elements from
+    - State (the Claim)
+        pub genesis_hash: BlockHash,
+        pub tip_hash: BlockHash,
+        pub chain_work: ChainWork,
+        pub height: u32,
+    - Continuation Hash
+        pub continuation_digest: [u8; 32],
+    - VerifierKey
+        pub verifier_key: VerifierKeyDigest,
+  - Plus a return_code
+    pub return_code: u8,
+  - (There is s failure_height, but that's just the height of the state when it failed, so it's already in the Claim)
+
+
+
+
 
 Execute:
    // TBD

@@ -6,9 +6,11 @@ use bytemuck::{Pod, Zeroable};
 
 mod brand;
 mod bigint;
-
+mod bytes;
+pub use bytes::ByteInfo;
 pub use brand::Branded;
 pub use bigint::u256;
+// pub use byte::Info as ByteInfo;
 
 // Define tags for domain-specific versions of primitive types
 

@@ -6,6 +6,8 @@ use crate::{
     CLAIM_SIZE, CONTINUATION_DATA_SIZE, MINIMAL_PV_SIZE, WINDOW_SIZE,
 };
 
+
+
 /// Digest of a program verifier key.
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -13,7 +15,7 @@ use crate::{
 pub struct VerifierKeyDigest([u32; 8]);
 
 impl VerifierKeyDigest {
-    pub const SIZE: usize = 32;
+    // pub const SIZE: usize = 32;
 
     #[must_use]
     pub const fn from_raw(raw: [u32; 8]) -> Self {

@@ -2,22 +2,24 @@
 compile_error!("zkpow wire types require a little-endian target");
 
 use bytemuck::{Pod, PodCastError, Zeroable};
-#[cfg(feature = "host")]
-use serde::{Deserialize, Serialize};
+// #[cfg(feature = "host")]
+// use serde::{Deserialize, Serialize};
 pub use sp1_cycle::tracked;
+
+use crate::primitives::ByteInfo;
 
 use crate::{
     advance_ordered_timestamp_run, block_work_from_target, calculate_next_target_required, check_proof_of_work,
     copy_to_bytes, has_ordered_timestamp_window, hash_header, ordered_median_timestamp_slot, ordered_timestamp_run,
     target_from_bits, timestamp_slot, ApplyFailure, BlockHash, BlockTimestamp, BlockWork, ChainWork, Claim,
     CompactTarget, ContinuationData, HeaderInput, Target, TargetError, ValidationErrorCode, CONTINUATION_DATA_SIZE,
-    EPOCH_LENGTH, STATE_SIZE, WINDOW_SIZE,
+    EPOCH_LENGTH, WINDOW_SIZE,
 };
 
 /// Complete authenticated validation state, serialized between recursive iterations.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Pod, Zeroable)]
-#[cfg_attr(feature = "host", derive(Serialize, Deserialize))]
+// #[cfg_attr(feature = "host", derive(serde::Serialize, serde::Deserialize))]
 pub struct State {
     pub block_hash: BlockHash,
     pub genesis_hash: BlockHash,
@@ -30,21 +32,22 @@ pub struct State {
 }
 
 impl State {
-    pub const SIZE: usize = size_of::<Self>();
     /// The circular-buffer slot containing the current tip timestamp.
     #[must_use]
+    #[inline]
     fn current_timestamp_slot(&self) -> usize {
         timestamp_slot(self.height.into())
     }
 
     #[must_use]
+    #[inline]
     fn previous_timestamp(&self) -> BlockTimestamp {
         self.timestamps[self.current_timestamp_slot()]
     }
 
     /// Serialize to exactly [`STATE_SIZE`] bytes.
     #[must_use]
-    pub fn to_bytes(&self) -> [u8; STATE_SIZE] {
+    pub fn to_bytes(&self) -> [u8; Self::SIZE] {
         copy_to_bytes(self)
     }
 
@@ -52,14 +55,6 @@ impl State {
     #[tracked]
     pub fn parse(bytes: &[u8]) -> Result<&Self, PodCastError> {
         bytemuck::try_from_bytes::<Self>(bytes)
-    }
-
-    /// Deserialize by copy from exactly [`STATE_SIZE`] bytes.
-    ///
-    /// Unlike [`State::parse`] this has no alignment requirement, so it works
-    /// on slices taken at arbitrary offsets of a larger buffer.
-    pub fn parse_unaligned(bytes: &[u8]) -> Result<Self, PodCastError> {
-        bytemuck::try_pod_read_unaligned(bytes)
     }
 
     /// Extract the verifier-visible public claim from this state.
@@ -130,6 +125,7 @@ impl State {
             });
         }
 
+        // <!-- Updates State -->
         sp1_cycle::track!({
             self.height = candidate_height;
             self.timestamps[timestamp_slot] = new_header.timestamp;

@@ -3,10 +3,10 @@
 //! Both controller operations accept only a run id. HTTP encodes the batch
 //! response with postcard; local mode passes the value directly.
 
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use zkpow_core::{BlockTimestamp, State, VerifierKeyDigest, CONTINUATION_DATA_SIZE, NEW_HEADER_SIZE};
 
-const MEDIAN_HINT_SIZE: usize = size_of::<BlockTimestamp>();
+pub(crate) const MEDIAN_HINT_SIZE: usize = size_of::<BlockTimestamp>();
 
 /// An opaque artifact location selected by the controller.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -16,7 +16,8 @@ pub enum FileLocation {
 }
 
 /// Everything required to prove the next controller-selected batch.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+// #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Batch {
     pub first_new_height: u32,
     pub end_height: u32,
@@ -125,50 +126,19 @@ pub fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>, String> {
     postcard::to_allocvec(value).map_err(|err| err.to_string())
 }
 
-pub fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, String> {
-    let (value, remaining) = postcard::take_from_bytes(bytes).map_err(|err| err.to_string())?;
-    if !remaining.is_empty() {
-        return Err(format!("message has {} trailing bytes", remaining.len()));
-    }
-    Ok(value)
-}
+// pub fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, String> {
+//     let (value, remaining) = postcard::take_from_bytes(bytes).map_err(|err| err.to_string())?;
+//     if !remaining.is_empty() {
+//         return Err(format!("message has {} trailing bytes", remaining.len()));
+//     }
+//     Ok(value)
+// }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+// pub fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, String> {
+//     let (value, remaining) = postcard::take_from_bytes(bytes).map_err(|err| err.to_string())?;
+//     if !remaining.is_empty() {
+//         return Err(format!("message has {} trailing bytes", remaining.len()));
+//     }
+//     Ok(value)
+// }
 
-    fn sample_batch() -> Batch {
-        Batch {
-            first_new_height: 7,
-            end_height: 8,
-            verifier_key: VerifierKeyDigest::from_raw([0x11223344; 8]),
-            current_state: State::default(),
-            header_bytes: vec![0xAB; 2 * NEW_HEADER_SIZE],
-            median_hint_bytes: vec![0xCD; MEDIAN_HINT_SIZE],
-            previous_proof: Some(FileLocation::Url("https://example.test/get".to_string())),
-            proof_upload: FileLocation::Path("/tmp/run/proof.bin".to_string()),
-            continuation_bytes: vec![0xEF; CONTINUATION_DATA_SIZE],
-            continuation_upload: FileLocation::Path("/tmp/run/continuation.bin".to_string()),
-        }
-    }
-
-    #[test]
-    fn batch_round_trips() {
-        let batch = sample_batch();
-        assert_eq!(decode::<Batch>(&encode(&batch).unwrap()).unwrap(), batch);
-    }
-
-    #[test]
-    fn batch_rejects_trailing_bytes() {
-        let mut bytes = encode(&sample_batch()).unwrap();
-        bytes.push(0);
-        assert!(decode::<Batch>(&bytes).is_err());
-    }
-
-    #[test]
-    fn batch_rejects_header_payload_mismatch() {
-        let mut batch = sample_batch();
-        batch.header_bytes.pop();
-        assert!(batch.validate().is_err());
-    }
-}

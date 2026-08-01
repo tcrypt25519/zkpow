@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod tests;
+
 pub mod db;
 
 pub use db::{genesis_state_from_record, HeaderBatchWitness, HeaderRecord, HeaderStore, RunRecord};
