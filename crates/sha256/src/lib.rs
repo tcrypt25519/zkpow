@@ -4,7 +4,7 @@
 //!
 //! Specialized guest functions for the exact sizes we need:
 //! - `sha256_32bytes`: hashes exactly 32 bytes (intermediate hash output)
-//! - `sha256_153bytes`: hashes exactly 153 bytes (minimal public values)
+//! - `of_minimal_public_values`: hashes minimal public values from their fields
 //! - `sha256_52bytes`: hashes exactly 52 bytes (continuation data)
 //! - `of_header`: hashes a full Bitcoin header from disjoint fields
 //!
@@ -114,33 +114,54 @@ fn of_digest(prev_state: &[u64; 8]) -> [u8; 32] {
     state_to_hash(&state)
 }
 
-/// Compute SHA-256 of exactly 153 bytes.
+/// Compute SHA-256 of minimal public values from their individual fields.
 ///
-/// Produces three blocks:
-/// - Block 1: bytes 0-63
-/// - Block 2: bytes 64-127
-/// - Block 3: bytes 128-152 (25 data bytes) + 0x80 + zeros + 8-byte length (1224 bits = 0x4C8)
-pub fn of_153bytes(data: &[u8; 153]) -> [u8; 32] {
+/// Equivalent to serializing the fields to 165 bytes and hashing them, but avoids
+/// materializing the intermediate byte array. The field order matches
+/// [`MinimalPublicValues::to_bytes`]:
+/// - Block 1: chain_work (32) + verifier_key (32)
+/// - Block 2: continuation_digest (32) + genesis_hash (32)
+/// - Block 3: tip_hash (32) + height (4) + error_code (1) + padding + length
+pub fn of_minimal_public_values(
+    chain_work: &[u8; 32],
+    verifier_key: &[u8; 32],
+    continuation_digest: &[u8; 32],
+    genesis_hash: &[u8; 32],
+    tip_hash: &[u8; 32],
+    height: u32,
+    error_code: u8,
+) -> [u8; 32] {
     let mut state = SHA256_IV;
 
+    // Block 1: chain_work + verifier_key
     let mut w = [0u64; 16];
-    for i in 0..16 {
-        w[i] = be_u64_from_slice(data, i);
+    for i in 0..8 {
+        w[i] = be_u64_from_slice(chain_work, i);
+    }
+    for i in 0..8 {
+        w[8 + i] = be_u64_from_slice(verifier_key, i);
     }
     of_block(&w, &mut state);
 
+    // Block 2: continuation_digest + genesis_hash
     let mut w = [0u64; 16];
-    for i in 0..16 {
-        w[i] = be_u64_from_slice(data, 16 + i);
+    for i in 0..8 {
+        w[i] = be_u64_from_slice(continuation_digest, i);
+    }
+    for i in 0..8 {
+        w[8 + i] = be_u64_from_slice(genesis_hash, i);
     }
     of_block(&w, &mut state);
 
+    // Block 3: tip_hash + height + error_code + padding + length
     let mut w = [0u64; 16];
-    for i in 0..6 {
-        w[i] = be_u64_from_slice(data, 32 + i);
+    for i in 0..8 {
+        w[i] = be_u64_from_slice(tip_hash, i);
     }
-    w[6] = ((data[152] as u64) << 24) | 0x0080_0000;
-    w[15] = 0x4C8;
+    let height_bytes = height.to_le_bytes();
+    w[8] = be_u64_from_slice(&height_bytes, 0);
+    w[9] = ((error_code as u64) << 24) | 0x0080_0000;
+    w[15] = 0x528;
     of_block(&w, &mut state);
 
     state_to_hash(&state)

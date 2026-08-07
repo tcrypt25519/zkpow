@@ -12,20 +12,18 @@
 //!   4. median_time_past_hints: Vec<u8>
 //!   5. If `state.height > 0`, compressed SP1 proof witness (via write_proof)
 //!
-//! Output: MinimalPublicValues (153 bytes) on success or failure.
+//! Output: MinimalPublicValues (165 bytes) on success or failure.
 
 #![no_main]
 sp1_zkvm::entrypoint!(main);
 
+use bytemuck::{self, Pod, PodCastError};
 use sp1_zkvm::lib::read_vec_raw;
 use zkpow_core::{
-    BlockTimestamp, Claim, HeaderInput, MinimalPublicValues, State, VerifierKeyDigest, CONTINUATION_DATA_SIZE,
-    MINIMAL_PV_SIZE,
+    ApplyFailure, BlockTimestamp, CONTINUATION_DATA_SIZE, Claim, HeaderInput, MINIMAL_PV_SIZE, ReturnCode, State,
+    VerifierKeyDigest, serialize_minimal_public_values,
 };
 use zkpow_sha256;
-
-use bytemuck;
-use bytemuck::{Pod, PodCastError};
 
 /// Compute the continuation digest: SHA-256 of the serialized continuation data.
 #[sp1_cycle::tracked]
@@ -35,31 +33,23 @@ fn compute_continuation_digest(state: &State) -> [u8; 32] {
 }
 
 /// Commit the minimal public values and halt.
-fn commit_minimal_pv(pv: &MinimalPublicValues) -> ! {
-    let bytes: [u8; MINIMAL_PV_SIZE] = pv.to_bytes();
+fn commit_minimal_pv(
+    claim: &Claim,
+    verifier_key: &VerifierKeyDigest,
+    continuation_digest: &[u8; 32],
+    error_code: u8,
+) -> ! {
+    let bytes: [u8; MINIMAL_PV_SIZE] = serialize_minimal_public_values(
+        &claim.chain_work,
+        verifier_key,
+        continuation_digest,
+        &claim.genesis_hash,
+        &claim.tip_hash,
+        claim.height,
+        error_code,
+    );
     sp1_zkvm::io::commit_slice(&bytes);
     sp1_zkvm::syscalls::syscall_halt(0)
-}
-
-#[sp1_cycle::tracked]
-fn verify_prior_proof(
-    verifier_key: &[u32; 8],
-    prior_claim: &Claim,
-    prior_continuation_bytes: &[u8; CONTINUATION_DATA_SIZE],
-) {
-    // 1. Hash the prior continuation data.
-    let continuation_digest = sp1_cycle::track!({ zkpow_sha256::of_52bytes(prior_continuation_bytes) });
-
-    // 2. Reconstruct the prior proof's minimal public values and hash them.
-    let prior_pv =
-        MinimalPublicValues::success(prior_claim, continuation_digest, VerifierKeyDigest::from_raw(*verifier_key));
-    let prior_pv_bytes: [u8; MINIMAL_PV_SIZE] = prior_pv.to_bytes();
-    let actual_pv_hash = sp1_cycle::track!({ zkpow_sha256::of_153bytes(&prior_pv_bytes) });
-
-    // 3. Verify the SP1 proof.
-    sp1_cycle::track!({
-        sp1_zkvm::lib::verify::verify_sp1_proof(verifier_key, &actual_pv_hash);
-    });
 }
 
 //fn read_array_input<'g, T, const N: usize>() -> &'g [T; N] {
@@ -92,17 +82,11 @@ fn read_fixed_size_input_mut<'g, T>() -> Result<&'g mut T, PodCastError> {
     unsafe { input_sized.as_mut() }.ok_or(PodCastError::OutputSliceWouldHaveSlop)
 }
 
-fn read_byte_slice_input<'g>() -> Result<&'g [u8], PodCastError> {
-    let read_vec_results = unsafe { read_vec_raw() };
-    let input_slice = std::ptr::slice_from_raw_parts(read_vec_results.ptr, read_vec_results.len);
-    unsafe { input_slice.as_ref() }.ok_or(PodCastError::OutputSliceWouldHaveSlop)
-}
-
 //fn read_typed_scalar_input_mut<'g, T>() -> Result<&'g mut T, PodCastError> {
 //    let read_vec_results = unsafe { read_vec_raw() };
 //    let input_slice = std::ptr::slice_from_raw_parts_mut(read_vec_results.ptr, read_vec_results.len);
-//    let input_slice_ref = unsafe { input_slice.as_mut() }.ok_or(PodCastError::OutputSliceWouldHaveSlop)?; //.expect("dynamic size input");
-//    let input_type = input_slice.cast::<T>();
+//    let input_slice_ref = unsafe { input_slice.as_mut() }.ok_or(PodCastError::OutputSliceWouldHaveSlop)?;
+// //.expect("dynamic size input");    let input_type = input_slice.cast::<T>();
 //    unsafe { input_type.as_mut() }.ok_or(PodCastError::OutputSliceWouldHaveSlop)
 //}
 
@@ -144,59 +128,63 @@ fn inner_main() -> Result<(), ProgramError> {
     // chain_work
     // epoch_start_timestamp
     // timestamps
-    let state_bytes = read_byte_slice_mut()?;
+    let _state_bytes = read_byte_slice_mut()?;
 
 /*
 
-- First data used is prior_claim which is extraced, parsed, from state, and then immediately serizlized back to bytes (wtf?)
-- Then vk_bytes, prior_claim, and prior_continuation_bytes are used; passed into in verify_prior_proof.
-- vk_bytes are used again; in a converstion to VerifierKeyDigest
-
-- Then state is used; the apply_headers method is called on it
-- headers and medians are used in the call to apply_headers
-
-That should be the end of input data usage; afer there it's all output data.
-
-
-So:
-
-Read:
- - verifier_key and leave as bytes
- - state and parse it into a State struct
- - headers and parse them into HeaderInput structs
- - medians and parse them into BlockTimestamp structs
-
-Check:
- - Get parsed prior_claim from parsed State
- - Get un-parsed prior_continuation_bytes from parsed State
- - Hash prior_continuation_bytes
- - Instatiate a MinimalPublicValues with parsed prior_claim, hashed prior_continuation_bytes, and a parsed-inline verifier_key
- - Serialize the MinimalPublicValues THAT WE JUST MADE back into bytes
- - Hash the bytes of the MinimalPublicValues
- - Call verify_pverify_sp1_proof with un-parsed verifier_key and hashed MinimalPublicValues
- - Parse the verifier_key bytes *again* into a VerifierKeyDigest
- - Call apply_headers on parsed State, passing in parsed headers and parsed medians
- - There is one more use of input data after apply_headers: the now twice-parsed Verification Key is added to a new MinimalPublicValues which
-   is then IMMEDIATE SERIZLIED BACK TO BYTES, AGAIN.
-
-Notes from observations:
-
-Both the VK and genesis hash should be checked by the verifying system.
-We should make the Host act in that capacity for now. Allow setting them by env vars and for any 
-batch inputs (which necessariliy must be > 0) we should require them to be correct.
+ ## In-progress
+    - Mapping serializaton/deserialization in this program
+    - Mapping how we use the pieces of data and in what form(s)
+    - Evaluating if we can simplify the data flow
+    - Evaluating if we need such coupled structures **in memory**
+        - Having them be in solid logical groups is easy to work with
+        but I highly doubt we need the data in these groups to use
+        it correctly. An example is hashing the 6 field/80 byte header.
+        We don't need all 80 byts sitting together or in our memory in
+        order to feed sha256 individual words. We had the necessary
+        bytes in memory already so why waste copies moving them into
+        a single struct? Now we feed the hashing function references
+        to the individual fields.
 
 
-Logic Pieces
+## What happens to data in this program
+    - First data used is prior_claim which is extracted, parsed, from state, and then used (with continuation digest and vk) to build a MinimalPublicValues which is serialized back to bytes.
+    - Then vk_bytes, prior_claim, and prior_continuation_bytes are used; passed into verify_prior_proof logic.
+    - vk_bytes are used again; in a conversion to VerifierKeyDigest.
+
+    - Then state is used; the apply_headers method is called on it
+    - headers and medians are used in the call to apply_headers
+    - After apply_headers returns, the Verification Key is added to a new MinimalPublicValues which is then IMMEDIATE SERIALIZED BACK TO BYTES, AGAIN.
+
+## So
+
+    - Read `verifier_key` and keep it as bytes
+    - Read `state` and parse it into a State struct
+    - Read `headers` and parse them into HeaderInput structs
+    - Read `medians` and parse them into BlockTimestamp structs
+
+    - Get `prior_claim` (parsed Claim) from `state` (parsed State)
+    - Get `prior_continuation_bytes` (un-parsed) from `state` (parsed State)
+    - Hash `prior_continuation_bytes`
+
+    - Hash the prior public-value fields (chain_work, verifier_key, continuation_digest, genesis_hash, tip_hash, height, success error_code) directly without instantiating a MinimalPublicValues
+    - Call verify_sp1_proof with un-parsed verifier_key and hashed MinimalPublicValues
+    - Parse the verifier_key bytes into a VerifierKeyDigest (stored as vk_digest)
+    - Call apply_headers on parsed State, passing in parsed headers and parsed medians
+    - There is one more use of input data after apply_headers: the Verification Key (as vk_digest) is added to a new MinimalPublicValues which is then IMMEDIATE SERIALIZED BACK TO BYTES, AGAIN.
+
+
+## Logic Pieces
 
 - VK
-  - [u32; 8]                                             ; Used for proof verification, committed
+    - [u32; 8]                                             ; Used for proof verification, committed
 - State
-  - Claim
+    - Claim
         pub genesis_hash: BlockHash,
         pub tip_hash: BlockHash,
         pub chain_work: ChainWork,
         pub height: u32,
-  - Continuation
+    - Continuation
         pub current_nbits: CompactTarget,
         pub epoch_start_timestamp: BlockTimestamp,
         pub timestamps: [BlockTimestamp; WINDOW_SIZE],
@@ -208,30 +196,36 @@ Logic Pieces
 - Median
     pub timestamp: BlockTimestamp,
 
-
-
 - *MinimalPublicValues
-  - A reformulation of elements from
+    - A reformulation of elements from
     - State (the Claim)
+        pub chain_work: ChainWork,
         pub genesis_hash: BlockHash,
         pub tip_hash: BlockHash,
-        pub chain_work: ChainWork,
         pub height: u32,
     - Continuation Hash
         pub continuation_digest: [u8; 32],
     - VerifierKey
         pub verifier_key: VerifierKeyDigest,
-  - Plus a return_code
-    pub return_code: u8,
-  - (There is s failure_height, but that's just the height of the state when it failed, so it's already in the Claim)
+    - Plus an error_code
+    pub error_code: Option<NonZeroU8>,
+    - The failure height is `last_valid_claim.height + 1`, derived from the claim.
 
 
+## Where state gets mutated
 
-
-
-Execute:
-   // TBD
-
+    - State is mutated IN PLACE by `state.apply_headers(headers, medians)` in this file, on the `&mut State` read from stdin.
+    - Inside `State::apply_headers` (`crates/core/src/state.rs`):
+        - `height` is incremented in `apply_header_after_median_check` to `self.height + 1`.
+        - `timestamps[slot]` is overwritten with the new header timestamp.
+        - `current_nbits` is updated once per chunk in `EpochManager::flush`.
+        - `epoch_start_timestamp` is overwritten only at epoch boundaries.
+        - `block_hash` is overwritten with the double-SHA256 of the new header.
+        - `chain_work` is updated in `EpochManager::flush` by adding `active_block_work * processed`.
+    - `EpochManager::flush` runs on Drop at the end of each chunk and on the failure path.
+    - On failure, the caller reads the last valid state directly from the same `&mut State` that `apply_headers` mutated; no copy is needed.
+    - Between iterations, the host serializes the updated State via `state.to_bytes()` and the next guest deserializes it fresh from stdin. The guest never re-serializes the canonical State internally.
+    - Continuation data (`current_nbits`, `epoch_start_timestamp`, `timestamps`) is never modified on its own. It is copied out of State into ContinuationData and serialized only for hashing.
 
 */
 
@@ -241,18 +235,25 @@ Execute:
     let medians: &[BlockTimestamp] = read_slice_of_fixed_size_elements_input::<BlockTimestamp>()?;
 
     if state.height > 0 {
+        
         let prior_claim = state.public_claim();
         let prior_continuation_bytes: [u8; CONTINUATION_DATA_SIZE] = state.continuation_bytes();
-        // verify_prior_proof(vk_bytes, &prior_claim, &prior_continuation_bytes);
 
         // 1. Hash the prior continuation data.
         let continuation_digest = sp1_cycle::track!({ zkpow_sha256::of_52bytes(&prior_continuation_bytes) });
 
-        // 2. Reconstruct the prior proof's minimal public values and hash them.
-        let prior_pv =
-            MinimalPublicValues::success(&prior_claim, continuation_digest, VerifierKeyDigest::from_raw(*verifier_key));
-        let prior_pv_bytes: [u8; MINIMAL_PV_SIZE] = prior_pv.to_bytes();
-        let actual_pv_hash = sp1_cycle::track!({ zkpow_sha256::of_153bytes(&prior_pv_bytes) });
+        // 2. Hash the prior proof's minimal public values directly from their fields.
+        let actual_pv_hash = sp1_cycle::track!({
+            zkpow_sha256::of_minimal_public_values(
+                &prior_claim.chain_work.to_le_bytes(),
+                &VerifierKeyDigest::from_raw(*verifier_key).to_bytes(),
+                &continuation_digest,
+                &prior_claim.genesis_hash.to_le_bytes(),
+                &prior_claim.tip_hash.to_le_bytes(),
+                prior_claim.height,
+                0,
+            )
+        });
 
         // 3. Verify the SP1 proof.
         sp1_cycle::track!({
@@ -263,23 +264,20 @@ Execute:
     let vk_digest = VerifierKeyDigest::from_raw(*verifier_key);
 
     // Apply headers; on failure commit minimal PV and halt.
-    if let Err(failure) = state.apply_headers(headers, medians) {
-        let digest = compute_continuation_digest(&failure.last_valid_state);
-        let pv = MinimalPublicValues::failure(
-            &failure.last_valid_state.public_claim(),
-            failure.error_code,
-            failure.failure_height,
-            digest,
-            vk_digest,
-        );
-        commit_minimal_pv(&pv);
-    }
-
+    let return_code = match state.apply_headers(headers, medians) {
+        Ok(()) => ReturnCode::SUCCESS,
+        Err(ApplyFailure { error_code }) => ReturnCode::from(error_code),
+    };
     let digest = compute_continuation_digest(&state);
-    let pv = MinimalPublicValues::success(&state.public_claim(), digest, vk_digest);
-    commit_minimal_pv(&pv);
+    let claim = state.public_claim();
+    commit_minimal_pv(
+        &claim,
+        &vk_digest,
+        &digest,
+        return_code.into(),
+    );
 }
 
 pub fn main() {
-    inner_main().unwrap();
+    let _ = inner_main();
 }

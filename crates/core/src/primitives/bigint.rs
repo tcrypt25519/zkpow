@@ -1,12 +1,15 @@
+use core::ops::Deref;
+
 use bytemuck::{Pod, Zeroable};
-#[cfg(feature = "host")]
-use serde::{Deserialize, Serialize};
 
 /// A 256-bit unsigned integer stored as four little-endian u64 limbs.
 #[allow(non_camel_case_types)]
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Pod, Zeroable)]
-#[cfg_attr(feature = "host", derive(Serialize, Deserialize))]
+#[cfg_attr(
+    not(target_os = "zkvm"),
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct u256([u64; 4]);
 
 impl u256 {
@@ -125,5 +128,48 @@ impl TryFrom<&[u8]> for u256 {
         let mut arr = [0u8; 32];
         arr.copy_from_slice(value);
         Ok(Self::from_le_bytes(arr))
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(transparent)]
+pub struct NonMaxU256(u256);
+
+impl NonMaxU256 {
+    /// Construct a value unless every limb is saturated.
+    pub const fn new(value: u256) -> Option<Self> {
+        let limbs = value.as_limbs();
+        if limbs[0] == u64::MAX && limbs[1] == u64::MAX && limbs[2] == u64::MAX && limbs[3] == u64::MAX {
+            None
+        } else {
+            Some(Self(value))
+        }
+    }
+
+    #[must_use]
+    pub const fn from_limbs(limbs: [u64; 4]) -> Self {
+        Self::try_from_limbs(limbs).expect("should be given non-max limbs")
+    }
+    #[must_use]
+    pub const fn try_from_limbs(limbs: [u64; 4]) -> Option<Self> {
+        Self::new(u256::from_limbs(limbs))
+    }
+
+    #[must_use]
+    pub const fn into_inner(self) -> u256 {
+        self.0
+    }
+
+    #[must_use]
+    pub const fn as_inner(&self) -> &u256 {
+        &self.0
+    }
+}
+
+impl Deref for NonMaxU256 {
+    type Target = u256;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }

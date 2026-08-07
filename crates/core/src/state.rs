@@ -12,23 +12,28 @@ use crate::{
     advance_ordered_timestamp_run, block_work_from_target, calculate_next_target_required, check_proof_of_work,
     copy_to_bytes, has_ordered_timestamp_window, hash_header, ordered_median_timestamp_slot, ordered_timestamp_run,
     target_from_bits, timestamp_slot, ApplyFailure, BlockHash, BlockTimestamp, BlockWork, ChainWork, Claim,
-    CompactTarget, ContinuationData, HeaderInput, Target, TargetError, ValidationErrorCode, CONTINUATION_DATA_SIZE,
-    EPOCH_LENGTH, WINDOW_SIZE,
+    CompactTarget, ContinuationData, HeaderInput, ReturnCode, Target, CONTINUATION_DATA_SIZE, EPOCH_LENGTH,
+    HALF_WINDOW_SIZE, WINDOW_SIZE,
 };
+
+// use rkyv::{Archive, Serialize, Deserialize};
 
 /// Complete authenticated validation state, serialized between recursive iterations.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Pod, Zeroable)]
-// #[cfg_attr(feature = "host", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    not(target_os = "zkvm"),
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 pub struct State {
-    pub block_hash: BlockHash,
-    pub genesis_hash: BlockHash,
     pub chain_work: ChainWork,
-    pub current_nbits: CompactTarget,
+    pub genesis_hash: BlockHash,
+    pub block_hash: BlockHash,
     pub height: u32,
+
+    pub current_nbits: CompactTarget,
     pub epoch_start_timestamp: BlockTimestamp,
     pub timestamps: [BlockTimestamp; WINDOW_SIZE],
-    pub _padding: [u8; 8],
 }
 
 impl State {
@@ -45,7 +50,7 @@ impl State {
         self.timestamps[self.current_timestamp_slot()]
     }
 
-    /// Serialize to exactly [`STATE_SIZE`] bytes.
+    /// Serialize to exactly [`STATE_SIZE`] bytes.ff
     #[must_use]
     pub fn to_bytes(&self) -> [u8; Self::SIZE] {
         copy_to_bytes(self)
@@ -61,9 +66,9 @@ impl State {
     #[must_use]
     pub fn public_claim(&self) -> Claim {
         Claim {
+            chain_work: self.chain_work,
             genesis_hash: self.genesis_hash,
             tip_hash: self.block_hash,
-            chain_work: self.chain_work,
             height: self.height,
         }
     }
@@ -80,11 +85,8 @@ impl State {
         &self,
         current_target: Target,
         previous_timestamp: BlockTimestamp,
-    ) -> Result<(CompactTarget, Target, BlockWork), TargetError> {
-        let (current_nbits, current_target) =
-            calculate_next_target_required(current_target, self.epoch_start_timestamp, previous_timestamp);
-        let block_work = block_work_from_target(current_target)?;
-        Ok((current_nbits, current_target, block_work))
+    ) -> (CompactTarget, Target, BlockWork) {
+        calculate_next_target_required(current_target, self.epoch_start_timestamp, previous_timestamp)
     }
 
     #[allow(clippy::result_large_err)]
@@ -94,16 +96,12 @@ impl State {
         claimed_median: BlockTimestamp,
         active_nbits: CompactTarget,
         active_target: Target,
-    ) -> Result<(), ApplyFailure> {
+    ) -> ReturnCode {
         let candidate_height = sp1_cycle::track!(self.height + 1);
         let timestamp_slot = timestamp_slot(candidate_height.into());
 
         if sp1_cycle::track!(new_header.timestamp <= claimed_median) {
-            return Err(ApplyFailure {
-                last_valid_state: *self,
-                error_code: ValidationErrorCode::TimestampTooOld,
-                failure_height: candidate_height,
-            });
+            return ReturnCode::TIMESTAMP_TOO_OLD;
         }
 
         let block_hash = sp1_cycle::track!({
@@ -117,26 +115,13 @@ impl State {
             )
         });
 
-        if !check_proof_of_work(block_hash, active_target) {
-            return Err(ApplyFailure {
-                last_valid_state: *self,
-                error_code: ValidationErrorCode::PowInsufficient,
-                failure_height: candidate_height,
-            });
+        if !check_proof_of_work(block_hash, &active_target) {
+            return ReturnCode::POW_INSUFFICIENT;
         }
 
-        // <!-- Updates State -->
-        sp1_cycle::track!({
-            self.height = candidate_height;
-            self.timestamps[timestamp_slot] = new_header.timestamp;
-            self.current_nbits = active_nbits;
-            if candidate_height.is_multiple_of(EPOCH_LENGTH) {
-                self.epoch_start_timestamp = new_header.timestamp;
-            }
-            self.block_hash = block_hash;
-        });
+        HeaderUpdate::new(self, candidate_height, timestamp_slot, new_header.timestamp, block_hash);
 
-        Ok(())
+        ReturnCode::SUCCESS
     }
 
     #[allow(clippy::result_large_err)]
@@ -146,91 +131,93 @@ impl State {
         headers: &[HeaderInput],
         median_hints: &[BlockTimestamp],
     ) -> Result<(), ApplyFailure> {
-        let mut headers_consumed = 0;
+        let mut header_iter = headers.iter();
+        self.apply_cold_start_headers(&mut header_iter)?;
+        self.apply_warm_headers(&mut header_iter, median_hints)?;
+        Ok(())
+    }
 
-        if self.height < (WINDOW_SIZE - 1) as u32 {
-            let cold_len = (WINDOW_SIZE - 1 - self.height as usize).min(headers.len());
-            let mut context = EpochManager::new(self);
-            for new_header in &headers[..cold_len] {
-                let claimed_median = context.state.timestamps[(context.state.height as usize).div_ceil(2)];
-                if let Err(mut failure) = context.state.apply_header_after_median_check(
+    fn apply_cold_start_headers(
+        &mut self,
+        header_iter: &mut core::slice::Iter<'_, HeaderInput>,
+    ) -> Result<(), ApplyFailure> {
+        let cold_len = (WINDOW_SIZE - 1).saturating_sub(self.height as usize).min(header_iter.len());
+        let context = EpochManager::new(self);
+        for new_header in header_iter.take(cold_len) {
+            let claimed_median = context.state.timestamps[(context.state.height as usize).div_ceil(2)];
+            let return_code = context.state.apply_header_after_median_check(
+                new_header,
+                claimed_median,
+                context.active_nbits,
+                context.active_target,
+            );
+            if return_code.is_failure() {
+                return Err(ApplyFailure {
+                    error_code: return_code.error_code().unwrap(),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn apply_warm_headers(
+        &mut self,
+        header_iter: &mut core::slice::Iter<'_, HeaderInput>,
+        median_hints: &[BlockTimestamp],
+    ) -> Result<(), ApplyFailure> {
+        let mut median_hint_iter = median_hints.iter();
+        let mut ordered_run_len =
+            sp1_cycle::track!({ ordered_timestamp_run(&self.timestamps, self.height.into()) }) as usize;
+
+        while header_iter.len() > 0 {
+            let context = EpochManager::new(self);
+            let current_height = context.state.height;
+            let headers_to_end_of_epoch = (EPOCH_LENGTH - ((current_height + 1) % EPOCH_LENGTH)) as usize;
+            let chunk_len = header_iter.len().min(headers_to_end_of_epoch);
+
+            for new_header in header_iter.take(chunk_len) {
+                let claimed_median = if has_ordered_timestamp_window(ordered_run_len as u64) {
+                    context.state.timestamps[ordered_median_timestamp_slot(context.state.height.into())]
+                } else {
+                    let claimed_median = *median_hint_iter
+                        .next()
+                        .unwrap_or_else(|| panic!("missing median time past hint at header {}", context.state.height));
+                    let (less_count, equal_count) = sp1_cycle::track!({
+                        // let mut less_count = 0usize;
+                        // let mut equal_count = 0usize;
+                        let mut counts: [usize; 3] = [0, 0, 0];
+                        for &timestamp in &context.state.timestamps {
+                            counts[(timestamp.cmp(&claimed_median) as usize) + 1] += 1;
+                        }
+                        (counts[0], counts[1])
+                        // (less_count, equal_count)
+                    });
+                    assert!(
+                        less_count <= HALF_WINDOW_SIZE && less_count + equal_count > HALF_WINDOW_SIZE,
+                        "invalid median time past hint at header index {}",
+                        context.state.height
+                    );
+                    claimed_median
+                };
+
+                let previous_timestamp = sp1_cycle::track!({ context.state.previous_timestamp() });
+                ordered_run_len = advance_ordered_timestamp_run(
+                    ordered_run_len as u64,
+                    previous_timestamp.into_inner(),
+                    new_header.timestamp.into_inner(),
+                ) as usize;
+
+                let return_code = context.state.apply_header_after_median_check(
                     new_header,
                     claimed_median,
                     context.active_nbits,
                     context.active_target,
-                ) {
-                    context.flush();
-                    failure.last_valid_state = *context.state;
-                    return Err(failure);
+                );
+                if return_code.is_failure() {
+                    return Err(ApplyFailure {
+                        error_code: return_code.error_code().unwrap(),
+                    });
                 }
-                context.pending_run_count += 1;
-            }
-            headers_consumed = cold_len;
-        }
-
-        let mut median_hint_iter = median_hints.iter();
-
-        if headers_consumed < headers.len() {
-            let mut ordered_run_len =
-                sp1_cycle::track!({ ordered_timestamp_run(&self.timestamps, self.height.into()) }) as usize;
-
-            while headers_consumed < headers.len() {
-                let mut context = EpochManager::new(self);
-
-                let current_height = context.state.height;
-                let headers_to_end_of_epoch = (EPOCH_LENGTH - ((current_height + 1) % EPOCH_LENGTH)) as usize;
-
-                let chunk_len = (headers.len() - headers_consumed).min(headers_to_end_of_epoch);
-                let chunk_headers = &headers[headers_consumed..headers_consumed + chunk_len];
-
-                for (chunk_index, new_header) in chunk_headers.iter().enumerate() {
-                    let header_index = headers_consumed + chunk_index;
-                    let claimed_median = if has_ordered_timestamp_window(ordered_run_len as u64) {
-                        context.state.timestamps[ordered_median_timestamp_slot(context.state.height.into())]
-                    } else {
-                        let claimed_median = *median_hint_iter
-                            .next()
-                            .unwrap_or_else(|| panic!("missing median time past hint at header index {header_index}"));
-                        let (less_count, equal_count) = sp1_cycle::track!({
-                            let mut less_count = 0usize;
-                            let mut equal_count = 0usize;
-                            for &timestamp in &context.state.timestamps {
-                                if timestamp < claimed_median {
-                                    less_count += 1;
-                                } else if timestamp == claimed_median {
-                                    equal_count += 1;
-                                }
-                            }
-                            (less_count, equal_count)
-                        });
-                        assert!(
-                            less_count <= WINDOW_SIZE / 2 && less_count + equal_count > WINDOW_SIZE / 2,
-                            "invalid median time past hint at header index {header_index}"
-                        );
-                        claimed_median
-                    };
-
-                    let previous_timestamp = sp1_cycle::track!({ context.state.previous_timestamp() });
-                    ordered_run_len = advance_ordered_timestamp_run(
-                        ordered_run_len as u64,
-                        previous_timestamp.into_inner(),
-                        new_header.timestamp.into_inner(),
-                    ) as usize;
-
-                    if let Err(mut failure) = context.state.apply_header_after_median_check(
-                        new_header,
-                        claimed_median,
-                        context.active_nbits,
-                        context.active_target,
-                    ) {
-                        context.flush();
-                        failure.last_valid_state = *context.state;
-                        return Err(failure);
-                    }
-                    context.pending_run_count += 1;
-                }
-
-                headers_consumed += chunk_len;
             }
         }
 
@@ -250,14 +237,13 @@ impl Default for State {
             chain_work: ChainWork::default(),
             epoch_start_timestamp: BlockTimestamp::default(),
             timestamps: [BlockTimestamp::default(); WINDOW_SIZE],
-            _padding: [0; 8],
         }
     }
 }
 
 struct EpochManager<'a> {
     state: &'a mut State,
-    pending_run_count: u32,
+    start_height: u32,
     active_block_work: BlockWork,
     active_nbits: CompactTarget,
     active_target: Target,
@@ -271,39 +257,79 @@ impl<'a> EpochManager<'a> {
             let previous_timestamp = sp1_cycle::track!({ state.previous_timestamp() });
             let prepared = sp1_cycle::track!({
                 state.prepare_new_epoch(target_from_bits(state.current_nbits), previous_timestamp)
-            })
-            .expect("epoch target must not be u256::MAX — invalid blockchain data");
+            });
             active_nbits = prepared.0;
             active_target = prepared.1;
             active_work = prepared.2;
         } else {
             active_nbits = state.current_nbits;
             active_target = target_from_bits(active_nbits);
-            active_work = block_work_from_target(active_target).expect("current target must be valid blockchain data");
+            active_work = block_work_from_target(active_target);
         }
 
+        let start_height = state.height;
         Self {
             state,
+            start_height,
             active_block_work: active_work,
-            pending_run_count: 0,
             active_nbits,
             active_target,
         }
     }
 
     fn flush(&mut self) {
-        if self.pending_run_count > 0 {
+        let processed = self.state.height - self.start_height;
+        if processed > 0 {
             sp1_cycle::track!({
-                let new_chain_work: ChainWork = self.active_block_work * self.pending_run_count;
+                let new_chain_work: ChainWork = self.active_block_work * processed;
                 self.state.chain_work = self.state.chain_work + new_chain_work;
             });
-            self.pending_run_count = 0;
         }
+        self.state.current_nbits = self.active_nbits;
     }
 }
 
 impl<'a> Drop for EpochManager<'a> {
     fn drop(&mut self) {
         self.flush();
+    }
+}
+
+struct HeaderUpdate<'a> {
+    state: &'a mut State,
+    height: u32,
+    timestamp_slot: usize,
+    timestamp: BlockTimestamp,
+    block_hash: BlockHash,
+}
+
+impl<'a> HeaderUpdate<'a> {
+    fn new(
+        state: &'a mut State,
+        height: u32,
+        timestamp_slot: usize,
+        timestamp: BlockTimestamp,
+        block_hash: BlockHash,
+    ) -> Self {
+        Self {
+            state,
+            height,
+            timestamp_slot,
+            timestamp,
+            block_hash,
+        }
+    }
+}
+
+impl<'a> Drop for HeaderUpdate<'a> {
+    fn drop(&mut self) {
+        sp1_cycle::track!({
+            self.state.height = self.height;
+            self.state.timestamps[self.timestamp_slot] = self.timestamp;
+            if self.height.is_multiple_of(EPOCH_LENGTH) {
+                self.state.epoch_start_timestamp = self.timestamp;
+            }
+            self.state.block_hash = self.block_hash;
+        });
     }
 }

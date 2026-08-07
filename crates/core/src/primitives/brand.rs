@@ -1,18 +1,19 @@
 use core::marker::PhantomData;
 
 use bytemuck::{Pod, Zeroable};
-#[cfg(feature = "host")]
-use serde::{Deserialize, Serialize};
 
 use super::u256;
 
 /// Generic branded newtype wrapper providing type-safe distinction without runtime overhead.
 #[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Pod, Zeroable)]
-#[cfg_attr(feature = "host", derive(Serialize, Deserialize))]
+#[cfg_attr(
+    not(target_os = "zkvm"),
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 #[repr(transparent)]
 pub struct Branded<Tag, T>(T, PhantomData<fn(Tag) -> Tag>);
 
-impl<Tag: Pod + Zeroable, T: Sized + Pod + Zeroable> Branded<Tag, T> {
+impl<Tag, T> Branded<Tag, T> {
     pub const SIZE: usize = core::mem::size_of::<T>();
 
     #[must_use]
@@ -34,7 +35,9 @@ impl<Tag: Pod + Zeroable, T: Sized + Pod + Zeroable> Branded<Tag, T> {
     pub fn as_inner_mut(&mut self) -> &mut T {
         &mut self.0
     }
+}
 
+impl<Tag: Pod + Zeroable, T: Pod + Zeroable> Branded<Tag, T> {
     pub fn from_bytes(bytes: &[u8]) -> &T {
         bytemuck::from_bytes::<T>(bytes)
     }
@@ -68,8 +71,6 @@ impl<Tag, T: core::fmt::Debug> core::fmt::Debug for Branded<Tag, T> {
     }
 }
 
-/// `Branded<Tag, T> + Branded<Tag, T> = Branded<Tag, T>` whenever `T` itself supports addition.
-/// The `Tag` must match on both sides, so this never lets two different branded types combine.
 impl<Tag, T: core::ops::Add<Output = T>> core::ops::Add for Branded<Tag, T> {
     type Output = Self;
 
@@ -81,42 +82,6 @@ impl<Tag, T: core::ops::Add<Output = T>> core::ops::Add for Branded<Tag, T> {
 impl<Tag, T: Copy + core::ops::Add<Output = T>> core::ops::AddAssign for Branded<Tag, T> {
     fn add_assign(&mut self, rhs: Self) {
         self.0 = self.0 + rhs.0;
-    }
-}
-
-/// Blanket implementations for `Branded<Tag, u256>`.
-impl<Tag: Pod + Zeroable> Branded<Tag, u256> {
-    #[must_use]
-    pub const fn from_limbs(limbs: [u64; 4]) -> Self {
-        Self::new(u256::from_limbs(limbs))
-    }
-
-    #[must_use]
-    pub fn from_le_bytes(bytes: [u8; 32]) -> Self {
-        Self::new(u256::from_le_bytes(bytes))
-    }
-
-    #[must_use]
-    pub fn to_le_bytes(&self) -> [u8; 32] {
-        self.0.to_le_bytes()
-    }
-
-    #[must_use]
-    pub fn to_le_bytes_slice(&self) -> &[u8] {
-        // Safety: u256 is repr(transparent) over [u64; 4] and crate enforces LE target.
-        unsafe { core::slice::from_raw_parts(&self.0 as *const u256 as *const u8, 32) }
-    }
-
-    #[must_use]
-    pub fn from_le_bytes_slice(slice: &[u8]) -> Self {
-        assert!(slice.len() == 32, "from_le_bytes_slice: expected 32 bytes, got {}", slice.len());
-        let bytes: [u8; 32] = slice.try_into().unwrap();
-        Self::from_le_bytes(bytes)
-    }
-
-    #[must_use]
-    pub fn as_limbs(&self) -> &[u64; 4] {
-        self.0.as_limbs()
     }
 }
 
@@ -168,5 +133,41 @@ impl<Tag: Pod + Zeroable> Branded<Tag, [u8; 32]> {
         assert!(slice.len() == 32, "from_le_bytes_slice: expected 32 bytes, got {}", slice.len());
         let bytes: [u8; 32] = slice.try_into().unwrap();
         Self::new(bytes)
+    }
+}
+
+/// Blanket implementations for `Branded<Tag, u256>`.
+impl<Tag: Pod + Zeroable> Branded<Tag, u256> {
+    #[must_use]
+    pub const fn from_limbs(limbs: [u64; 4]) -> Self {
+        Self::new(u256::from_limbs(limbs))
+    }
+
+    #[must_use]
+    pub fn from_le_bytes(bytes: [u8; 32]) -> Self {
+        Self::new(u256::from_le_bytes(bytes))
+    }
+
+    #[must_use]
+    pub fn to_le_bytes(&self) -> [u8; 32] {
+        self.0.to_le_bytes()
+    }
+
+    #[must_use]
+    pub fn to_le_bytes_slice(&self) -> &[u8] {
+        // Safety: u256 is repr(transparent) over [u64; 4] and crate enforces LE target.
+        unsafe { core::slice::from_raw_parts(&self.0 as *const u256 as *const u8, 32) }
+    }
+
+    #[must_use]
+    pub fn from_le_bytes_slice(slice: &[u8]) -> Self {
+        assert!(slice.len() == 32, "from_le_bytes_slice: expected 32 bytes, got {}", slice.len());
+        let bytes: [u8; 32] = slice.try_into().unwrap();
+        Self::from_le_bytes(bytes)
+    }
+
+    #[must_use]
+    pub fn as_limbs(&self) -> &[u64; 4] {
+        self.0.as_limbs()
     }
 }

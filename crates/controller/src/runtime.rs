@@ -11,7 +11,7 @@ use std::{
 };
 
 use tokio::sync::Notify;
-use zkpow_core::{serialize_inputs, BlockHash, MinimalPublicValues, State, VerifierKeyDigest};
+use zkpow_core::{serialize_inputs, serialize_minimal_public_values, BlockHash, State, VerifierKeyDigest};
 use zkpow_store::{HeaderStore, RunRecord};
 
 use crate::{
@@ -57,8 +57,6 @@ struct PendingBatch {
     expected_state: State,
     expected_public_values: Vec<u8>,
     proof_object: String,
-    continuation_bytes: Vec<u8>,
-    continuation_object: String,
 }
 
 struct PreparedBatch {
@@ -106,7 +104,6 @@ enum Pull {
 struct ReadyBatch {
     fetched: FetchedBatch,
     proof_object: String,
-    continuation_object: String,
     previous_proof_object: Option<String>,
 }
 
@@ -197,7 +194,7 @@ impl ControllerRuntime {
 
     pub async fn complete(&self, run_id: &str) -> Result<(), ControllerError> {
         validate_run_id(run_id)?;
-        let (end_height, proof_object, expected_public_values, continuation_object, expected_continuation) = {
+        let (end_height, proof_object, expected_public_values) = {
             let mut core = lock_core(&self.inner.core);
             let session = core.session_mut(run_id)?;
             let pending = session.pending.front().ok_or_else(|| {
@@ -207,8 +204,6 @@ impl ControllerRuntime {
                 pending.end_height,
                 pending.proof_object.clone(),
                 pending.expected_public_values.clone(),
-                pending.continuation_object.clone(),
-                pending.continuation_bytes.clone(),
             )
         };
 
@@ -216,18 +211,7 @@ impl ControllerRuntime {
         let verifier = self.inner.verifier.clone();
         let verification_run = run_id.to_owned();
         let verification_object = proof_object.clone();
-        let verification_continuation_object = continuation_object.clone();
         let verification = tokio::task::spawn_blocking(move || {
-            let continuation = storage
-                .fetch(&verification_run, &verification_continuation_object)
-                .map_err(|err| {
-                    format!("failed to fetch continuation data {verification_continuation_object}: {err}")
-                })?;
-            if continuation != expected_continuation {
-                return Err(format!(
-                    "uploaded continuation data {verification_continuation_object} does not match the selected batch"
-                ));
-            }
             storage
                 .fetch(&verification_run, &verification_object)
                 .map_err(|err| format!("failed to fetch uploaded proof {verification_object}: {err}"))
@@ -284,13 +268,7 @@ impl ControllerRuntime {
             .storage
             .put_target(run_id, &ready.proof_object)
             .map_err(|err| storage_error("PUT target", err))?;
-        let continuation_upload = self
-            .inner
-            .storage
-            .put_target(run_id, &ready.continuation_object)
-            .map_err(|err| storage_error("continuation PUT target", err))?;
         let fetched = ready.fetched;
-        let continuation_bytes = fetched.expected_state.continuation_bytes().to_vec();
         Ok(Batch {
             first_new_height: fetched.first_new_height,
             end_height: fetched.end_height,
@@ -300,8 +278,6 @@ impl ControllerRuntime {
             median_hint_bytes: fetched.median_hint_bytes,
             previous_proof,
             proof_upload,
-            continuation_bytes,
-            continuation_upload,
         })
     }
 
@@ -382,21 +358,16 @@ impl ControllerCore {
             _ => self.fetch_batch(tip_state)?,
         };
         let proof_object = format!("proof_{}.bin", fetched.end_height);
-        let continuation_object = format!("continuation_data_{}.bin", fetched.end_height);
-        let continuation_bytes = fetched.expected_state.continuation_bytes().to_vec();
         let session = self.session_mut(run_id)?;
         session.pending.push_back(PendingBatch {
             end_height: fetched.end_height,
             expected_state: fetched.expected_state,
             expected_public_values: std::mem::take(&mut fetched.expected_public_values),
             proof_object: proof_object.clone(),
-            continuation_bytes,
-            continuation_object: continuation_object.clone(),
         });
         Ok(Pull::Ready(Box::new(ReadyBatch {
             fetched,
             proof_object,
-            continuation_object,
             previous_proof_object,
         })))
     }
@@ -430,12 +401,16 @@ impl ControllerCore {
         }
         let end_height = current_state.height + witness.headers.len() as u32;
         let expected_state = self.state_at(end_height);
-        let expected_public_values = MinimalPublicValues::success(
-            &expected_state.public_claim(),
-            continuation_digest_from_state(&expected_state),
-            self.verifier_key,
+        let expected_claim = expected_state.public_claim();
+        let expected_public_values = serialize_minimal_public_values(
+            &expected_claim.chain_work,
+            &self.verifier_key,
+            &continuation_digest_from_state(&expected_state),
+            &expected_claim.genesis_hash,
+            &expected_claim.tip_hash,
+            expected_claim.height,
+            0,
         )
-        .to_bytes()
         .to_vec();
         Ok(FetchedBatch {
             current_state,

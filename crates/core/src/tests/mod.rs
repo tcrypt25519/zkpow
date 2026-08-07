@@ -6,70 +6,17 @@ mod input;
 
 use super::*;
 
+#[cfg(all(not(target_os = "zkvm"), test))]
+#[must_use]
+fn set_hash_success() -> crate::test_hash_mock::MockHashGuard {
+    crate::test_hash_mock::set_success()
+}
 
 #[cfg(all(not(target_os = "zkvm"), test))]
 #[must_use]
-fn set_hash_success() -> test_hash_mock::MockHashGuard {
-    test_hash_mock::set_success()
+fn set_hash_fail() -> crate::test_hash_mock::MockHashGuard {
+    crate::test_hash_mock::set_fail()
 }
-
-#[cfg(all(not(target_os = "zkvm"), test))]
-#[must_use]
-fn set_hash_fail() -> test_hash_mock::MockHashGuard {
-    test_hash_mock::set_fail()
-}
-
-#[cfg(all(not(target_os = "zkvm"), test))]
-mod test_hash_mock {
-    std::thread_local! {
-        static MOCK_HEADER_HASH: std::cell::Cell<Option<[u8; 32]>> =
-            const { std::cell::Cell::new(None) };
-    }
-
-    pub(super) struct MockHashGuard;
-
-    pub(super) fn get() -> Option<[u8; 32]> {
-        MOCK_HEADER_HASH.with(|mock_hash| mock_hash.get())
-    }
-
-    pub(super) fn set_success() -> MockHashGuard {
-        set([0; 32])
-    }
-
-    pub(super) fn set_fail() -> MockHashGuard {
-        set([0xFF; 32])
-    }
-
-    fn set(hash: [u8; 32]) -> MockHashGuard {
-        MOCK_HEADER_HASH.with(|mock_hash| {
-            assert!(mock_hash.get().is_none(), "hash mock already set in this thread");
-            mock_hash.set(Some(hash));
-        });
-        MockHashGuard
-    }
-
-    impl Drop for MockHashGuard {
-        fn drop(&mut self) {
-            MOCK_HEADER_HASH.with(|mock_hash| mock_hash.set(None));
-        }
-    }
-}
-
-#[cfg(all(not(target_os = "zkvm"), test))]
-fn hash_header(
-    version: u32,
-    prev_blockhash: &BlockHash,
-    merkle_root: [u8; 32],
-    timestamp: BlockTimestamp,
-    nbits: CompactTarget,
-    nonce: u32,
-) -> BlockHash {
-    if let Some(hash) = test_hash_mock::get() {
-        return BlockHash::new(hash);
-    }
-    host_hash_header(version, prev_blockhash, merkle_root, timestamp, nbits, nonce)
-}
-
 
 fn ts(seconds: u32) -> BlockTimestamp {
     BlockTimestamp::new(seconds)
@@ -164,15 +111,17 @@ fn median_hints_for_headers(initial_state: &State, headers: &[HeaderInput]) -> V
     hints
 }
 
-fn failure_public_value_bytes(failure: &ApplyFailure) -> [u8; MINIMAL_PV_SIZE] {
-    MinimalPublicValues::failure(
-        &failure.last_valid_state.public_claim(),
-        failure.error_code,
-        failure.failure_height,
-        [0xA5; 32],
-        VerifierKeyDigest::from_raw([0xA5A5_A5A5; 8]),
+fn failure_public_value_bytes(state: &State, error_code: ErrorCode) -> [u8; MINIMAL_PV_SIZE] {
+    let claim = state.public_claim();
+    serialize_minimal_public_values(
+        &claim.chain_work,
+        &VerifierKeyDigest::from_raw([0xA5A5_A5A5; 8]),
+        &[0xA5; 32],
+        &claim.genesis_hash,
+        &claim.tip_hash,
+        claim.height,
+        error_code.get(),
     )
-    .to_bytes()
 }
 
 fn expected_upper_median(height: u32) -> BlockTimestamp {
@@ -185,11 +134,11 @@ fn expected_upper_median(height: u32) -> BlockTimestamp {
 
 #[test]
 fn fixed_width_wire_sizes_match_protocol() {
-    assert_eq!(NEW_HEADER_SIZE, 44);
-    assert_eq!(STATE_SIZE, 144);
-    assert_eq!(CLAIM_SIZE, 84);
-    assert_eq!(CONTINUATION_DATA_SIZE, 52);
-    assert_eq!(MINIMAL_PV_SIZE, 153);
+    assert_eq!(HeaderInput::SIZE, 44);
+    assert_eq!(State::SIZE, 152);
+    assert_eq!(Claim::SIZE, 100);
+    assert_eq!(ContinuationData::SIZE, 52);
+    assert_eq!(MinimalPublicValues::SIZE, 165);
     assert_eq!(align_of::<Header>(), 4);
     assert_eq!(align_of::<HeaderInput>(), 4);
     assert_eq!(align_of::<BlockWork>(), 8);
@@ -208,23 +157,32 @@ fn minimal_public_values_round_trips() {
     };
     let digest = [0x11u8; 32];
     let verifier_key = VerifierKeyDigest::from_raw([9; 8]);
-    let pv = MinimalPublicValues::success(&state.public_claim(), digest, verifier_key);
-    let bytes = pv.to_bytes();
+    let claim = state.public_claim();
+    let bytes = serialize_minimal_public_values(
+        &claim.chain_work,
+        &verifier_key,
+        &digest,
+        &claim.genesis_hash,
+        &claim.tip_hash,
+        claim.height,
+        0,
+    );
     assert_eq!(bytes.len(), MINIMAL_PV_SIZE);
-    assert_eq!(bytes[121..153], verifier_key.to_bytes());
+    assert_eq!(bytes[0..32], state.chain_work.to_le_bytes());
+    assert_eq!(bytes[32..64], verifier_key.to_bytes());
+    assert_eq!(bytes[64..96], digest);
     let parsed = MinimalPublicValues::parse(&bytes).unwrap();
     assert_eq!(parsed.genesis_hash, state.genesis_hash);
     assert_eq!(parsed.tip_hash, state.block_hash);
     assert_eq!(parsed.height, state.height);
-    assert_eq!(parsed.return_code, 0);
-    assert_eq!(parsed.failure_height, 0);
+    assert!(parsed.is_success());
     assert_eq!(parsed.continuation_digest, digest);
     assert_eq!(parsed.verifier_key, verifier_key);
 }
 
 #[test]
 fn header_and_new_header_round_trip_exact_wire_bytes() {
-    let mut header_bytes = [0u8; BLOCK_HEADER_SIZE];
+    let mut header_bytes = [0u8; Header::SIZE];
     header_bytes[0..4].copy_from_slice(&0x1122_3344u32.to_le_bytes());
     header_bytes[4..36].copy_from_slice(&[0x55; 32]);
     header_bytes[36..68].copy_from_slice(&[0x66; 32]);
@@ -241,7 +199,7 @@ fn header_and_new_header_round_trip_exact_wire_bytes() {
     assert_eq!(header.nonce, 0xbbcc_ddee);
     assert_eq!(header.to_bytes(), header_bytes);
 
-    let mut new_header_bytes = [0u8; NEW_HEADER_SIZE];
+    let mut new_header_bytes = [0u8; HeaderInput::SIZE];
     new_header_bytes[0..4].copy_from_slice(&0x1122_3344u32.to_le_bytes());
     new_header_bytes[4..36].copy_from_slice(&[0x66; 32]);
     new_header_bytes[36..40].copy_from_slice(&0x7788_99aau32.to_le_bytes());
@@ -280,15 +238,14 @@ fn chain_work_adds_block_work_with_two_limb_carry_and_wrap() {
 fn block_work_mul_u32_scales_by_small_count() {
     let value = BlockWork::from_limbs([3, 0, 0, 0]);
 
-    let mut result = value;
-    result *= 7;
-    assert_eq!(result, BlockWork::from_limbs([21, 0, 0, 0]));
+    let result = value * 7u32;
+    assert_eq!(result, ChainWork::from_limbs([21, 0, 0, 0]));
 }
 
 #[test]
 fn check_proof_of_work_accepts_exact_target_boundary() {
     let hash = BlockHash::new(GENESIS_TARGET.to_le_bytes());
-    assert!(check_proof_of_work(hash, GENESIS_TARGET));
+    assert!(check_proof_of_work(hash, &GENESIS_TARGET));
 }
 
 #[test]
@@ -354,10 +311,10 @@ fn apply_headers_flushes_deferred_chain_work_on_success() {
     let hints = median_hints_for_headers(&state, &headers);
     state.apply_headers(&headers, &hints).expect("headers should validate");
 
-    let work = block_work_from_target(GENESIS_TARGET).expect("genesis target is valid");
-    let mut expected = work;
-    expected *= 2;
-    let expected = ChainWork::default() + expected + BlockWork::default();
+    let block_work = block_work_from_target(GENESIS_TARGET);
+    let mut new_chain_work = block_work * 2u32;
+    new_chain_work += BlockWork::default();
+    let expected = ChainWork::default() + new_chain_work;
     assert_eq!(state.chain_work, expected);
 }
 
@@ -389,9 +346,8 @@ fn apply_headers_flushes_deferred_chain_work_for_longer_run() {
     let hints = median_hints_for_headers(&state, &headers);
     state.apply_headers(&headers, &hints).expect("validation should succeed");
 
-    let work = block_work_from_target(GENESIS_TARGET).expect("genesis target is valid");
-    let mut expected = work;
-    expected *= 3;
+    let block_work = block_work_from_target(GENESIS_TARGET);
+    let expected = block_work * 3;
     let expected = ChainWork::default() + expected;
     assert_eq!(state.chain_work, expected);
 }
@@ -415,9 +371,8 @@ fn failure_height_is_absolute_chain_height() {
     // Use a hash that exceeds the target to trigger PowInsufficient.
     let failure = state.apply_headers(&headers, &hints).expect_err("should fail PoW");
 
-    assert_eq!(failure.error_code, ValidationErrorCode::PowInsufficient);
-    assert_eq!(failure.failure_height, 6); // last_valid_state.height(5) + 1
-    assert_eq!(failure.last_valid_state.height, 5);
+    assert_eq!(failure.error_code, ErrorCode::POW_INSUFFICIENT);
+    assert_eq!(state.height + 1, 6);
 }
 
 #[test]
@@ -441,13 +396,13 @@ fn apply_headers_flushes_deferred_chain_work_before_failure() {
 
     let hints = median_hints_for_headers(&state, &headers);
 
-    let failure = state
+    state
         .apply_headers(&headers, &hints)
         .expect_err("second header should fail timestamp validation");
 
-    let work = block_work_from_target(GENESIS_TARGET).expect("genesis target is valid");
-    assert_eq!(failure.last_valid_state.chain_work, ChainWork::default() + work);
-    assert_eq!(failure.failure_height, 2);
+    let work = block_work_from_target(GENESIS_TARGET);
+    assert_eq!(state.chain_work, ChainWork::default() + work);
+    assert_eq!(state.height + 1, 2);
 }
 
 #[test]
@@ -474,11 +429,12 @@ fn apply_headers_failure_output_includes_flushed_chain_work() {
         .apply_headers(&headers, &hints)
         .expect_err("validation should fail on the second header");
 
-    let public_values = failure_public_value_bytes(&failure);
+    let public_values = failure_public_value_bytes(&state, failure.error_code);
     let parsed = MinimalPublicValues::parse(&public_values).unwrap();
-    assert_eq!(parsed.return_code, ValidationErrorCode::TimestampTooOld.as_byte());
-    assert_eq!(parsed.failure_height, 2);
-    assert_eq!(parsed.chain_work, failure.last_valid_state.chain_work);
+    assert!(parsed.is_failure());
+    assert_eq!(parsed.validation_error_code().unwrap(), ErrorCode::TIMESTAMP_TOO_OLD);
+    assert_eq!(parsed.height + 1, 2);
+    assert_eq!(parsed.chain_work, state.chain_work);
 }
 
 #[test]
@@ -688,16 +644,16 @@ fn state_continuation_bytes_matches_continuation_data_to_bytes() {
 #[test]
 fn claim_serializes_to_fixed_width() {
     let claim = Claim {
+        chain_work: ChainWork::from_limbs([3, 4, 0, 0]),
         genesis_hash: BlockHash::new([1; 32]),
         tip_hash: BlockHash::new([2; 32]),
-        chain_work: ChainWork::from_limbs([3, 4, 0, 0]),
         height: 99,
     };
     let bytes = claim.to_bytes();
     assert_eq!(bytes.len(), CLAIM_SIZE);
-    assert_eq!(bytes[64..72], 3u64.to_le_bytes());
-    assert_eq!(bytes[72..80], 4u64.to_le_bytes());
-    assert_eq!(bytes[80..84], 99u32.to_le_bytes());
+    assert_eq!(bytes[0..8], 3u64.to_le_bytes());
+    assert_eq!(bytes[8..16], 4u64.to_le_bytes());
+    assert_eq!(bytes[96..100], 99u32.to_le_bytes());
     let parsed = Claim::parse(&bytes).unwrap();
     assert_eq!(parsed, claim);
 }
@@ -730,7 +686,7 @@ fn retarget_timespan_cases_adjust_target_direction() {
 
     for (name, timespan, expected) in cases {
         let old = GENESIS_TARGET;
-        let (bits, new) = calculate_next_target_required(old, ts(0), ts(timespan));
+        let (bits, new, _) = calculate_next_target_required(old, ts(0), ts(timespan));
 
         match expected {
             ExpectedDirection::Equal => {
@@ -788,7 +744,7 @@ fn malformed_header_pow_and_timestamp_errors() {
     let failure = s2
         .apply_headers(&[bad_hdr], &median_hints)
         .expect_err("timestamp equal to median must fail");
-    assert_eq!(failure.error_code, ValidationErrorCode::TimestampTooOld);
+    assert_eq!(failure.error_code, ErrorCode::TIMESTAMP_TOO_OLD);
 
     // Version field is not validated by consensus here; a weird version should still pass if PoW/timestamp do.
     let mut s3 = test_state();
@@ -823,5 +779,5 @@ fn median_time_boundary_equality_fails() {
     let failure = state
         .apply_headers(&[hdr], &median_hints)
         .expect_err("timestamp equal to median must fail");
-    assert_eq!(failure.error_code, ValidationErrorCode::TimestampTooOld);
+    assert_eq!(failure.error_code, ErrorCode::TIMESTAMP_TOO_OLD);
 }

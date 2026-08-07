@@ -4,13 +4,12 @@
 
 use bytemuck::{Pod, Zeroable};
 
-mod brand;
 mod bigint;
+mod brand;
 mod bytes;
-pub use bytes::ByteInfo;
+pub use bigint::{u256, NonMaxU256};
 pub use brand::Branded;
-pub use bigint::u256;
-// pub use byte::Info as ByteInfo;
+pub use bytes::ByteInfo;
 
 // Define tags for domain-specific versions of primitive types
 
@@ -36,7 +35,7 @@ pub struct BlockTimestampTag;
 
 #[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Debug, Pod, Zeroable)]
 #[repr(transparent)]
-pub struct  BlockHashTag;
+pub struct BlockHashTag;
 
 /// BlockHash is a sha256d digest of a block header
 pub type BlockHash = Branded<BlockHashTag, [u8; 32]>;
@@ -51,7 +50,7 @@ pub type BlockWork = Branded<BlockWorkTag, u256>;
 pub type ChainWork = Branded<ChainWorkTag, u256>;
 
 /// Target is the target for a valid BlockHash to be below
-pub type Target = Branded<TargetTag, u256>;
+pub type Target = Branded<TargetTag, NonMaxU256>;
 
 /// CompactTarget is the compact representation of a target
 pub type CompactTarget = Branded<CompactTargetTag, u32>;

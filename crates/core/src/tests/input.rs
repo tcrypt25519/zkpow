@@ -3,13 +3,7 @@ use alloc::vec;
 use bytemuck::PodCastError;
 
 use super::*;
-use crate::{check_exact_len, ParseError};
-use crate::{copy_to_bytes, BlockHash, BlockTimestamp, CompactTarget,HeaderInput,  BLOCK_HEADER_SIZE, NEW_HEADER_SIZE};
-
-pub fn parse_header(bytes: &[u8]) -> Result<Header, ParseError> {
-    check_exact_len(bytes, BLOCK_HEADER_SIZE)?;
-    Ok(bytemuck::pod_read_unaligned(bytes))
-}
+use crate::{BlockTimestamp, HeaderInput};
 
 #[test]
 fn test_new_header_hints_round_trip() {

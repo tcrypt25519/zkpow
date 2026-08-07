@@ -1,5 +1,3 @@
-
-
 /// Parse errors for fixed-width serialized core types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum ParseError {
@@ -14,15 +12,6 @@ pub enum ParseError {
         needed: usize,
         actual: usize,
     },
-}
-
-/// Target errors that occur during arithmetic
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum TargetError {
-    #[error("invalid target: can not be max u256")]
-    TargetTooLarge,
-    //     #[error("invalid target: can not be max u256")]
-    //     PodCastError(TestErrAA),
 }
 
 /// Parse errors for witness (hints) data.

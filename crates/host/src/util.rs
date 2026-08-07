@@ -8,8 +8,7 @@ pub use zkpow_controller::{
 };
 pub use zkpow_core::{
     block_work_from_target, cast_slice, serialize_inputs, target_from_bits, u256, ApplyFailure, BlockHash,
-    BlockTimestamp, ChainWork, Claim, CompactTarget, ContinuationData, Header, HeaderChainPublicValues, HeaderInput,
-    InputParseError, MinimalPublicValues, ParseError, ProofFailure, PublicValuesDigest, State, Target,
-    ValidationErrorCode, VerifierKeyDigest, CLAIM_SIZE, CONTINUATION_DATA_SIZE, GENESIS_TARGET, MINIMAL_PV_SIZE,
-    NEW_HEADER_SIZE, STATE_SIZE,
+    BlockTimestamp, ChainWork, Claim, CompactTarget, ContinuationData, ErrorCode, ErrorCodeNames, Header, HeaderInput,
+    InputParseError, MinimalPublicValues, ParseError, PublicValuesDigest, ReturnCode, State, Target, VerifierKeyDigest,
+    CLAIM_SIZE, CONTINUATION_DATA_SIZE, GENESIS_TARGET, MINIMAL_PV_SIZE,
 };

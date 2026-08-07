@@ -122,7 +122,7 @@ fn sync_p2p(args: &SyncArgs) -> Result<(), Box<dyn std::error::Error>> {
 fn genesis_connected_header() -> ConnectedHeader {
     let header = Header::new(zkpow_core::MAINNET_GENESIS_HEADER);
     let block_hash = header.block_hash();
-    ConnectedHeader::new(header, block_hash, 0, zkpow_core::genesis_work(), 0, 0)
+    ConnectedHeader::new(header, block_hash, 0, zkpow_core::GENESIS_WORK, 0, 0)
 }
 
 fn parse_network(s: &str) -> Result<Network, Box<dyn std::error::Error>> {

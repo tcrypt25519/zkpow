@@ -30,9 +30,7 @@ mod validation;
 pub use diagnostics::format_claim_mismatch;
 pub use digest::{continuation_digest, continuation_digest_from_state};
 pub use validation::{compute_final_state_with_hints, records_to_new_headers};
-pub use zkpow_core::{
-    requires_median_hint, BlockHash, BlockTimestamp, Claim, HeaderChainPublicValues, HeaderInput, State,
-};
+pub use zkpow_core::{requires_median_hint, BlockHash, BlockTimestamp, Claim, HeaderInput, State};
 pub use zkpow_sha256;
 pub use zkpow_store::{db_path, genesis_state_from_record, HeaderBatchWitness, HeaderRecord, HeaderStore, RunRecord};
 

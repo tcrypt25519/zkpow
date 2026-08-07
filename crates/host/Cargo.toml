@@ -29,6 +29,7 @@ sp1-prover = { workspace = true }
 sp1-recursion-gnark-ffi = { workspace = true, features = ["native"] }
 memuse = { workspace = true }
 postcard = { workspace = true, features = ["alloc"] }
+rkyv = { workspace = true }
 hex = { workspace = true }
 num-bigint = { workspace = true }
 reqwest = { workspace = true }

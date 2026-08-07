@@ -1,4 +1,4 @@
-//! The host proving pipeline.
+//! The host proving pipeline TEST.
 //!
 //! The host is a stateless I/O driver between the controller and the guest:
 //! it pulls batches from the controller, pipes them into the SP1 zkVM,
@@ -46,7 +46,7 @@ use zkpow_controller::{
     verify::ProofVerifier,
     HeaderStore,
 };
-use zkpow_core::HeaderChainPublicValues;
+use zkpow_core::MinimalPublicValues;
 
 use crate::memory_monitor;
 
@@ -167,10 +167,8 @@ struct BatchOutcome {
 }
 
 struct BatchCompletion {
-    proof_upload:        FileLocation,
-    proof_bytes:         Vec<u8>,
-    continuation_upload: FileLocation,
-    continuation_bytes:  Vec<u8>,
+    proof_upload: FileLocation,
+    proof_bytes:  Vec<u8>,
 }
 
 async fn run_execution_session(config: ProofGenerationConfig) -> Result<u32, BoxError> {
@@ -290,8 +288,6 @@ async fn process_batch(
         median_hint_bytes,
         previous_proof: previous_proof_location,
         proof_upload,
-        continuation_bytes,
-        continuation_upload,
     } = batch;
 
     let started = Instant::now();
@@ -358,8 +354,6 @@ async fn process_batch(
         BatchCompletion {
             proof_upload,
             proof_bytes,
-            continuation_upload,
-            continuation_bytes,
         },
         before_prove_memory,
     ))
@@ -385,15 +379,7 @@ async fn complete_batch<T: ControllerTransport>(
     run_id: &str,
     completion: BatchCompletion,
 ) -> Result<(), BoxError> {
-    tokio::try_join!(
-        timed_upload("compressed proof", http, &completion.proof_upload, completion.proof_bytes,),
-        timed_upload(
-            "continuation data",
-            http,
-            &completion.continuation_upload,
-            completion.continuation_bytes,
-        ),
-    )?;
+    timed_upload("compressed proof", http, &completion.proof_upload, completion.proof_bytes).await?;
     transport.complete(run_id).await?;
     tracing::info!("Controller verified batch");
     Ok(())
@@ -454,14 +440,13 @@ fn previous_proof_from_proof(
     proof: SP1ProofWithPublicValues,
     expected_end_height: Option<u32>,
 ) -> Result<PreviousProof, BoxError> {
-    let end_height = match HeaderChainPublicValues::parse(proof.public_values.as_slice()) {
-        Ok(HeaderChainPublicValues::Success { claim, .. }) => claim.height,
-        Ok(HeaderChainPublicValues::Failure { failure, .. }) => {
-            return Err(format!(
-                "previous proof ended in error {} at height {}",
-                failure.error_code, failure.failure_height
-            )
-            .into());
+    let end_height = match MinimalPublicValues::parse(proof.public_values.as_slice()) {
+        Ok(pv) if pv.is_success() => pv.height,
+        Ok(pv) => {
+            let error_code = pv
+                .validation_error_code()
+                .expect("failure has an error code");
+            return Err(format!("previous proof ended in error {error_code} at height {}", pv.height + 1).into());
         },
         Err(err) => return Err(format!("previous proof has malformed public values: {err}").into()),
     };

@@ -1,7 +1,7 @@
 use std::sync::Mutex;
 use std::time::Duration;
 
-use zkpow_core::{MinimalPublicValues, VerifierKeyDigest};
+use zkpow_core::{serialize_minimal_public_values, VerifierKeyDigest};
 use zkpow_sha256;
 use zkpow_store::db_path;
 
@@ -69,21 +69,21 @@ impl Harness {
         let state = HeaderStore::open(db_path())
             .unwrap()
             .state_at_height(batch.end_height, self.genesis_hash());
-        let bytes = MinimalPublicValues::success(
-            &state.public_claim(),
-            continuation_digest_from_state(&state),
-            batch.verifier_key,
-        )
-        .to_bytes();
+        let claim = state.public_claim();
+        let bytes = serialize_minimal_public_values(
+            &claim.chain_work,
+            &batch.verifier_key,
+            &continuation_digest_from_state(&state),
+            &claim.genesis_hash,
+            &claim.tip_hash,
+            claim.height,
+            0,
+        );
         let FileLocation::Path(path) = &batch.proof_upload else {
             panic!("expected path")
         };
         std::fs::write(path, bytes).unwrap();
         assert!(path.contains(run));
-        let FileLocation::Path(path) = &batch.continuation_upload else {
-            panic!("expected path")
-        };
-        std::fs::write(path, &batch.continuation_bytes).unwrap();
     }
 
     fn genesis_hash(&self) -> BlockHash {
@@ -124,11 +124,7 @@ async fn run_id_is_the_entire_request_and_completion() {
 async fn completion_requires_the_controller_selected_proof() {
     let harness = Harness::new();
     let run = harness.run("missing-proof");
-    let batch = harness.runtime.pull_batch(&run).await.unwrap();
-    let FileLocation::Path(path) = &batch.continuation_upload else {
-        panic!("expected path")
-    };
-    std::fs::write(path, &batch.continuation_bytes).unwrap();
+    harness.runtime.pull_batch(&run).await.unwrap();
     let error = harness.runtime.complete(&run).await.unwrap_err();
     assert!(error.message.contains("failed to fetch uploaded proof"));
     assert_eq!(

@@ -49,34 +49,29 @@ keep that recursive binding property without revealing the whole state.
 The public values should describe the claim a verifier actually checks:
 
 ```text
+chain_work:           [u8; 32]
+verifier_key:         [u8; 32]
+continuation_digest:  [u8; 32]
 genesis_hash:         [u8; 32]
 tip_hash:             [u8; 32]
-chain_work:           [u8; 16]
 height:               u32
-return_code:          u8   // 0 = success, nonzero = validation failure
-failure_height:       u32  // 0 on success, absolute chain height on failure
-continuation_digest:  [u8; 32]
-verifier_key:         [u8; 32]
+error_code:           Option<NonZeroU8>  // None = success, Some = validation failure
 ```
 
-This is 169 bytes with explicit packed serialization. If the serialization needs
-alignment padding for host-side casting, put `height` next to `return_code` and
-`failure_height`; do not reorder the three primary 32-byte values unless it
-removes real padding. The normal field order should be genesis hash, tip hash,
-chain work, then height.
+This is 165 bytes with explicit packed serialization. The failure height is
+`height + 1` and is derived from the last valid claim; it is not stored separately.
 
 `verifier_key` is the SP1 verifier-key digest used for recursive proof
 verification. Verifiers are responsible for checking that this digest is the
 program key they intend to trust.
 
-`return_code` should be one byte, like a Unix return value. `0` means success;
-nonzero values are validation errors. A separate status byte and error-code byte
-would duplicate the same information.
+`error_code` is an optional non-zero byte. `None` means success; `Some(code)`
+means a validation error. It uses the same byte representation as `u8` (`0` for
+success, nonzero for failure) while allowing pattern matching on `Option`.
 
-`failure_height` is the absolute block height where validation failed. A
-per-batch header index is not useful to a verifier unless they already know the
-hidden batch shape. If we are spending four bytes on failure location, use a
-chain-global height.
+The failure height is `height + 1` and is derived from the last valid claim; it
+is not stored separately. A per-batch header index is not useful to a verifier
+unless they already know the hidden batch shape.
 
 `chain_work` is mandatory public data. Canonical-chain comparison is the main
 reason to carry the proof, so cumulative work is part of the visible claim.
@@ -118,10 +113,9 @@ The continuation digest should commit to the hidden continuation state:
 continuation_digest = H(private_continuation_state)
 ```
 
-The proof public-values hash already binds `continuation_digest` to
-`genesis_hash`, `tip_hash`, `chain_work`, `height`, `return_code`, and
-`failure_height`. Repeating those fields inside the continuation digest is not
-necessary.
+The proof public-values hash already binds `verifier_key`, `continuation_digest`,
+`genesis_hash`, `tip_hash`, `chain_work`, `height`, and `return_code`. Repeating
+those fields inside the continuation digest is not necessary.
 
 ### Auxiliary Witness Hints
 
@@ -159,8 +153,8 @@ For a recursive proof, the guest should:
 3. Recompute `continuation_digest` from `previous_public_claim` plus
    `previous_continuation_state`.
 4. Reconstruct the canonical previous public-values bytes:
-   `previous_public_claim`, success `return_code`, zero `failure_height`, and
-   the recomputed `continuation_digest`.
+   `verifier_key`, `previous_public_claim`, the recomputed `continuation_digest`,
+   success `return_code`.
 5. Hash those reconstructed public values and check the digest equals
    `previous_public_values_digest`.
 6. Use `previous_public_claim` plus `previous_continuation_state` as the

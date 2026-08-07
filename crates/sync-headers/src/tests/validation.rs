@@ -29,7 +29,7 @@ fn make_header(prev: BlockHash, nbits: u32, timestamp: u32, nonce: u32) -> Heade
 fn mine_header_against(prev: BlockHash, claimed_nbits: u32, validate_target: Target, timestamp: u32) -> Header {
     (0u32..)
         .map(|nonce| make_header(prev, claimed_nbits, timestamp, nonce))
-        .find(|header| check_proof_of_work(header.block_hash(), validate_target))
+        .find(|header| check_proof_of_work(header.block_hash(), &validate_target))
         .expect("a passing nonce exists well within u32 range at this difficulty")
 }
 
@@ -51,21 +51,22 @@ fn build_chain(anchor: &Tip, count: u32, nbits_at: impl Fn(u32) -> u32) -> Vec<H
     headers
 }
 
-/// A synthetic anchor at `height` with `current_target`/`current_work`
+/// A synthetic anchor at `height` with `current_target`/`current_block_work`
 /// already cached from `nbits` — standing in for whatever a real `Tip`
 /// would carry after validating its way there, without having to mine
 /// `height` real headers to construct one.
 fn synthetic_anchor(height: u64, nbits: u32) -> Tip {
-    let (current_nbits, current_target, current_work) = current_difficulty(CompactTarget::new(nbits));
+    let (current_nbits, current_target, current_block_work) = expand_target(CompactTarget::new(nbits));
+    let chainwork = current_block_work * ((height + 1) as u32);
     Tip::new(
         BlockHash::new([0xAB; 32]),
         height,
-        current_work,
+        chainwork,
         [2_000_000_000u32; WINDOW_SIZE],
         height,
         current_nbits,
         current_target,
-        current_work,
+        current_block_work,
     )
 }
 
@@ -112,7 +113,7 @@ fn connect_headers_only_re_derives_target_at_epoch_boundary() {
     let connected = connect_headers(&anchor, std::slice::from_ref(&boundary_header));
     assert_eq!(connected.len(), 1, "boundary header should validate under its own (new) bits");
 
-    let (_, target_b, work_b) = current_difficulty(CompactTarget::new(TRIVIAL_NBITS_B));
+    let (_, target_b, work_b) = expand_target(CompactTarget::new(TRIVIAL_NBITS_B));
     assert_eq!(
         connected[0].chainwork,
         anchor.chainwork + work_b,
@@ -144,18 +145,19 @@ fn connect_headers_only_re_derives_target_at_epoch_boundary() {
 #[test]
 fn median_time_past_matches_hand_computed_values_through_a_wrap() {
     let base = 2_000_000_000u32;
-    let (current_nbits, current_target, current_work) = current_difficulty(CompactTarget::new(TRIVIAL_NBITS_A));
+    let (current_nbits, current_target, current_block_work) = expand_target(CompactTarget::new(TRIVIAL_NBITS_A));
+    let chainwork = current_block_work * 1u32;
     let mut timestamps = [0u32; WINDOW_SIZE];
     timestamps[0] = base;
     let anchor = Tip::new(
         BlockHash::new([0xCD; 32]),
         0,
-        current_work,
+        chainwork,
         timestamps,
         0,
         current_nbits,
         current_target,
-        current_work,
+        current_block_work,
     );
 
     // At height 0 the count is 1, not 0: the anchor itself is a recorded
@@ -205,11 +207,12 @@ fn median_time_past_matches_hand_computed_values_through_a_wrap() {
 #[test]
 fn connect_headers_resets_ordered_timestamp_run_on_timestamp_regression() {
     let base = 2_000_000_000u32;
-    let (current_nbits, current_target, current_work) = current_difficulty(CompactTarget::new(TRIVIAL_NBITS_A));
+    let (current_nbits, current_target, current_block_work) = expand_target(CompactTarget::new(TRIVIAL_NBITS_A));
+    let chainwork = current_block_work * 11u32;
     let anchor = Tip::new(
         BlockHash::new([0xEF; 32]),
         10,
-        current_work,
+        chainwork,
         [
             base,
             base + 1,
@@ -226,7 +229,7 @@ fn connect_headers_resets_ordered_timestamp_run_on_timestamp_regression() {
         10,
         current_nbits,
         current_target,
-        current_work,
+        current_block_work,
     );
 
     let regressing_header = mine_header(anchor.hash, TRIVIAL_NBITS_A, base + 7);
@@ -240,11 +243,12 @@ fn connect_headers_resets_ordered_timestamp_run_on_timestamp_regression() {
 #[test]
 fn ordered_window_uses_ring_median_without_changing_result() {
     let base = 2_000_000_000u32;
-    let (current_nbits, current_target, current_work) = current_difficulty(CompactTarget::new(TRIVIAL_NBITS_A));
+    let (current_nbits, current_target, current_block_work) = expand_target(CompactTarget::new(TRIVIAL_NBITS_A));
+    let chainwork = current_block_work * 11u32;
     let anchor = Tip::new(
         BlockHash::new([0x9A; 32]),
         10,
-        current_work,
+        chainwork,
         [
             base,
             base + 1,
@@ -261,7 +265,7 @@ fn ordered_window_uses_ring_median_without_changing_result() {
         10,
         current_nbits,
         current_target,
-        current_work,
+        current_block_work,
     );
     let header = mine_header(anchor.hash, TRIVIAL_NBITS_A, base + 11);
 

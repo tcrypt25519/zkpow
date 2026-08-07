@@ -7,7 +7,7 @@
 //!   stdin: verifier key(Vec<u8>) + state witness(Vec<u8>) + header witness(Vec<u8>)
 //!          + median-time-past witness(Vec<u8>)
 //!          → [compressed SP1 proof witness when state.height > 0]
-//!   output: MinimalPublicValues (153 bytes)
+//!   output: MinimalPublicValues (169 bytes)
 
 use sp1_sdk::{prelude::*, Elf, HashableKey, Prover, ProverClient, SP1Stdin};
 use zkpow_controller::db_path;
@@ -15,7 +15,7 @@ use zkpow_host::{
     observability,
     pipeline::input::genesis_hash,
     util,
-    util::{HeaderChainPublicValues, MinimalPublicValues, ValidationErrorCode, VerifierKeyDigest},
+    util::{ErrorCode, MinimalPublicValues, VerifierKeyDigest},
 };
 
 const ELF: Elf = include_elf!("zkpow-guest");
@@ -31,37 +31,39 @@ async fn run_and_get_pv(stdin: SP1Stdin) -> Result<Vec<u8>, String> {
 }
 
 fn expect_success(pv: &[u8]) -> Result<util::Claim, String> {
-    let parsed = HeaderChainPublicValues::parse(pv).map_err(|err| format!("failed to parse PV: {err}"))?;
-    match parsed {
-        HeaderChainPublicValues::Success { claim, .. } => Ok(claim),
-        HeaderChainPublicValues::Failure { failure, .. } => Err(format!(
-            "expected success, got error {} at height {}",
-            failure.error_code, failure.failure_height,
-        )),
+    let pv = MinimalPublicValues::parse(pv).map_err(|err| format!("failed to parse PV: {err}"))?;
+    if pv.is_success() {
+        Ok(pv.claim())
+    } else {
+        Err(format!("expected success, got error at height {}", pv.height + 1))
     }
 }
 
-fn expect_failure(pv: &[u8], expected_code: ValidationErrorCode, expected_failure_height: u32) -> Result<(), String> {
-    let parsed = HeaderChainPublicValues::parse(pv).map_err(|err| format!("failed to parse PV: {err}"))?;
+fn expect_failure(
+    pv: &[u8],
+    expected_code: ErrorCode,
+    expected_failure_height: u32,
+) -> Result<(), String> {
+    let pv = MinimalPublicValues::parse(pv).map_err(|err| format!("failed to parse PV: {err}"))?;
 
-    match parsed {
-        HeaderChainPublicValues::Success { claim, .. } => Err(format!(
-            "expected error {}, got success at height {}",
-            expected_code, claim.height,
-        )),
-        HeaderChainPublicValues::Failure { failure, .. } => {
-            if failure.error_code != expected_code {
-                return Err(format!("expected error {}, got {}", expected_code, failure.error_code,));
-            }
-            if failure.failure_height != expected_failure_height {
-                return Err(format!(
-                    "expected failure height {}, got {}",
-                    expected_failure_height, failure.failure_height,
-                ));
-            }
-            Ok(())
-        },
+    if pv.is_success() {
+        return Err(format!("expected error {}, got success at height {}", expected_code, pv.height));
     }
+
+    let error_code = pv
+        .validation_error_code()
+        .ok_or("parsed PV had no error code".to_string())?;
+    if error_code != expected_code {
+        return Err(format!("expected error {}, got {}", expected_code, error_code));
+    }
+    let failure_height = pv.height + 1;
+    if failure_height != expected_failure_height {
+        return Err(format!(
+            "expected failure height {}, got {}",
+            expected_failure_height, failure_height,
+        ));
+    }
+    Ok(())
 }
 
 fn check(name: &str, result: Result<(), String>) {
@@ -277,7 +279,7 @@ async fn test_error_timestamp_too_old() -> Result<(), String> {
     );
 
     let pv = run_and_get_pv(stdin).await?;
-    expect_failure(&pv, ValidationErrorCode::TimestampTooOld, 12)
+    expect_failure(&pv, ErrorCode::TIMESTAMP_TOO_OLD, 12)
 }
 
 async fn test_error_pow_insufficient() -> Result<(), String> {
@@ -293,7 +295,7 @@ async fn test_error_pow_insufficient() -> Result<(), String> {
     );
 
     let pv = run_and_get_pv(stdin).await?;
-    expect_failure(&pv, ValidationErrorCode::PowInsufficient, 1)
+    expect_failure(&pv, ErrorCode::POW_INSUFFICIENT, 1)
 }
 
 async fn test_recursive_chain_success() -> Result<(), String> {
@@ -373,8 +375,8 @@ async fn test_error_recursive_on_failed_proof() -> Result<(), String> {
         Err(_) => Ok(()),
         Ok((pv, _)) => {
             let pv_bytes = pv.to_vec();
-            match HeaderChainPublicValues::parse(&pv_bytes) {
-                Ok(HeaderChainPublicValues::Success { .. }) => {
+            match MinimalPublicValues::parse(&pv_bytes) {
+                Ok(pv) if pv.is_success() => {
                     Err("expected guest to reject failed prior proof, but got a success state".to_string())
                 },
                 _ => Ok(()),
@@ -407,8 +409,8 @@ async fn test_error_recursive_on_tampered_state_witness() -> Result<(), String> 
         Err(_) => Ok(()),
         Ok((pv, _)) => {
             let pv_bytes = pv.to_vec();
-            match HeaderChainPublicValues::parse(&pv_bytes) {
-                Ok(HeaderChainPublicValues::Success { .. }) => {
+            match MinimalPublicValues::parse(&pv_bytes) {
+                Ok(pv) if pv.is_success() => {
                     Err("expected guest to reject tampered continuation state, but got success".to_string())
                 },
                 _ => Ok(()),
@@ -417,7 +419,7 @@ async fn test_error_recursive_on_tampered_state_witness() -> Result<(), String> 
     }
 }
 
-/// Verify the public-value format is the minimal 153-byte layout.
+/// Verify the public-value format is the minimal 169-byte layout.
 async fn test_pv_minimal_format() -> Result<(), String> {
     use zkpow_core::MINIMAL_PV_SIZE;
 
@@ -450,8 +452,8 @@ async fn test_pv_minimal_format() -> Result<(), String> {
     if mpv.continuation_digest == [0u8; 32] {
         return Err("continuation digest is all zeros".to_string());
     }
-    if mpv.return_code != 0 {
-        return Err(format!("expected return_code 0, got {}", mpv.return_code));
+    if mpv.is_failure() {
+        return Err(format!("expected success error_code, got {:?}", mpv.return_code));
     }
 
     // Host-computed continuation digest must match.

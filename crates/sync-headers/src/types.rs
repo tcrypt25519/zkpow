@@ -1,8 +1,8 @@
 //! Core types for the header sync protocol.
 
 use zkpow_core::{
-    block_work_from_target, genesis_work, target_from_bits, BlockHash, BlockWork, ChainWork, CompactTarget,
-    Header as CoreHeader, Target, GENESIS_NBITS, GENESIS_TARGET, WINDOW_SIZE,
+    block_work_from_target, target_from_bits, BlockHash, BlockWork, ChainWork, CompactTarget, Header as CoreHeader,
+    Target, GENESIS_NBITS, GENESIS_TARGET, GENESIS_WORK, WINDOW_SIZE,
 };
 use zkpow_sha256;
 
@@ -27,12 +27,14 @@ pub struct Tip {
     /// Count of consecutive nondecreasing timestamp links ending at this tip.
     /// Genesis has no predecessor, so its run is 0.
     pub ordered_timestamp_run: u64,
-    /// Difficulty bits/target/work active at `height`, cached by the sync path.
+
+    /// Difficulty bits/target/block work active at `height`, cached by the sync path.
     /// Updated only at a retarget boundary (`height % EPOCH_LENGTH == 0`) and
-    /// carried forward unchanged otherwise.
-    pub current_nbits: CompactTarget,
-    pub current_target: Target,
-    pub current_work: BlockWork,
+    /// left unchanged otherwise.
+    /// TODO: Just put this in a separate table of epochs. Reader selects from epochs where id = height / EPOCH_LENGTH
+    pub current_nbits:      CompactTarget,
+    pub current_target:     Target,
+    pub current_block_work: BlockWork,
 }
 
 impl Tip {
@@ -45,7 +47,7 @@ impl Tip {
         ordered_timestamp_run: u64,
         current_nbits: CompactTarget,
         current_target: Target,
-        current_work: BlockWork,
+        current_block_work: BlockWork,
     ) -> Self {
         Self {
             hash,
@@ -55,16 +57,15 @@ impl Tip {
             ordered_timestamp_run,
             current_nbits,
             current_target,
-            current_work,
+            current_block_work,
         }
     }
 
     pub fn genesis(hash: BlockHash) -> Self {
         let mut timestamps = [0u32; WINDOW_SIZE];
         timestamps[0] = zkpow_core::MAINNET_GENESIS_HEADER.timestamp.into_inner();
-        let genesis_work = genesis_work();
-        let genesis_block_work =
-            block_work_from_target(GENESIS_TARGET).expect("genesis target is valid blockchain data");
+        let genesis_work = GENESIS_WORK;
+        let genesis_block_work = block_work_from_target(GENESIS_TARGET);
         Self {
             hash,
             height: 0,
@@ -73,17 +74,15 @@ impl Tip {
             ordered_timestamp_run: 0,
             current_nbits: CompactTarget::new(GENESIS_NBITS),
             current_target: GENESIS_TARGET,
-            current_work: genesis_block_work,
+            current_block_work: genesis_block_work,
         }
     }
 }
 
-/// Derive `(nbits, target, work)` for a tip whose latest header carries `bits`
-/// — the one place outside a retarget boundary check that expands compact
-/// bits, used to seed/refresh a `Tip`'s cached fields from a header's own bits.
-pub fn current_difficulty(bits: CompactTarget) -> (CompactTarget, Target, BlockWork) {
+/// Expand `bits` into the `(nbits, target, block_work)` triple a `Tip` caches.
+pub fn expand_target(bits: CompactTarget) -> (CompactTarget, Target, BlockWork) {
     let target = target_from_bits(bits);
-    let work = block_work_from_target(target).expect("target from valid compact bits is always valid");
+    let work = block_work_from_target(target);
     (bits, target, work)
 }
 

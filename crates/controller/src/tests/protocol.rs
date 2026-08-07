@@ -1,7 +1,7 @@
-use zkpow_core::{VerifierKeyDigest, CONTINUATION_DATA_SIZE, NEW_HEADER_SIZE};
+use zkpow_core::{HeaderInput, VerifierKeyDigest};
 
 use super::*;
-use crate::protocol::{decode, encode, Batch, FileLocation, MEDIAN_HINT_SIZE};
+use crate::protocol::{Batch, FileLocation, MEDIAN_HINT_SIZE};
 
 fn sample_batch() -> Batch {
     Batch {
@@ -9,26 +9,26 @@ fn sample_batch() -> Batch {
         end_height: 8,
         verifier_key: VerifierKeyDigest::from_raw([0x11223344; 8]),
         current_state: State::default(),
-        header_bytes: vec![0xAB; 2 * NEW_HEADER_SIZE],
+        header_bytes: vec![0xAB; 2 * HeaderInput::SIZE],
         median_hint_bytes: vec![0xCD; MEDIAN_HINT_SIZE],
         previous_proof: Some(FileLocation::Url("https://example.test/get".to_string())),
         proof_upload: FileLocation::Path("/tmp/run/proof.bin".to_string()),
-        continuation_bytes: vec![0xEF; CONTINUATION_DATA_SIZE],
-        continuation_upload: FileLocation::Path("/tmp/run/continuation.bin".to_string()),
     }
 }
 
 #[test]
 fn batch_round_trips() {
     let batch = sample_batch();
-    assert_eq!(decode::<Batch>(&encode(&batch).unwrap()).unwrap(), batch);
+    let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&batch).unwrap();
+    let decoded: Batch = rkyv::from_bytes::<Batch, rkyv::rancor::Error>(&bytes).unwrap();
+    assert_eq!(decoded, batch);
 }
 
 #[test]
 fn batch_rejects_trailing_bytes() {
-    let mut bytes = encode(&sample_batch()).unwrap();
+    let mut bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&sample_batch()).unwrap();
     bytes.push(0);
-    assert!(decode::<Batch>(&bytes).is_err());
+    assert!(rkyv::from_bytes::<Batch, rkyv::rancor::Error>(&bytes).is_err());
 }
 
 #[test]

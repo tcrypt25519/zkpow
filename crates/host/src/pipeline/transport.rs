@@ -1,8 +1,5 @@
 //! Host-side controller transports.
 //!
-//! The host is a dumb pipe: it never validates block data or results, it
-//! only moves protocol messages between the controller and the guest:
-//!
 //! * [`HttpController`] POSTs encoded frames to a remote `zkpow-controller-serve` (e.g. over a Tailscale-private
 //!   address).
 //! * [`LocalController`] calls the typed runtime API directly.
@@ -10,7 +7,7 @@
 use std::future::Future;
 
 use zkpow_controller::{
-    protocol::{Batch},
+    protocol::Batch,
     runtime::ControllerRuntime,
 };
 
@@ -87,7 +84,8 @@ impl HttpController {
 impl ControllerTransport for HttpController {
     async fn pull_batch(&self, run_id: &str) -> Result<Batch, BoxError> {
         let response = self.post_bytes("/v1/batch", run_id.as_bytes().to_vec()).await?;
-        let batch = decode::<Batch>(&response).map_err(|err| format!("invalid batch: {err}"))?;
+        let batch: Batch = rkyv::from_bytes::<Batch, rkyv::rancor::Error>(&response)
+            .map_err(|err| format!("invalid batch: {err}"))?;
         batch.validate().map_err(|err| format!("invalid batch: {err}"))?;
         Ok(batch)
     }

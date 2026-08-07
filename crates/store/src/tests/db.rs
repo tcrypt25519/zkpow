@@ -55,7 +55,7 @@ fn run_ledger_round_trips_in_the_header_database() {
 fn genesis_connected_header() -> ConnectedHeader {
     let header = SyncHeader::new(zkpow_core::MAINNET_GENESIS_HEADER);
     let block_hash = header.block_hash();
-    ConnectedHeader::new(header, block_hash, 0, zkpow_core::genesis_work(), 0, 0)
+    ConnectedHeader::new(header, block_hash, 0, zkpow_core::GENESIS_WORK, 0, 0)
 }
 
 #[test]
@@ -208,7 +208,7 @@ fn bulk_insert_calculates_median_time_past() {
         let mtp = tmp_win[tmp_win.len() / 2];
 
         let header = SyncHeader::new(inner);
-        let work = block_work_from_target(target_from_bits(inner.compact_target)).expect("valid target");
+        let work = block_work_from_target(target_from_bits(inner.compact_target));
         cumulative_work = cumulative_work + work;
         let ordered_timestamp_run = u64::from(i);
         let block_hash = header.block_hash();

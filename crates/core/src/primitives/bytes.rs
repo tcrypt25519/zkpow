@@ -2,7 +2,6 @@ pub trait ByteInfo {
     const SIZE: usize;
     const ALIGN: usize;
 }
-
 impl<T> ByteInfo for T
 where
     T: Sized,

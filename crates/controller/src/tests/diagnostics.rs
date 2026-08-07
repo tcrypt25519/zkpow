@@ -53,7 +53,7 @@ fn claim_mismatch_splits_32_byte_fields_and_pairs_corrections() {
     let actual = Claim {
         genesis_hash: BlockHash::from_le_bytes([0x11; 32]),
         tip_hash: BlockHash::from_le_bytes([0x22; 32]),
-        chain_work: ChainWork::from_le_bytes([0x33; 16]),
+        chain_work: ChainWork::from_le_bytes([0x33; 32]),
         height: 1,
     };
     let expected = Claim {
@@ -81,7 +81,7 @@ fn claim_mismatch_keeps_matching_32_byte_fields_to_two_lines() {
     let claim = Claim {
         genesis_hash: BlockHash::from_le_bytes([0x11; 32]),
         tip_hash: BlockHash::from_le_bytes([0x22; 32]),
-        chain_work: ChainWork::from_le_bytes([0x33; 16]),
+        chain_work: ChainWork::from_le_bytes([0x33; 32]),
         height: 1,
     };
 

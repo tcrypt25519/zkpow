@@ -2,55 +2,48 @@
 
 #![no_std]
 
-#[cfg(test)] mod tests;
-
+#[cfg(test)]
+mod tests;
 
 extern crate alloc;
 extern crate self as zkpow_core;
 
-use core::mem::size_of;
-
 use bytemuck::Pod;
-pub use sp1_cycle;
 
-pub mod primitives;
-pub use primitives::u256;
-pub use primitives::ByteInfo;
-
-pub use primitives::{BlockHash, BlockTimestamp, BlockWork, ChainWork, CompactTarget, Target};
 mod header;
 pub use header::{Header, HeaderInput};
+
+pub mod primitives;
+pub use primitives::{BlockHash, BlockTimestamp, BlockWork, ByteInfo, ChainWork, CompactTarget, Target, u256};
+
+mod public_values;
+pub use public_values::{
+    ApplyFailure, Claim, ContinuationData, ErrorCode, ErrorCodeNames, MinimalPublicValues, PublicValuesDigest,
+    ReturnCode, VerifierKeyDigest, serialize_minimal_public_values,
+};
+pub use sp1_cycle;
 
 mod state;
 pub use state::State;
 
 mod errors;
-
-pub(crate) use errors::TargetError;
 pub use errors::{InputParseError, ParseError};
 
 mod input;
 pub use input::{cast_slice, serialize_inputs};
-
-mod public_values;
-pub use public_values::{
-    ApplyFailure, Claim, ContinuationData, HeaderChainPublicValues, MinimalPublicValues, ProofFailure,
-    PublicValuesDigest, ValidationErrorCode, VerifierKeyDigest,
-};
 #[cfg(not(target_os = "zkvm"))]
 use sha2::{Digest, Sha256};
 
-/// Size of the serialized [`State`] in bytes.
-pub const STATE_SIZE: usize = size_of::<State>();
-
-/// Size of each [`HeaderInput`] input from the prover.
-pub const NEW_HEADER_SIZE: usize = size_of::<HeaderInput>();
-
-/// Size of a serialized Bitcoin block header in bytes.
-pub const BLOCK_HEADER_SIZE: usize = size_of::<Header>();
+use crate::primitives::NonMaxU256;
 
 /// Sliding window size used for median-time-past checks.
 pub const WINDOW_SIZE: usize = 11;
+
+/// Half of the sliding window size.
+pub const HALF_WINDOW_SIZE: usize = WINDOW_SIZE / 2;
+
+/// Maximum index in the sliding window.
+pub const WINDOW_MAX_INDEX: usize = WINDOW_SIZE - 1;
 
 /// Number of blocks per difficulty retarget epoch.
 pub const EPOCH_LENGTH: u32 = 2016;
@@ -75,23 +68,18 @@ pub const GENESIS_NBITS: u32 = 0x1d00ffff;
 /// Stored as four little-endian u64 limbs. The value is:
 ///   0x00000000FFFF0000000000000000000000000000000000000000000000000000
 /// In LE limbs: limbs[3] = 0xFFFF0000, limbs[0..2] = 0.
-pub const GENESIS_TARGET: Target = Target::from_limbs([0, 0, 0, 0x0000_0000_FFFF_0000]);
+pub const GENESIS_TARGET: Target = Target::new(NonMaxU256::from_limbs([0, 0, 0, 0x0000_0000_FFFF_0000]));
 
-pub const GENESIS_WORK: ChainWork = ChainWork::from_limbs([0x0000_0001_0001_0001, 0,0,0]);
+pub const GENESIS_WORK: ChainWork = ChainWork::from_limbs([0x0000_0001_0001_0001, 0, 0, 0]);
 
 /// Size of a serialized [`Claim`] in bytes.
-pub const CLAIM_SIZE: usize = 32 + 32 + 16 + 4;
+pub const CLAIM_SIZE: usize = 32 + 32 + 32 + 4;
 
 /// Size of the serialized [`ContinuationData`] in bytes (no padding).
 pub const CONTINUATION_DATA_SIZE: usize = 4 + 4 + 4 * WINDOW_SIZE;
 
 /// Size of the serialized [`PublicValues`] in bytes.
-pub const MINIMAL_PV_SIZE: usize = 32 + 32 + 16 + 4 + 1 + 4 + 32 + 32; // = 153
-
-#[must_use]
-pub const fn genesis_work() -> ChainWork {
-    GENESIS_WORK
-}
+pub const MINIMAL_PV_SIZE: usize = 32 + 32 + 32 + 32 + 32 + 4 + 1; // = 165
 
 /// Raw little-endian mainnet genesis block hash.
 pub const MAINNET_GENESIS_HASH_RAW: [u8; 32] = [
@@ -103,15 +91,15 @@ pub const MAINNET_GENESIS_HASH_RAW: [u8; 32] = [
 /// hash; `merkle_root` is the genesis coinbase merkle root in internal
 /// (reversed-from-display) byte order.
 pub const MAINNET_GENESIS_HEADER: Header = Header {
-    version: 1,
+    version:        1,
     prev_blockhash: BlockHash::new([0u8; 32]),
-    merkle_root: [
+    merkle_root:    [
         0x3b, 0xa3, 0xed, 0xfd, 0x7a, 0x7b, 0x12, 0xb2, 0x7a, 0xc7, 0x2c, 0x3e, 0x67, 0x76, 0x8f, 0x61, 0x7f, 0xc8,
         0x1b, 0xc3, 0x88, 0x8a, 0x51, 0x32, 0x3a, 0x9f, 0xb8, 0xaa, 0x4b, 0x1e, 0x5e, 0x4a,
     ],
-    timestamp: BlockTimestamp::new(1231006505),
+    timestamp:      BlockTimestamp::new(1231006505),
     compact_target: CompactTarget::new(GENESIS_NBITS),
-    nonce: 2083236893,
+    nonce:          2083236893,
 };
 
 #[cfg(target_os = "zkvm")]
@@ -163,19 +151,49 @@ fn hash_header(
     nbits: CompactTarget,
     nonce: u32,
 ) -> BlockHash {
+    #[cfg(test)]
+    if let Some(hash) = test_hash_mock::get() {
+        return BlockHash::new(hash);
+    }
     host_hash_header(version, prev_blockhash, merkle_root, timestamp, nbits, nonce)
 }
 
+#[cfg(test)]
+mod test_hash_mock {
+    extern crate std;
+    use std::cell::Cell;
 
-/// Number of valid entries in an MTP ring buffer whose most-recently-written
-/// slot is `height` — e.g. at genesis (`height == 0`) there is exactly one
-/// valid entry (genesis's own timestamp). Shared by `State`'s median-time-past
-/// logic and `sync-headers`'s `Tip`/`connect_headers` window-length logic; every
-/// caller computing "how many ring-buffer slots are populated" goes through
-/// this one function.
-#[must_use]
-pub fn timestamp_count(height: u64) -> usize {
-    (height as usize + 1).min(WINDOW_SIZE)
+    std::thread_local! {
+        static MOCK_HEADER_HASH: Cell<Option<[u8; 32]>> = const { Cell::new(None) };
+    }
+
+    pub(crate) struct MockHashGuard;
+
+    pub(crate) fn get() -> Option<[u8; 32]> {
+        MOCK_HEADER_HASH.with(|mock| mock.get())
+    }
+
+    pub(crate) fn set_success() -> MockHashGuard {
+        set([0; 32])
+    }
+
+    pub(crate) fn set_fail() -> MockHashGuard {
+        set([0xFF; 32])
+    }
+
+    fn set(hash: [u8; 32]) -> MockHashGuard {
+        MOCK_HEADER_HASH.with(|mock| {
+            assert!(mock.get().is_none(), "hash mock already set in this thread");
+            mock.set(Some(hash));
+        });
+        MockHashGuard
+    }
+
+    impl Drop for MockHashGuard {
+        fn drop(&mut self) {
+            MOCK_HEADER_HASH.with(|mock| mock.set(None));
+        }
+    }
 }
 
 #[must_use]
@@ -184,8 +202,14 @@ pub const fn timestamp_slot(height: u64) -> usize {
 }
 
 #[must_use]
+pub const fn timestamp_count(height: u64) -> usize {
+    let count = height as usize + 1;
+    if count > WINDOW_SIZE { WINDOW_SIZE } else { count }
+}
+
+#[must_use]
 pub const fn has_ordered_timestamp_window(ordered_timestamp_run: u64) -> bool {
-    ordered_timestamp_run >= (WINDOW_SIZE - 1) as u64
+    ordered_timestamp_run >= (WINDOW_MAX_INDEX) as u64
 }
 
 #[must_use]
@@ -214,7 +238,7 @@ pub fn ordered_timestamp_run(timestamps: &[BlockTimestamp; WINDOW_SIZE], height:
 
 #[must_use]
 pub const fn ordered_median_timestamp_slot(height: u64) -> usize {
-    (timestamp_slot(height) + WINDOW_SIZE - (WINDOW_SIZE / 2)) % WINDOW_SIZE
+    (timestamp_slot(height) + WINDOW_SIZE - (HALF_WINDOW_SIZE)) % WINDOW_SIZE
 }
 
 #[must_use]
@@ -294,14 +318,16 @@ pub fn target_from_bits(compact_target: CompactTarget) -> Target {
         }
     }
 
-    Target::from_le_bytes(normalized_target_bytes)
+    let target = NonMaxU256::new(u256::from_le_bytes(normalized_target_bytes))
+        .expect("a compact target cannot expand to u256::MAX");
+    Target::new(target)
 }
 
 /// Check whether a header hash satisfies a target.
 #[must_use]
 #[sp1_cycle::tracked]
-pub fn check_proof_of_work(hash: BlockHash, target: Target) -> bool {
-    u256::from_le_bytes(*hash.as_inner()) <= *target.as_inner()
+pub fn check_proof_of_work(hash: BlockHash, target: &Target) -> bool {
+    u256::from_le_bytes(*hash.as_inner()) <= *target.as_inner().as_inner()
 }
 
 /// Subtract `rhs` from `self` in place. Returns `true` if there was an underflow (borrow out).
@@ -344,10 +370,9 @@ fn sub_assign(lhs: &mut u256, rhs: u256) -> bool {
 ///   - A max u64 with a carry-over of 1 becomes 0
 ///
 /// We can iterate until we find a limb < max u64, add 1 to it, and we're done. As long as we find max u64 limbs we
-/// just set them to 0 and move forward. Iterating fully without hitting a non-max u64 indicates that we have bad
-/// data; the target is invalid and we return an error.
-#[sp1_cycle::tracked]
-fn increment_target(target: &mut u256) -> Result<(), TargetError> {
+/// just set them to 0 and move forward. [`NonMaxU256`] guarantees that the carry cannot escape the final limb.
+pub(crate) fn increment_target(target: NonMaxU256) -> u256 {
+    let mut target = target.into_inner();
     for (i, limb) in target.as_limbs_mut().iter_mut().enumerate() {
         // This limb isn't saturated so it can't carry; add 1 and we're done.
         if *limb < u64::MAX {
@@ -355,15 +380,15 @@ fn increment_target(target: &mut u256) -> Result<(), TargetError> {
             break;
         }
 
-        // If we're here at the last index then all limbs are saturated and the target is invalid.
+        // This is unreachable because NonMaxU256 excludes the only value that could carry out.
         if i == 3 {
-            return Err(TargetError::TargetTooLarge);
+            unreachable!("NonMaxU256 invariant violated");
         }
 
         // This limb is saturated but not the final limb, so roll it over to 0 and proceed with the carry
         *limb = 0;
     }
-    Ok(())
+    target
 }
 
 /// Shift `value` left by one bit in place, returning the carry (the evicted MSB).
@@ -386,9 +411,8 @@ fn shl1_with_carry(value: &mut u256) -> bool {
 /// the implicit leading 1 of the dividend `2^256`; for `bit < 256` we set the
 /// corresponding quotient bit when the remainder meets the divisor.
 #[sp1_cycle::tracked]
-pub fn block_work_from_target(target: Target) -> Result<BlockWork, TargetError> {
-    let mut divisor = *target.as_inner();
-    increment_target(&mut divisor)?;
+pub fn block_work_from_target(target: Target) -> BlockWork {
+    let divisor = increment_target(target.into_inner());
 
     let mut remainder = u256::from_limbs([0u64; 4]);
     let mut quotient = [0u64; 4];
@@ -413,25 +437,25 @@ pub fn block_work_from_target(target: Target) -> Result<BlockWork, TargetError> 
         }
     });
 
-    Ok(BlockWork::from_limbs(quotient))
+    BlockWork::from_limbs(quotient)
 }
 
 /// Compute the compact and normalized full target required at a difficulty boundary.
 #[must_use]
-#[sp1_cycle::tracked]
 pub fn calculate_next_target_required(
-    mut old_target: Target,
+    old_target: Target,
     epoch_start_timestamp: BlockTimestamp,
     previous_timestamp: BlockTimestamp,
-) -> (CompactTarget, Target) {
+) -> (CompactTarget, Target, BlockWork) {
     // Normalize the timespan to ensure it's within the min/max bounds allowed.
     let actual_timespan = i64::from(*previous_timestamp) - i64::from(*epoch_start_timestamp);
     let clamped_timespan = actual_timespan.clamp(MIN_EPOCH_TIMESPAN, MAX_EPOCH_TIMESPAN) as u32;
 
-    *old_target.as_inner_mut() *= clamped_timespan;
+    let mut calculated_target = old_target.into_inner().into_inner();
+    calculated_target *= clamped_timespan;
 
     let mut remainder = 0u128;
-    for limb in old_target.as_limbs_mut().iter_mut().rev() {
+    for limb in calculated_target.as_limbs_mut().iter_mut().rev() {
         let value = (remainder << 64) | (*limb as u128);
         *limb = (value / (EXPECTED_EPOCH_TIMESPAN as u128)) as u64;
         remainder = value % (EXPECTED_EPOCH_TIMESPAN as u128);
@@ -439,12 +463,14 @@ pub fn calculate_next_target_required(
 
     // Normalize the new target to ensure an upper-bound (a minimum difficulty) and to handle the implicit
     // truncation that occurs when round-tripping through the nbits format.
-    let calculated_target = Target::from_limbs(old_target.into_limbs());
-    let clamped_target = calculated_target.min(GENESIS_TARGET);
+    let calculated_target =
+        Target::new(NonMaxU256::new(calculated_target).expect("a scaled Bitcoin target cannot be u256::MAX"));
+    let clamped_target: Target = calculated_target.min(GENESIS_TARGET);
     let compact_target = target_to_bits(clamped_target);
     let normalized_target = target_from_bits(compact_target);
 
-    // The target is capped above and truncated below; return it and the compact form we calculated along the way.
-    (compact_target, normalized_target)
-}
+    let block_work = block_work_from_target(normalized_target);
 
+    // The target is capped above and truncated below; return it and the compact form we calculated along the way.
+    (compact_target, normalized_target, block_work)
+}

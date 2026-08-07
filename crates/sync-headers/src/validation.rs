@@ -3,7 +3,7 @@ use zkpow_core::{
     timestamp_slot, EPOCH_LENGTH, WINDOW_SIZE,
 };
 
-use crate::types::{current_difficulty, ConnectedHeader, Header, Tip};
+use crate::types::{expand_target, ConnectedHeader, Header, Tip};
 
 pub fn connect_headers(anchor: &Tip, headers: &[Header]) -> Vec<ConnectedHeader> {
     let mut connected = Vec::with_capacity(headers.len());
@@ -14,7 +14,7 @@ pub fn connect_headers(anchor: &Tip, headers: &[Header]) -> Vec<ConnectedHeader>
     let mut ordered_timestamp_run = anchor.ordered_timestamp_run;
 
     let mut active_target = anchor.current_target;
-    let mut active_work = anchor.current_work;
+    let mut active_work = anchor.current_block_work;
 
     for header in headers {
         if header.prev_blockhash() != prev_hash {
@@ -31,12 +31,12 @@ pub fn connect_headers(anchor: &Tip, headers: &[Header]) -> Vec<ConnectedHeader>
         let previous_timestamp = timestamps[timestamp_slot(height)];
 
         if candidate_height.is_multiple_of(EPOCH_LENGTH as u64) {
-            let (_, target, work) = current_difficulty(header.inner.compact_target);
+            let (_, target, work) = expand_target(header.inner.compact_target);
             active_target = target;
             active_work = work;
         }
 
-        if !check_proof_of_work(hash, active_target) {
+        if !check_proof_of_work(hash, &active_target) {
             tracing::debug!(%hash, "PoW validation failed");
             break;
         }
@@ -88,7 +88,7 @@ pub fn tip_from_connected(anchor: &Tip, connected: &[ConnectedHeader]) -> Tip {
         timestamps[timestamp_slot(ch.height)] = ch.header.inner.timestamp.into_inner();
     }
 
-    let (current_nbits, current_target, current_work) = current_difficulty(last.header.inner.compact_target);
+    let (current_nbits, current_target, current_block_work) = expand_target(last.header.inner.compact_target);
 
     Tip::new(
         last.block_hash,
@@ -98,7 +98,6 @@ pub fn tip_from_connected(anchor: &Tip, connected: &[ConnectedHeader]) -> Tip {
         last.ordered_timestamp_run,
         current_nbits,
         current_target,
-        current_work,
+        current_block_work,
     )
 }
-

@@ -23,5 +23,5 @@ pub mod p2p {
 pub use connection::PeerConnection;
 pub use error::SyncHeadersError;
 pub use peers::{PeerEntry, PeerStatus, PeerStore};
-pub use types::{current_difficulty, ConnectedHeader, Header, Network, Tip};
+pub use types::{expand_target, ConnectedHeader, Header, Network, Tip};
 pub use validation::{connect_headers, tip_from_connected};

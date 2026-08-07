@@ -4,16 +4,14 @@
 
 use std::path::Path;
 
-use zkpow_core::ByteInfo;
+use rusqlite::{params, Connection, OptionalExtension};
 use sync_headers::{ConnectedHeader, Tip};
 use zkpow_core::{
-    requires_median_hint, BlockHash, BlockTimestamp, ChainWork,
-    Claim, CompactTarget, Header, HeaderInput, State, VerifierKeyDigest, WINDOW_SIZE,
+    requires_median_hint, BlockHash, BlockTimestamp, ByteInfo, ChainWork, Claim, CompactTarget, Header, HeaderInput,
+    State, VerifierKeyDigest, WINDOW_SIZE,
 };
 
-use rusqlite::{params, Connection, OptionalExtension};
-
-#[derive(thiserror::Error, Debug)] 
+#[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("data failed to convert")]
     ConversionError(#[from] std::array::TryFromSliceError),
@@ -24,12 +22,13 @@ pub enum Error {
 impl From<Error> for rusqlite::Error {
     fn from(err: Error) -> Self {
         match err {
-            Error::ConversionError(e) => rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e)),
+            Error::ConversionError(e) => {
+                rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
+            },
             Error::RusqliteError(e) => e,
         }
     }
 }
-
 
 pub(crate) fn hash_to_bytes(hash: &BlockHash) -> [u8; BlockHash::SIZE] {
     *hash.as_inner()
@@ -64,22 +63,22 @@ fn ordered_timestamp_run_from_db(height: u64, value: i64) -> u64 {
 }
 
 struct HeaderFields {
-    version: u32,
-    prev: [u8; BlockHash::SIZE],
+    version:     u32,
+    prev:        [u8; BlockHash::SIZE],
     merkle_root: [u8; BlockHash::SIZE],
-    timestamp: u32,
-    n_bits: u32,
-    nonce: u32,
+    timestamp:   u32,
+    n_bits:      u32,
+    nonce:       u32,
 }
 
 fn header_fields(header: &Header) -> HeaderFields {
     HeaderFields {
-        version: header.version,
-        prev: *header.prev_blockhash.as_inner(),
+        version:     header.version,
+        prev:        *header.prev_blockhash.as_inner(),
         merkle_root: header.merkle_root,
-        timestamp: header.timestamp.into_inner(),
-        n_bits: header.compact_target.into_inner(),
-        nonce: header.nonce,
+        timestamp:   header.timestamp.into_inner(),
+        n_bits:      header.compact_target.into_inner(),
+        nonce:       header.nonce,
     }
 }
 
@@ -131,10 +130,10 @@ impl HeaderStore {
 
     pub fn get_best_tip(&self) -> rusqlite::Result<Option<Tip>> {
         struct BestTipRow {
-            hash_bytes: Vec<u8>,
-            height: i64,
-            chainwork_bytes: Vec<u8>,
-            n_bits: i64,
+            hash_bytes:            Vec<u8>,
+            height:                i64,
+            chainwork_bytes:       Vec<u8>,
+            n_bits:                i64,
             ordered_timestamp_run: i64,
         }
 
@@ -161,7 +160,7 @@ impl HeaderStore {
                 let chainwork = work_from_bytes(&row.chainwork_bytes)?;
                 let ordered_timestamp_run = ordered_timestamp_run_from_db(row.height as u64, row.ordered_timestamp_run);
                 let (current_nbits, current_target, current_work) =
-                    sync_headers::current_difficulty(CompactTarget::new(row.n_bits as u32));
+                    sync_headers::expand_target(CompactTarget::new(row.n_bits as u32));
 
                 let mut stmt = self
                     .conn
@@ -300,12 +299,12 @@ impl HeaderStore {
                 Ok(HeaderRecord {
                     height,
                     header: Header {
-                        version: version as u32,
+                        version:        version as u32,
                         prev_blockhash: hash_from_bytes(prev)?,
-                        merkle_root: merkle_root.try_into().expect("merkle_root must be 32 bytes"),
-                        timestamp: BlockTimestamp::new(timestamp as u32),
+                        merkle_root:    merkle_root.try_into().expect("merkle_root must be 32 bytes"),
+                        timestamp:      BlockTimestamp::new(timestamp as u32),
                         compact_target: CompactTarget::new(nbits as u32),
-                        nonce: nonce as u32,
+                        nonce:          nonce as u32,
                     },
                     chain_work: work_from_bytes(chainwork)?,
                     median_time_past: BlockTimestamp::new(median_time_past as u32),
@@ -365,10 +364,10 @@ impl HeaderStore {
                 Ok((
                     height,
                     HeaderInput {
-                        version: version as u32,
+                        version:     version as u32,
                         merkle_root: merkle_root.try_into().expect("merkle_root must be 32 bytes"),
-                        timestamp: BlockTimestamp::new(timestamp as u32),
-                        nonce: nonce as u32,
+                        timestamp:   BlockTimestamp::new(timestamp as u32),
+                        nonce:       nonce as u32,
                     },
                     BlockTimestamp::new(median_time_past as u32),
                     ordered_timestamp_run_from_db(height, ordered_timestamp_run),
@@ -425,7 +424,6 @@ impl HeaderStore {
             chain_work: current.chain_work,
             epoch_start_timestamp: epoch_start.header.timestamp,
             timestamps,
-            _padding: [0; 8],
         }
     }
 
@@ -435,17 +433,18 @@ impl HeaderStore {
                 "SELECT verifier_key, verified_height, proof_object FROM runs WHERE run_id = ?1",
                 [run_id],
                 |row| {
-                    let verifier_key: [u8; VerifierKeyDigest::SIZE] = row.get::<_, Vec<u8>>(0)?.try_into().map_err(|_| {
-                        rusqlite::Error::InvalidColumnType(
-                            0,
-                            format!("verifier_key must be {} bytes", VerifierKeyDigest::SIZE),
-                            rusqlite::types::Type::Blob,
-                        )
-                    })?;
+                    let verifier_key: [u8; VerifierKeyDigest::SIZE] =
+                        row.get::<_, Vec<u8>>(0)?.try_into().map_err(|_| {
+                            rusqlite::Error::InvalidColumnType(
+                                0,
+                                format!("verifier_key must be {} bytes", VerifierKeyDigest::SIZE),
+                                rusqlite::types::Type::Blob,
+                            )
+                        })?;
                     Ok(RunRecord {
-                        verifier_key: VerifierKeyDigest::from_bytes(verifier_key),
+                        verifier_key:    VerifierKeyDigest::from_bytes(verifier_key),
                         verified_height: row.get(1)?,
-                        proof_object: row.get(2)?,
+                        proof_object:    row.get(2)?,
                     })
                 },
             )
@@ -502,20 +501,20 @@ impl HeaderStore {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunRecord {
     /// Verifying-key digest pinned at run creation.
-    pub verifier_key: VerifierKeyDigest,
+    pub verifier_key:    VerifierKeyDigest,
     pub verified_height: u32,
     /// Storage object name of the proof at `verified_height`, when one was
     /// uploaded and verified.
-    pub proof_object: Option<String>,
+    pub proof_object:    Option<String>,
 }
 
 /// A single `headers` row, decoded into typed fields.
 #[derive(Debug, Clone)]
 pub struct HeaderRecord {
-    pub height: u64,
-    pub header: Header,
-    pub chain_work: ChainWork,
-    pub median_time_past: BlockTimestamp,
+    pub height:                u64,
+    pub header:                Header,
+    pub chain_work:            ChainWork,
+    pub median_time_past:      BlockTimestamp,
     pub ordered_timestamp_run: u64,
 }
 
@@ -533,7 +532,7 @@ impl HeaderRecord {
 /// The SP1 stdin witness for a batch: the new headers plus their median-time-past hints.
 #[derive(Debug, Clone)]
 pub struct HeaderBatchWitness {
-    pub headers: Vec<HeaderInput>,
+    pub headers:                Vec<HeaderInput>,
     pub median_time_past_hints: Vec<BlockTimestamp>,
 }
 
@@ -553,7 +552,5 @@ pub fn genesis_state_from_record(genesis: HeaderRecord, genesis_hash: BlockHash)
         chain_work: genesis.chain_work,
         epoch_start_timestamp: genesis.header.timestamp,
         timestamps,
-        _padding: [0; 8],
     }
 }
-

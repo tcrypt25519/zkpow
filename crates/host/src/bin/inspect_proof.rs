@@ -4,7 +4,7 @@ use hex::encode;
 use sp1_sdk::SP1ProofWithPublicValues;
 use zkpow_host::util;
 
-use crate::util::{HeaderChainPublicValues, ValidationErrorCode};
+use crate::util::MinimalPublicValues;
 
 const MAINNET_GENESIS_HEX: &str = "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f";
 
@@ -23,38 +23,26 @@ fn main() {
     let pv = proof.public_values.as_ref();
     println!("\n=== zkpow Proof ===\n");
 
-    match HeaderChainPublicValues::parse(pv) {
-        Ok(HeaderChainPublicValues::Success {
-            claim,
-            continuation_digest,
-            verifier_key,
-        }) => {
+    match MinimalPublicValues::parse(pv) {
+        Ok(pv) if pv.is_success() => {
+            let claim = pv.claim();
             display_claim(&claim);
-            display_verifier_key(verifier_key);
+            display_verifier_key(pv.verifier_key);
             println!("\n--- Continuation ---");
-            println!("Continuation Digest: {}", hex::encode(continuation_digest));
+            println!("Continuation Digest: {}", hex::encode(pv.continuation_digest));
             println!("\nStatus:              ✓ All headers validated");
         },
-        Ok(HeaderChainPublicValues::Failure {
-            failure,
-            last_valid_claim,
-            continuation_digest,
-            verifier_key,
-        }) => {
+        Ok(pv) => {
+            let last_valid_claim = pv.claim();
+            let error_code = pv.validation_error_code().expect("failure has an error code");
             println!("--- Last Valid State ---");
             display_claim(&last_valid_claim);
-            display_verifier_key(verifier_key);
+            display_verifier_key(pv.verifier_key);
             println!("\n--- Error ---");
-            let error_name = match failure.error_code {
-                ValidationErrorCode::HeaderPayloadLengthInvalid => "Header payload length invalid",
-                ValidationErrorCode::PowInsufficient => "PoW insufficient",
-                ValidationErrorCode::TimestampTooOld => "Timestamp too old",
-                ValidationErrorCode::GenesisHashMismatch => "Genesis hash mismatch",
-            };
-            println!("Error Code:        {} ({})", failure.error_code as u8, error_name,);
-            println!("Failure Height:    {}", failure.failure_height);
+            println!("Error Code:        {} ({})", error_code.get(), error_code);
+            println!("Failure Height:    {}", last_valid_claim.height + 1);
             println!("\n--- Continuation ---");
-            println!("Continuation Digest: {}", hex::encode(continuation_digest));
+            println!("Continuation Digest: {}", hex::encode(pv.continuation_digest));
         },
         Err(parse_error) => {
             eprintln!("ERROR: {}", parse_error);
