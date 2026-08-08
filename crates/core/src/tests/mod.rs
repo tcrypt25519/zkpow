@@ -136,7 +136,7 @@ fn expected_upper_median(height: u32) -> BlockTimestamp {
 fn fixed_width_wire_sizes_match_protocol() {
     assert_eq!(HeaderInput::SIZE, 44);
     assert_eq!(State::SIZE, 152);
-    assert_eq!(Claim::SIZE, 100);
+    assert_eq!(Claim::SIZE_NO_TAIL_PAD, 100);
     assert_eq!(ContinuationData::SIZE, 52);
     assert_eq!(MinimalPublicValues::SIZE, 165);
     assert_eq!(align_of::<Header>(), 4);

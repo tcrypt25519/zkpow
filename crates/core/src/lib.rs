@@ -40,7 +40,10 @@ use crate::primitives::NonMaxU256;
 pub const WINDOW_SIZE: usize = 11;
 
 /// Half of the sliding window size.
-pub const HALF_WINDOW_SIZE: usize = WINDOW_SIZE / 2;
+pub const WINDOW_SMALL_HALF_SIZE: usize = WINDOW_SIZE / 2;
+
+// Half of the sliding window size, rounded up. Used wind around the buffer
+pub const WINDOW_LARGE_HALF_SIZE: usize = WINDOW_SIZE - WINDOW_SMALL_HALF_SIZE;
 
 /// Maximum index in the sliding window.
 pub const WINDOW_MAX_INDEX: usize = WINDOW_SIZE - 1;
@@ -79,13 +82,13 @@ pub const CLAIM_SIZE: usize = 32 + 32 + 32 + 4;
 pub const CONTINUATION_DATA_SIZE: usize = 4 + 4 + 4 * WINDOW_SIZE;
 
 /// Size of the serialized [`PublicValues`] in bytes.
-pub const MINIMAL_PV_SIZE: usize = 32 + 32 + 32 + 32 + 32 + 4 + 1; // = 165
+pub const MINIMAL_PV_SIZE: usize = 32 + 32 + 32 + 32 + 32 + 4 + 1;
 
 /// Raw little-endian mainnet genesis block hash.
-pub const MAINNET_GENESIS_HASH_RAW: [u8; 32] = [
+pub const MAINNET_GENESIS_HASH: BlockHash = BlockHash::new([
     0x6f, 0xe2, 0x8c, 0x0a, 0xb6, 0xf1, 0xb3, 0x72, 0xc1, 0xa6, 0xa2, 0x46, 0xae, 0x63, 0xf7, 0x4f, 0x93, 0x1e, 0x83,
     0x65, 0xe1, 0x5a, 0x08, 0x9c, 0x68, 0xd6, 0x19, 0x00, 0x00, 0x00, 0x00, 0x00,
-];
+]);
 
 /// The mainnet genesis block header (height 0). `prev_blockhash` is the zero
 /// hash; `merkle_root` is the genesis coinbase merkle root in internal
@@ -238,7 +241,7 @@ pub fn ordered_timestamp_run(timestamps: &[BlockTimestamp; WINDOW_SIZE], height:
 
 #[must_use]
 pub const fn ordered_median_timestamp_slot(height: u64) -> usize {
-    (timestamp_slot(height) + WINDOW_SIZE - (HALF_WINDOW_SIZE)) % WINDOW_SIZE
+    (timestamp_slot(height) + WINDOW_SIZE - (WINDOW_SMALL_HALF_SIZE)) % WINDOW_SIZE
 }
 
 #[must_use]

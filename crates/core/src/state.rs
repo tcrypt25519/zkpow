@@ -13,7 +13,7 @@ use crate::{
     copy_to_bytes, has_ordered_timestamp_window, hash_header, ordered_median_timestamp_slot, ordered_timestamp_run,
     target_from_bits, timestamp_slot, ApplyFailure, BlockHash, BlockTimestamp, BlockWork, ChainWork, Claim,
     CompactTarget, ContinuationData, HeaderInput, ReturnCode, Target, CONTINUATION_DATA_SIZE, EPOCH_LENGTH,
-    HALF_WINDOW_SIZE, WINDOW_SIZE,
+    WINDOW_SIZE, WINDOW_SMALL_HALF_SIZE,
 };
 
 // use rkyv::{Archive, Serialize, Deserialize};
@@ -183,17 +183,14 @@ impl State {
                         .next()
                         .unwrap_or_else(|| panic!("missing median time past hint at header {}", context.state.height));
                     let (less_count, equal_count) = sp1_cycle::track!({
-                        // let mut less_count = 0usize;
-                        // let mut equal_count = 0usize;
                         let mut counts: [usize; 3] = [0, 0, 0];
                         for &timestamp in &context.state.timestamps {
-                            counts[(timestamp.cmp(&claimed_median) as usize) + 1] += 1;
+                            counts[((timestamp.cmp(&claimed_median) as i8) + 1) as usize] += 1;
                         }
                         (counts[0], counts[1])
-                        // (less_count, equal_count)
                     });
                     assert!(
-                        less_count <= HALF_WINDOW_SIZE && less_count + equal_count > HALF_WINDOW_SIZE,
+                        less_count <= WINDOW_SMALL_HALF_SIZE && less_count + equal_count > WINDOW_SMALL_HALF_SIZE,
                         "invalid median time past hint at header index {}",
                         context.state.height
                     );

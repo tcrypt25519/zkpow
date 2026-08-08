@@ -101,7 +101,7 @@ impl From<PublicValuesDigest> for [u8; 32] {
 
 /// The verifier-visible portion of a validated chain segment.
 #[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Size)]
 pub struct Claim {
     pub chain_work: ChainWork,
     pub genesis_hash: BlockHash,
