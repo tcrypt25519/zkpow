@@ -11,10 +11,9 @@
 
 use sp1_sdk::{prelude::*, Elf, HashableKey, Prover, ProverClient, SP1Stdin};
 use zkpow_controller::db_path;
+use zkpow_core::MAINNET_GENESIS_HASH;
 use zkpow_host::{
-    observability,
-    pipeline::input::genesis_hash,
-    util,
+    observability, util,
     util::{ErrorCode, MinimalPublicValues, VerifierKeyDigest},
 };
 
@@ -39,20 +38,14 @@ fn expect_success(pv: &[u8]) -> Result<util::Claim, String> {
     }
 }
 
-fn expect_failure(
-    pv: &[u8],
-    expected_code: ErrorCode,
-    expected_failure_height: u32,
-) -> Result<(), String> {
+fn expect_failure(pv: &[u8], expected_code: ErrorCode, expected_failure_height: u32) -> Result<(), String> {
     let pv = MinimalPublicValues::parse(pv).map_err(|err| format!("failed to parse PV: {err}"))?;
 
     if pv.is_success() {
         return Err(format!("expected error {}, got success at height {}", expected_code, pv.height));
     }
 
-    let error_code = pv
-        .validation_error_code()
-        .ok_or("parsed PV had no error code".to_string())?;
+    let error_code = pv.validation_error_code().ok_or("parsed PV had no error code".to_string())?;
     if error_code != expected_code {
         return Err(format!("expected error {}, got {}", expected_code, error_code));
     }
@@ -84,7 +77,7 @@ fn open_db() -> zkpow_controller::HeaderStore {
 fn mainnet_genesis_state() -> util::State {
     let db = open_db();
     let genesis = db.load_header_record(0);
-    zkpow_controller::genesis_state_from_record(genesis, genesis_hash())
+    zkpow_controller::genesis_state_from_record(genesis, MAINNET_GENESIS_HASH)
 }
 
 fn build_stdin(

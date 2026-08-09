@@ -6,10 +6,7 @@
 
 use std::future::Future;
 
-use zkpow_controller::{
-    protocol::Batch,
-    runtime::ControllerRuntime,
-};
+use zkpow_controller::{protocol::Batch, runtime::ControllerRuntime};
 
 use crate::pipeline::BoxError;
 
@@ -84,8 +81,8 @@ impl HttpController {
 impl ControllerTransport for HttpController {
     async fn pull_batch(&self, run_id: &str) -> Result<Batch, BoxError> {
         let response = self.post_bytes("/v1/batch", run_id.as_bytes().to_vec()).await?;
-        let batch: Batch = rkyv::from_bytes::<Batch, rkyv::rancor::Error>(&response)
-            .map_err(|err| format!("invalid batch: {err}"))?;
+        let batch: Batch =
+            rkyv::from_bytes::<Batch, rkyv::rancor::Error>(&response).map_err(|err| format!("invalid batch: {err}"))?;
         batch.validate().map_err(|err| format!("invalid batch: {err}"))?;
         Ok(batch)
     }
@@ -95,4 +92,3 @@ impl ControllerTransport for HttpController {
         Ok(())
     }
 }
-

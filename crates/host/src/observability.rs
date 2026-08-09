@@ -17,7 +17,7 @@ fn env_truthy(name: &str) -> bool {
     )
 }
 
-/// Initialise tracing.
+/// Initialize tracing.
 ///
 /// Two layers are registered:
 /// - **stderr**: compact human-readable output, filtered by `RUST_LOG` (default: off).

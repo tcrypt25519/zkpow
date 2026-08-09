@@ -203,9 +203,7 @@ impl PeerConnection {
         payload.extend_from_slice(&0u16.to_le_bytes());
         payload.extend_from_slice(&rand::random::<u64>().to_le_bytes());
         let ua_bytes = USER_AGENT.as_bytes();
-        encode::VarInt(ua_bytes.len() as u64)
-            .consensus_encode(&mut payload)
-            .map_err(io_error2)?;
+        encode::VarInt(ua_bytes.len() as u64).consensus_encode(&mut payload)?;
         payload.extend_from_slice(ua_bytes);
         payload.extend_from_slice(&start_height.to_le_bytes());
         payload.push(0);
@@ -244,9 +242,7 @@ impl PeerConnection {
     pub fn send_getheaders(&mut self, locators: &[BlockHash], stop_hash: BlockHash) -> std::io::Result<()> {
         let mut payload = Vec::new();
         payload.extend_from_slice(&PROTOCOL_VERSION.to_le_bytes());
-        encode::VarInt(locators.len() as u64)
-            .consensus_encode(&mut payload)
-            .map_err(io_error2)?;
+        encode::VarInt(locators.len() as u64).consensus_encode(&mut payload)?;
         for hash in locators {
             payload.extend_from_slice(hash.as_inner());
         }

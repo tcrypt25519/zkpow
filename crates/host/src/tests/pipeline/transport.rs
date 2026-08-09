@@ -1,7 +1,10 @@
 use std::time::Duration;
 
 use zkpow_controller::{
-    db_path, runtime::ControllerRuntime, runtime::ControllerConfig, storage::LocalArtifactStore, HeaderStore,
+    db_path,
+    runtime::{ControllerConfig, ControllerRuntime},
+    storage::LocalArtifactStore,
+    HeaderStore,
 };
 use zkpow_core::VerifierKeyDigest;
 

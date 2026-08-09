@@ -9,9 +9,6 @@ use std::{
 
 use rand::seq::IndexedRandom;
 
-
-
-
 /// Known Bitcoin mainnet DNS seeds.
 const DNS_SEEDS: &[&str] = &[
     "seed.bitcoin.sipa.be",

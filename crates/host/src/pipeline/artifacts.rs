@@ -59,4 +59,3 @@ pub async fn fetch_artifact(client: &reqwest::Client, target: &FileLocation) -> 
         },
     }
 }
-

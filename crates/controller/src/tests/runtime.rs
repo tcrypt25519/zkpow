@@ -1,5 +1,4 @@
-use std::sync::Mutex;
-use std::time::Duration;
+use std::{sync::Mutex, time::Duration};
 
 use zkpow_core::{serialize_minimal_public_values, VerifierKeyDigest};
 use zkpow_sha256;
@@ -29,9 +28,9 @@ impl ProofVerifier for BytesArePublicValues {
 
 struct Harness {
     runtime: ControllerRuntime,
-    root: std::path::PathBuf,
+    root:    std::path::PathBuf,
     run_ids: Mutex<Vec<String>>,
-    nonce: u128,
+    nonce:   u128,
 }
 
 impl Harness {

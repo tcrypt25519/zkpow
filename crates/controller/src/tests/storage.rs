@@ -1,7 +1,9 @@
 use std::path::PathBuf;
 
-use crate::protocol::FileLocation;
-use crate::storage::{ArtifactStore, LocalArtifactStore, S3ArtifactStore, S3Config};
+use crate::{
+    protocol::FileLocation,
+    storage::{ArtifactStore, LocalArtifactStore, S3ArtifactStore, S3Config},
+};
 
 fn temp_root(test_name: &str) -> PathBuf {
     let nonce = std::time::SystemTime::now()
@@ -10,7 +12,6 @@ fn temp_root(test_name: &str) -> PathBuf {
         .as_nanos();
     std::env::temp_dir().join(format!("zkpow-artifact-store-{test_name}-{}-{nonce}", std::process::id()))
 }
-
 
 #[test]
 fn local_store_round_trips_artifacts() {
@@ -45,12 +46,12 @@ fn local_store_segments_by_run_id() {
 #[test]
 fn s3_store_mints_url_targets_with_run_scoped_keys() {
     let store = S3ArtifactStore::new(&S3Config {
-        bucket: "test-bucket".to_string(),
-        region: "us-east-1".to_string(),
-        endpoint: "http://127.0.0.1:9000".to_string(),
+        bucket:     "test-bucket".to_string(),
+        region:     "us-east-1".to_string(),
+        endpoint:   "http://127.0.0.1:9000".to_string(),
         access_key: "ak".to_string(),
         secret_key: "sk".to_string(),
-        prefix: "proofs".to_string(),
+        prefix:     "proofs".to_string(),
     })
     .unwrap();
 

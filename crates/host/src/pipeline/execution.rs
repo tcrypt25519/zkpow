@@ -36,9 +36,7 @@ pub(crate) fn check_guest_success(public_values: &[u8], stage: &str) -> Result<(
     match MinimalPublicValues::parse(public_values) {
         Ok(pv) if pv.is_success() => Ok(()),
         Ok(pv) => {
-            let error_code = pv
-                .validation_error_code()
-                .expect("failure has an error code");
+            let error_code = pv.validation_error_code().expect("failure has an error code");
             Err(format!("guest {stage} failed with {error_code} at height {}", pv.height + 1).into())
         },
         Err(err) => Err(format!("{stage} produced malformed public values: {err}").into()),

@@ -6,14 +6,12 @@ use bytemuck::{Pod, PodCastError, Zeroable};
 // use serde::{Deserialize, Serialize};
 pub use sp1_cycle::tracked;
 
-use crate::primitives::ByteInfo;
-
 use crate::{
     advance_ordered_timestamp_run, block_work_from_target, calculate_next_target_required, check_proof_of_work,
     copy_to_bytes, has_ordered_timestamp_window, hash_header, ordered_median_timestamp_slot, ordered_timestamp_run,
-    target_from_bits, timestamp_slot, ApplyFailure, BlockHash, BlockTimestamp, BlockWork, ChainWork, Claim,
-    CompactTarget, ContinuationData, HeaderInput, ReturnCode, Target, CONTINUATION_DATA_SIZE, EPOCH_LENGTH,
-    WINDOW_SIZE, WINDOW_SMALL_HALF_SIZE,
+    primitives::ByteInfo, target_from_bits, timestamp_slot, ApplyFailure, BlockHash, BlockTimestamp, BlockWork,
+    ChainWork, Claim, CompactTarget, ContinuationData, HeaderInput, ReturnCode, Target, CONTINUATION_DATA_SIZE,
+    EPOCH_LENGTH, WINDOW_SIZE, WINDOW_SMALL_HALF_SIZE,
 };
 
 // use rkyv::{Archive, Serialize, Deserialize};
@@ -26,14 +24,14 @@ use crate::{
     derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
 )]
 pub struct State {
-    pub chain_work: ChainWork,
+    pub chain_work:   ChainWork,
     pub genesis_hash: BlockHash,
-    pub block_hash: BlockHash,
-    pub height: u32,
+    pub block_hash:   BlockHash,
+    pub height:       u32,
 
-    pub current_nbits: CompactTarget,
+    pub current_nbits:         CompactTarget,
     pub epoch_start_timestamp: BlockTimestamp,
-    pub timestamps: [BlockTimestamp; WINDOW_SIZE],
+    pub timestamps:            [BlockTimestamp; WINDOW_SIZE],
 }
 
 impl State {
@@ -66,10 +64,10 @@ impl State {
     #[must_use]
     pub fn public_claim(&self) -> Claim {
         Claim {
-            chain_work: self.chain_work,
+            chain_work:   self.chain_work,
             genesis_hash: self.genesis_hash,
-            tip_hash: self.block_hash,
-            height: self.height,
+            tip_hash:     self.block_hash,
+            height:       self.height,
         }
     }
 
@@ -227,23 +225,23 @@ impl State {
 impl Default for State {
     fn default() -> Self {
         Self {
-            block_hash: BlockHash::default(),
-            genesis_hash: BlockHash::default(),
-            current_nbits: CompactTarget::default(),
-            height: 0,
-            chain_work: ChainWork::default(),
+            block_hash:            BlockHash::default(),
+            genesis_hash:          BlockHash::default(),
+            current_nbits:         CompactTarget::default(),
+            height:                0,
+            chain_work:            ChainWork::default(),
             epoch_start_timestamp: BlockTimestamp::default(),
-            timestamps: [BlockTimestamp::default(); WINDOW_SIZE],
+            timestamps:            [BlockTimestamp::default(); WINDOW_SIZE],
         }
     }
 }
 
 struct EpochManager<'a> {
-    state: &'a mut State,
-    start_height: u32,
+    state:             &'a mut State,
+    start_height:      u32,
     active_block_work: BlockWork,
-    active_nbits: CompactTarget,
-    active_target: Target,
+    active_nbits:      CompactTarget,
+    active_target:     Target,
 }
 
 impl<'a> EpochManager<'a> {
@@ -293,11 +291,11 @@ impl<'a> Drop for EpochManager<'a> {
 }
 
 struct HeaderUpdate<'a> {
-    state: &'a mut State,
-    height: u32,
+    state:          &'a mut State,
+    height:         u32,
     timestamp_slot: usize,
-    timestamp: BlockTimestamp,
-    block_hash: BlockHash,
+    timestamp:      BlockTimestamp,
+    block_hash:     BlockHash,
 }
 
 impl<'a> HeaderUpdate<'a> {

@@ -59,10 +59,10 @@ pub(crate) fn median_time_past(state: &State) -> BlockTimestamp {
 fn apply_header(state: &mut State, timestamp: u32) {
     let _hash_guard = set_hash_success();
     let header = HeaderInput {
-        version: 1,
+        version:     1,
         merkle_root: [0x22; 32],
-        timestamp: ts(timestamp),
-        nonce: 7,
+        timestamp:   ts(timestamp),
+        nonce:       7,
     };
     let median_hints = median_hints_for_headers(state, &[header]);
     state.apply_headers(&[header], &median_hints).unwrap();
@@ -295,16 +295,16 @@ fn apply_headers_flushes_deferred_chain_work_on_success() {
     let mut state = test_state();
     let headers = [
         HeaderInput {
-            version: 1,
+            version:     1,
             merkle_root: [0x22; 32],
-            timestamp: ts(10),
-            nonce: 7,
+            timestamp:   ts(10),
+            nonce:       7,
         },
         HeaderInput {
-            version: 1,
+            version:     1,
             merkle_root: [0x33; 32],
-            timestamp: ts(20),
-            nonce: 8,
+            timestamp:   ts(20),
+            nonce:       8,
         },
     ];
 
@@ -324,22 +324,22 @@ fn apply_headers_flushes_deferred_chain_work_for_longer_run() {
     let mut state = test_state();
     let headers = [
         HeaderInput {
-            version: 1,
+            version:     1,
             merkle_root: [0x22; 32],
-            timestamp: ts(10),
-            nonce: 7,
+            timestamp:   ts(10),
+            nonce:       7,
         },
         HeaderInput {
-            version: 1,
+            version:     1,
             merkle_root: [0x33; 32],
-            timestamp: ts(20),
-            nonce: 8,
+            timestamp:   ts(20),
+            nonce:       8,
         },
         HeaderInput {
-            version: 1,
+            version:     1,
             merkle_root: [0x44; 32],
-            timestamp: ts(30),
-            nonce: 9,
+            timestamp:   ts(30),
+            nonce:       9,
         },
     ];
 
@@ -362,10 +362,10 @@ fn failure_height_is_absolute_chain_height() {
         ..State::default()
     };
     let headers = [HeaderInput {
-        version: 1,
+        version:     1,
         merkle_root: [0x22; 32],
-        timestamp: ts(1000),
-        nonce: 7,
+        timestamp:   ts(1000),
+        nonce:       7,
     }];
     let hints = median_hints_for_headers(&state, &headers);
     // Use a hash that exceeds the target to trigger PowInsufficient.
@@ -381,16 +381,16 @@ fn apply_headers_flushes_deferred_chain_work_before_failure() {
     let mut state = test_state();
     let headers = [
         HeaderInput {
-            version: 1,
+            version:     1,
             merkle_root: [0x22; 32],
-            timestamp: ts(10),
-            nonce: 7,
+            timestamp:   ts(10),
+            nonce:       7,
         },
         HeaderInput {
-            version: 1,
+            version:     1,
             merkle_root: [0x33; 32],
-            timestamp: ts(0),
-            nonce: 8,
+            timestamp:   ts(0),
+            nonce:       8,
         },
     ];
 
@@ -411,16 +411,16 @@ fn apply_headers_failure_output_includes_flushed_chain_work() {
     let mut state = test_state();
     let headers = [
         HeaderInput {
-            version: 1,
+            version:     1,
             merkle_root: [0x22; 32],
-            timestamp: ts(10),
-            nonce: 7,
+            timestamp:   ts(10),
+            nonce:       7,
         },
         HeaderInput {
-            version: 1,
+            version:     1,
             merkle_root: [0x33; 32],
-            timestamp: ts(0),
-            nonce: 8,
+            timestamp:   ts(0),
+            nonce:       8,
         },
     ];
 
@@ -442,10 +442,10 @@ fn apply_headers_matches_sequential_next_across_median_window_wrap() {
     let _hash_guard = set_hash_success();
     let headers: Vec<HeaderInput> = (1..=23)
         .map(|timestamp| HeaderInput {
-            version: 1,
+            version:     1,
             merkle_root: [timestamp as u8; 32],
-            timestamp: ts(timestamp),
-            nonce: timestamp,
+            timestamp:   ts(timestamp),
+            nonce:       timestamp,
         })
         .collect();
 
@@ -471,10 +471,10 @@ fn hinted_apply_headers_matches_sorted_apply_headers_across_window_wrap() {
     let _hash_guard = set_hash_success();
     let headers: Vec<HeaderInput> = (1..=23)
         .map(|timestamp| HeaderInput {
-            version: 1,
+            version:     1,
             merkle_root: [timestamp as u8; 32],
-            timestamp: ts(timestamp),
-            nonce: timestamp,
+            timestamp:   ts(timestamp),
+            nonce:       timestamp,
         })
         .collect();
     let state = test_state();
@@ -497,10 +497,10 @@ fn hinted_median_validation_accepts_duplicate_median_values() {
         ..State::default()
     };
     let headers = [HeaderInput {
-        version: 1,
+        version:     1,
         merkle_root: [0x22; 32],
-        timestamp: ts(10),
-        nonce: 7,
+        timestamp:   ts(10),
+        nonce:       7,
     }];
 
     state
@@ -517,10 +517,10 @@ fn hinted_median_validation_rejects_wrong_rank_hint() {
         ..State::default()
     };
     let headers = [HeaderInput {
-        version: 1,
+        version:     1,
         merkle_root: [0x22; 32],
-        timestamp: ts(12),
-        nonce: 7,
+        timestamp:   ts(12),
+        nonce:       7,
     }];
 
     let result = std::panic::catch_unwind(|| {
@@ -539,10 +539,10 @@ fn apply_headers_treats_height_zero_state_as_trusted_anchor() {
     state.genesis_hash = BlockHash::new([0x11; 32]);
     state.block_hash = BlockHash::new([0x22; 32]);
     let headers = [HeaderInput {
-        version: 1,
+        version:     1,
         merkle_root: [0x33; 32],
-        timestamp: ts(10),
-        nonce: 7,
+        timestamp:   ts(10),
+        nonce:       7,
     }];
     let hints = median_hints_for_headers(&state, &headers);
     state
@@ -603,10 +603,10 @@ fn next_overwrites_only_the_next_ring_slot() {
         ..State::default()
     };
     let header = HeaderInput {
-        version: 1,
+        version:     1,
         merkle_root: [0x22; 32],
-        timestamp: ts(999),
-        nonce: 7,
+        timestamp:   ts(999),
+        nonce:       7,
     };
     let median_hints = median_hints_for_headers(&state, &[header]);
     state.apply_headers(&[header], &median_hints).unwrap();
@@ -619,9 +619,9 @@ fn next_overwrites_only_the_next_ring_slot() {
 #[test]
 fn continuation_data_serializes_to_fixed_width() {
     let pcs = ContinuationData {
-        current_nbits: CompactTarget::new(GENESIS_NBITS),
+        current_nbits:         CompactTarget::new(GENESIS_NBITS),
         epoch_start_timestamp: BlockTimestamp::new(500),
-        timestamps: [BlockTimestamp::new(10); WINDOW_SIZE],
+        timestamps:            [BlockTimestamp::new(10); WINDOW_SIZE],
     };
     let bytes = pcs.to_bytes();
     assert_eq!(bytes.len(), CONTINUATION_DATA_SIZE);
@@ -644,10 +644,10 @@ fn state_continuation_bytes_matches_continuation_data_to_bytes() {
 #[test]
 fn claim_serializes_to_fixed_width() {
     let claim = Claim {
-        chain_work: ChainWork::from_limbs([3, 4, 0, 0]),
+        chain_work:   ChainWork::from_limbs([3, 4, 0, 0]),
         genesis_hash: BlockHash::new([1; 32]),
-        tip_hash: BlockHash::new([2; 32]),
-        height: 99,
+        tip_hash:     BlockHash::new([2; 32]),
+        height:       99,
     };
     let bytes = claim.to_bytes();
     assert_eq!(bytes.len(), CLAIM_SIZE);
@@ -708,10 +708,10 @@ fn retarget_timespan_cases_adjust_target_direction() {
 fn malformed_header_pow_and_timestamp_errors() {
     let mut state = test_state();
     let hdr1 = HeaderInput {
-        version: 1,
+        version:     1,
         merkle_root: [0x22; 32],
-        timestamp: ts(1),
-        nonce: 7,
+        timestamp:   ts(1),
+        nonce:       7,
     };
     let hints = median_hints_for_headers(&state, &[hdr1]);
 
@@ -726,19 +726,19 @@ fn malformed_header_pow_and_timestamp_errors() {
     let mut s2 = test_state();
     // First, accept a valid header to seed the window deterministically.
     let ok_hdr = HeaderInput {
-        version: 2,
+        version:     2,
         merkle_root: [0x33; 32],
-        timestamp: ts(1),
-        nonce: 9,
+        timestamp:   ts(1),
+        nonce:       9,
     };
     let median_hints = median_hints_for_headers(&s2, &[ok_hdr]);
     s2.apply_headers(&[ok_hdr], &median_hints).unwrap();
     let median_after_1 = median_time_past(&s2);
     let bad_hdr = HeaderInput {
-        version: 42,
+        version:     42,
         merkle_root: [0x44; 32],
-        timestamp: median_after_1,
-        nonce: 10,
+        timestamp:   median_after_1,
+        nonce:       10,
     };
     let median_hints = median_hints_for_headers(&s2, &[bad_hdr]);
     let failure = s2
@@ -750,10 +750,10 @@ fn malformed_header_pow_and_timestamp_errors() {
     let mut s3 = test_state();
     let median_start = median_time_past(&s3);
     let odd_version_hdr = HeaderInput {
-        version: 0xFFFF_FFFF,
+        version:     0xFFFF_FFFF,
         merkle_root: [0x55; 32],
-        timestamp: ts(median_start.into_inner().wrapping_add(1)),
-        nonce: 1,
+        timestamp:   ts(median_start.into_inner().wrapping_add(1)),
+        nonce:       1,
     };
     let median_hints = median_hints_for_headers(&s3, &[odd_version_hdr]);
     s3.apply_headers(&[odd_version_hdr], &median_hints)
@@ -770,10 +770,10 @@ fn median_time_boundary_equality_fails() {
     }
     let median = median_time_past(&state);
     let hdr = HeaderInput {
-        version: 1,
+        version:     1,
         merkle_root: [0x66; 32],
-        timestamp: median,
-        nonce: 1,
+        timestamp:   median,
+        nonce:       1,
     };
     let median_hints = median_hints_for_headers(&state, &[hdr]);
     let failure = state

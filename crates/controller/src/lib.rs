@@ -37,4 +37,3 @@ pub use zkpow_store::{db_path, genesis_state_from_record, HeaderBatchWitness, He
 pub type BoxError = Box<dyn std::error::Error + Send + Sync + 'static>;
 
 pub const NO_HEADERS_REMAINING_PREFIX: &str = "no headers remaining in database";
-

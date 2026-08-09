@@ -20,21 +20,21 @@ pub enum FileLocation {
 #[derive(Archive, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 // #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Batch {
-    pub first_new_height: u32,
-    pub end_height: u32,
-    pub verifier_key: VerifierKeyDigest,
-    pub current_state: State,
-    pub header_bytes: Vec<u8>,
+    pub first_new_height:  u32,
+    pub end_height:        u32,
+    pub verifier_key:      VerifierKeyDigest,
+    pub current_state:     State,
+    pub header_bytes:      Vec<u8>,
     pub median_hint_bytes: Vec<u8>,
     /// Recursive witness for a fresh worker. A worker that just produced this
     /// proof already has it in memory and need not fetch it.
-    pub previous_proof: Option<FileLocation>,
-    pub proof_upload: FileLocation,
+    pub previous_proof:    Option<FileLocation>,
+    pub proof_upload:      FileLocation,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ControllerError {
-    pub kind: ErrorKind,
+    pub kind:    ErrorKind,
     pub message: String,
 }
 
@@ -50,35 +50,35 @@ pub enum ErrorKind {
 impl ControllerError {
     pub fn bad_request(message: impl Into<String>) -> Self {
         Self {
-            kind: ErrorKind::BadRequest,
+            kind:    ErrorKind::BadRequest,
             message: message.into(),
         }
     }
 
     pub fn exhausted(message: impl Into<String>) -> Self {
         Self {
-            kind: ErrorKind::Exhausted,
+            kind:    ErrorKind::Exhausted,
             message: message.into(),
         }
     }
 
     pub fn conflict(message: impl Into<String>) -> Self {
         Self {
-            kind: ErrorKind::Conflict,
+            kind:    ErrorKind::Conflict,
             message: message.into(),
         }
     }
 
     pub fn timeout(message: impl Into<String>) -> Self {
         Self {
-            kind: ErrorKind::Timeout,
+            kind:    ErrorKind::Timeout,
             message: message.into(),
         }
     }
 
     pub fn internal(message: impl Into<String>) -> Self {
         Self {
-            kind: ErrorKind::Internal,
+            kind:    ErrorKind::Internal,
             message: message.into(),
         }
     }

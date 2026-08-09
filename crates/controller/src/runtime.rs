@@ -28,7 +28,7 @@ const DEFAULT_PULL_TIMEOUT: Duration = Duration::from_secs(600);
 #[derive(Debug, Clone)]
 pub struct ControllerConfig {
     pub genesis_hash: BlockHash,
-    pub batch_size: u32,
+    pub batch_size:   u32,
     pub pull_timeout: Duration,
 }
 
@@ -43,33 +43,33 @@ impl ControllerConfig {
 }
 
 struct FetchedBatch {
-    current_state: State,
-    header_bytes: Vec<u8>,
-    median_hint_bytes: Vec<u8>,
-    expected_state: State,
+    current_state:          State,
+    header_bytes:           Vec<u8>,
+    median_hint_bytes:      Vec<u8>,
+    expected_state:         State,
     expected_public_values: Vec<u8>,
-    first_new_height: u32,
-    end_height: u32,
+    first_new_height:       u32,
+    end_height:             u32,
 }
 
 struct PendingBatch {
-    end_height: u32,
-    expected_state: State,
+    end_height:             u32,
+    expected_state:         State,
     expected_public_values: Vec<u8>,
-    proof_object: String,
+    proof_object:           String,
 }
 
 struct PreparedBatch {
     current_state: State,
-    result: Result<FetchedBatch, ControllerError>,
+    result:        Result<FetchedBatch, ControllerError>,
 }
 
 struct RunSession {
-    verified_state: State,
+    verified_state:        State,
     verified_proof_object: Option<String>,
-    pending: VecDeque<PendingBatch>,
-    prepared: Option<PreparedBatch>,
-    halted: Option<String>,
+    pending:               VecDeque<PendingBatch>,
+    prepared:              Option<PreparedBatch>,
+    halted:                Option<String>,
 }
 
 impl RunSession {
@@ -89,11 +89,11 @@ impl RunSession {
 }
 
 struct ControllerCore {
-    store: HeaderStore,
+    store:        HeaderStore,
     genesis_hash: BlockHash,
     verifier_key: VerifierKeyDigest,
-    batch_size: u32,
-    runs: HashMap<String, RunSession>,
+    batch_size:   u32,
+    runs:         HashMap<String, RunSession>,
 }
 
 enum Pull {
@@ -102,16 +102,16 @@ enum Pull {
 }
 
 struct ReadyBatch {
-    fetched: FetchedBatch,
-    proof_object: String,
+    fetched:               FetchedBatch,
+    proof_object:          String,
     previous_proof_object: Option<String>,
 }
 
 struct RuntimeInner {
-    core: Mutex<ControllerCore>,
-    progress: Notify,
-    storage: Arc<dyn ArtifactStore>,
-    verifier: Arc<dyn ProofVerifier>,
+    core:         Mutex<ControllerCore>,
+    progress:     Notify,
+    storage:      Arc<dyn ArtifactStore>,
+    verifier:     Arc<dyn ProofVerifier>,
     verifier_key: VerifierKeyDigest,
     pull_timeout: Duration,
 }
@@ -317,9 +317,9 @@ impl ControllerCore {
             Some(record) => record,
             None => {
                 let record = RunRecord {
-                    verifier_key: self.verifier_key,
+                    verifier_key:    self.verifier_key,
                     verified_height: 0,
-                    proof_object: None,
+                    proof_object:    None,
                 };
                 self.store
                     .create_run(run_id, &record)
@@ -327,16 +327,13 @@ impl ControllerCore {
                 record
             },
         };
-        self.runs.insert(
-            run_id.to_owned(),
-            RunSession {
-                verified_state: self.state_at(record.verified_height),
-                verified_proof_object: record.proof_object,
-                pending: VecDeque::new(),
-                prepared: None,
-                halted: None,
-            },
-        );
+        self.runs.insert(run_id.to_owned(), RunSession {
+            verified_state:        self.state_at(record.verified_height),
+            verified_proof_object: record.proof_object,
+            pending:               VecDeque::new(),
+            prepared:              None,
+            halted:                None,
+        });
         Ok(())
     }
 
@@ -360,10 +357,10 @@ impl ControllerCore {
         let proof_object = format!("proof_{}.bin", fetched.end_height);
         let session = self.session_mut(run_id)?;
         session.pending.push_back(PendingBatch {
-            end_height: fetched.end_height,
-            expected_state: fetched.expected_state,
+            end_height:             fetched.end_height,
+            expected_state:         fetched.expected_state,
             expected_public_values: std::mem::take(&mut fetched.expected_public_values),
-            proof_object: proof_object.clone(),
+            proof_object:           proof_object.clone(),
         });
         Ok(Pull::Ready(Box::new(ReadyBatch {
             fetched,
@@ -423,4 +420,3 @@ impl ControllerCore {
         })
     }
 }
-

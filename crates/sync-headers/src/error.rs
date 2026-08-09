@@ -19,25 +19,25 @@ pub enum SyncHeadersError<E: std::fmt::Debug> {
     /// Failed to connect to the peer at all.
     #[error("failed to connect to peer {peer}: {source}")]
     Connect {
-        peer: SocketAddr,
-        source: Box<std::io::Error>,
+        peer:       SocketAddr,
+        source:     Box<std::io::Error>,
         latest_tip: Box<Tip>,
     },
 
     /// Lost connection or protocol error during the sync.
     #[error("peer error during sync (after {synced} headers): {source}")]
     Peer {
-        source: Box<std::io::Error>,
+        source:     Box<std::io::Error>,
         latest_tip: Box<Tip>,
-        synced: u64,
+        synced:     u64,
     },
 
     /// The caller's header-processing callback returned an error.
     #[error("header processing error (after {synced} headers): {source:?}")]
     Callback {
-        source: Box<E>,
+        source:     Box<E>,
         latest_tip: Box<Tip>,
-        synced: u64,
+        synced:     u64,
     },
 
     /// No candidate peers available to try.

@@ -6,12 +6,12 @@ use zkpow_controller::{db_path, HeaderStore, NO_HEADERS_REMAINING_PREFIX};
 mod artifacts;
 mod transport;
 
-use crate::pipeline::input::{
-    config_from_source, ensure_cuda_requested_configuration, parse_bool_env, parse_u32_env, EnvSource,
-    MapEnvSource, ENV_ZKPOW_BATCH_SIZE, ENV_ZKPOW_EXECUTE_ONLY, ENV_ZKPOW_GENERATE_GROTH16, ENV_ZKPOW_RUN_ID,
-    ENV_ZKPOW_USE_CUDA,
-};
 use crate::pipeline::{
+    input::{
+        config_from_source, ensure_cuda_requested_configuration, parse_bool_env, parse_u32_env, EnvSource,
+        MapEnvSource, ENV_ZKPOW_BATCH_SIZE, ENV_ZKPOW_EXECUTE_ONLY, ENV_ZKPOW_GENERATE_GROTH16, ENV_ZKPOW_RUN_ID,
+        ENV_ZKPOW_USE_CUDA,
+    },
     is_header_exhaustion_error, run_batch_session, BoxError, PipelineMode, ProverBackend,
 };
 
@@ -155,8 +155,7 @@ impl SessionEnv {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let dir =
-            std::env::temp_dir().join(format!("zkpow-host-session-{test_name}-{}-{nonce}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("zkpow-host-session-{test_name}-{}-{nonce}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let run_id = format!("test-{test_name}-{nonce}");
         set_env("ZKPOW_PROOF_STORE_DIR", dir.join("artifacts").to_str().unwrap());

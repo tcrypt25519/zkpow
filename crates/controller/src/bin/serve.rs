@@ -34,7 +34,7 @@ use zkpow_controller::{
     runtime::{ControllerConfig, ControllerRuntime},
     storage::{ArtifactStore, LocalArtifactStore, S3ArtifactStore, S3Config},
     verify::ProofVerifier,
-    BlockHash, HeaderStore,
+    HeaderStore,
 };
 
 const DEFAULT_PORT: u16 = 7878;
@@ -108,12 +108,11 @@ async fn main() {
     tracing_subscriber::fmt::init();
 
     let db = HeaderStore::open(db_path()).expect("failed to open database");
-    let genesis_hash = BlockHash::new(zkpow_core::MAINNET_GENESIS_HASH_RAW);
 
     let batch_size = env("ZKPOW_BATCH_SIZE")
         .map(|value| value.parse().expect("invalid ZKPOW_BATCH_SIZE"))
         .unwrap_or(DEFAULT_BATCH_SIZE);
-    let config = ControllerConfig::new(genesis_hash, batch_size);
+    let config = ControllerConfig::new(zkpow_core::MAINNET_GENESIS_HASH, batch_size);
 
     let runtime = ControllerRuntime::new(db, storage_from_env(), verifier_from_env().await, config);
     let app = build_router(runtime);

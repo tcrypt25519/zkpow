@@ -8,7 +8,7 @@
 
 use std::{net::SocketAddr, thread, time::Duration};
 
-use zkpow_core::{BlockHash, MAINNET_GENESIS_HASH_RAW};
+use zkpow_core::{BlockHash, MAINNET_GENESIS_HASH};
 
 use crate::{
     connection::PeerConnection,
@@ -219,6 +219,5 @@ where
 }
 
 fn build_locators(tip: &Tip) -> Vec<BlockHash> {
-    let genesis = BlockHash::new(MAINNET_GENESIS_HASH_RAW);
-    vec![tip.hash, genesis]
+    vec![tip.hash, MAINNET_GENESIS_HASH]
 }

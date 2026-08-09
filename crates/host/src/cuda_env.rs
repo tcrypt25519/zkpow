@@ -230,4 +230,3 @@ fn parse_compute_capability(input: &str) -> Result<ComputeCapability, BoxError> 
         minor: version.minor,
     })
 }
-

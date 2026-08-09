@@ -20,8 +20,8 @@ sp1_zkvm::entrypoint!(main);
 use bytemuck::{self, Pod, PodCastError};
 use sp1_zkvm::lib::read_vec_raw;
 use zkpow_core::{
-    ApplyFailure, BlockTimestamp, CONTINUATION_DATA_SIZE, Claim, HeaderInput, MINIMAL_PV_SIZE, ReturnCode, State,
-    VerifierKeyDigest, serialize_minimal_public_values,
+    serialize_minimal_public_values, ApplyFailure, BlockTimestamp, Claim, HeaderInput, ReturnCode, State,
+    VerifierKeyDigest, CONTINUATION_DATA_SIZE, MINIMAL_PV_SIZE,
 };
 use zkpow_sha256;
 
@@ -130,104 +130,104 @@ fn inner_main() -> Result<(), ProgramError> {
     // timestamps
     let _state_bytes = read_byte_slice_mut()?;
 
-/*
+    /*
 
- ## In-progress
-    - Mapping serializaton/deserialization in this program
-    - Mapping how we use the pieces of data and in what form(s)
-    - Evaluating if we can simplify the data flow
-    - Evaluating if we need such coupled structures **in memory**
-        - Having them be in solid logical groups is easy to work with
-        but I highly doubt we need the data in these groups to use
-        it correctly. An example is hashing the 6 field/80 byte header.
-        We don't need all 80 byts sitting together or in our memory in
-        order to feed sha256 individual words. We had the necessary
-        bytes in memory already so why waste copies moving them into
-        a single struct? Now we feed the hashing function references
-        to the individual fields.
-
-
-## What happens to data in this program
-    - First data used is prior_claim which is extracted, parsed, from state, and then used (with continuation digest and vk) to build a MinimalPublicValues which is serialized back to bytes.
-    - Then vk_bytes, prior_claim, and prior_continuation_bytes are used; passed into verify_prior_proof logic.
-    - vk_bytes are used again; in a conversion to VerifierKeyDigest.
-
-    - Then state is used; the apply_headers method is called on it
-    - headers and medians are used in the call to apply_headers
-    - After apply_headers returns, the Verification Key is added to a new MinimalPublicValues which is then IMMEDIATE SERIALIZED BACK TO BYTES, AGAIN.
-
-## So
-
-    - Read `verifier_key` and keep it as bytes
-    - Read `state` and parse it into a State struct
-    - Read `headers` and parse them into HeaderInput structs
-    - Read `medians` and parse them into BlockTimestamp structs
-
-    - Get `prior_claim` (parsed Claim) from `state` (parsed State)
-    - Get `prior_continuation_bytes` (un-parsed) from `state` (parsed State)
-    - Hash `prior_continuation_bytes`
-
-    - Hash the prior public-value fields (chain_work, verifier_key, continuation_digest, genesis_hash, tip_hash, height, success error_code) directly without instantiating a MinimalPublicValues
-    - Call verify_sp1_proof with un-parsed verifier_key and hashed MinimalPublicValues
-    - Parse the verifier_key bytes into a VerifierKeyDigest (stored as vk_digest)
-    - Call apply_headers on parsed State, passing in parsed headers and parsed medians
-    - There is one more use of input data after apply_headers: the Verification Key (as vk_digest) is added to a new MinimalPublicValues which is then IMMEDIATE SERIALIZED BACK TO BYTES, AGAIN.
+     ## In-progress
+        - Mapping serializaton/deserialization in this program
+        - Mapping how we use the pieces of data and in what form(s)
+        - Evaluating if we can simplify the data flow
+        - Evaluating if we need such coupled structures **in memory**
+            - Having them be in solid logical groups is easy to work with
+            but I highly doubt we need the data in these groups to use
+            it correctly. An example is hashing the 6 field/80 byte header.
+            We don't need all 80 byts sitting together or in our memory in
+            order to feed sha256 individual words. We had the necessary
+            bytes in memory already so why waste copies moving them into
+            a single struct? Now we feed the hashing function references
+            to the individual fields.
 
 
-## Logic Pieces
+    ## What happens to data in this program
+        - First data used is prior_claim which is extracted, parsed, from state, and then used (with continuation digest and vk) to build a MinimalPublicValues which is serialized back to bytes.
+        - Then vk_bytes, prior_claim, and prior_continuation_bytes are used; passed into verify_prior_proof logic.
+        - vk_bytes are used again; in a conversion to VerifierKeyDigest.
 
-- VK
-    - [u32; 8]                                             ; Used for proof verification, committed
-- State
-    - Claim
-        pub genesis_hash: BlockHash,
-        pub tip_hash: BlockHash,
-        pub chain_work: ChainWork,
-        pub height: u32,
-    - Continuation
-        pub current_nbits: CompactTarget,
-        pub epoch_start_timestamp: BlockTimestamp,
-        pub timestamps: [BlockTimestamp; WINDOW_SIZE],
-- Headers
-    pub version: u32,
-    pub merkle_root: [u8; 32],
-    pub timestamp: BlockTimestamp,
-    pub nonce: u32,
-- Median
-    pub timestamp: BlockTimestamp,
+        - Then state is used; the apply_headers method is called on it
+        - headers and medians are used in the call to apply_headers
+        - After apply_headers returns, the Verification Key is added to a new MinimalPublicValues which is then IMMEDIATE SERIALIZED BACK TO BYTES, AGAIN.
 
-- *MinimalPublicValues
-    - A reformulation of elements from
-    - State (the Claim)
-        pub chain_work: ChainWork,
-        pub genesis_hash: BlockHash,
-        pub tip_hash: BlockHash,
-        pub height: u32,
-    - Continuation Hash
-        pub continuation_digest: [u8; 32],
-    - VerifierKey
-        pub verifier_key: VerifierKeyDigest,
-    - Plus an error_code
-    pub error_code: Option<NonZeroU8>,
-    - The failure height is `last_valid_claim.height + 1`, derived from the claim.
+    ## So
+
+        - Read `verifier_key` and keep it as bytes
+        - Read `state` and parse it into a State struct
+        - Read `headers` and parse them into HeaderInput structs
+        - Read `medians` and parse them into BlockTimestamp structs
+
+        - Get `prior_claim` (parsed Claim) from `state` (parsed State)
+        - Get `prior_continuation_bytes` (un-parsed) from `state` (parsed State)
+        - Hash `prior_continuation_bytes`
+
+        - Hash the prior public-value fields (chain_work, verifier_key, continuation_digest, genesis_hash, tip_hash, height, success error_code) directly without instantiating a MinimalPublicValues
+        - Call verify_sp1_proof with un-parsed verifier_key and hashed MinimalPublicValues
+        - Parse the verifier_key bytes into a VerifierKeyDigest (stored as vk_digest)
+        - Call apply_headers on parsed State, passing in parsed headers and parsed medians
+        - There is one more use of input data after apply_headers: the Verification Key (as vk_digest) is added to a new MinimalPublicValues which is then IMMEDIATE SERIALIZED BACK TO BYTES, AGAIN.
 
 
-## Where state gets mutated
+    ## Logic Pieces
 
-    - State is mutated IN PLACE by `state.apply_headers(headers, medians)` in this file, on the `&mut State` read from stdin.
-    - Inside `State::apply_headers` (`crates/core/src/state.rs`):
-        - `height` is incremented in `apply_header_after_median_check` to `self.height + 1`.
-        - `timestamps[slot]` is overwritten with the new header timestamp.
-        - `current_nbits` is updated once per chunk in `EpochManager::flush`.
-        - `epoch_start_timestamp` is overwritten only at epoch boundaries.
-        - `block_hash` is overwritten with the double-SHA256 of the new header.
-        - `chain_work` is updated in `EpochManager::flush` by adding `active_block_work * processed`.
-    - `EpochManager::flush` runs on Drop at the end of each chunk and on the failure path.
-    - On failure, the caller reads the last valid state directly from the same `&mut State` that `apply_headers` mutated; no copy is needed.
-    - Between iterations, the host serializes the updated State via `state.to_bytes()` and the next guest deserializes it fresh from stdin. The guest never re-serializes the canonical State internally.
-    - Continuation data (`current_nbits`, `epoch_start_timestamp`, `timestamps`) is never modified on its own. It is copied out of State into ContinuationData and serialized only for hashing.
+    - VK
+        - [u32; 8]                                             ; Used for proof verification, committed
+    - State
+        - Claim
+            pub genesis_hash: BlockHash,
+            pub tip_hash: BlockHash,
+            pub chain_work: ChainWork,
+            pub height: u32,
+        - Continuation
+            pub current_nbits: CompactTarget,
+            pub epoch_start_timestamp: BlockTimestamp,
+            pub timestamps: [BlockTimestamp; WINDOW_SIZE],
+    - Headers
+        pub version: u32,
+        pub merkle_root: [u8; 32],
+        pub timestamp: BlockTimestamp,
+        pub nonce: u32,
+    - Median
+        pub timestamp: BlockTimestamp,
 
-*/
+    - *MinimalPublicValues
+        - A reformulation of elements from
+        - State (the Claim)
+            pub chain_work: ChainWork,
+            pub genesis_hash: BlockHash,
+            pub tip_hash: BlockHash,
+            pub height: u32,
+        - Continuation Hash
+            pub continuation_digest: [u8; 32],
+        - VerifierKey
+            pub verifier_key: VerifierKeyDigest,
+        - Plus an error_code
+        pub error_code: Option<NonZeroU8>,
+        - The failure height is `last_valid_claim.height + 1`, derived from the claim.
+
+
+    ## Where state gets mutated
+
+        - State is mutated IN PLACE by `state.apply_headers(headers, medians)` in this file, on the `&mut State` read from stdin.
+        - Inside `State::apply_headers` (`crates/core/src/state.rs`):
+            - `height` is incremented in `apply_header_after_median_check` to `self.height + 1`.
+            - `timestamps[slot]` is overwritten with the new header timestamp.
+            - `current_nbits` is updated once per chunk in `EpochManager::flush`.
+            - `epoch_start_timestamp` is overwritten only at epoch boundaries.
+            - `block_hash` is overwritten with the double-SHA256 of the new header.
+            - `chain_work` is updated in `EpochManager::flush` by adding `active_block_work * processed`.
+        - `EpochManager::flush` runs on Drop at the end of each chunk and on the failure path.
+        - On failure, the caller reads the last valid state directly from the same `&mut State` that `apply_headers` mutated; no copy is needed.
+        - Between iterations, the host serializes the updated State via `state.to_bytes()` and the next guest deserializes it fresh from stdin. The guest never re-serializes the canonical State internally.
+        - Continuation data (`current_nbits`, `epoch_start_timestamp`, `timestamps`) is never modified on its own. It is copied out of State into ContinuationData and serialized only for hashing.
+
+    */
 
     let verifier_key = read_fixed_size_input::<[u32; 8]>()?;
     let state: &mut State = read_fixed_size_input_mut::<State>()?;
@@ -235,7 +235,6 @@ fn inner_main() -> Result<(), ProgramError> {
     let medians: &[BlockTimestamp] = read_slice_of_fixed_size_elements_input::<BlockTimestamp>()?;
 
     if state.height > 0 {
-        
         let prior_claim = state.public_claim();
         let prior_continuation_bytes: [u8; CONTINUATION_DATA_SIZE] = state.continuation_bytes();
 
@@ -270,12 +269,7 @@ fn inner_main() -> Result<(), ProgramError> {
     };
     let digest = compute_continuation_digest(&state);
     let claim = state.public_claim();
-    commit_minimal_pv(
-        &claim,
-        &vk_digest,
-        &digest,
-        return_code.into(),
-    );
+    commit_minimal_pv(&claim, &vk_digest, &digest, return_code.into());
 }
 
 pub fn main() {

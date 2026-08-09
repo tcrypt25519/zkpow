@@ -9,16 +9,16 @@ use crate::{BlockTimestamp, HeaderInput};
 fn test_new_header_hints_round_trip() {
     let headers: Vec<HeaderInput> = vec![
         HeaderInput {
-            version: 1,
+            version:     1,
             merkle_root: [4; 32],
-            timestamp: BlockTimestamp::new(100),
-            nonce: 0,
+            timestamp:   BlockTimestamp::new(100),
+            nonce:       0,
         },
         HeaderInput {
-            version: 2,
+            version:     2,
             merkle_root: [5; 32],
-            timestamp: BlockTimestamp::new(200),
-            nonce: 1,
+            timestamp:   BlockTimestamp::new(200),
+            nonce:       1,
         },
     ];
 
@@ -30,10 +30,10 @@ fn test_new_header_hints_round_trip() {
 #[test]
 fn test_new_header_hints_reject_truncated_payload() {
     let headers = vec![HeaderInput {
-        version: 1,
+        version:     1,
         merkle_root: [4; 32],
-        timestamp: BlockTimestamp::new(100),
-        nonce: 0,
+        timestamp:   BlockTimestamp::new(100),
+        nonce:       0,
     }];
     let mut bytes = serialize_inputs(&headers);
     bytes.pop();
@@ -57,4 +57,3 @@ fn median_time_past_hints_reject_invalid_lengths() {
     // so only assert that a 3-byte payload is rejected.
     assert!(cast_slice::<BlockTimestamp>(&[1, 2, 3]).is_err());
 }
-

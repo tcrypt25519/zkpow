@@ -31,7 +31,7 @@ use std::time::Instant;
 use diagnostics::{clear_phase_timings, collected_phase_timings, timed_sync};
 pub use diagnostics::{log_execution_report, PhaseTiming};
 use execution::execute_batch;
-use input::{build_stdin, config_from_env, controller_url_from_env, genesis_hash};
+use input::{build_stdin, config_from_env, controller_url_from_env};
 use memuse::{StageHistory, StageMetric, StageSample};
 use proof::{
     compressed::generate_compressed_proof, get_prepared_prover, groth16::generate_groth16_proof, PreparedProver,
@@ -443,9 +443,7 @@ fn previous_proof_from_proof(
     let end_height = match MinimalPublicValues::parse(proof.public_values.as_slice()) {
         Ok(pv) if pv.is_success() => pv.height,
         Ok(pv) => {
-            let error_code = pv
-                .validation_error_code()
-                .expect("failure has an error code");
+            let error_code = pv.validation_error_code().expect("failure has an error code");
             return Err(format!("previous proof ended in error {error_code} at height {}", pv.height + 1).into());
         },
         Err(err) => return Err(format!("previous proof has malformed public values: {err}").into()),
@@ -511,4 +509,3 @@ fn log_prover_backend_selection(prover_backend: ProverBackend, cuda_device_id: O
         },
     }
 }
-

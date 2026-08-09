@@ -13,9 +13,9 @@ fn open_db() -> HeaderStore {
 
 fn make_pcs() -> ContinuationData {
     ContinuationData {
-        current_nbits: CompactTarget::new(GENESIS_NBITS),
+        current_nbits:         CompactTarget::new(GENESIS_NBITS),
         epoch_start_timestamp: BTimestamp::new(500),
-        timestamps: [BTimestamp::new(10); WINDOW_SIZE],
+        timestamps:            [BTimestamp::new(10); WINDOW_SIZE],
     }
 }
 
@@ -69,8 +69,7 @@ fn compute_final_state_with_hints_reaches_expected_height() {
     let genesis_hash = BlockHash::new(zkpow_sha256::double(&genesis.header.to_bytes()));
     let genesis_state = genesis_state_from_record(genesis, genesis_hash);
     let witness = db.load_header_batch_witness(1, 128);
-    let final_state =
-        compute_final_state_with_hints(&genesis_state, &witness.headers, &witness.median_time_past_hints);
+    let final_state = compute_final_state_with_hints(&genesis_state, &witness.headers, &witness.median_time_past_hints);
 
     assert_eq!(final_state.height, 128);
 }
@@ -85,7 +84,7 @@ fn applying_headers_one_at_a_time_matches_db_claims() {
     let mut previous_ordered_run = genesis.ordered_timestamp_run;
 
     for (index, record) in records.iter().enumerate() {
-        let header = HeaderInput::from_header(&record.header);
+        let header = header_to_input(&record.header);
         let needs_hint = requires_median_hint(record.height, previous_ordered_run);
         state
             .apply_headers(
@@ -111,16 +110,14 @@ fn db_retarget_schedule_matches_height_40320() {
     let genesis_hash = BlockHash::new(zkpow_sha256::double(&genesis.header.to_bytes()));
     let genesis_state = genesis_state_from_record(genesis, genesis_hash);
     let witness_1 = db.load_header_batch_witness(1, 40319);
-    let state =
-        compute_final_state_with_hints(&genesis_state, &witness_1.headers, &witness_1.median_time_past_hints);
+    let state = compute_final_state_with_hints(&genesis_state, &witness_1.headers, &witness_1.median_time_past_hints);
     let pre_boundary_nbits = db.load_compact_target(40319);
 
     assert_eq!(state.height, 40319);
     assert_eq!(state.current_nbits, pre_boundary_nbits);
 
     let witness_2 = db.load_header_batch_witness(40320, 1);
-    let boundary_state =
-        compute_final_state_with_hints(&state, &witness_2.headers, &witness_2.median_time_past_hints);
+    let boundary_state = compute_final_state_with_hints(&state, &witness_2.headers, &witness_2.median_time_past_hints);
     assert_eq!(boundary_state.height, 40320);
     let boundary_nbits = db.load_compact_target(40320);
     assert_eq!(boundary_state.current_nbits, boundary_nbits);

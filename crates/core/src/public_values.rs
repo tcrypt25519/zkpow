@@ -103,10 +103,10 @@ impl From<PublicValuesDigest> for [u8; 32] {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Size)]
 pub struct Claim {
-    pub chain_work: ChainWork,
+    pub chain_work:   ChainWork,
     pub genesis_hash: BlockHash,
-    pub tip_hash: BlockHash,
-    pub height: u32,
+    pub tip_hash:     BlockHash,
+    pub height:       u32,
 }
 
 impl Claim {
@@ -149,18 +149,18 @@ impl Claim {
 #[repr(C)]
 #[derive(Debug, Clone, PartialEq, Eq, Size)]
 pub struct ContinuationData {
-    pub current_nbits: CompactTarget,
+    pub current_nbits:         CompactTarget,
     pub epoch_start_timestamp: BlockTimestamp,
-    pub timestamps: [BlockTimestamp; WINDOW_SIZE],
+    pub timestamps:            [BlockTimestamp; WINDOW_SIZE],
 }
 
 impl ContinuationData {
     #[must_use]
     pub fn from_state(state: &State) -> Self {
         Self {
-            current_nbits: state.current_nbits,
+            current_nbits:         state.current_nbits,
             epoch_start_timestamp: state.epoch_start_timestamp,
-            timestamps: state.timestamps,
+            timestamps:            state.timestamps,
         }
     }
 
@@ -252,10 +252,10 @@ impl core::fmt::Display for ErrorCode {
 #[repr(u8)]
 pub enum ErrorCodeNames {
     HeaderPayloadLengthInvalid = 1,
-    PowInsufficient = 2,
-    TimestampTooOld = 3,
+    PowInsufficient     = 2,
+    TimestampTooOld     = 3,
     GenesisHashMismatch = 4,
-    UnknownError = 255,
+    UnknownError        = 255,
 }
 
 impl TryFrom<u8> for ErrorCodeNames {
@@ -405,13 +405,13 @@ pub struct ApplyFailure {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MinimalPublicValues {
-    pub chain_work: ChainWork,
-    pub verifier_key: VerifierKeyDigest,
+    pub chain_work:          ChainWork,
+    pub verifier_key:        VerifierKeyDigest,
     pub continuation_digest: [u8; 32],
-    pub genesis_hash: BlockHash,
-    pub tip_hash: BlockHash,
-    pub height: u32,
-    pub return_code: ReturnCode,
+    pub genesis_hash:        BlockHash,
+    pub tip_hash:            BlockHash,
+    pub height:              u32,
+    pub return_code:         ReturnCode,
 }
 
 /// Serialize minimal public values from their individual fields.
@@ -461,7 +461,7 @@ impl MinimalPublicValues {
         if bytes.len() != MINIMAL_PV_SIZE {
             return Err(InputParseError::InvalidLength {
                 expected: MINIMAL_PV_SIZE,
-                actual: bytes.len(),
+                actual:   bytes.len(),
             });
         }
         let chain_work = ChainWork::new(bytes[0..32].try_into().unwrap());
@@ -487,9 +487,9 @@ impl MinimalPublicValues {
     pub fn claim(&self) -> Claim {
         Claim {
             genesis_hash: self.genesis_hash,
-            tip_hash: self.tip_hash,
-            chain_work: self.chain_work,
-            height: self.height,
+            tip_hash:     self.tip_hash,
+            chain_work:   self.chain_work,
+            height:       self.height,
         }
     }
 

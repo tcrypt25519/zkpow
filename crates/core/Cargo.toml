@@ -12,7 +12,7 @@ host = ["dep:serde"]
 profiling = []
 
 [dependencies]
-sp1-zkvm = { workspace = true }
+#sp1-zkvm = { workspace = true }
 thiserror = { version = "2.0", default-features = false }
 bytemuck = { workspace = true }
 serde = { workspace = true, optional = true }
@@ -21,5 +21,5 @@ sp1-cycle-macros = { workspace = true }
 zkpow-sha256 = { workspace = true }
 sha2 = { workspace = true }
 rkyv = { workspace = true }
-bytes = { workspace = true }
+#bytes = { workspace = true }
 derive-size = { workspace = true }

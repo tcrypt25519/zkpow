@@ -265,4 +265,3 @@ fn display_hex<const N: usize>(mut bytes: [u8; N]) -> String {
     bytes.reverse();
     hex::encode(bytes)
 }
-

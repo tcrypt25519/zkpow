@@ -66,10 +66,6 @@ impl EnvSource for MapEnvSource {
     }
 }
 
-pub fn genesis_hash() -> util::BlockHash {
-    util::BlockHash::new(zkpow_core::MAINNET_GENESIS_HASH_RAW)
-}
-
 pub(crate) fn parse_bool_env(source: &impl EnvSource, var_name: &'static str) -> Result<bool, BoxError> {
     parse_bool_env_or(source, var_name, false)
 }

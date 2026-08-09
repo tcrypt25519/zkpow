@@ -24,7 +24,6 @@ zkpow-store = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
 axum = { workspace = true }
-rusqlite = { workspace = true }
 rust-s3 = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
@@ -32,5 +31,4 @@ tracing-subscriber = { workspace = true }
 sp1-sdk = { workspace = true, optional = true }
 sp1-prover = { workspace = true, optional = true }
 postcard = { workspace = true }
-serde = { workspace = true }
 rkyv.workspace = true

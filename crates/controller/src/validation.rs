@@ -1,4 +1,4 @@
-use zkpow_core::{BlockTimestamp, HeaderInput, State};
+use zkpow_core::{BlockTimestamp, Header, HeaderInput, State};
 use zkpow_store::HeaderRecord;
 
 /// Apply a batch locally with its sparse median-time-past hints.
@@ -15,5 +15,15 @@ pub fn compute_final_state_with_hints(
 }
 
 pub fn records_to_new_headers(records: &[HeaderRecord]) -> Vec<HeaderInput> {
-    records.iter().map(|record| HeaderInput::from_header(&record.header)).collect()
+    records.iter().map(|record| header_to_input(&record.header)).collect()
+}
+
+/// Extract the prover-supplied subset of fields from a full [`Header`].
+pub(crate) fn header_to_input(header: &Header) -> HeaderInput {
+    HeaderInput {
+        version:     header.version,
+        merkle_root: header.merkle_root,
+        timestamp:   header.timestamp,
+        nonce:       header.nonce,
+    }
 }
