@@ -70,7 +70,7 @@ fn rejects_cuda_when_feature_is_not_compiled_in() {
 #[test]
 fn config_validation_matrix_invalid_values() {
     struct SingleValueEnv {
-        key:   &'static str,
+        key: &'static str,
         value: &'static str,
     }
 

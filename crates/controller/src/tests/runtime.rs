@@ -1,7 +1,6 @@
 use std::{sync::Mutex, time::Duration};
 
 use zkpow_core::{serialize_minimal_public_values, VerifierKeyDigest};
-use zkpow_sha256;
 use zkpow_store::db_path;
 
 use super::*;
@@ -28,9 +27,9 @@ impl ProofVerifier for BytesArePublicValues {
 
 struct Harness {
     runtime: ControllerRuntime,
-    root:    std::path::PathBuf,
+    root: std::path::PathBuf,
     run_ids: Mutex<Vec<String>>,
-    nonce:   u128,
+    nonce: u128,
 }
 
 impl Harness {
@@ -41,7 +40,7 @@ impl Harness {
             .as_nanos();
         let root = std::env::temp_dir().join(format!("zkpow-runtime-{nonce}"));
         let store = HeaderStore::open(db_path()).unwrap();
-        let genesis_hash = BlockHash::new(zkpow_sha256::double(&store.load_header_record(0).header.to_bytes()));
+        let genesis_hash = BlockHash::from(&store.load_header_record(0).header);
         let mut config = ControllerConfig::new(genesis_hash, 2);
         config.pull_timeout = Duration::from_millis(100);
         let runtime = ControllerRuntime::new(
@@ -67,7 +66,7 @@ impl Harness {
     fn upload_expected(&self, run: &str, batch: &Batch) {
         let state = HeaderStore::open(db_path())
             .unwrap()
-            .state_at_height(batch.end_height, self.genesis_hash());
+            .state_at_height::<Mainnet>(batch.end_height, self.genesis_hash());
         let claim = state.public_claim();
         let bytes = serialize_minimal_public_values(
             &claim.chain_work,
@@ -87,7 +86,7 @@ impl Harness {
 
     fn genesis_hash(&self) -> BlockHash {
         let store = HeaderStore::open(db_path()).unwrap();
-        BlockHash::new(zkpow_sha256::double(&store.load_header_record(0).header.to_bytes()))
+        BlockHash::from(&store.load_header_record(0).header)
     }
 }
 

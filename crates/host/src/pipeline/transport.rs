@@ -43,7 +43,7 @@ impl ControllerTransport for LocalController {
 /// client has no request timeout.
 pub struct HttpController {
     base_url: String,
-    client:   reqwest::Client,
+    client: reqwest::Client,
 }
 
 impl HttpController {

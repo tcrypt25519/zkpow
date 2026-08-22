@@ -18,9 +18,9 @@ default = []
 sp1-verify = ["dep:sp1-sdk", "dep:sp1-prover"]
 
 [dependencies]
-zkpow-core = { workspace = true, features = ["host"] }
-zkpow-sha256 = { workspace = true, features = ["host"] }
+zkpow-core = { workspace = true }
 zkpow-store = { workspace = true }
+zkpow-params = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
 axum = { workspace = true }

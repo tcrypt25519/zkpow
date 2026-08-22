@@ -10,7 +10,6 @@
 //!
 //! No loops, no branching on block count. The padding and block layout
 //! are hardcoded for each size.
-
 use core::mem::MaybeUninit;
 
 use sp1_zkvm::syscalls::{syscall_sha256_compress, syscall_sha256_extend};

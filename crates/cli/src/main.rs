@@ -1,5 +1,7 @@
 use clap::{Args, Parser, Subcommand};
 use sync_headers::{connect_headers, tip_from_connected, ConnectedHeader, Header, Network, PeerStore, Tip};
+use zkpow_params::Consensus;
+use zkpow_params::Mainnet;
 use zkpow_store::HeaderStore;
 
 #[derive(Parser, Debug)]
@@ -77,7 +79,7 @@ fn sync_p2p(args: &SyncArgs) -> Result<(), Box<dyn std::error::Error>> {
             tracing::info!("Initializing database with genesis block");
             let genesis = genesis_connected_header();
             store.insert_genesis(&genesis)?;
-            Tip::genesis(genesis.block_hash())
+            Tip::genesis::<Mainnet>(genesis.block_hash())
         },
     };
 
@@ -92,13 +94,13 @@ fn sync_p2p(args: &SyncArgs) -> Result<(), Box<dyn std::error::Error>> {
         PeerStore::from_dns_seeds()?
     };
 
-    let final_tip = sync_headers::p2p::sync(
+    let final_tip = sync_headers::p2p::sync::<Mainnet, _, _>(
         network,
         &anchor,
         args.max_headers,
         &mut peer_store,
         |raw_headers, tip| -> Result<Tip, String> {
-            let connected = connect_headers(tip, raw_headers);
+            let connected = connect_headers::<Mainnet>(tip, raw_headers);
             if connected.is_empty() {
                 return Err("no headers could be connected to the tip".into());
             }
@@ -120,9 +122,9 @@ fn sync_p2p(args: &SyncArgs) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn genesis_connected_header() -> ConnectedHeader {
-    let header = Header::new(zkpow_core::MAINNET_GENESIS_HEADER);
+    let header = Header::new(Mainnet::PARAMS.genesis);
     let block_hash = header.block_hash();
-    ConnectedHeader::new(header, block_hash, 0, zkpow_core::GENESIS_WORK, 0, 0)
+    ConnectedHeader::new(header, block_hash, 0, Mainnet::PARAMS.genesis_work, 0, 0)
 }
 
 fn parse_network(s: &str) -> Result<Network, Box<dyn std::error::Error>> {

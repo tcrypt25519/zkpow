@@ -55,14 +55,20 @@ pub(crate) async fn generate_groth16_proof(
                     .unwrap_or_else(|_| panic!("failed to parse {label} as BigUint"))
             };
 
+            let vkey_hash_bn = parse_biguint(&vkey_hash, "Groth16 vkey hash");
+            let committed_values_digest_bn = parse_biguint(&committed_values_digest, "Groth16 public-values digest");
+            let exit_code_bn = parse_biguint(&exit_code, "Groth16 exit code");
+            let vk_root_bn = parse_biguint(&vk_root, "Groth16 recursion VK root");
+            let proof_nonce_bn = parse_biguint(&proof_nonce, "Groth16 proof nonce");
+
             prover
                 .verify(
                     &proof,
-                    &parse_biguint(&vkey_hash, "Groth16 vkey hash"),
-                    &parse_biguint(&committed_values_digest, "Groth16 public-values digest"),
-                    &parse_biguint(&exit_code, "Groth16 exit code"),
-                    &parse_biguint(&vk_root, "Groth16 recursion VK root"),
-                    &parse_biguint(&proof_nonce, "Groth16 proof nonce"),
+                    &vkey_hash_bn,
+                    &committed_values_digest_bn,
+                    &exit_code_bn,
+                    &vk_root_bn,
+                    &proof_nonce_bn,
                     &build_dir,
                 )
                 .expect("native Groth16 verification failed");

@@ -11,11 +11,12 @@
 
 use sp1_sdk::{prelude::*, Elf, HashableKey, Prover, ProverClient, SP1Stdin};
 use zkpow_controller::db_path;
-use zkpow_core::MAINNET_GENESIS_HASH;
 use zkpow_host::{
     observability, util,
     util::{ErrorCode, MinimalPublicValues, VerifierKeyDigest},
 };
+use zkpow_params::Consensus;
+use zkpow_params::Mainnet;
 
 const ELF: Elf = include_elf!("zkpow-guest");
 
@@ -77,7 +78,7 @@ fn open_db() -> zkpow_controller::HeaderStore {
 fn mainnet_genesis_state() -> util::State {
     let db = open_db();
     let genesis = db.load_header_record(0);
-    zkpow_controller::genesis_state_from_record(genesis, MAINNET_GENESIS_HASH)
+    zkpow_controller::genesis_state_from_record(genesis, Mainnet::GENESIS_HASH)
 }
 
 fn build_stdin(
@@ -99,7 +100,7 @@ fn compute_final_state_with_sparse_hints(
     headers: &[util::HeaderInput],
     sparse_hints: &[util::BlockTimestamp],
 ) -> util::State {
-    util::compute_final_state_with_hints(initial_state, headers, sparse_hints)
+    util::compute_final_state_with_hints::<Mainnet>(initial_state, headers, sparse_hints)
 }
 
 #[tokio::main]
@@ -149,7 +150,7 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
     const FIRST_BOUNDARY_TIP_HEIGHT: usize = 2015;
     const RETARGET_HEIGHT: usize = 32256;
     const RETARGET_TIP_HEIGHT: usize = RETARGET_HEIGHT - 1;
-    const EPOCH_LENGTH: usize = zkpow_core::EPOCH_LENGTH as usize;
+    const EPOCH_LENGTH: usize = Mainnet::PARAMS.epoch_length as usize;
     let db = open_db();
     let genesis_state = mainnet_genesis_state();
 
@@ -414,7 +415,7 @@ async fn test_error_recursive_on_tampered_state_witness() -> Result<(), String> 
 
 /// Verify the public-value format is the minimal 169-byte layout.
 async fn test_pv_minimal_format() -> Result<(), String> {
-    use zkpow_core::MINIMAL_PV_SIZE;
+    use zkpow_core::MinimalPublicValues;
 
     let genesis_state = mainnet_genesis_state();
     let witness = open_db().load_header_batch_witness(1, 10);
@@ -427,10 +428,10 @@ async fn test_pv_minimal_format() -> Result<(), String> {
 
     let pv = run_and_get_pv(stdin).await?;
 
-    if pv.len() != MINIMAL_PV_SIZE {
+    if pv.len() != MinimalPublicValues::SIZE {
         return Err(format!(
-            "expected {} bytes (MINIMAL_PV_SIZE), got {}",
-            MINIMAL_PV_SIZE,
+            "expected {} bytes (MinimalPublicValues::SIZE), got {}",
+            MinimalPublicValues::SIZE,
             pv.len()
         ));
     }

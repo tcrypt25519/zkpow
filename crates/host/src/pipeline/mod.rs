@@ -47,6 +47,8 @@ use zkpow_controller::{
     HeaderStore,
 };
 use zkpow_core::MinimalPublicValues;
+use zkpow_params::Consensus;
+use zkpow_params::Mainnet;
 
 use crate::memory_monitor;
 
@@ -65,15 +67,15 @@ pub enum ProverBackend {
 pub struct ProofGenerationConfig {
     /// The IVC chain this host extends; the controller tracks progress per
     /// run id in its database.
-    pub run_id:           String,
+    pub run_id: String,
     /// Used only by the in-process controller and execute-only diagnostic.
     /// A remote controller ignores this host setting and selects its own size.
     pub local_batch_size: u32,
-    pub batch_count:      u32,
-    pub db_path:          std::path::PathBuf,
-    pub mode:             PipelineMode,
-    pub prover_backend:   ProverBackend,
-    pub cuda_device_id:   Option<u32>,
+    pub batch_count: u32,
+    pub db_path: std::path::PathBuf,
+    pub mode: PipelineMode,
+    pub prover_backend: ProverBackend,
+    pub cuda_device_id: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -149,7 +151,7 @@ fn build_local_controller(
     // with the same prepared prover the host proves with.
     let verifier = Box::new(verify::PreparedProverVerifier::new(prepared.clone())) as Box<dyn ProofVerifier>;
 
-    let controller_config = ControllerConfig::new(genesis_hash(), config.local_batch_size);
+    let controller_config = ControllerConfig::new(Mainnet::GENESIS_HASH, config.local_batch_size);
     Ok(ControllerRuntime::new(db, storage, verifier, controller_config))
 }
 
@@ -157,26 +159,26 @@ fn build_local_controller(
 /// batch's recursion.
 struct PreviousProof {
     end_height: u32,
-    proof:      SP1ProofWithPublicValues,
+    proof: SP1ProofWithPublicValues,
 }
 
 /// Everything one batch produced.
 struct BatchOutcome {
     compressed_proof: SP1ProofWithPublicValues,
-    groth16_proof:    Option<SP1ProofWithPublicValues>,
+    groth16_proof: Option<SP1ProofWithPublicValues>,
 }
 
 struct BatchCompletion {
     proof_upload: FileLocation,
-    proof_bytes:  Vec<u8>,
+    proof_bytes: Vec<u8>,
 }
 
 async fn run_execution_session(config: ProofGenerationConfig) -> Result<u32, BoxError> {
     tracing::info!("Execute-only diagnostic; controller progress and artifact storage are disabled");
     let store = HeaderStore::open(&config.db_path).map_err(|err| format!("failed to open database: {err}"))?;
     let prover = ProverClient::builder().mock().build().await;
-    let genesis_hash = genesis_hash();
-    let mut state = store.state_at_height(0, genesis_hash);
+    let genesis_hash = Mainnet::GENESIS_HASH;
+    let mut state = store.state_at_height::<Mainnet>(0, genesis_hash);
     let mut completed = 0;
 
     while completed < config.batch_count {
@@ -199,7 +201,7 @@ async fn run_execution_session(config: ProofGenerationConfig) -> Result<u32, Box
         let elapsed = started.elapsed().as_secs_f64();
         tracing::info!(first_new_height, end_height, "Execution completed in {elapsed:.2} seconds");
         log_execution_report(&report, elapsed);
-        state = store.state_at_height(end_height, genesis_hash);
+        state = store.state_at_height::<Mainnet>(end_height, genesis_hash);
         completed += 1;
     }
     Ok(completed)

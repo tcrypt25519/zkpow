@@ -65,25 +65,25 @@ impl ArtifactStore for LocalArtifactStore {
 
 #[derive(Debug, Clone)]
 pub struct S3Config {
-    pub bucket:     String,
-    pub region:     String,
-    pub endpoint:   String,
+    pub bucket: String,
+    pub region: String,
+    pub endpoint: String,
     pub access_key: String,
     pub secret_key: String,
-    pub prefix:     String,
+    pub prefix: String,
 }
 
 /// S3-compatible store (e.g. DigitalOcean Spaces). Mints pre-signed PUT/GET
 /// URLs for the host and fetches objects directly for verification.
 pub struct S3ArtifactStore {
-    bucket:     Box<Bucket>,
+    bucket: Box<Bucket>,
     key_prefix: String,
 }
 
 impl S3ArtifactStore {
     pub fn new(config: &S3Config) -> Result<Self, BoxError> {
         let region = Region::Custom {
-            region:   config.region.clone(),
+            region: config.region.clone(),
             endpoint: config.endpoint.clone(),
         };
         let credentials = Credentials::new(Some(&config.access_key), Some(&config.secret_key), None, None, None)

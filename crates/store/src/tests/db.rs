@@ -6,6 +6,7 @@ use std::{
 
 use sync_headers::{ConnectedHeader, Header as SyncHeader};
 use zkpow_core::{block_work_from_target, target_from_bits, BlockTimestamp, VerifierKeyDigest};
+use zkpow_params::{Consensus, Mainnet};
 
 use super::*;
 use crate::db::{hash_to_bytes, work_to_bytes};
@@ -29,9 +30,9 @@ fn run_ledger_round_trips_in_the_header_database() {
     assert_eq!(db.load_run("missing").unwrap(), None);
 
     let record = RunRecord {
-        verifier_key:    VerifierKeyDigest::from_raw([7; 8]),
+        verifier_key: VerifierKeyDigest::from_raw([7; 8]),
         verified_height: 0,
-        proof_object:    None,
+        proof_object: None,
     };
     db.create_run("mainnet-01", &record).unwrap();
     assert_eq!(db.load_run("mainnet-01").unwrap(), Some(record.clone()));
@@ -53,9 +54,9 @@ fn run_ledger_round_trips_in_the_header_database() {
 }
 
 fn genesis_connected_header() -> ConnectedHeader {
-    let header = SyncHeader::new(zkpow_core::MAINNET_GENESIS_HEADER);
+    let header = SyncHeader::new(Mainnet::PARAMS.genesis);
     let block_hash = header.block_hash();
-    ConnectedHeader::new(header, block_hash, 0, zkpow_core::GENESIS_WORK, 0, 0)
+    ConnectedHeader::new(header, block_hash, 0, Mainnet::PARAMS.genesis_work, 0, 0)
 }
 
 #[test]
@@ -72,19 +73,22 @@ fn open_creates_current_headers_schema_only() {
             .collect::<Result<_, _>>()
             .unwrap()
     };
-    assert_eq!(columns, vec![
-        "block_hash",
-        "prev",
-        "merkle_root",
-        "version",
-        "timestamp",
-        "n_bits",
-        "nonce",
-        "height",
-        "chainwork",
-        "median_time_past",
-        "ordered_timestamp_run",
-    ]);
+    assert_eq!(
+        columns,
+        vec![
+            "block_hash",
+            "prev",
+            "merkle_root",
+            "version",
+            "timestamp",
+            "n_bits",
+            "nonce",
+            "height",
+            "chainwork",
+            "median_time_past",
+            "ordered_timestamp_run",
+        ]
+    );
 
     let table_names: Vec<String> = {
         let mut stmt = store

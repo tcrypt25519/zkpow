@@ -5,9 +5,10 @@ edition = "2021"
 description = "SQLite persistence for Bitcoin block headers"
 
 [dependencies]
-zkpow-core = { workspace = true, features = ["host"] }
-zkpow-sha256 = { workspace = true, features = ["host"] }
+zkpow-core = { workspace = true }
 zkpow-sync-headers.workspace = true
+zkpow-params.workspace = true
 rusqlite.workspace = true
 thiserror.workspace = true
+num-bigint.workspace = true
 

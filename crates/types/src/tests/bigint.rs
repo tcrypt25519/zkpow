@@ -1,4 +1,4 @@
-use super::{u256, NonMaxU256};
+use crate::{u256, NonMaxU256};
 
 #[test]
 fn non_max_u256_accepts_valid_boundaries() {
@@ -11,5 +11,5 @@ fn non_max_u256_accepts_valid_boundaries() {
 #[test]
 fn non_max_u256_rejects_max_value() {
     let max = u256::from_limbs([u64::MAX; 4]);
-    assert_eq!(NonMaxU256::new(max), Err("value cannot be max u256"));
+    assert_eq!(NonMaxU256::new(max), None);
 }

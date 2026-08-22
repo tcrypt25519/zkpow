@@ -7,6 +7,8 @@ use zkpow_controller::{
     HeaderStore,
 };
 use zkpow_core::VerifierKeyDigest;
+use zkpow_params::Consensus;
+use zkpow_params::Mainnet;
 
 use crate::pipeline::transport::{ControllerTransport, HttpController, LocalController};
 
@@ -26,13 +28,13 @@ impl zkpow_controller::verify::ProofVerifier for TestVerifier {
 /// table) and one artifact root, so equal requests must produce equal
 /// batches. Drop deletes the test's run row again.
 struct Harness {
-    run_id:        String,
+    run_id: String,
     artifact_root: std::path::PathBuf,
 }
 
 fn test_runtime(artifact_root: &std::path::Path) -> ControllerRuntime {
     let store = HeaderStore::open(db_path()).expect("failed to open test database");
-    let mut config = ControllerConfig::new(crate::pipeline::input::genesis_hash(), 13);
+    let mut config = ControllerConfig::new(Mainnet::GENESIS_HASH, 13);
     config.pull_timeout = Duration::from_millis(200);
     ControllerRuntime::new(
         store,

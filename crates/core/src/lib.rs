@@ -1,4 +1,8 @@
-//! Shared consensus types and pure helper logic for the zkpow prover.
+//! The header chain state transition and the consensus math it runs on.
+//!
+//! The value types live in `zkpow-types` and the network parameters in `zkpow-params`; this crate
+//! is generic over the latter. The types are re-exported here so consumers have a single import
+//! surface for a header chain's vocabulary.
 
 #![no_std]
 
@@ -10,11 +14,13 @@ extern crate self as zkpow_core;
 
 use bytemuck::Pod;
 
-mod header;
-pub use header::{Header, HeaderInput};
+use zkpow_params::Consensus;
+pub use zkpow_types::{
+    BlockHash, BlockTimestamp, BlockWork, ByteInfo, ChainWork, CompactTarget, Header, NonMaxU256, Target, u256,
+};
 
-pub mod primitives;
-pub use primitives::{BlockHash, BlockTimestamp, BlockWork, ByteInfo, ChainWork, CompactTarget, Target, u256};
+mod header;
+pub use header::HeaderInput;
 
 mod public_values;
 pub use public_values::{
@@ -31,134 +37,29 @@ pub use errors::{InputParseError, ParseError};
 
 mod input;
 pub use input::{cast_slice, serialize_inputs};
-#[cfg(not(target_os = "zkvm"))]
-use sha2::{Digest, Sha256};
 
-use crate::primitives::NonMaxU256;
-
-/// Sliding window size used for median-time-past checks.
+/// Median-time-past window.
+///
+/// Not a network parameter: [`State`] and [`ContinuationData`] carry a
+/// `[BlockTimestamp; WINDOW_SIZE]`, and an array length cannot come from an associated const on
+/// stable. Changing it changes the proof's wire format, so it is fixed here for every network.
 pub const WINDOW_SIZE: usize = 11;
 
-/// Half of the sliding window size.
+/// Half the window, rounded down; the number of timestamps that may sit below the median.
 pub const WINDOW_SMALL_HALF_SIZE: usize = WINDOW_SIZE / 2;
-
-// Half of the sliding window size, rounded up. Used wind around the buffer
-pub const WINDOW_LARGE_HALF_SIZE: usize = WINDOW_SIZE - WINDOW_SMALL_HALF_SIZE;
 
 /// Maximum index in the sliding window.
 pub const WINDOW_MAX_INDEX: usize = WINDOW_SIZE - 1;
 
-/// Number of blocks per difficulty retarget epoch.
-pub const EPOCH_LENGTH: u32 = 2016;
-
-/// Expected seconds between consecutive blocks.
-pub const TARGET_BLOCK_TIME: u32 = 600;
-
-/// Expected timespan of a single difficulty epoch in seconds.
-pub const EXPECTED_EPOCH_TIMESPAN: u32 = EPOCH_LENGTH * TARGET_BLOCK_TIME;
-
-/// Minimum clamped epoch timespan used for difficulty retargeting.
-pub const MIN_EPOCH_TIMESPAN: i64 = (EXPECTED_EPOCH_TIMESPAN / 4) as i64;
-
-/// Maximum clamped epoch timespan used for difficulty retargeting.
-pub const MAX_EPOCH_TIMESPAN: i64 = (EXPECTED_EPOCH_TIMESPAN * 4) as i64;
-
-/// Mainnet PoW limit in compact form.
-pub const GENESIS_NBITS: u32 = 0x1d00ffff;
-
-/// Mainnet PoW limit as an expanded 256-bit target (the full expansion of `0x1d00ffff`).
-///
-/// Stored as four little-endian u64 limbs. The value is:
-///   0x00000000FFFF0000000000000000000000000000000000000000000000000000
-/// In LE limbs: limbs[3] = 0xFFFF0000, limbs[0..2] = 0.
-pub const GENESIS_TARGET: Target = Target::new(NonMaxU256::from_limbs([0, 0, 0, 0x0000_0000_FFFF_0000]));
-
-pub const GENESIS_WORK: ChainWork = ChainWork::from_limbs([0x0000_0001_0001_0001, 0, 0, 0]);
-
-/// Size of a serialized [`Claim`] in bytes.
-pub const CLAIM_SIZE: usize = 32 + 32 + 32 + 4;
-
-/// Size of the serialized [`ContinuationData`] in bytes (no padding).
-pub const CONTINUATION_DATA_SIZE: usize = 4 + 4 + 4 * WINDOW_SIZE;
-
-/// Size of the serialized [`PublicValues`] in bytes.
-pub const MINIMAL_PV_SIZE: usize = 32 + 32 + 32 + 32 + 32 + 4 + 1;
-
-/// Raw little-endian mainnet genesis block hash.
-pub const MAINNET_GENESIS_HASH: BlockHash = BlockHash::new([
-    0x6f, 0xe2, 0x8c, 0x0a, 0xb6, 0xf1, 0xb3, 0x72, 0xc1, 0xa6, 0xa2, 0x46, 0xae, 0x63, 0xf7, 0x4f, 0x93, 0x1e, 0x83,
-    0x65, 0xe1, 0x5a, 0x08, 0x9c, 0x68, 0xd6, 0x19, 0x00, 0x00, 0x00, 0x00, 0x00,
-]);
-
-/// The mainnet genesis block header (height 0). `prev_blockhash` is the zero
-/// hash; `merkle_root` is the genesis coinbase merkle root in internal
-/// (reversed-from-display) byte order.
-pub const MAINNET_GENESIS_HEADER: Header = Header {
-    version:        1,
-    prev_blockhash: BlockHash::new([0u8; 32]),
-    merkle_root:    [
-        0x3b, 0xa3, 0xed, 0xfd, 0x7a, 0x7b, 0x12, 0xb2, 0x7a, 0xc7, 0x2c, 0x3e, 0x67, 0x76, 0x8f, 0x61, 0x7f, 0xc8,
-        0x1b, 0xc3, 0x88, 0x8a, 0x51, 0x32, 0x3a, 0x9f, 0xb8, 0xaa, 0x4b, 0x1e, 0x5e, 0x4a,
-    ],
-    timestamp:      BlockTimestamp::new(1231006505),
-    compact_target: CompactTarget::new(GENESIS_NBITS),
-    nonce:          2083236893,
-};
-
-#[cfg(target_os = "zkvm")]
-fn hash_header(
-    version: u32,
-    prev_blockhash: &BlockHash,
-    merkle_root: [u8; 32],
-    timestamp: BlockTimestamp,
-    nbits: CompactTarget,
-    nonce: u32,
-) -> BlockHash {
-    let hash = zkpow_sha256::of_header(
-        version,
-        prev_blockhash.into_inner(),
-        merkle_root,
-        timestamp.into_inner(),
-        nbits.into_inner(),
-        nonce,
-    );
-    BlockHash::new(hash)
-}
-
-#[cfg(not(target_os = "zkvm"))]
-fn host_hash_header(
-    version: u32,
-    prev_blockhash: &BlockHash,
-    merkle_root: [u8; 32],
-    timestamp: BlockTimestamp,
-    nbits: CompactTarget,
-    nonce: u32,
-) -> BlockHash {
-    let mut hasher = Sha256::new();
-    hasher.update(version.to_le_bytes());
-    hasher.update(prev_blockhash.as_inner());
-    hasher.update(merkle_root);
-    hasher.update(timestamp.to_le_bytes());
-    hasher.update(nbits.to_le_bytes());
-    hasher.update(nonce.to_le_bytes());
-    let hash = hasher.finalize();
-    BlockHash::new(*hash.as_array().expect("sha256 output is 32 bytes"))
-}
-
-#[cfg(not(target_os = "zkvm"))]
-fn hash_header(
-    version: u32,
-    prev_blockhash: &BlockHash,
-    merkle_root: [u8; 32],
-    timestamp: BlockTimestamp,
-    nbits: CompactTarget,
-    nonce: u32,
-) -> BlockHash {
+/// Hashing lives on [`Header`]; this wrapper exists only so tests can substitute a hash without
+/// mining one. It must stay in this crate: `cfg(test)` is per-compilation-unit, so a mock in
+/// `zkpow-types` would not be compiled when `zkpow-core`'s tests run.
+fn hash_header(header: &Header) -> BlockHash {
     #[cfg(test)]
     if let Some(hash) = test_hash_mock::get() {
         return BlockHash::new(hash);
     }
-    host_hash_header(version, prev_blockhash, merkle_root, timestamp, nbits, nonce)
+    BlockHash::from(header)
 }
 
 #[cfg(test)]
@@ -173,7 +74,7 @@ mod test_hash_mock {
     pub(crate) struct MockHashGuard;
 
     pub(crate) fn get() -> Option<[u8; 32]> {
-        MOCK_HEADER_HASH.with(|mock| mock.get())
+        MOCK_HEADER_HASH.get()
     }
 
     pub(crate) fn set_success() -> MockHashGuard {
@@ -194,7 +95,7 @@ mod test_hash_mock {
 
     impl Drop for MockHashGuard {
         fn drop(&mut self) {
-            MOCK_HEADER_HASH.with(|mock| mock.set(None));
+            MOCK_HEADER_HASH.set(None);
         }
     }
 }
@@ -212,7 +113,7 @@ pub const fn timestamp_count(height: u64) -> usize {
 
 #[must_use]
 pub const fn has_ordered_timestamp_window(ordered_timestamp_run: u64) -> bool {
-    ordered_timestamp_run >= (WINDOW_MAX_INDEX) as u64
+    ordered_timestamp_run >= WINDOW_MAX_INDEX as u64
 }
 
 #[must_use]
@@ -445,30 +346,31 @@ pub fn block_work_from_target(target: Target) -> BlockWork {
 
 /// Compute the compact and normalized full target required at a difficulty boundary.
 #[must_use]
-pub fn calculate_next_target_required(
+pub fn calculate_next_target_required<C: Consensus>(
     old_target: Target,
     epoch_start_timestamp: BlockTimestamp,
     previous_timestamp: BlockTimestamp,
 ) -> (CompactTarget, Target, BlockWork) {
     // Normalize the timespan to ensure it's within the min/max bounds allowed.
     let actual_timespan = i64::from(*previous_timestamp) - i64::from(*epoch_start_timestamp);
-    let clamped_timespan = actual_timespan.clamp(MIN_EPOCH_TIMESPAN, MAX_EPOCH_TIMESPAN) as u32;
+    let clamped_timespan = actual_timespan.clamp(C::PARAMS.min_epoch_timespan(), C::PARAMS.max_epoch_timespan()) as u32;
 
     let mut calculated_target = old_target.into_inner().into_inner();
     calculated_target *= clamped_timespan;
 
+    let expected = C::PARAMS.expected_epoch_time() as u128;
     let mut remainder = 0u128;
     for limb in calculated_target.as_limbs_mut().iter_mut().rev() {
         let value = (remainder << 64) | (*limb as u128);
-        *limb = (value / (EXPECTED_EPOCH_TIMESPAN as u128)) as u64;
-        remainder = value % (EXPECTED_EPOCH_TIMESPAN as u128);
+        *limb = (value / expected) as u64;
+        remainder = value % expected;
     }
 
     // Normalize the new target to ensure an upper-bound (a minimum difficulty) and to handle the implicit
     // truncation that occurs when round-tripping through the nbits format.
     let calculated_target =
         Target::new(NonMaxU256::new(calculated_target).expect("a scaled Bitcoin target cannot be u256::MAX"));
-    let clamped_target: Target = calculated_target.min(GENESIS_TARGET);
+    let clamped_target: Target = calculated_target.min(C::PARAMS.genesis_target);
     let compact_target = target_to_bits(clamped_target);
     let normalized_target = target_from_bits(compact_target);
 

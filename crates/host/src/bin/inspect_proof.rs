@@ -5,8 +5,7 @@ use sp1_sdk::SP1ProofWithPublicValues;
 use zkpow_host::util;
 
 use crate::util::MinimalPublicValues;
-
-const MAINNET_GENESIS_HEX: &str = "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f";
+use zkpow_params::{Consensus, Mainnet};
 
 fn reverse_hash_display(hash: util::BlockHash) -> String {
     let mut hash_be = hash.into_inner();
@@ -63,14 +62,8 @@ fn display_verifier_key(verifier_key: util::VerifierKeyDigest) {
 }
 
 fn display_claim(claim: &util::Claim) {
-    let mainnet_genesis_raw: [u8; 32] = {
-        let mut g: [u8; 32] = hex::decode(MAINNET_GENESIS_HEX).unwrap().try_into().unwrap();
-        g.reverse();
-        g
-    };
-
     println!("Genesis Hash:      {}", reverse_hash_display(claim.genesis_hash));
-    if claim.genesis_hash == util::BlockHash::new(mainnet_genesis_raw) {
+    if claim.genesis_hash == Mainnet::GENESIS_HASH {
         println!("                     ↳ mainnet ✓");
     } else {
         println!("                     ↳ NOT mainnet (different chain)");

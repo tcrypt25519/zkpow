@@ -1,11 +1,12 @@
 use zkpow_core::{
     advance_ordered_timestamp_run, check_proof_of_work, has_ordered_timestamp_window, ordered_median_timestamp_slot,
-    timestamp_slot, EPOCH_LENGTH, WINDOW_SIZE,
+    timestamp_slot, WINDOW_SIZE,
 };
+use zkpow_params::Consensus;
 
 use crate::types::{expand_target, ConnectedHeader, Header, Tip};
 
-pub fn connect_headers(anchor: &Tip, headers: &[Header]) -> Vec<ConnectedHeader> {
+pub fn connect_headers<C: Consensus>(anchor: &Tip, headers: &[Header]) -> Vec<ConnectedHeader> {
     let mut connected = Vec::with_capacity(headers.len());
     let mut prev_hash = anchor.hash;
     let mut height = anchor.height;
@@ -30,7 +31,7 @@ pub fn connect_headers(anchor: &Tip, headers: &[Header]) -> Vec<ConnectedHeader>
         let candidate_height = height + 1;
         let previous_timestamp = timestamps[timestamp_slot(height)];
 
-        if candidate_height.is_multiple_of(EPOCH_LENGTH as u64) {
+        if candidate_height.is_multiple_of(C::PARAMS.epoch_length as u64) {
             let (_, target, work) = expand_target(header.inner.compact_target);
             active_target = target;
             active_work = work;

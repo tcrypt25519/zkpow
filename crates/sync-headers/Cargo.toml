@@ -9,7 +9,8 @@ name = "sync_headers"
 path = "src/lib.rs"
 
 [dependencies]
-zkpow-core = { workspace = true, features = ["host"] }
+zkpow-core = { workspace = true }
+zkpow-params = { workspace = true }
 zkpow-sha256 = { workspace = true, features = ["host"] }
 bitcoin.workspace = true
 bitcoin-io.workspace = true

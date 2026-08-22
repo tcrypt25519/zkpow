@@ -30,8 +30,11 @@ mod validation;
 pub use diagnostics::format_claim_mismatch;
 pub use digest::{continuation_digest, continuation_digest_from_state};
 pub use validation::{compute_final_state_with_hints, records_to_new_headers};
+
+/// Headers per controller-selected batch: one difficulty epoch.
+pub const DEFAULT_BATCH_SIZE: u32 = Mainnet::PARAMS.epoch_length;
 pub use zkpow_core::{requires_median_hint, BlockHash, BlockTimestamp, Claim, HeaderInput, State};
-pub use zkpow_sha256;
+use zkpow_params::{Consensus, Mainnet};
 pub use zkpow_store::{db_path, genesis_state_from_record, HeaderBatchWitness, HeaderRecord, HeaderStore, RunRecord};
 
 pub type BoxError = Box<dyn std::error::Error + Send + Sync + 'static>;

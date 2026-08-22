@@ -28,6 +28,9 @@
 
 use std::net::SocketAddr;
 
+use zkpow_params::Consensus;
+use zkpow_params::Mainnet;
+
 use zkpow_controller::{
     db_path,
     http::build_router,
@@ -39,7 +42,7 @@ use zkpow_controller::{
 
 const DEFAULT_PORT: u16 = 7878;
 const DEFAULT_PROOF_STORE_DIR: &str = "proof_store";
-const DEFAULT_BATCH_SIZE: u32 = 2016;
+use zkpow_controller::DEFAULT_BATCH_SIZE;
 
 fn env(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|value| !value.is_empty())
@@ -112,7 +115,7 @@ async fn main() {
     let batch_size = env("ZKPOW_BATCH_SIZE")
         .map(|value| value.parse().expect("invalid ZKPOW_BATCH_SIZE"))
         .unwrap_or(DEFAULT_BATCH_SIZE);
-    let config = ControllerConfig::new(zkpow_core::MAINNET_GENESIS_HASH, batch_size);
+    let config = ControllerConfig::new(Mainnet::GENESIS_HASH, batch_size);
 
     let runtime = ControllerRuntime::new(db, storage_from_env(), verifier_from_env().await, config);
     let app = build_router(runtime);

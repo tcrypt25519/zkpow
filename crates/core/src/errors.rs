@@ -2,7 +2,6 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum ParseError {
     #[error("invalid length: expected {expected}, got {actual}")]
-    #[from(TestErr::SizeMismatch)]
     InvalidLength { expected: usize, actual: usize },
     #[error("misaligned input requires {required}-byte alignment")]
     Misaligned { required: usize },

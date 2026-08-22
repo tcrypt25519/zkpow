@@ -4,7 +4,7 @@ use derive_size::Size;
 
 use crate::{
     check_exact_len, BlockHash, BlockTimestamp, ChainWork, CompactTarget, InputParseError, ParseError, State,
-    CLAIM_SIZE, CONTINUATION_DATA_SIZE, MINIMAL_PV_SIZE, WINDOW_SIZE,
+    WINDOW_SIZE,
 };
 
 /// Digest of a program verifier key.
@@ -103,16 +103,16 @@ impl From<PublicValuesDigest> for [u8; 32] {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Size)]
 pub struct Claim {
-    pub chain_work:   ChainWork,
+    pub chain_work: ChainWork,
     pub genesis_hash: BlockHash,
-    pub tip_hash:     BlockHash,
-    pub height:       u32,
+    pub tip_hash: BlockHash,
+    pub height: u32,
 }
 
 impl Claim {
     #[must_use]
-    pub fn to_bytes(&self) -> [u8; CLAIM_SIZE] {
-        let mut out = [0u8; CLAIM_SIZE];
+    pub fn to_bytes(&self) -> [u8; Self::SIZE_NO_TAIL_PAD] {
+        let mut out = [0u8; Self::SIZE_NO_TAIL_PAD];
         out[0..32].copy_from_slice(self.chain_work.to_le_bytes_slice());
         out[32..64].copy_from_slice(self.genesis_hash.to_le_bytes_slice());
         out[64..96].copy_from_slice(self.tip_hash.to_le_bytes_slice());
@@ -121,7 +121,7 @@ impl Claim {
     }
 
     pub fn parse(bytes: &[u8]) -> Result<Self, ParseError> {
-        check_exact_len(bytes, CLAIM_SIZE)?;
+        check_exact_len(bytes, Self::SIZE_NO_TAIL_PAD)?;
         let chain_work = ChainWork::from_le_bytes(bytes[0..32].try_into().unwrap());
         let genesis_hash = BlockHash::new(bytes[32..64].try_into().unwrap());
         let tip_hash = BlockHash::new(bytes[64..96].try_into().unwrap());
@@ -149,24 +149,24 @@ impl Claim {
 #[repr(C)]
 #[derive(Debug, Clone, PartialEq, Eq, Size)]
 pub struct ContinuationData {
-    pub current_nbits:         CompactTarget,
+    pub current_nbits: CompactTarget,
     pub epoch_start_timestamp: BlockTimestamp,
-    pub timestamps:            [BlockTimestamp; WINDOW_SIZE],
+    pub timestamps: [BlockTimestamp; WINDOW_SIZE],
 }
 
 impl ContinuationData {
     #[must_use]
     pub fn from_state(state: &State) -> Self {
         Self {
-            current_nbits:         state.current_nbits,
+            current_nbits: state.current_nbits,
             epoch_start_timestamp: state.epoch_start_timestamp,
-            timestamps:            state.timestamps,
+            timestamps: state.timestamps,
         }
     }
 
     #[must_use]
-    pub fn to_bytes(&self) -> [u8; CONTINUATION_DATA_SIZE] {
-        let mut out = [0u8; CONTINUATION_DATA_SIZE];
+    pub fn to_bytes(&self) -> [u8; Self::SIZE] {
+        let mut out = [0u8; Self::SIZE];
         out[0..4].copy_from_slice(self.current_nbits.to_le_bytes_slice());
         out[4..8].copy_from_slice(self.epoch_start_timestamp.to_le_bytes_slice());
         for (i, ts) in self.timestamps.iter().enumerate() {
@@ -176,7 +176,7 @@ impl ContinuationData {
     }
 
     pub fn parse(bytes: &[u8]) -> Result<Self, ParseError> {
-        check_exact_len(bytes, CONTINUATION_DATA_SIZE)?;
+        check_exact_len(bytes, Self::SIZE)?;
         let current_nbits = CompactTarget::new(u32::from_le_bytes(bytes[0..4].try_into().unwrap()));
         let epoch_start_timestamp = BlockTimestamp::from_le_bytes(bytes[4..8].try_into().unwrap());
         let mut timestamps = [BlockTimestamp::default(); WINDOW_SIZE];
@@ -252,10 +252,10 @@ impl core::fmt::Display for ErrorCode {
 #[repr(u8)]
 pub enum ErrorCodeNames {
     HeaderPayloadLengthInvalid = 1,
-    PowInsufficient     = 2,
-    TimestampTooOld     = 3,
+    PowInsufficient = 2,
+    TimestampTooOld = 3,
     GenesisHashMismatch = 4,
-    UnknownError        = 255,
+    UnknownError = 255,
 }
 
 impl TryFrom<u8> for ErrorCodeNames {
@@ -405,13 +405,13 @@ pub struct ApplyFailure {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MinimalPublicValues {
-    pub chain_work:          ChainWork,
-    pub verifier_key:        VerifierKeyDigest,
+    pub chain_work: ChainWork,
+    pub verifier_key: VerifierKeyDigest,
     pub continuation_digest: [u8; 32],
-    pub genesis_hash:        BlockHash,
-    pub tip_hash:            BlockHash,
-    pub height:              u32,
-    pub return_code:         ReturnCode,
+    pub genesis_hash: BlockHash,
+    pub tip_hash: BlockHash,
+    pub height: u32,
+    pub return_code: ReturnCode,
 }
 
 /// Serialize minimal public values from their individual fields.
@@ -442,7 +442,7 @@ pub fn serialize_minimal_public_values(
 impl MinimalPublicValues {
     pub const SIZE: usize = 165;
 
-    /// Serialize to exactly [`MINIMAL_PV_SIZE`] bytes (no padding).
+    /// Serialize to exactly [`MinimalPublicValues::SIZE`] bytes (no padding).
     #[must_use]
     pub fn to_bytes(&self) -> [u8; MinimalPublicValues::SIZE] {
         serialize_minimal_public_values(
@@ -456,12 +456,12 @@ impl MinimalPublicValues {
         )
     }
 
-    /// Deserialize from exactly [`MINIMAL_PV_SIZE`] bytes.
+    /// Deserialize from exactly [`MinimalPublicValues::SIZE`] bytes.
     pub fn parse(bytes: &[u8]) -> Result<Self, InputParseError> {
-        if bytes.len() != MINIMAL_PV_SIZE {
+        if bytes.len() != Self::SIZE {
             return Err(InputParseError::InvalidLength {
-                expected: MINIMAL_PV_SIZE,
-                actual:   bytes.len(),
+                expected: Self::SIZE,
+                actual: bytes.len(),
             });
         }
         let chain_work = ChainWork::new(bytes[0..32].try_into().unwrap());
@@ -487,9 +487,9 @@ impl MinimalPublicValues {
     pub fn claim(&self) -> Claim {
         Claim {
             genesis_hash: self.genesis_hash,
-            tip_hash:     self.tip_hash,
-            chain_work:   self.chain_work,
-            height:       self.height,
+            tip_hash: self.tip_hash,
+            chain_work: self.chain_work,
+            height: self.height,
         }
     }
 

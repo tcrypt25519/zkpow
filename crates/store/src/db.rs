@@ -10,6 +10,7 @@ use zkpow_core::{
     requires_median_hint, BlockHash, BlockTimestamp, ByteInfo, ChainWork, Claim, CompactTarget, Header, HeaderInput,
     State, VerifierKeyDigest, WINDOW_SIZE,
 };
+use zkpow_params::Consensus;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -130,10 +131,10 @@ impl HeaderStore {
 
     pub fn get_best_tip(&self) -> rusqlite::Result<Option<Tip>> {
         struct BestTipRow {
-            hash_bytes:            Vec<u8>,
-            height:                i64,
-            chainwork_bytes:       Vec<u8>,
-            n_bits:                i64,
+            hash_bytes: Vec<u8>,
+            height: i64,
+            chainwork_bytes: Vec<u8>,
+            n_bits: i64,
             ordered_timestamp_run: i64,
         }
 
@@ -251,7 +252,7 @@ impl HeaderStore {
         const SQL: &str = "SELECT block_hash, chainwork FROM headers WHERE height = ?1";
 
         let mut stmt = self.conn.prepare_cached(SQL).expect("prepare");
-        stmt.query_row(params![height], |row| {
+        stmt.query_row(params![height as i64], |row| {
             let block_hash: Vec<u8> = row.get(0)?;
             let chainwork: Vec<u8> = row.get(1)?;
             Ok(Claim {
@@ -268,7 +269,7 @@ impl HeaderStore {
         const SQL: &str = "SELECT n_bits FROM headers WHERE height = ?1";
 
         let mut stmt = self.conn.prepare_cached(SQL).expect("prepare");
-        stmt.query_row(params![height], |row| {
+        stmt.query_row(params![height as i64], |row| {
             let nbits: i64 = row.get(0)?;
             Ok(CompactTarget::new(nbits as u32))
         })
@@ -282,7 +283,7 @@ impl HeaderStore {
 
         let mut stmt = self.conn.prepare_cached(SQL).expect("prepare");
         let rows = stmt
-            .query_map(params![start_height, start_height + count], |row| {
+            .query_map(params![start_height as i64, (start_height + count) as i64], |row| {
                 let height: i64 = row.get(0)?;
                 let version: i64 = row.get(1)?;
                 // Borrow blob columns in place; the fixed-width consumers
@@ -337,7 +338,7 @@ impl HeaderStore {
         const SQL: &str = "SELECT ordered_timestamp_run FROM headers WHERE height = ?1";
         let mut stmt = self.conn.prepare_cached(SQL).expect("prepare");
         let raw: i64 = stmt
-            .query_row(params![height], |row| row.get(0))
+            .query_row(params![height as i64], |row| row.get(0))
             .expect("load_ordered_timestamp_run");
         ordered_timestamp_run_from_db(height, raw)
     }
@@ -350,7 +351,7 @@ impl HeaderStore {
 
         let mut stmt = self.conn.prepare_cached(SQL).expect("prepare");
         let rows = stmt
-            .query_map(params![start_height, start_height + count], |row| {
+            .query_map(params![start_height as i64, (start_height + count) as i64], |row| {
                 let height: i64 = row.get(0)?;
                 let version: i64 = row.get(1)?;
                 // Borrowed blob: copied once into the fixed-width array, no
@@ -397,12 +398,13 @@ impl HeaderStore {
     }
 
     /// Reconstruct full consensus state at an arbitrary height.
-    pub fn state_at_height(&self, height: u32, genesis_hash: BlockHash) -> State {
+    pub fn state_at_height<C: Consensus>(&self, height: u32, genesis_hash: BlockHash) -> State {
         if height == 0 {
             return genesis_state_from_record(self.load_header_record(0), genesis_hash);
         }
 
-        let epoch_start_height = (height / zkpow_core::EPOCH_LENGTH) * zkpow_core::EPOCH_LENGTH;
+        let epoch_length = C::PARAMS.epoch_length;
+        let epoch_start_height = (height / epoch_length) * epoch_length;
         let epoch_start = self.load_header_record(epoch_start_height as u64);
         let window_count = (height as usize + 1).min(zkpow_core::WINDOW_SIZE) as u64;
         let window_start = height as u64 + 1 - window_count;
@@ -417,7 +419,7 @@ impl HeaderStore {
         let current = window.last().expect("window covers the requested height");
 
         State {
-            block_hash: BlockHash::new(zkpow_sha256::double(&current.header.to_bytes())),
+            block_hash: BlockHash::from(&current.header),
             genesis_hash,
             current_nbits: current.header.compact_target,
             height,
@@ -522,7 +524,7 @@ impl HeaderRecord {
     pub fn public_claim(&self, genesis_hash: BlockHash) -> Claim {
         Claim {
             genesis_hash,
-            tip_hash: BlockHash::new(zkpow_sha256::double(&self.header.to_bytes())),
+            tip_hash: BlockHash::from(&self.header),
             chain_work: self.chain_work,
             height: self.height as u32,
         }
@@ -538,7 +540,7 @@ pub struct HeaderBatchWitness {
 
 /// Reconstruct the genesis state from its stored record.
 pub fn genesis_state_from_record(genesis: HeaderRecord, genesis_hash: BlockHash) -> State {
-    let block_hash = BlockHash::new(zkpow_sha256::double(&genesis.header.to_bytes()));
+    let block_hash = BlockHash::from(&genesis.header);
     assert_eq!(block_hash, genesis_hash, "genesis hash mismatch");
 
     let mut timestamps = [BlockTimestamp::default(); zkpow_core::WINDOW_SIZE];

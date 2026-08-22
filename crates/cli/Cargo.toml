@@ -9,6 +9,7 @@ name = "zkpow-cli"
 path = "src/main.rs"
 
 [dependencies]
+zkpow-params.workspace = true
 zkpow-core.workspace = true
 zkpow-sync-headers.workspace = true
 zkpow-store.workspace = true

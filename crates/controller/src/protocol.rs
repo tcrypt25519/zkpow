@@ -28,8 +28,8 @@ pub struct Batch {
     pub median_hint_bytes: Vec<u8>,
     /// Recursive witness for a fresh worker. A worker that just produced this
     /// proof already has it in memory and need not fetch it.
-    pub previous_proof:    Option<FileLocation>,
-    pub proof_upload:      FileLocation,
+    pub previous_proof: Option<FileLocation>,
+    pub proof_upload: FileLocation,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,35 +50,35 @@ pub enum ErrorKind {
 impl ControllerError {
     pub fn bad_request(message: impl Into<String>) -> Self {
         Self {
-            kind:    ErrorKind::BadRequest,
+            kind: ErrorKind::BadRequest,
             message: message.into(),
         }
     }
 
     pub fn exhausted(message: impl Into<String>) -> Self {
         Self {
-            kind:    ErrorKind::Exhausted,
+            kind: ErrorKind::Exhausted,
             message: message.into(),
         }
     }
 
     pub fn conflict(message: impl Into<String>) -> Self {
         Self {
-            kind:    ErrorKind::Conflict,
+            kind: ErrorKind::Conflict,
             message: message.into(),
         }
     }
 
     pub fn timeout(message: impl Into<String>) -> Self {
         Self {
-            kind:    ErrorKind::Timeout,
+            kind: ErrorKind::Timeout,
             message: message.into(),
         }
     }
 
     pub fn internal(message: impl Into<String>) -> Self {
         Self {
-            kind:    ErrorKind::Internal,
+            kind: ErrorKind::Internal,
             message: message.into(),
         }
     }

@@ -20,15 +20,16 @@ sp1_zkvm::entrypoint!(main);
 use bytemuck::{self, Pod, PodCastError};
 use sp1_zkvm::lib::read_vec_raw;
 use zkpow_core::{
-    serialize_minimal_public_values, ApplyFailure, BlockTimestamp, Claim, HeaderInput, ReturnCode, State,
-    VerifierKeyDigest, CONTINUATION_DATA_SIZE, MINIMAL_PV_SIZE,
+    serialize_minimal_public_values, ApplyFailure, BlockTimestamp, Claim, ContinuationData, HeaderInput,
+    MinimalPublicValues, ReturnCode, State, VerifierKeyDigest,
 };
+use zkpow_params::Mainnet;
 use zkpow_sha256;
 
 /// Compute the continuation digest: SHA-256 of the serialized continuation data.
 #[sp1_cycle::tracked]
 fn compute_continuation_digest(state: &State) -> [u8; 32] {
-    let cd_bytes: [u8; CONTINUATION_DATA_SIZE] = state.continuation_bytes();
+    let cd_bytes: [u8; ContinuationData::SIZE] = state.continuation_bytes();
     zkpow_sha256::of_52bytes(&cd_bytes)
 }
 
@@ -39,7 +40,7 @@ fn commit_minimal_pv(
     continuation_digest: &[u8; 32],
     error_code: u8,
 ) -> ! {
-    let bytes: [u8; MINIMAL_PV_SIZE] = serialize_minimal_public_values(
+    let bytes: [u8; MinimalPublicValues::SIZE] = serialize_minimal_public_values(
         &claim.chain_work,
         verifier_key,
         continuation_digest,
@@ -236,7 +237,7 @@ fn inner_main() -> Result<(), ProgramError> {
 
     if state.height > 0 {
         let prior_claim = state.public_claim();
-        let prior_continuation_bytes: [u8; CONTINUATION_DATA_SIZE] = state.continuation_bytes();
+        let prior_continuation_bytes: [u8; ContinuationData::SIZE] = state.continuation_bytes();
 
         // 1. Hash the prior continuation data.
         let continuation_digest = sp1_cycle::track!({ zkpow_sha256::of_52bytes(&prior_continuation_bytes) });
@@ -263,7 +264,7 @@ fn inner_main() -> Result<(), ProgramError> {
     let vk_digest = VerifierKeyDigest::from_raw(*verifier_key);
 
     // Apply headers; on failure commit minimal PV and halt.
-    let return_code = match state.apply_headers(headers, medians) {
+    let return_code = match state.apply_headers::<Mainnet>(headers, medians) {
         Ok(()) => ReturnCode::SUCCESS,
         Err(ApplyFailure { error_code }) => ReturnCode::from(error_code),
     };

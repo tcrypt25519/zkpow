@@ -2,9 +2,9 @@
 
 use zkpow_core::{
     block_work_from_target, target_from_bits, BlockHash, BlockWork, ChainWork, CompactTarget, Header as CoreHeader,
-    Target, GENESIS_NBITS, GENESIS_TARGET, GENESIS_WORK, WINDOW_SIZE,
+    Target, WINDOW_SIZE,
 };
-use zkpow_sha256;
+use zkpow_params::Consensus;
 
 /// Network selection for Bitcoin consensus.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,20 +61,20 @@ impl Tip {
         }
     }
 
-    pub fn genesis(hash: BlockHash) -> Self {
+    pub fn genesis<C: Consensus>(hash: BlockHash) -> Self {
+        let genesis = C::PARAMS.genesis;
         let mut timestamps = [0u32; WINDOW_SIZE];
-        timestamps[0] = zkpow_core::MAINNET_GENESIS_HEADER.timestamp.into_inner();
-        let genesis_work = GENESIS_WORK;
-        let genesis_block_work = block_work_from_target(GENESIS_TARGET);
+        timestamps[0] = genesis.timestamp.into_inner();
+        let (_, target, block_work) = expand_target(genesis.compact_target);
         Self {
             hash,
             height: 0,
-            chainwork: genesis_work,
+            chainwork: ChainWork::new(block_work.into_inner()),
             timestamps,
             ordered_timestamp_run: 0,
-            current_nbits: CompactTarget::new(GENESIS_NBITS),
-            current_target: GENESIS_TARGET,
-            current_block_work: genesis_block_work,
+            current_nbits: genesis.compact_target,
+            current_target: target,
+            current_block_work: block_work,
         }
     }
 }
@@ -98,7 +98,7 @@ impl Header {
     }
 
     pub fn block_hash(&self) -> BlockHash {
-        BlockHash::new(zkpow_sha256::double(&self.inner.to_bytes()))
+        BlockHash::from(&self.inner)
     }
 
     pub fn prev_blockhash(&self) -> BlockHash {

@@ -77,7 +77,6 @@ impl core::ops::Add for u256 {
 }
 
 impl core::ops::MulAssign<u32> for u256 {
-    #[sp1_cycle::tracked]
     fn mul_assign(&mut self, rhs: u32) {
         let multiplier = rhs as u128;
         let mut carry = 0u128;

@@ -33,7 +33,7 @@ pub const ENV_ZKPOW_CUDA_DEVICE_ID: &str = "ZKPOW_CUDA_DEVICE_ID";
 
 const DEFAULT_RUN_ID: &str = "dev";
 const DEFAULT_PROOF_STORE_DIR: &str = "proof_store";
-const DEFAULT_BATCH_SIZE: u32 = 2016;
+use zkpow_controller::DEFAULT_BATCH_SIZE;
 const DEFAULT_BATCH_COUNT: u32 = 500;
 
 pub(crate) trait EnvSource {

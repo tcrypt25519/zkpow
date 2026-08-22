@@ -31,7 +31,7 @@ mod sp1 {
     /// guest program a run may extend.
     pub struct Sp1ElfVerifier {
         prover: CpuProver,
-        vk:     sp1_prover::SP1VerifyingKey,
+        vk: sp1_prover::SP1VerifyingKey,
     }
 
     impl Sp1ElfVerifier {

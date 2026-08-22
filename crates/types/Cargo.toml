@@ -1,0 +1,16 @@
+[package]
+name = "zkpow-types"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Consensus value types shared by zkpow-params and zkpow-core"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+bytemuck = { workspace = true }
+derive-size = { workspace = true }
+rkyv = { workspace = true }
+sha2 = { workspace = true }
+zkpow-sha256 = { workspace = true }

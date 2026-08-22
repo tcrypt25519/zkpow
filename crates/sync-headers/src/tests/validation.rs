@@ -1,7 +1,10 @@
 use zkpow_core::{
     check_proof_of_work, target_from_bits, BlockHash, BlockTimestamp, CompactTarget, Header as CoreHeader, Target,
-    EPOCH_LENGTH, WINDOW_SIZE,
+    WINDOW_SIZE,
 };
+use zkpow_params::{Consensus, Mainnet};
+
+const EPOCH_LENGTH: u32 = Mainnet::PARAMS.epoch_length;
 
 use super::*;
 
@@ -77,7 +80,7 @@ fn connect_headers_wraps_the_timestamp_window_across_batches() {
     let total = (WINDOW_SIZE as u32) * 2 + 3;
     let headers = build_chain(&anchor, total, |_| TRIVIAL_NBITS_A);
 
-    let connected = connect_headers(&anchor, &headers);
+    let connected = connect_headers::<Mainnet>(&anchor, &headers);
     assert_eq!(connected.len(), total as usize, "every header should connect");
     for (i, ch) in connected.iter().enumerate() {
         assert_eq!(ch.height, anchor.height + 1 + i as u64);
@@ -87,9 +90,9 @@ fn connect_headers_wraps_the_timestamp_window_across_batches() {
     // must produce the same final state as one single batch. This is what
     // actually exercises the ring-buffer hand-off between calls.
     let split = 7usize;
-    let first_batch = connect_headers(&anchor, &headers[..split]);
+    let first_batch = connect_headers::<Mainnet>(&anchor, &headers[..split]);
     let mid_tip = tip_from_connected(&anchor, &first_batch);
-    let second_batch = connect_headers(&mid_tip, &headers[split..]);
+    let second_batch = connect_headers::<Mainnet>(&mid_tip, &headers[split..]);
     assert_eq!(first_batch.len() + second_batch.len(), connected.len());
 
     let final_tip = tip_from_connected(&mid_tip, &second_batch);
@@ -110,7 +113,7 @@ fn connect_headers_only_re_derives_target_at_epoch_boundary() {
     // *different* difficulty, B. This must be picked up, since this is
     // exactly the `height % EPOCH_LENGTH == 0` case.
     let boundary_header = mine_header(anchor.hash, TRIVIAL_NBITS_B, 2_000_010_000);
-    let connected = connect_headers(&anchor, std::slice::from_ref(&boundary_header));
+    let connected = connect_headers::<Mainnet>(&anchor, std::slice::from_ref(&boundary_header));
     assert_eq!(connected.len(), 1, "boundary header should validate under its own (new) bits");
 
     let (_, target_b, work_b) = expand_target(CompactTarget::new(TRIVIAL_NBITS_B));
@@ -128,7 +131,7 @@ fn connect_headers_only_re_derives_target_at_epoch_boundary() {
     // is mined against B's target, so the assertion below passes only if
     // validation reads the cache rather than the header's own bits.
     let mid_epoch_header = mine_header_against(tip.hash, TRIVIAL_NBITS_A, target_b, 2_000_020_000);
-    let connected_mid = connect_headers(&tip, std::slice::from_ref(&mid_epoch_header));
+    let connected_mid = connect_headers::<Mainnet>(&tip, std::slice::from_ref(&mid_epoch_header));
     assert_eq!(connected_mid.len(), 1);
     assert_eq!(
         connected_mid[0].chainwork,
@@ -172,7 +175,7 @@ fn median_time_past_matches_hand_computed_values_through_a_wrap() {
         prev = header.block_hash();
         headers.push(header);
     }
-    let connected = connect_headers(&anchor, &headers);
+    let connected = connect_headers::<Mainnet>(&anchor, &headers);
     assert_eq!(connected.len(), 15);
 
     let expected_mtp = |height: u64| -> u32 {
@@ -233,7 +236,7 @@ fn connect_headers_resets_ordered_timestamp_run_on_timestamp_regression() {
     );
 
     let regressing_header = mine_header(anchor.hash, TRIVIAL_NBITS_A, base + 7);
-    let connected = connect_headers(&anchor, std::slice::from_ref(&regressing_header));
+    let connected = connect_headers::<Mainnet>(&anchor, std::slice::from_ref(&regressing_header));
 
     assert_eq!(connected.len(), 1);
     assert_eq!(connected[0].ordered_timestamp_run, 0);
@@ -269,7 +272,7 @@ fn ordered_window_uses_ring_median_without_changing_result() {
     );
     let header = mine_header(anchor.hash, TRIVIAL_NBITS_A, base + 11);
 
-    let connected = connect_headers(&anchor, std::slice::from_ref(&header));
+    let connected = connect_headers::<Mainnet>(&anchor, std::slice::from_ref(&header));
     assert_eq!(connected.len(), 1);
     assert_eq!(connected[0].median_time_past, base + 5);
 }

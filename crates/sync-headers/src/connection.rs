@@ -342,7 +342,3 @@ fn bitcoin_to_core(bh: BitcoinHeader) -> CoreHeader {
 fn io_error(e: encode::Error) -> std::io::Error {
     std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
 }
-
-fn io_error2(e: bitcoin_io::Error) -> std::io::Error {
-    std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
-}

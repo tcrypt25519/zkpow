@@ -11,8 +11,8 @@ fn sample_batch() -> Batch {
         current_state:     State::default(),
         header_bytes:      vec![0xAB; 2 * HeaderInput::SIZE],
         median_hint_bytes: vec![0xCD; MEDIAN_HINT_SIZE],
-        previous_proof:    Some(FileLocation::Url("https://example.test/get".to_string())),
-        proof_upload:      FileLocation::Path("/tmp/run/proof.bin".to_string()),
+        previous_proof: Some(FileLocation::Url("https://example.test/get".to_string())),
+        proof_upload: FileLocation::Path("/tmp/run/proof.bin".to_string()),
     }
 }
 

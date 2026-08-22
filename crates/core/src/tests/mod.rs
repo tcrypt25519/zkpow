@@ -6,6 +6,17 @@ mod input;
 
 use super::*;
 
+/// The transition is generic over the network, so its tests drive it with the real ones.
+/// `ShortEpoch` differs from `Mainnet` only in `epoch_length`, which is what makes it useful here.
+use zkpow_params::{Mainnet as TestConsensus, ShortEpoch};
+
+const GENESIS_NBITS: u32 = *TestConsensus::PARAMS.genesis.compact_target.as_inner();
+const GENESIS_TARGET: Target = TestConsensus::PARAMS.genesis_target;
+
+const EXPECTED_EPOCH_TIMESPAN: u32 = TestConsensus::PARAMS.expected_epoch_time();
+const MIN_EPOCH_TIMESPAN: i64 = TestConsensus::PARAMS.min_epoch_timespan();
+const MAX_EPOCH_TIMESPAN: i64 = TestConsensus::PARAMS.max_epoch_timespan();
+
 #[cfg(all(not(target_os = "zkvm"), test))]
 #[must_use]
 fn set_hash_success() -> crate::test_hash_mock::MockHashGuard {
@@ -26,15 +37,19 @@ fn zero_hash() -> BlockHash {
     BlockHash::new([0; 32])
 }
 
+fn sample_header() -> Header {
+    Header {
+        version: 1,
+        prev_blockhash: BlockHash::new([0x11; 32]),
+        merkle_root: [0x22; 32],
+        timestamp: ts(10),
+        compact_target: CompactTarget::new(GENESIS_NBITS),
+        nonce: 7,
+    }
+}
+
 fn hash_sample_header() -> BlockHash {
-    hash_header(
-        1,
-        &BlockHash::new([0x11; 32]),
-        [0x22; 32],
-        ts(10),
-        CompactTarget::new(GENESIS_NBITS),
-        7,
-    )
+    hash_header(&sample_header())
 }
 
 fn test_state() -> State {
@@ -59,13 +74,13 @@ pub(crate) fn median_time_past(state: &State) -> BlockTimestamp {
 fn apply_header(state: &mut State, timestamp: u32) {
     let _hash_guard = set_hash_success();
     let header = HeaderInput {
-        version:     1,
+        version: 1,
         merkle_root: [0x22; 32],
-        timestamp:   ts(timestamp),
-        nonce:       7,
+        timestamp: ts(timestamp),
+        nonce: 7,
     };
     let median_hints = median_hints_for_headers(state, &[header]);
-    state.apply_headers(&[header], &median_hints).unwrap();
+    state.apply_headers::<TestConsensus>(&[header], &median_hints).unwrap();
 }
 
 fn dense_median_hints_for_headers(initial_state: &State, headers: &[HeaderInput]) -> Vec<BlockTimestamp> {
@@ -111,7 +126,7 @@ fn median_hints_for_headers(initial_state: &State, headers: &[HeaderInput]) -> V
     hints
 }
 
-fn failure_public_value_bytes(state: &State, error_code: ErrorCode) -> [u8; MINIMAL_PV_SIZE] {
+fn failure_public_value_bytes(state: &State, error_code: ErrorCode) -> [u8; MinimalPublicValues::SIZE] {
     let claim = state.public_claim();
     serialize_minimal_public_values(
         &claim.chain_work,
@@ -167,7 +182,7 @@ fn minimal_public_values_round_trips() {
         claim.height,
         0,
     );
-    assert_eq!(bytes.len(), MINIMAL_PV_SIZE);
+    assert_eq!(bytes.len(), MinimalPublicValues::SIZE);
     assert_eq!(bytes[0..32], state.chain_work.to_le_bytes());
     assert_eq!(bytes[32..64], verifier_key.to_bytes());
     assert_eq!(bytes[64..96], digest);
@@ -197,7 +212,7 @@ fn header_and_new_header_round_trip_exact_wire_bytes() {
     assert_eq!(header.timestamp, BlockTimestamp::new(0x7788_99aa));
     assert_eq!(header.compact_target, CompactTarget::new(0x1d00_ffff));
     assert_eq!(header.nonce, 0xbbcc_ddee);
-    assert_eq!(header.to_bytes(), header_bytes);
+    assert_eq!(header.as_bytes(), header_bytes.as_slice());
 
     let mut new_header_bytes = [0u8; HeaderInput::SIZE];
     new_header_bytes[0..4].copy_from_slice(&0x1122_3344u32.to_le_bytes());
@@ -295,21 +310,23 @@ fn apply_headers_flushes_deferred_chain_work_on_success() {
     let mut state = test_state();
     let headers = [
         HeaderInput {
-            version:     1,
+            version: 1,
             merkle_root: [0x22; 32],
-            timestamp:   ts(10),
-            nonce:       7,
+            timestamp: ts(10),
+            nonce: 7,
         },
         HeaderInput {
-            version:     1,
+            version: 1,
             merkle_root: [0x33; 32],
-            timestamp:   ts(20),
-            nonce:       8,
+            timestamp: ts(20),
+            nonce: 8,
         },
     ];
 
     let hints = median_hints_for_headers(&state, &headers);
-    state.apply_headers(&headers, &hints).expect("headers should validate");
+    state
+        .apply_headers::<TestConsensus>(&headers, &hints)
+        .expect("headers should validate");
 
     let block_work = block_work_from_target(GENESIS_TARGET);
     let mut new_chain_work = block_work * 2u32;
@@ -324,27 +341,29 @@ fn apply_headers_flushes_deferred_chain_work_for_longer_run() {
     let mut state = test_state();
     let headers = [
         HeaderInput {
-            version:     1,
+            version: 1,
             merkle_root: [0x22; 32],
-            timestamp:   ts(10),
-            nonce:       7,
+            timestamp: ts(10),
+            nonce: 7,
         },
         HeaderInput {
-            version:     1,
+            version: 1,
             merkle_root: [0x33; 32],
-            timestamp:   ts(20),
-            nonce:       8,
+            timestamp: ts(20),
+            nonce: 8,
         },
         HeaderInput {
-            version:     1,
+            version: 1,
             merkle_root: [0x44; 32],
-            timestamp:   ts(30),
-            nonce:       9,
+            timestamp: ts(30),
+            nonce: 9,
         },
     ];
 
     let hints = median_hints_for_headers(&state, &headers);
-    state.apply_headers(&headers, &hints).expect("validation should succeed");
+    state
+        .apply_headers::<TestConsensus>(&headers, &hints)
+        .expect("validation should succeed");
 
     let block_work = block_work_from_target(GENESIS_TARGET);
     let expected = block_work * 3;
@@ -362,14 +381,16 @@ fn failure_height_is_absolute_chain_height() {
         ..State::default()
     };
     let headers = [HeaderInput {
-        version:     1,
+        version: 1,
         merkle_root: [0x22; 32],
-        timestamp:   ts(1000),
-        nonce:       7,
+        timestamp: ts(1000),
+        nonce: 7,
     }];
     let hints = median_hints_for_headers(&state, &headers);
     // Use a hash that exceeds the target to trigger PowInsufficient.
-    let failure = state.apply_headers(&headers, &hints).expect_err("should fail PoW");
+    let failure = state
+        .apply_headers::<TestConsensus>(&headers, &hints)
+        .expect_err("should fail PoW");
 
     assert_eq!(failure.error_code, ErrorCode::POW_INSUFFICIENT);
     assert_eq!(state.height + 1, 6);
@@ -381,23 +402,23 @@ fn apply_headers_flushes_deferred_chain_work_before_failure() {
     let mut state = test_state();
     let headers = [
         HeaderInput {
-            version:     1,
+            version: 1,
             merkle_root: [0x22; 32],
-            timestamp:   ts(10),
-            nonce:       7,
+            timestamp: ts(10),
+            nonce: 7,
         },
         HeaderInput {
-            version:     1,
+            version: 1,
             merkle_root: [0x33; 32],
-            timestamp:   ts(0),
-            nonce:       8,
+            timestamp: ts(0),
+            nonce: 8,
         },
     ];
 
     let hints = median_hints_for_headers(&state, &headers);
 
     state
-        .apply_headers(&headers, &hints)
+        .apply_headers::<TestConsensus>(&headers, &hints)
         .expect_err("second header should fail timestamp validation");
 
     let work = block_work_from_target(GENESIS_TARGET);
@@ -411,22 +432,22 @@ fn apply_headers_failure_output_includes_flushed_chain_work() {
     let mut state = test_state();
     let headers = [
         HeaderInput {
-            version:     1,
+            version: 1,
             merkle_root: [0x22; 32],
-            timestamp:   ts(10),
-            nonce:       7,
+            timestamp: ts(10),
+            nonce: 7,
         },
         HeaderInput {
-            version:     1,
+            version: 1,
             merkle_root: [0x33; 32],
-            timestamp:   ts(0),
-            nonce:       8,
+            timestamp: ts(0),
+            nonce: 8,
         },
     ];
 
     let hints = median_hints_for_headers(&state, &headers);
     let failure = state
-        .apply_headers(&headers, &hints)
+        .apply_headers::<TestConsensus>(&headers, &hints)
         .expect_err("validation should fail on the second header");
 
     let public_values = failure_public_value_bytes(&state, failure.error_code);
@@ -442,10 +463,10 @@ fn apply_headers_matches_sequential_next_across_median_window_wrap() {
     let _hash_guard = set_hash_success();
     let headers: Vec<HeaderInput> = (1..=23)
         .map(|timestamp| HeaderInput {
-            version:     1,
+            version: 1,
             merkle_root: [timestamp as u8; 32],
-            timestamp:   ts(timestamp),
-            nonce:       timestamp,
+            timestamp: ts(timestamp),
+            nonce: timestamp,
         })
         .collect();
 
@@ -453,14 +474,14 @@ fn apply_headers_matches_sequential_next_across_median_window_wrap() {
     for header in headers.iter().copied() {
         let median_hints = median_hints_for_headers(&sequential, &[header]);
         sequential
-            .apply_headers(&[header], &median_hints)
+            .apply_headers::<TestConsensus>(&[header], &median_hints)
             .expect("sequential validation should succeed");
     }
 
     let hints = median_hints_for_headers(&test_state(), &headers);
     let mut batched = test_state();
     batched
-        .apply_headers(&headers, &hints)
+        .apply_headers::<TestConsensus>(&headers, &hints)
         .expect("batched validation should succeed");
 
     assert_eq!(batched, sequential);
@@ -471,10 +492,10 @@ fn hinted_apply_headers_matches_sorted_apply_headers_across_window_wrap() {
     let _hash_guard = set_hash_success();
     let headers: Vec<HeaderInput> = (1..=23)
         .map(|timestamp| HeaderInput {
-            version:     1,
+            version: 1,
             merkle_root: [timestamp as u8; 32],
-            timestamp:   ts(timestamp),
-            nonce:       timestamp,
+            timestamp: ts(timestamp),
+            nonce: timestamp,
         })
         .collect();
     let state = test_state();
@@ -482,7 +503,7 @@ fn hinted_apply_headers_matches_sorted_apply_headers_across_window_wrap() {
 
     let mut hinted = state;
     hinted
-        .apply_headers(&headers, &hints)
+        .apply_headers::<TestConsensus>(&headers, &hints)
         .expect("hinted validation should succeed");
     assert_eq!(hinted.height, 23);
 }
@@ -497,14 +518,14 @@ fn hinted_median_validation_accepts_duplicate_median_values() {
         ..State::default()
     };
     let headers = [HeaderInput {
-        version:     1,
+        version: 1,
         merkle_root: [0x22; 32],
-        timestamp:   ts(10),
-        nonce:       7,
+        timestamp: ts(10),
+        nonce: 7,
     }];
 
     state
-        .apply_headers(&headers, &[ts(6)])
+        .apply_headers::<TestConsensus>(&headers, &[ts(6)])
         .expect("duplicate median values should be accepted");
 }
 
@@ -517,16 +538,16 @@ fn hinted_median_validation_rejects_wrong_rank_hint() {
         ..State::default()
     };
     let headers = [HeaderInput {
-        version:     1,
+        version: 1,
         merkle_root: [0x22; 32],
-        timestamp:   ts(12),
-        nonce:       7,
+        timestamp: ts(12),
+        nonce: 7,
     }];
 
     let result = std::panic::catch_unwind(|| {
         let _hash_guard = set_hash_success();
         let mut state = state;
-        state.apply_headers(&headers, &[ts(4)]).unwrap();
+        state.apply_headers::<TestConsensus>(&headers, &[ts(4)]).unwrap();
     });
 
     assert!(result.is_err());
@@ -539,14 +560,14 @@ fn apply_headers_treats_height_zero_state_as_trusted_anchor() {
     state.genesis_hash = BlockHash::new([0x11; 32]);
     state.block_hash = BlockHash::new([0x22; 32]);
     let headers = [HeaderInput {
-        version:     1,
+        version: 1,
         merkle_root: [0x33; 32],
-        timestamp:   ts(10),
-        nonce:       7,
+        timestamp: ts(10),
+        nonce: 7,
     }];
     let hints = median_hints_for_headers(&state, &headers);
     state
-        .apply_headers(&headers, &hints)
+        .apply_headers::<TestConsensus>(&headers, &hints)
         .expect("height-zero anchor should already be trusted");
 
     assert_eq!(state.height, 1);
@@ -603,13 +624,13 @@ fn next_overwrites_only_the_next_ring_slot() {
         ..State::default()
     };
     let header = HeaderInput {
-        version:     1,
+        version: 1,
         merkle_root: [0x22; 32],
-        timestamp:   ts(999),
-        nonce:       7,
+        timestamp: ts(999),
+        nonce: 7,
     };
     let median_hints = median_hints_for_headers(&state, &[header]);
-    state.apply_headers(&[header], &median_hints).unwrap();
+    state.apply_headers::<TestConsensus>(&[header], &median_hints).unwrap();
 
     let mut expected = original;
     expected[1] = ts(999);
@@ -619,12 +640,12 @@ fn next_overwrites_only_the_next_ring_slot() {
 #[test]
 fn continuation_data_serializes_to_fixed_width() {
     let pcs = ContinuationData {
-        current_nbits:         CompactTarget::new(GENESIS_NBITS),
+        current_nbits: CompactTarget::new(GENESIS_NBITS),
         epoch_start_timestamp: BlockTimestamp::new(500),
-        timestamps:            [BlockTimestamp::new(10); WINDOW_SIZE],
+        timestamps: [BlockTimestamp::new(10); WINDOW_SIZE],
     };
     let bytes = pcs.to_bytes();
-    assert_eq!(bytes.len(), CONTINUATION_DATA_SIZE);
+    assert_eq!(bytes.len(), ContinuationData::SIZE);
     let parsed = ContinuationData::parse(&bytes).unwrap();
     assert_eq!(parsed, pcs);
 }
@@ -644,13 +665,13 @@ fn state_continuation_bytes_matches_continuation_data_to_bytes() {
 #[test]
 fn claim_serializes_to_fixed_width() {
     let claim = Claim {
-        chain_work:   ChainWork::from_limbs([3, 4, 0, 0]),
+        chain_work: ChainWork::from_limbs([3, 4, 0, 0]),
         genesis_hash: BlockHash::new([1; 32]),
-        tip_hash:     BlockHash::new([2; 32]),
-        height:       99,
+        tip_hash: BlockHash::new([2; 32]),
+        height: 99,
     };
     let bytes = claim.to_bytes();
-    assert_eq!(bytes.len(), CLAIM_SIZE);
+    assert_eq!(bytes.len(), Claim::SIZE_NO_TAIL_PAD);
     assert_eq!(bytes[0..8], 3u64.to_le_bytes());
     assert_eq!(bytes[8..16], 4u64.to_le_bytes());
     assert_eq!(bytes[96..100], 99u32.to_le_bytes());
@@ -686,7 +707,7 @@ fn retarget_timespan_cases_adjust_target_direction() {
 
     for (name, timespan, expected) in cases {
         let old = GENESIS_TARGET;
-        let (bits, new, _) = calculate_next_target_required(old, ts(0), ts(timespan));
+        let (bits, new, _) = calculate_next_target_required::<TestConsensus>(old, ts(0), ts(timespan));
 
         match expected {
             ExpectedDirection::Equal => {
@@ -708,17 +729,19 @@ fn retarget_timespan_cases_adjust_target_direction() {
 fn malformed_header_pow_and_timestamp_errors() {
     let mut state = test_state();
     let hdr1 = HeaderInput {
-        version:     1,
+        version: 1,
         merkle_root: [0x22; 32],
-        timestamp:   ts(1),
-        nonce:       7,
+        timestamp: ts(1),
+        nonce: 7,
     };
     let hints = median_hints_for_headers(&state, &[hdr1]);
 
     // PowInsufficient on first header using a deliberately large hash value (> target).
     {
         let _hash_guard = set_hash_fail();
-        state.apply_headers(&[hdr1], &hints).expect_err("expected PoW failure");
+        state
+            .apply_headers::<TestConsensus>(&[hdr1], &hints)
+            .expect_err("expected PoW failure");
     }
 
     // TimestampTooOld on equality to median (<= median should fail).
@@ -726,23 +749,23 @@ fn malformed_header_pow_and_timestamp_errors() {
     let mut s2 = test_state();
     // First, accept a valid header to seed the window deterministically.
     let ok_hdr = HeaderInput {
-        version:     2,
+        version: 2,
         merkle_root: [0x33; 32],
-        timestamp:   ts(1),
-        nonce:       9,
+        timestamp: ts(1),
+        nonce: 9,
     };
     let median_hints = median_hints_for_headers(&s2, &[ok_hdr]);
-    s2.apply_headers(&[ok_hdr], &median_hints).unwrap();
+    s2.apply_headers::<TestConsensus>(&[ok_hdr], &median_hints).unwrap();
     let median_after_1 = median_time_past(&s2);
     let bad_hdr = HeaderInput {
-        version:     42,
+        version: 42,
         merkle_root: [0x44; 32],
-        timestamp:   median_after_1,
-        nonce:       10,
+        timestamp: median_after_1,
+        nonce: 10,
     };
     let median_hints = median_hints_for_headers(&s2, &[bad_hdr]);
     let failure = s2
-        .apply_headers(&[bad_hdr], &median_hints)
+        .apply_headers::<TestConsensus>(&[bad_hdr], &median_hints)
         .expect_err("timestamp equal to median must fail");
     assert_eq!(failure.error_code, ErrorCode::TIMESTAMP_TOO_OLD);
 
@@ -750,13 +773,13 @@ fn malformed_header_pow_and_timestamp_errors() {
     let mut s3 = test_state();
     let median_start = median_time_past(&s3);
     let odd_version_hdr = HeaderInput {
-        version:     0xFFFF_FFFF,
+        version: 0xFFFF_FFFF,
         merkle_root: [0x55; 32],
-        timestamp:   ts(median_start.into_inner().wrapping_add(1)),
-        nonce:       1,
+        timestamp: ts(median_start.into_inner().wrapping_add(1)),
+        nonce: 1,
     };
     let median_hints = median_hints_for_headers(&s3, &[odd_version_hdr]);
-    s3.apply_headers(&[odd_version_hdr], &median_hints)
+    s3.apply_headers::<TestConsensus>(&[odd_version_hdr], &median_hints)
         .expect("unexpected failure due to version only");
 }
 
@@ -770,14 +793,93 @@ fn median_time_boundary_equality_fails() {
     }
     let median = median_time_past(&state);
     let hdr = HeaderInput {
-        version:     1,
+        version: 1,
         merkle_root: [0x66; 32],
-        timestamp:   median,
-        nonce:       1,
+        timestamp: median,
+        nonce: 1,
     };
     let median_hints = median_hints_for_headers(&state, &[hdr]);
     let failure = state
-        .apply_headers(&[hdr], &median_hints)
+        .apply_headers::<TestConsensus>(&[hdr], &median_hints)
         .expect_err("timestamp equal to median must fail");
     assert_eq!(failure.error_code, ErrorCode::TIMESTAMP_TOO_OLD);
+}
+
+/// A call that starts exactly one block before a retarget boundary must retarget once. The
+/// cold-start pass builds an `EpochManager` even when it has no headers to process, and that
+/// guard used to commit the new nbits on drop, so the warm pass then retargeted a second time
+/// from the already-retargeted value.
+#[test]
+fn boundary_header_retargets_once_per_call() {
+    assert_boundary_retargets_once::<TestConsensus>();
+    // Same assertion at a different epoch length, so a hardcoded 2016 anywhere in the transition
+    // would show up here.
+    assert_boundary_retargets_once::<ShortEpoch>();
+}
+
+fn assert_boundary_retargets_once<C: Consensus>() {
+    let _hash_guard = set_hash_success();
+    let epoch_length = C::PARAMS.epoch_length;
+
+    let mut state = test_state();
+    state.height = epoch_length - 1;
+    state.epoch_start_timestamp = ts(1_000_000);
+    state.timestamps = [ts(1_000_600); WINDOW_SIZE];
+
+    let (expected_nbits, ..) = calculate_next_target_required::<C>(
+        target_from_bits(state.current_nbits),
+        state.epoch_start_timestamp,
+        state.timestamps[timestamp_slot(state.height as u64)],
+    );
+    assert_ne!(
+        expected_nbits, state.current_nbits,
+        "test needs a boundary that actually changes nbits"
+    );
+
+    let header = HeaderInput {
+        version: 1,
+        merkle_root: [0x22; 32],
+        timestamp: ts(1_000_700),
+        nonce: 7,
+    };
+    state.apply_headers::<C>(&[header], &[]).expect("boundary header should apply");
+
+    assert_eq!(state.height, epoch_length);
+    assert_eq!(state.current_nbits, expected_nbits);
+}
+
+/// The epoch boundary must come from the parameters, not a constant. `ShortEpoch` retargets every
+/// 32 blocks, so a batch that spans one boundary under it spans none under mainnet.
+#[test]
+fn epoch_boundary_is_read_from_the_parameters() {
+    assert_eq!(TestConsensus::PARAMS.epoch_length, 2016);
+    assert_eq!(ShortEpoch::PARAMS.epoch_length, 32);
+
+    let _hash_guard = set_hash_success();
+    let mut state = test_state();
+    state.epoch_start_timestamp = ts(1_000_000);
+    state.timestamps = [ts(1_000_600); WINDOW_SIZE];
+    state.height = ShortEpoch::PARAMS.epoch_length - 1;
+    let starting_nbits = state.current_nbits;
+
+    let header = HeaderInput {
+        version: 1,
+        merkle_root: [0x22; 32],
+        timestamp: ts(1_000_700),
+        nonce: 7,
+    };
+
+    let mut short = state;
+    short.apply_headers::<ShortEpoch>(&[header], &[]).expect("should apply");
+    assert_ne!(
+        short.current_nbits, starting_nbits,
+        "ShortEpoch crossed a boundary and must retarget"
+    );
+
+    let mut main = state;
+    main.apply_headers::<TestConsensus>(&[header], &[]).expect("should apply");
+    assert_eq!(
+        main.current_nbits, starting_nbits,
+        "mainnet is mid-epoch here and must not retarget"
+    );
 }

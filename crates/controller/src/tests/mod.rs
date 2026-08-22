@@ -1,6 +1,7 @@
-use zkpow_core::{BlockTimestamp as BTimestamp, CompactTarget, ContinuationData, GENESIS_NBITS, WINDOW_SIZE};
-
 use super::*;
+use crate::validation::header_to_input;
+use zkpow_core::{BlockTimestamp as BTimestamp, ContinuationData, WINDOW_SIZE};
+use zkpow_params::{Consensus, Mainnet};
 
 mod diagnostics;
 mod protocol;
@@ -13,9 +14,9 @@ fn open_db() -> HeaderStore {
 
 fn make_pcs() -> ContinuationData {
     ContinuationData {
-        current_nbits:         CompactTarget::new(GENESIS_NBITS),
+        current_nbits: Mainnet::PARAMS.genesis.compact_target,
         epoch_start_timestamp: BTimestamp::new(500),
-        timestamps:            [BTimestamp::new(10); WINDOW_SIZE],
+        timestamps: [BTimestamp::new(10); WINDOW_SIZE],
     }
 }
 
@@ -45,11 +46,11 @@ fn continuation_digest_is_deterministic() {
 fn db_median_time_hints_match_genesis_seeded_state() {
     let db = open_db();
     let genesis = db.load_header_record(0);
-    let genesis_hash = BlockHash::new(zkpow_sha256::double(&genesis.header.to_bytes()));
+    let genesis_hash = BlockHash::from(&genesis.header);
     let genesis_state = genesis_state_from_record(genesis, genesis_hash);
     let witness = db.load_header_batch_witness(1, 13);
 
-    compute_final_state_with_hints(&genesis_state, &witness.headers, &witness.median_time_past_hints);
+    compute_final_state_with_hints::<Mainnet>(&genesis_state, &witness.headers, &witness.median_time_past_hints);
 }
 
 #[test]
@@ -66,10 +67,11 @@ fn batch_witness_loader_matches_record_projection() {
 fn compute_final_state_with_hints_reaches_expected_height() {
     let db = open_db();
     let genesis = db.load_header_record(0);
-    let genesis_hash = BlockHash::new(zkpow_sha256::double(&genesis.header.to_bytes()));
+    let genesis_hash = BlockHash::from(&genesis.header);
     let genesis_state = genesis_state_from_record(genesis, genesis_hash);
     let witness = db.load_header_batch_witness(1, 128);
-    let final_state = compute_final_state_with_hints(&genesis_state, &witness.headers, &witness.median_time_past_hints);
+    let final_state =
+        compute_final_state_with_hints::<Mainnet>(&genesis_state, &witness.headers, &witness.median_time_past_hints);
 
     assert_eq!(final_state.height, 128);
 }
@@ -78,7 +80,7 @@ fn compute_final_state_with_hints_reaches_expected_height() {
 fn applying_headers_one_at_a_time_matches_db_claims() {
     let db = open_db();
     let genesis = db.load_header_record(0);
-    let genesis_hash = BlockHash::new(zkpow_sha256::double(&genesis.header.to_bytes()));
+    let genesis_hash = BlockHash::from(&genesis.header);
     let mut state = genesis_state_from_record(genesis.clone(), genesis_hash);
     let records = db.load_header_records(1, 64);
     let mut previous_ordered_run = genesis.ordered_timestamp_run;
@@ -87,7 +89,7 @@ fn applying_headers_one_at_a_time_matches_db_claims() {
         let header = header_to_input(&record.header);
         let needs_hint = requires_median_hint(record.height, previous_ordered_run);
         state
-            .apply_headers(
+            .apply_headers::<Mainnet>(
                 &[header],
                 if needs_hint {
                     core::slice::from_ref(&record.median_time_past)
@@ -107,17 +109,22 @@ fn applying_headers_one_at_a_time_matches_db_claims() {
 fn db_retarget_schedule_matches_height_40320() {
     let db = open_db();
     let genesis = db.load_header_record(0);
-    let genesis_hash = BlockHash::new(zkpow_sha256::double(&genesis.header.to_bytes()));
+    let genesis_hash = BlockHash::from(&genesis.header);
     let genesis_state = genesis_state_from_record(genesis, genesis_hash);
     let witness_1 = db.load_header_batch_witness(1, 40319);
-    let state = compute_final_state_with_hints(&genesis_state, &witness_1.headers, &witness_1.median_time_past_hints);
+    let state = compute_final_state_with_hints::<Mainnet>(
+        &genesis_state,
+        &witness_1.headers,
+        &witness_1.median_time_past_hints,
+    );
     let pre_boundary_nbits = db.load_compact_target(40319);
 
     assert_eq!(state.height, 40319);
     assert_eq!(state.current_nbits, pre_boundary_nbits);
 
     let witness_2 = db.load_header_batch_witness(40320, 1);
-    let boundary_state = compute_final_state_with_hints(&state, &witness_2.headers, &witness_2.median_time_past_hints);
+    let boundary_state =
+        compute_final_state_with_hints::<Mainnet>(&state, &witness_2.headers, &witness_2.median_time_past_hints);
     assert_eq!(boundary_state.height, 40320);
     let boundary_nbits = db.load_compact_target(40320);
     assert_eq!(boundary_state.current_nbits, boundary_nbits);
@@ -137,16 +144,19 @@ fn db_chainwork_matches_simulated_batches() {
 
     let db = open_db();
     let genesis = db.load_header_record(0);
-    let genesis_hash = BlockHash::new(zkpow_sha256::double(&genesis.header.to_bytes()));
+    let genesis_hash = BlockHash::from(&genesis.header);
 
     for (name, initial_state, record_start, record_count, expected_height) in cases {
         let initial_state = match initial_state {
             InitialState::Genesis => genesis_state_from_record(genesis.clone(), genesis_hash),
-            InitialState::DbHeight(height) => db.state_at_height(height, genesis_hash),
+            InitialState::DbHeight(height) => db.state_at_height::<Mainnet>(height, genesis_hash),
         };
         let witness = db.load_header_batch_witness(record_start, record_count);
-        let final_state =
-            compute_final_state_with_hints(&initial_state, &witness.headers, &witness.median_time_past_hints);
+        let final_state = compute_final_state_with_hints::<Mainnet>(
+            &initial_state,
+            &witness.headers,
+            &witness.median_time_past_hints,
+        );
         let db_claim = db.load_public_claim(expected_height as u64, genesis_hash);
         let db_nbits = db.load_compact_target(expected_height as u64);
 

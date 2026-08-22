@@ -19,7 +19,7 @@ pub struct PhaseTiming {
 
 #[derive(Debug, Clone, Copy, Default)]
 struct PhaseTimingAccum {
-    total:       Duration,
+    total: Duration,
     invocations: u32,
 }
 
@@ -46,9 +46,9 @@ pub(crate) fn collected_phase_timings() -> Vec<PhaseTiming> {
         timings
             .iter()
             .map(|(label, accum)| PhaseTiming {
-                label:               (*label).to_string(),
+                label: (*label).to_string(),
                 total_duration_secs: accum.total.as_secs_f64(),
-                invocations:         accum.invocations,
+                invocations: accum.invocations,
             })
             .collect::<Vec<_>>()
     } else {
@@ -65,10 +65,10 @@ pub(crate) fn collected_phase_timings() -> Vec<PhaseTiming> {
 
 #[derive(Debug, Default)]
 struct CycleTreeNode {
-    self_cycles:      u64,
+    self_cycles: u64,
     self_invocations: u64,
-    total_cycles:     u64,
-    children:         BTreeMap<String, CycleTreeNode>,
+    total_cycles: u64,
+    children: BTreeMap<String, CycleTreeNode>,
 }
 
 impl CycleTreeNode {

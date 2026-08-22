@@ -8,7 +8,8 @@
 
 use std::{net::SocketAddr, thread, time::Duration};
 
-use zkpow_core::{BlockHash, MAINNET_GENESIS_HASH};
+use zkpow_core::BlockHash;
+use zkpow_params::Consensus;
 
 use crate::{
     connection::PeerConnection,
@@ -31,7 +32,7 @@ const CONNECT_RETRIES: u32 = 3;
 /// 4. Passes raw headers to `on_headers(headers, current_tip)`
 /// 5. Uses the returned tip for the next `getheaders` request
 /// 6. Repeats until the peer sends an empty batch (tip reached) or an error occurs
-pub fn sync<C, E>(
+pub fn sync<P, C, E>(
     network: Network,
     anchor: &Tip,
     max_headers: u64,
@@ -39,6 +40,7 @@ pub fn sync<C, E>(
     mut on_headers: C,
 ) -> Result<Tip, SyncHeadersError<E>>
 where
+    P: Consensus,
     C: FnMut(&[Header], &Tip) -> Result<Tip, E>,
     E: std::fmt::Debug,
 {
@@ -64,7 +66,7 @@ where
 
         tracing::info!(peer = %peer_addr, tip_height = current_tip.height, "Starting sync run with peer");
 
-        match sync_with_peer(
+        match sync_with_peer::<P, _, _>(
             peer_addr,
             network,
             &mut current_tip,
@@ -101,7 +103,7 @@ where
     Ok(current_tip)
 }
 
-fn sync_with_peer<C, E>(
+fn sync_with_peer<P, C, E>(
     peer_addr: SocketAddr,
     network: Network,
     current_tip: &mut Tip,
@@ -111,6 +113,7 @@ fn sync_with_peer<C, E>(
     on_headers: &mut C,
 ) -> Result<(), SyncHeadersError<E>>
 where
+    P: Consensus,
     C: FnMut(&[Header], &Tip) -> Result<Tip, E>,
     E: std::fmt::Debug,
 {
@@ -155,7 +158,7 @@ where
             break;
         }
 
-        let locators = build_locators(current_tip);
+        let locators = build_locators::<P>(current_tip);
         let stop_hash = BlockHash::new([0u8; 32]);
 
         if let Err(e) = p2p_conn.send_getheaders(&locators, stop_hash) {
@@ -218,6 +221,6 @@ where
     Ok(())
 }
 
-fn build_locators(tip: &Tip) -> Vec<BlockHash> {
-    vec![tip.hash, MAINNET_GENESIS_HASH]
+fn build_locators<P: Consensus>(tip: &Tip) -> Vec<BlockHash> {
+    vec![tip.hash, P::GENESIS_HASH]
 }

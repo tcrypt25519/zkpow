@@ -1,0 +1,16 @@
+[package]
+name = "zkpow-params"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+# Exposes synthetic networks (e.g. ShortEpoch) used to test that consensus code is generic.
+test-networks = []
+
+[dependencies]
+zkpow-types = { workspace = true }
+sha256_const = { workspace = true }
