@@ -31,7 +31,7 @@ use std::time::Instant;
 use diagnostics::{clear_phase_timings, collected_phase_timings, timed_sync};
 pub use diagnostics::{log_execution_report, PhaseTiming};
 use execution::execute_batch;
-use input::{build_stdin, config_from_env, controller_url_from_env};
+use input::{build_stdin, config_from_env, controller_url_from_env, s3_storage_config_from_env};
 use memuse::{StageHistory, StageMetric, StageSample};
 use proof::{
     compressed::generate_compressed_proof, get_prepared_prover, groth16::generate_groth16_proof, PreparedProver,
@@ -135,7 +135,7 @@ fn build_local_controller(
 ) -> Result<ControllerRuntime, BoxError> {
     let db = HeaderStore::open(&config.db_path).map_err(|err| format!("failed to open database: {err}"))?;
 
-    let storage: Box<dyn ArtifactStore> = match input::s3_storage_config_from_env()? {
+    let storage: Box<dyn ArtifactStore> = match s3_storage_config_from_env()? {
         Some(s3) => {
             tracing::info!(bucket = s3.bucket, "Using S3 artifact storage");
             Box::new(S3ArtifactStore::new(&s3)?)

@@ -3,7 +3,6 @@ use crate::validation::header_to_input;
 use zkpow_core::{BlockTimestamp as BTimestamp, ContinuationData, WINDOW_SIZE};
 use zkpow_params::{Consensus, Mainnet};
 
-mod diagnostics;
 mod protocol;
 mod runtime;
 mod storage;

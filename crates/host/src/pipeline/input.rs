@@ -1,6 +1,6 @@
 //! Host configuration (environment-driven) and guest stdin construction.
 
-use std::{collections::HashMap, env::VarError, path::PathBuf};
+use std::path::PathBuf;
 
 use sp1_sdk::{prelude::*, SP1Proof};
 use zkpow_controller::storage::S3Config;
@@ -36,46 +36,12 @@ const DEFAULT_PROOF_STORE_DIR: &str = "proof_store";
 use zkpow_controller::DEFAULT_BATCH_SIZE;
 const DEFAULT_BATCH_COUNT: u32 = 500;
 
-pub(crate) trait EnvSource {
-    fn get(&self, var_name: &str) -> Result<String, VarError>;
+pub(crate) fn parse_bool_env(var_name: &'static str) -> Result<bool, BoxError> {
+    parse_bool_env_or(var_name, false)
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct ProcessEnv;
-
-impl EnvSource for ProcessEnv {
-    fn get(&self, var_name: &str) -> Result<String, VarError> {
-        std::env::var(var_name)
-    }
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct MapEnvSource {
-    values: HashMap<String, String>,
-}
-
-impl MapEnvSource {
-    pub fn new(values: HashMap<String, String>) -> Self {
-        Self { values }
-    }
-}
-
-impl EnvSource for MapEnvSource {
-    fn get(&self, var_name: &str) -> Result<String, VarError> {
-        self.values.get(var_name).cloned().ok_or(VarError::NotPresent)
-    }
-}
-
-pub(crate) fn parse_bool_env(source: &impl EnvSource, var_name: &'static str) -> Result<bool, BoxError> {
-    parse_bool_env_or(source, var_name, false)
-}
-
-pub(crate) fn parse_bool_env_or(
-    source: &impl EnvSource,
-    var_name: &'static str,
-    default: bool,
-) -> Result<bool, BoxError> {
-    match source.get(var_name) {
+pub(crate) fn parse_bool_env_or(var_name: &'static str, default: bool) -> Result<bool, BoxError> {
+    match std::env::var(var_name) {
         Ok(value) => match value.to_ascii_lowercase().as_str() {
             "1" | "true" | "yes" | "on" => Ok(true),
             "0" | "false" | "no" | "off" => Ok(false),
@@ -83,29 +49,29 @@ pub(crate) fn parse_bool_env_or(
                 Err(format!("invalid {var_name} value `{value}`; expected one of 1,true,yes,on,0,false,no,off").into())
             },
         },
-        Err(VarError::NotPresent) => Ok(default),
+        Err(std::env::VarError::NotPresent) => Ok(default),
         Err(err) => Err(err.into()),
     }
 }
 
-pub(crate) fn parse_u32_env(source: &impl EnvSource, var_name: &'static str) -> Result<Option<u32>, BoxError> {
-    match source.get(var_name) {
+pub(crate) fn parse_u32_env(var_name: &'static str) -> Result<Option<u32>, BoxError> {
+    match std::env::var(var_name) {
         Ok(value) => Ok(Some(
             value
                 .parse()
                 .map_err(|err| format!("invalid {var_name} value `{value}`: {err}"))?,
         )),
-        Err(VarError::NotPresent) => Ok(None),
+        Err(std::env::VarError::NotPresent) => Ok(None),
         Err(err) => Err(err.into()),
     }
 }
 
-fn parse_u32_env_or(source: &impl EnvSource, var_name: &'static str, default: u32) -> Result<u32, BoxError> {
-    Ok(parse_u32_env(source, var_name)?.unwrap_or(default))
+fn parse_u32_env_or(var_name: &'static str, default: u32) -> Result<u32, BoxError> {
+    Ok(parse_u32_env(var_name)?.unwrap_or(default))
 }
 
-fn parse_path_env<E: EnvSource>(source: &E, var_name: &'static str) -> Option<PathBuf> {
-    source.get(var_name).ok().map(PathBuf::from)
+fn parse_path_env(var_name: &'static str) -> Option<PathBuf> {
+    std::env::var_os(var_name).map(PathBuf::from)
 }
 
 pub(crate) fn ensure_cuda_requested_configuration(
@@ -130,18 +96,18 @@ pub(crate) fn ensure_cuda_requested_configuration(
     Err(format!("{ENV_ZKPOW_USE_CUDA}=1 requires building zkpow-host with `--features CUDA`").into())
 }
 
-pub(crate) fn config_from_source(source: &impl EnvSource) -> Result<ProofGenerationConfig, BoxError> {
-    let use_cuda = parse_bool_env(source, ENV_ZKPOW_USE_CUDA)?;
-    let cuda_device_id = parse_u32_env(source, ENV_ZKPOW_CUDA_DEVICE_ID)?;
+pub fn config_from_env() -> Result<ProofGenerationConfig, BoxError> {
+    let use_cuda = parse_bool_env(ENV_ZKPOW_USE_CUDA)?;
+    let cuda_device_id = parse_u32_env(ENV_ZKPOW_CUDA_DEVICE_ID)?;
 
-    let execute_only = parse_bool_env(source, ENV_ZKPOW_EXECUTE_ONLY)?;
-    let generate_groth16 = parse_bool_env(source, ENV_ZKPOW_GENERATE_GROTH16)?;
+    let execute_only = parse_bool_env(ENV_ZKPOW_EXECUTE_ONLY)?;
+    let generate_groth16 = parse_bool_env(ENV_ZKPOW_GENERATE_GROTH16)?;
     if execute_only && generate_groth16 {
         return Err(format!("{ENV_ZKPOW_GENERATE_GROTH16} cannot be enabled when {ENV_ZKPOW_EXECUTE_ONLY}=1").into());
     }
 
-    let local_batch_size = parse_u32_env_or(source, ENV_ZKPOW_BATCH_SIZE, DEFAULT_BATCH_SIZE)?;
-    let batch_count = parse_u32_env_or(source, ENV_ZKPOW_BATCH_COUNT, DEFAULT_BATCH_COUNT)?;
+    let local_batch_size = parse_u32_env_or(ENV_ZKPOW_BATCH_SIZE, DEFAULT_BATCH_SIZE)?;
+    let batch_count = parse_u32_env_or(ENV_ZKPOW_BATCH_COUNT, DEFAULT_BATCH_COUNT)?;
 
     let configured_backend = ensure_cuda_requested_configuration(use_cuda, cuda_device_id)?;
     let prover_backend = if execute_only && configured_backend == ProverBackend::Cpu {
@@ -151,10 +117,10 @@ pub(crate) fn config_from_source(source: &impl EnvSource) -> Result<ProofGenerat
     };
 
     Ok(ProofGenerationConfig {
-        run_id: source.get(ENV_ZKPOW_RUN_ID).unwrap_or_else(|_| DEFAULT_RUN_ID.to_string()),
+        run_id: std::env::var(ENV_ZKPOW_RUN_ID).unwrap_or_else(|_| DEFAULT_RUN_ID.to_string()),
         local_batch_size,
         batch_count,
-        db_path: parse_path_env(source, ENV_ZKPOW_DB_PATH).unwrap_or_else(zkpow_controller::db_path),
+        db_path: parse_path_env(ENV_ZKPOW_DB_PATH).unwrap_or_else(zkpow_controller::db_path),
         mode: if execute_only {
             PipelineMode::ExecuteOnly
         } else if generate_groth16 {
@@ -167,37 +133,23 @@ pub(crate) fn config_from_source(source: &impl EnvSource) -> Result<ProofGenerat
     })
 }
 
-pub fn config_from_env() -> Result<ProofGenerationConfig, BoxError> {
-    config_from_source(&ProcessEnv)
-}
-
-pub(crate) fn proof_store_dir_from_source(source: &impl EnvSource) -> PathBuf {
-    parse_path_env(source, ENV_ZKPOW_PROOF_STORE_DIR).unwrap_or_else(|| PathBuf::from(DEFAULT_PROOF_STORE_DIR))
-}
-
 pub fn proof_store_dir_from_env() -> PathBuf {
-    proof_store_dir_from_source(&ProcessEnv)
-}
-
-pub(crate) fn controller_url_from_source(source: &impl EnvSource) -> Option<String> {
-    source.get(ENV_ZKPOW_CONTROLLER_URL).ok()
+    parse_path_env(ENV_ZKPOW_PROOF_STORE_DIR).unwrap_or_else(|| PathBuf::from(DEFAULT_PROOF_STORE_DIR))
 }
 
 pub fn controller_url_from_env() -> Option<String> {
-    controller_url_from_source(&ProcessEnv)
+    std::env::var(ENV_ZKPOW_CONTROLLER_URL).ok()
 }
 
-pub(crate) fn s3_storage_config_from_source(source: &impl EnvSource) -> Result<Option<S3Config>, BoxError> {
-    let bucket = match source.get(ENV_ZKPOW_S3_BUCKET) {
+pub fn s3_storage_config_from_env() -> Result<Option<S3Config>, BoxError> {
+    let bucket = match std::env::var(ENV_ZKPOW_S3_BUCKET) {
         Ok(bucket) => bucket,
-        Err(VarError::NotPresent) => return Ok(None),
+        Err(std::env::VarError::NotPresent) => return Ok(None),
         Err(err) => return Err(err.into()),
     };
 
     let require = |var_name: &'static str| -> Result<String, BoxError> {
-        source
-            .get(var_name)
-            .map_err(|_| format!("{var_name} is required when {ENV_ZKPOW_S3_BUCKET} is set").into())
+        std::env::var(var_name).map_err(|_| format!("{var_name} is required when {ENV_ZKPOW_S3_BUCKET} is set").into())
     };
 
     Ok(Some(S3Config {
@@ -206,12 +158,8 @@ pub(crate) fn s3_storage_config_from_source(source: &impl EnvSource) -> Result<O
         endpoint: require(ENV_ZKPOW_S3_ENDPOINT)?,
         access_key: require(ENV_ZKPOW_S3_ACCESS_KEY)?,
         secret_key: require(ENV_ZKPOW_S3_SECRET_KEY)?,
-        prefix: source.get(ENV_ZKPOW_S3_PREFIX).unwrap_or_default(),
+        prefix: std::env::var(ENV_ZKPOW_S3_PREFIX).unwrap_or_default(),
     }))
-}
-
-pub fn s3_storage_config_from_env() -> Result<Option<S3Config>, BoxError> {
-    s3_storage_config_from_source(&ProcessEnv)
 }
 
 /// Assemble the guest's stdin. Header and median-hint bytes come straight

@@ -3,7 +3,6 @@
 //! Both controller operations accept only a run id. HTTP encodes the batch
 //! response with postcard; local mode passes the value directly.
 
-// use serde::{Deserialize, Serialize};
 use rkyv::{Archive, Deserialize, Serialize};
 use zkpow_core::{BlockTimestamp, HeaderInput, State, VerifierKeyDigest};
 
@@ -49,36 +48,28 @@ pub enum ErrorKind {
 
 impl ControllerError {
     pub fn bad_request(message: impl Into<String>) -> Self {
-        Self {
-            kind: ErrorKind::BadRequest,
-            message: message.into(),
-        }
+        Self::new(ErrorKind::BadRequest, message)
     }
 
     pub fn exhausted(message: impl Into<String>) -> Self {
-        Self {
-            kind: ErrorKind::Exhausted,
-            message: message.into(),
-        }
+        Self::new(ErrorKind::Exhausted, message)
     }
 
     pub fn conflict(message: impl Into<String>) -> Self {
-        Self {
-            kind: ErrorKind::Conflict,
-            message: message.into(),
-        }
+        Self::new(ErrorKind::Conflict, message)
     }
 
     pub fn timeout(message: impl Into<String>) -> Self {
-        Self {
-            kind: ErrorKind::Timeout,
-            message: message.into(),
-        }
+        Self::new(ErrorKind::Timeout, message)
     }
 
     pub fn internal(message: impl Into<String>) -> Self {
+        Self::new(ErrorKind::Internal, message)
+    }
+
+    fn new(kind: ErrorKind, message: impl Into<String>) -> Self {
         Self {
-            kind: ErrorKind::Internal,
+            kind,
             message: message.into(),
         }
     }
@@ -114,23 +105,3 @@ impl Batch {
         Ok(())
     }
 }
-
-// pub fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>, String> {
-//     postcard::to_allocvec(value).map_err(|err| err.to_string())
-// }
-
-// pub fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, String> {
-//     let (value, remaining) = postcard::take_from_bytes(bytes).map_err(|err| err.to_string())?;
-//     if !remaining.is_empty() {
-//         return Err(format!("message has {} trailing bytes", remaining.len()));
-//     }
-//     Ok(value)
-// }
-
-// pub fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, String> {
-//     let (value, remaining) = postcard::take_from_bytes(bytes).map_err(|err| err.to_string())?;
-//     if !remaining.is_empty() {
-//         return Err(format!("message has {} trailing bytes", remaining.len()));
-//     }
-//     Ok(value)
-// }

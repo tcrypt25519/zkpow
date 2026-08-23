@@ -1,6 +1,8 @@
-use std::{collections::HashMap, path::PathBuf, sync::OnceLock};
+use std::{
+    path::PathBuf,
+    sync::{Mutex, OnceLock},
+};
 
-use tokio::sync::Mutex;
 use zkpow_controller::{db_path, HeaderStore, NO_HEADERS_REMAINING_PREFIX};
 
 mod artifacts;
@@ -8,14 +10,14 @@ mod transport;
 
 use crate::pipeline::{
     input::{
-        config_from_source, ensure_cuda_requested_configuration, parse_bool_env, parse_u32_env, EnvSource,
-        MapEnvSource, ENV_ZKPOW_BATCH_SIZE, ENV_ZKPOW_EXECUTE_ONLY, ENV_ZKPOW_GENERATE_GROTH16, ENV_ZKPOW_RUN_ID,
+        config_from_env, ensure_cuda_requested_configuration, parse_bool_env, parse_u32_env, ENV_ZKPOW_BATCH_SIZE,
+        ENV_ZKPOW_CUDA_DEVICE_ID, ENV_ZKPOW_EXECUTE_ONLY, ENV_ZKPOW_GENERATE_GROTH16, ENV_ZKPOW_RUN_ID,
         ENV_ZKPOW_USE_CUDA,
     },
     is_header_exhaustion_error, run_batch_session, BoxError, PipelineMode, ProverBackend,
 };
 
-fn env_test_mutex() -> &'static Mutex<()> {
+fn _env_test_mutex() -> &'static Mutex<()> {
     static ENV_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
     ENV_MUTEX.get_or_init(|| Mutex::new(()))
 }
@@ -32,6 +34,7 @@ fn remove_env(name: &str) {
 
 #[test]
 fn parses_generate_groth16_env() {
+    let _guard = _env_test_mutex().lock().unwrap();
     let cases = [
         (Some("true"), Ok(true)),
         (Some("false"), Ok(false)),
@@ -40,18 +43,18 @@ fn parses_generate_groth16_env() {
     ];
 
     for (value, expected) in cases {
-        let source = value.map_or_else(MapEnvSource::default, |value| {
-            let mut values = HashMap::new();
-            values.insert(ENV_ZKPOW_GENERATE_GROTH16.to_string(), value.to_string());
-            MapEnvSource::new(values)
-        });
+        match value {
+            Some(v) => set_env(ENV_ZKPOW_GENERATE_GROTH16, v),
+            None => remove_env(ENV_ZKPOW_GENERATE_GROTH16),
+        }
 
-        let parsed = parse_bool_env(&source, ENV_ZKPOW_GENERATE_GROTH16);
+        let parsed = parse_bool_env(ENV_ZKPOW_GENERATE_GROTH16);
         match expected {
             Ok(expected) => assert_eq!(parsed.unwrap(), expected, "value={value:?}"),
             Err(()) => assert!(parsed.is_err(), "value={value:?} should error"),
         }
     }
+    remove_env(ENV_ZKPOW_GENERATE_GROTH16);
 }
 
 #[test]
@@ -69,63 +72,55 @@ fn rejects_cuda_when_feature_is_not_compiled_in() {
 
 #[test]
 fn config_validation_matrix_invalid_values() {
-    struct SingleValueEnv {
-        key: &'static str,
-        value: &'static str,
-    }
+    let _guard = _env_test_mutex().lock().unwrap();
 
-    impl EnvSource for SingleValueEnv {
-        fn get(&self, var_name: &str) -> Result<String, std::env::VarError> {
-            if var_name == self.key {
-                Ok(self.value.to_string())
-            } else {
-                Err(std::env::VarError::NotPresent)
-            }
-        }
-    }
+    set_env(ENV_ZKPOW_USE_CUDA, "maybe");
+    assert!(
+        parse_bool_env(ENV_ZKPOW_USE_CUDA).is_err(),
+        "{ENV_ZKPOW_USE_CUDA}=maybe should be invalid"
+    );
+    remove_env(ENV_ZKPOW_USE_CUDA);
 
-    enum Parser {
-        Bool,
-        U32,
-    }
+    set_env(ENV_ZKPOW_CUDA_DEVICE_ID, "abc");
+    assert!(
+        parse_u32_env(ENV_ZKPOW_CUDA_DEVICE_ID).is_err(),
+        "{ENV_ZKPOW_CUDA_DEVICE_ID}=abc should be invalid"
+    );
+    remove_env(ENV_ZKPOW_CUDA_DEVICE_ID);
 
-    let cases = [
-        (ENV_ZKPOW_USE_CUDA, "maybe", Parser::Bool),
-        ("ZKPOW_CUDA_DEVICE_ID", "abc", Parser::U32),
-        (ENV_ZKPOW_GENERATE_GROTH16, "yessir", Parser::Bool),
-    ];
-
-    for (key, value, parser) in cases {
-        let source = SingleValueEnv { key, value };
-        let parsed = match parser {
-            Parser::Bool => parse_bool_env(&source, key).map(|_| ()),
-            Parser::U32 => parse_u32_env(&source, key).map(|_| ()),
-        };
-
-        assert!(parsed.is_err(), "{key}={value:?} should be invalid");
-    }
+    set_env(ENV_ZKPOW_GENERATE_GROTH16, "yessir");
+    assert!(
+        parse_bool_env(ENV_ZKPOW_GENERATE_GROTH16).is_err(),
+        "{ENV_ZKPOW_GENERATE_GROTH16}=yessir should be invalid"
+    );
+    remove_env(ENV_ZKPOW_GENERATE_GROTH16);
 }
 
 #[test]
 fn execute_only_defaults_to_mock_backend_and_dev_run() {
-    let mut values = HashMap::new();
-    values.insert(ENV_ZKPOW_EXECUTE_ONLY.to_string(), "1".to_string());
-    values.insert(ENV_ZKPOW_BATCH_SIZE.to_string(), "1".to_string());
+    let _guard = _env_test_mutex().lock().unwrap();
+    set_env(ENV_ZKPOW_EXECUTE_ONLY, "1");
+    set_env(ENV_ZKPOW_BATCH_SIZE, "1");
 
-    let source = MapEnvSource::new(values);
-    let config = config_from_source(&source).unwrap();
+    let config = config_from_env().unwrap();
 
     assert_eq!(config.prover_backend, ProverBackend::Mock);
     assert_eq!(config.mode, PipelineMode::ExecuteOnly);
     assert_eq!(config.run_id, "dev");
+
+    remove_env(ENV_ZKPOW_EXECUTE_ONLY);
+    remove_env(ENV_ZKPOW_BATCH_SIZE);
 }
 
 #[test]
 fn run_id_env_overrides_default() {
-    let mut values = HashMap::new();
-    values.insert(ENV_ZKPOW_RUN_ID.to_string(), "mainnet-01".to_string());
-    let config = config_from_source(&MapEnvSource::new(values)).unwrap();
+    let _guard = _env_test_mutex().lock().unwrap();
+    set_env(ENV_ZKPOW_RUN_ID, "mainnet-01");
+
+    let config = config_from_env().unwrap();
     assert_eq!(config.run_id, "mainnet-01");
+
+    remove_env(ENV_ZKPOW_RUN_ID);
 }
 
 #[test]
@@ -186,7 +181,7 @@ impl Drop for SessionEnv {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn stops_after_reaching_configured_batch_count() {
-    let _guard = env_test_mutex().lock().await;
+    let _guard = _env_test_mutex().lock().unwrap();
     let env = SessionEnv::new("batch-count");
     set_env("ZKPOW_BATCH_COUNT", "0");
     set_env(ENV_ZKPOW_BATCH_SIZE, "1");
@@ -198,7 +193,7 @@ async fn stops_after_reaching_configured_batch_count() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn stops_after_exhausting_headers_in_database() {
-    let _guard = env_test_mutex().lock().await;
+    let _guard = _env_test_mutex().lock().unwrap();
     let _env = SessionEnv::new("exhausted");
     set_env("ZKPOW_BATCH_COUNT", "5");
     set_env(ENV_ZKPOW_BATCH_SIZE, "0");
@@ -214,7 +209,7 @@ async fn stops_after_exhausting_headers_in_database() {
 /// not create or advance a production run.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn execute_only_session_is_separate_from_run_progress() {
-    let _guard = env_test_mutex().lock().await;
+    let _guard = _env_test_mutex().lock().unwrap();
     let env = SessionEnv::new("advance-resume");
     set_env("ZKPOW_BATCH_COUNT", "2");
     set_env(ENV_ZKPOW_BATCH_SIZE, "3");

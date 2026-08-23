@@ -60,16 +60,10 @@ struct PendingBatch {
     proof_object: String,
 }
 
-struct PreparedBatch {
-    current_state: State,
-    result: Result<FetchedBatch, ControllerError>,
-}
-
 struct RunSession {
     verified_state: State,
     verified_proof_object: Option<String>,
     pending: VecDeque<PendingBatch>,
-    prepared: Option<PreparedBatch>,
     halted: Option<String>,
 }
 
@@ -171,7 +165,6 @@ impl ControllerRuntime {
             match pull {
                 Pull::Ready(ready) => {
                     let batch = self.attach_storage(run_id, *ready)?;
-                    self.prepare_ahead(run_id.to_owned());
                     tracing::info!(
                         run_id,
                         first_new_height = batch.first_new_height,
@@ -281,13 +274,6 @@ impl ControllerRuntime {
             proof_upload,
         })
     }
-
-    fn prepare_ahead(&self, run_id: String) {
-        let inner = self.inner.clone();
-        tokio::task::spawn_blocking(move || {
-            lock_core(&inner.core).prepare_ahead(&run_id);
-        });
-    }
 }
 
 impl ControllerCore {
@@ -334,7 +320,6 @@ impl ControllerCore {
                 verified_state: self.state_at(record.verified_height),
                 verified_proof_object: record.proof_object,
                 pending: VecDeque::new(),
-                prepared: None,
                 halted: None,
             },
         );
@@ -343,7 +328,7 @@ impl ControllerCore {
 
     fn pull(&mut self, run_id: &str) -> Result<Pull, ControllerError> {
         self.ensure_session(run_id)?;
-        let (tip_state, previous_proof_object, prepared) = {
+        let (tip_state, previous_proof_object) = {
             let session = self.session_mut(run_id)?;
             if let Some(reason) = &session.halted {
                 return Err(ControllerError::conflict(format!("run {run_id} is halted: {reason}")));
@@ -351,13 +336,10 @@ impl ControllerCore {
             if session.pending.len() >= MAX_OUTSTANDING_BATCHES {
                 return Ok(Pull::Wait);
             }
-            (session.tip_state(), session.tip_proof_object(), session.prepared.take())
+            (session.tip_state(), session.tip_proof_object())
         };
 
-        let mut fetched = match prepared {
-            Some(prepared) if prepared.current_state == tip_state => prepared.result?,
-            _ => self.fetch_batch(tip_state)?,
-        };
+        let mut fetched = self.fetch_batch(tip_state)?;
         let proof_object = format!("proof_{}.bin", fetched.end_height);
         let session = self.session_mut(run_id)?;
         session.pending.push_back(PendingBatch {
@@ -371,20 +353,6 @@ impl ControllerCore {
             proof_object,
             previous_proof_object,
         })))
-    }
-
-    fn prepare_ahead(&mut self, run_id: &str) {
-        let Some(session) = self.runs.get(run_id) else {
-            return;
-        };
-        if session.halted.is_some() || session.prepared.is_some() {
-            return;
-        }
-        let current_state = session.tip_state();
-        let result = self.fetch_batch(current_state);
-        if let Some(session) = self.runs.get_mut(run_id) {
-            session.prepared = Some(PreparedBatch { current_state, result });
-        }
     }
 
     fn fetch_batch(&self, current_state: State) -> Result<FetchedBatch, ControllerError> {

@@ -1,5 +1,4 @@
 use std::{
-    collections::{BTreeMap, HashMap},
     sync::{Mutex, OnceLock},
     time::{Duration, Instant},
 };
@@ -8,7 +7,7 @@ use sp1_sdk::ExecutionReport;
 
 use crate::{memory_monitor, pipeline::BoxError};
 
-static PHASE_TIMINGS: OnceLock<Mutex<HashMap<&'static str, PhaseTimingAccum>>> = OnceLock::new();
+static PHASE_TIMINGS: OnceLock<Mutex<Vec<(String, Duration)>>> = OnceLock::new();
 
 #[derive(Debug, Clone)]
 pub struct PhaseTiming {
@@ -17,14 +16,8 @@ pub struct PhaseTiming {
     pub invocations:         u32,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
-struct PhaseTimingAccum {
-    total: Duration,
-    invocations: u32,
-}
-
-fn phase_timings_store() -> &'static Mutex<HashMap<&'static str, PhaseTimingAccum>> {
-    PHASE_TIMINGS.get_or_init(|| Mutex::new(HashMap::new()))
+fn phase_timings_store() -> &'static Mutex<Vec<(String, Duration)>> {
+    PHASE_TIMINGS.get_or_init(|| Mutex::new(Vec::new()))
 }
 
 pub(crate) fn clear_phase_timings() {
@@ -35,25 +28,27 @@ pub(crate) fn clear_phase_timings() {
 
 fn record_phase_timing(label: &'static str, elapsed: Duration) {
     if let Ok(mut timings) = phase_timings_store().lock() {
-        let entry = timings.entry(label).or_default();
-        entry.total += elapsed;
-        entry.invocations += 1;
+        timings.push((label.to_string(), elapsed));
     }
 }
 
 pub(crate) fn collected_phase_timings() -> Vec<PhaseTiming> {
-    let mut out = if let Ok(timings) = phase_timings_store().lock() {
-        timings
-            .iter()
-            .map(|(label, accum)| PhaseTiming {
-                label: (*label).to_string(),
-                total_duration_secs: accum.total.as_secs_f64(),
-                invocations: accum.invocations,
-            })
-            .collect::<Vec<_>>()
-    } else {
-        Vec::new()
-    };
+    let mut grouped: std::collections::HashMap<String, (Duration, u32)> = std::collections::HashMap::new();
+    if let Ok(timings) = phase_timings_store().lock() {
+        for (label, elapsed) in timings.iter() {
+            let entry = grouped.entry(label.clone()).or_insert((Duration::ZERO, 0));
+            entry.0 += *elapsed;
+            entry.1 += 1;
+        }
+    }
+    let mut out: Vec<_> = grouped
+        .into_iter()
+        .map(|(label, (total, invocations))| PhaseTiming {
+            label,
+            total_duration_secs: total.as_secs_f64(),
+            invocations,
+        })
+        .collect();
     out.sort_unstable_by(|a, b| {
         b.total_duration_secs
             .partial_cmp(&a.total_duration_secs)
@@ -61,63 +56,6 @@ pub(crate) fn collected_phase_timings() -> Vec<PhaseTiming> {
             .then_with(|| a.label.cmp(&b.label))
     });
     out
-}
-
-#[derive(Debug, Default)]
-struct CycleTreeNode {
-    self_cycles: u64,
-    self_invocations: u64,
-    total_cycles: u64,
-    children: BTreeMap<String, CycleTreeNode>,
-}
-
-impl CycleTreeNode {
-    fn insert(&mut self, path: &str, cycles: u64, invocations: u64) {
-        let mut current = self;
-        for segment in path.split('/').filter(|segment| !segment.is_empty()) {
-            current = current.children.entry(segment.to_string()).or_default();
-        }
-        current.self_cycles = current.self_cycles.saturating_add(cycles);
-        current.self_invocations = current.self_invocations.saturating_add(invocations);
-    }
-
-    fn finalize_totals(&mut self) -> u64 {
-        let mut total = self.self_cycles;
-        for child in self.children.values_mut() {
-            total = total.saturating_add(child.finalize_totals());
-        }
-        self.total_cycles = total;
-        total
-    }
-}
-
-fn emit_cycle_tree(node: &CycleTreeNode, total_cycles: u64, depth: usize) {
-    let mut children: Vec<_> = node.children.iter().collect();
-    children.sort_unstable_by(|(name_a, node_a), (name_b, node_b)| {
-        node_b.total_cycles.cmp(&node_a.total_cycles).then_with(|| name_a.cmp(name_b))
-    });
-
-    for (name, child) in children {
-        let pct = if total_cycles == 0 {
-            0.0
-        } else {
-            (child.total_cycles as f64 * 100.0) / total_cycles as f64
-        };
-        let indent = "  ".repeat(depth);
-        tracing::info!(
-            "  {}- {}: {} cycles ({:.2}%){}",
-            indent,
-            name,
-            child.total_cycles,
-            pct,
-            if child.self_invocations > 1 {
-                format!(", {} invocations", child.self_invocations)
-            } else {
-                String::new()
-            }
-        );
-        emit_cycle_tree(child, total_cycles, depth + 1);
-    }
 }
 
 pub fn log_execution_report(report: &ExecutionReport, total_proving_time_secs: f64) {
@@ -163,23 +101,10 @@ pub fn log_execution_report(report: &ExecutionReport, total_proving_time_secs: f
         );
     }
 
-    let mut tree = CycleTreeNode::default();
-    for (label, cycles) in &entries {
-        let invocations = report.invocation_tracker.get((*label).as_str()).copied().unwrap_or(1);
-        tree.insert(label, **cycles, invocations);
-    }
-    tree.finalize_totals();
-    tracing::info!("  cycle hierarchy:");
-    emit_cycle_tree(&tree, total_tracked_cycles, 0);
-
     let prover_gas = report.gas().unwrap_or(0);
-    tracing::info!("  prover gas:");
-    tracing::info!("    total prover_gas: {}", prover_gas);
-    tracing::info!(
-        "    assumptions: proportional allocation from tracked cycle share (model coefficients internal to SP1)"
-    );
+    tracing::info!("  prover gas: {}", prover_gas);
     if prover_gas > 0 && total_tracked_cycles > 0 {
-        tracing::info!("    estimated gas by hot span:");
+        tracing::info!("  estimated gas by hot span:");
         for (label, cycles) in entries.iter().take(10) {
             let share = **cycles as f64 / total_tracked_cycles as f64;
             let estimated_gas = (prover_gas as f64 * share).round() as u64;

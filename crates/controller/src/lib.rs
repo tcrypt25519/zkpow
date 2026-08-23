@@ -17,7 +17,6 @@
 #[cfg(test)]
 mod tests;
 
-pub mod diagnostics;
 pub mod http;
 pub mod protocol;
 pub mod runtime;
@@ -27,7 +26,6 @@ pub mod verify;
 mod digest;
 mod validation;
 
-pub use diagnostics::format_claim_mismatch;
 pub use digest::{continuation_digest, continuation_digest_from_state};
 pub use validation::{compute_final_state_with_hints, records_to_new_headers};
 
