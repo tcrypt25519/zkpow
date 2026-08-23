@@ -99,12 +99,6 @@ fn read_slice_of_fixed_size_elements_input<'g, T: Pod>() -> Result<&'g [T], PodC
     Ok(input_type)
 }
 
-fn read_byte_slice_mut<'g>() -> Result<&'g mut [u8], PodCastError> {
-    let read_vec_results = unsafe { read_vec_raw() };
-    let input_slice = std::ptr::slice_from_raw_parts_mut(read_vec_results.ptr, read_vec_results.len);
-    unsafe { input_slice.as_mut() }.ok_or(PodCastError::OutputSliceWouldHaveSlop)
-}
-
 #[derive(Debug, thiserror::Error)]
 enum ProgramError {
     #[error("PodCastError: {0}")]
@@ -119,18 +113,6 @@ impl From<PodCastError> for ProgramError {
 
 #[sp1_cycle::tracked]
 fn inner_main() -> Result<(), ProgramError> {
-    // Claim:
-    // block_hash
-    // genesis_hash
-    // current_nbits <- remove
-    // height
-    // ----
-    // Continuation:
-    // chain_work
-    // epoch_start_timestamp
-    // timestamps
-    let _state_bytes = read_byte_slice_mut()?;
-
     /*
 
      ## In-progress
@@ -274,5 +256,5 @@ fn inner_main() -> Result<(), ProgramError> {
 }
 
 pub fn main() {
-    let _ = inner_main();
+    inner_main().expect("guest input parsing failed");
 }
