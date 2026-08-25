@@ -23,16 +23,15 @@ path = "src/lib.rs"
 zkpow-core = { workspace = true }
 zkpow-controller = { workspace = true }
 zkpow-params = { workspace = true }
+zkpow-worker = { workspace = true }
 console-subscriber = "0.4.1"
 sp1-sdk = { workspace = true }
 sp1-prover = { workspace = true }
 sp1-recursion-gnark-ffi = { workspace = true, features = ["native"] }
 memuse = { workspace = true }
 postcard = { workspace = true, features = ["alloc"] }
-rkyv = { workspace = true }
 hex = { workspace = true }
 num-bigint = { workspace = true }
-reqwest = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { version = "0.3", features = [
@@ -42,10 +41,6 @@ tracing-subscriber = { version = "0.3", features = [
 ] }
 tracing-appender = "0.2"
 sha2 = { workspace = true, features = ["std"] }
-
-
-[dev-dependencies]
-axum = { workspace = true }
 
 [build-dependencies]
 sp1-build = { workspace = true }

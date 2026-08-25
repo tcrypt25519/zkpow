@@ -1,5 +1,4 @@
 use sp1_sdk::prelude::*;
-use tracing::Instrument;
 
 use crate::pipeline::{
     diagnostics::{timed_async, timed_sync},
@@ -20,8 +19,7 @@ where
     P::Error: std::fmt::Display + Send + Sync + 'static,
 {
     let compressed_proof = timed_async("prove_compressed", || async {
-        async { prover.prove(proving_key, stdin).compressed().await }
-            .instrument(tracing::info_span!("prove_compressed_detail"))
+        zkpow_worker::prove_compressed(prover, proving_key, stdin)
             .await
             .map_err(|err| -> BoxError { err.to_string().into() })
     })

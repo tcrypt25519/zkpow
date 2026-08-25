@@ -1,23 +1,15 @@
 //! Data returned by the controller to a proving host.
 //!
-//! Both controller operations accept only a run id. HTTP encodes the batch
-//! response with postcard; local mode passes the value directly.
+//! Both controller operations accept only a run id. The host and controller
+//! run in the same process, so the batch value is passed directly with no
+//! wire encoding.
 
-use rkyv::{Archive, Deserialize, Serialize};
 use zkpow_core::{BlockTimestamp, HeaderInput, State, VerifierKeyDigest};
 
 pub(crate) const MEDIAN_HINT_SIZE: usize = size_of::<BlockTimestamp>();
 
-/// An opaque artifact location selected by the controller.
-#[derive(Archive, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum FileLocation {
-    Path(String),
-    Url(String),
-}
-
 /// Everything required to prove the next controller-selected batch.
-#[derive(Archive, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-// #[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Batch {
     pub first_new_height:  u32,
     pub end_height:        u32,
@@ -27,8 +19,8 @@ pub struct Batch {
     pub median_hint_bytes: Vec<u8>,
     /// Recursive witness for a fresh worker. A worker that just produced this
     /// proof already has it in memory and need not fetch it.
-    pub previous_proof: Option<FileLocation>,
-    pub proof_upload: FileLocation,
+    pub previous_proof:    Option<String>,
+    pub proof_upload:      String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

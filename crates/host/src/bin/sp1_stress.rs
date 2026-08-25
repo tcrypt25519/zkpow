@@ -58,7 +58,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         std::env::set_var("ZKPOW_BATCH_COUNT", "1");
         std::env::set_var(ENV_ZKPOW_BATCH_SIZE, num_headers.to_string());
         std::env::set_var(ENV_ZKPOW_EXECUTE_ONLY, if execute_only { "1" } else { "0" });
-        std::env::remove_var("ZKPOW_CONTROLLER_URL");
     }
 
     tracing::info!(iterations, num_headers, execute_only, "SP1 stress test starting");

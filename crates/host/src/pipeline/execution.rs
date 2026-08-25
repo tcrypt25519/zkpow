@@ -15,18 +15,14 @@ use crate::{
 pub(crate) async fn execute_batch<P>(prover: &P, stdin: SP1Stdin) -> Result<(Vec<u8>, ExecutionReport), BoxError>
 where
     P: Prover,
-    P::Error: std::fmt::Display + Send + Sync + 'static,
 {
     let (public_values, execution_report) = timed_async("execute_program", || async {
-        prover
-            .execute(ELF, stdin)
-            .deferred_proof_verification(false)
+        zkpow_worker::execute(prover, ELF, stdin)
             .await
-            .map_err(|err| -> BoxError { err.to_string().into() })
+            .map_err(|err| -> BoxError { err.into() })
     })
     .await?;
 
-    let public_values = public_values.to_vec();
     check_guest_success(&public_values, "execution")?;
     Ok((public_values, execution_report))
 }

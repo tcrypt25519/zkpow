@@ -14,8 +14,9 @@ members = [
     "crates/params",
     "crates/types",
     "crates/sha256_const",
+    "crates/worker",
 ]
-resolver = "2"
+resolver = "3"
 
 [workspace.dependencies]
 zkpow-controller = { path = "crates/controller" }
@@ -29,6 +30,7 @@ zkpow-sync-headers = { path = "crates/sync-headers" }
 zkpow-cli = { path = "crates/cli" }
 zkpow-params = { path = "crates/params" }
 zkpow-types = { path = "crates/types" }
+zkpow-worker = { path = "crates/worker" }
 derive-size = { path = "crates/derive-size" }
 sp1-cycle = { path = "crates/sp1-cycle" }
 sp1-cycle-macros = { path = "crates/sp1-cycle-macros" }
@@ -40,8 +42,13 @@ sp1-zkvm = { version = "6.4.0", default-features = false, features = [
 sp1-sdk = { version = "6.4.0", features = ["profiling"] }
 sp1-build = { version = "6.4.0" }
 sp1-derive = { version = "6.4.0" }
-sp1-prover = { version = "6.4.0" }
-sp1-recursion-gnark-ffi = { version = "6.4.0" }
+sp1-prover = { version = "6.4.0", default-features = false, features = [
+    "profiling",
+    "bigint-rug",
+    "debug",
+    "mprotect"
+] }
+sp1-recursion-gnark-ffi = { version = "6.4.0", default-features = false }
 
 
 memuse = { path = "../memuse" }
@@ -62,9 +69,7 @@ num-bigint = "0.4.8"
 clap = { version = "4.6.6", features = ["derive"] }
 thiserror = "2.0.20"
 rand = "0.10.2"
-reqwest = { version = "0.13.4", features = ["json"] }
 anyhow = "1.0.104"
-axum = "0.8"
 
 bytemuck = { version = "1.25.2", features = ["derive"] }
 rkyv = { version = "0.8.18", default-features = false, features = [
@@ -84,9 +89,6 @@ serde = { version = "1", default-features = false, features = [
     "derive",
     "alloc",
 ] }
-rust-s3 = { version = "0.37.2", default-features = false, features = [
-    "sync-rustls-tls",
-] }
 
 const-gen = { version = "1.6.9", default-features = false, features = [
     "derive",
@@ -103,10 +105,16 @@ sp1-recursion-gnark-ffi = { path = "../../succinctlabs/sp1/crates/recursion/gnar
 [profile.dev.package."*"]
 incremental = false
 
+[profile.release.package."*"]
+debug = true
+incremental = false
+
+
 [profile.release]
 debug = true            # Keep debug symbols
 split-debuginfo = "off" # Ensures symbols stay in the binary
 
-[profile.release.package."*"]
-debug = true
+[profile.dev]
 incremental = false
+lto = false
+opt-level = 0

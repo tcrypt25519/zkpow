@@ -15,4 +15,4 @@ zkpow-sync-headers.workspace = true
 zkpow-store.workspace = true
 clap.workspace = true
 tracing.workspace = true
-tracing-subscriber.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }

@@ -16,11 +16,15 @@ struct Cli {
 enum Command {
     /// Sync block headers from the P2P network into the local database.
     Sync(SyncArgs),
+    /// Snapshot the header database into the flat `headers.bin` file the
+    /// prover reads from. Run this after syncing new headers; the prover
+    /// itself never writes to `headers.bin`.
+    DumpBin(DumpBinArgs),
 }
 
 #[derive(Args, Debug)]
 struct SyncArgs {
-    #[arg(short, long, default_value = "zkpow.sqlite")]
+    #[arg(short, long, default_value = "headers.db")]
     db: String,
 
     #[arg(short, long, default_value = "0")]
@@ -39,6 +43,15 @@ struct SyncArgs {
     p2p_reset: bool,
 }
 
+#[derive(Args, Debug)]
+struct DumpBinArgs {
+    #[arg(short, long, default_value = "headers.db")]
+    db: String,
+
+    #[arg(short, long, default_value = "headers.bin")]
+    out: String,
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -49,8 +62,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     match cli.command {
         Command::Sync(args) => sync_p2p(&args)?,
+        Command::DumpBin(args) => dump_bin(&args)?,
     }
 
+    Ok(())
+}
+
+/// Snapshot every header currently in `headers.db` into a `headers.bin` flat
+/// file. Read-only against the database, overwrites the output file whole —
+/// there's no incremental update, this is meant to be re-run occasionally,
+/// not on every sync.
+fn dump_bin(args: &DumpBinArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let store = HeaderStore::open(&args.db)?;
+    let count = store.header_count()?;
+    if count == 0 {
+        return Err("database has no headers to dump".into());
+    }
+    tracing::info!(count, db = %args.db, out = %args.out, "Dumping headers to flat file");
+    let records = store.load_header_records(0, count);
+    zkpow_store::flat::write_snapshot(&args.out, &records)?;
+    tracing::info!(
+        out = %args.out,
+        bytes = count * zkpow_store::HEADER_RECORD_SIZE as u64,
+        "Dump complete"
+    );
     Ok(())
 }
 

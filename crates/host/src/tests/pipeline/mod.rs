@@ -6,7 +6,6 @@ use std::{
 use zkpow_controller::{db_path, HeaderStore, NO_HEADERS_REMAINING_PREFIX};
 
 mod artifacts;
-mod transport;
 
 use crate::pipeline::{
     input::{

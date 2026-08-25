@@ -5,25 +5,25 @@
 //! values. Completion means the selected proof has already been uploaded.
 
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::HashMap,
     sync::{Arc, Mutex, MutexGuard},
     time::Duration,
 };
 
 use tokio::sync::Notify;
-use zkpow_core::{serialize_inputs, serialize_minimal_public_values, BlockHash, State, VerifierKeyDigest};
+use zkpow_core::{serialize_inputs, serialize_minimal_public_values, BlockHash, ContinuationData, State, VerifierKeyDigest};
 use zkpow_params::Mainnet;
-use zkpow_store::{HeaderStore, RunRecord};
+use zkpow_store::{HeaderBinReader, HeaderStore, RunRecord};
 
 use crate::{
-    digest::continuation_digest_from_state,
     protocol::{Batch, ControllerError},
     storage::ArtifactStore,
     verify::ProofVerifier,
     NO_HEADERS_REMAINING_PREFIX,
 };
 
-pub const MAX_OUTSTANDING_BATCHES: usize = 2;
+use sha2::{Digest, Sha256};
+
 const DEFAULT_PULL_TIMEOUT: Duration = Duration::from_secs(600);
 
 #[derive(Debug, Clone)]
@@ -63,28 +63,31 @@ struct PendingBatch {
 struct RunSession {
     verified_state: State,
     verified_proof_object: Option<String>,
-    pending: VecDeque<PendingBatch>,
+    /// At most one batch outstanding: `pull_batch` refuses a new grant until
+    /// this one is verified by `complete`.
+    pending: Option<PendingBatch>,
     halted: Option<String>,
 }
 
 impl RunSession {
     fn tip_state(&self) -> State {
-        self.pending
-            .back()
-            .map(|batch| batch.expected_state)
-            .unwrap_or(self.verified_state)
+        self.pending.as_ref().map(|batch| batch.expected_state).unwrap_or(self.verified_state)
     }
 
     fn tip_proof_object(&self) -> Option<String> {
         self.pending
-            .back()
+            .as_ref()
             .map(|batch| batch.proof_object.clone())
             .or_else(|| self.verified_proof_object.clone())
     }
 }
 
 struct ControllerCore {
+    /// The run ledger only; header content is read from `headers`.
     store: HeaderStore,
+    /// Header content: a read-only `headers.bin` snapshot, not the live
+    /// database. Regenerate it with `zkpow-cli dump-bin` after syncing.
+    headers: HeaderBinReader,
     genesis_hash: BlockHash,
     verifier_key: VerifierKeyDigest,
     batch_size: u32,
@@ -130,6 +133,7 @@ fn validate_run_id(run_id: &str) -> Result<(), ControllerError> {
 impl ControllerRuntime {
     pub fn new(
         store: HeaderStore,
+        headers: HeaderBinReader,
         storage: Box<dyn ArtifactStore>,
         verifier: Box<dyn ProofVerifier>,
         config: ControllerConfig,
@@ -139,6 +143,7 @@ impl ControllerRuntime {
             inner: Arc::new(RuntimeInner {
                 core: Mutex::new(ControllerCore {
                     store,
+                    headers,
                     genesis_hash: config.genesis_hash,
                     verifier_key,
                     batch_size: config.batch_size,
@@ -191,7 +196,7 @@ impl ControllerRuntime {
         let (end_height, proof_object, expected_public_values) = {
             let mut core = lock_core(&self.inner.core);
             let session = core.session_mut(run_id)?;
-            let pending = session.pending.front().ok_or_else(|| {
+            let pending = session.pending.as_ref().ok_or_else(|| {
                 ControllerError::bad_request(format!("run {run_id} has no pending batch to complete"))
             })?;
             (
@@ -225,17 +230,17 @@ impl ControllerRuntime {
         {
             let mut core = lock_core(&self.inner.core);
             let session = core.session_mut(run_id)?;
-            if session.pending.front().map(|batch| batch.end_height) != Some(end_height) {
+            if session.pending.as_ref().map(|batch| batch.end_height) != Some(end_height) {
                 return Err(ControllerError::conflict(format!(
                     "pending batch for run {run_id} changed while verifying"
                 )));
             }
-            let expected_state = session.pending.front().expect("front checked").expected_state;
+            let expected_state = session.pending.as_ref().expect("checked above").expected_state;
             core.store
                 .record_run_progress(run_id, end_height, Some(&proof_object))
                 .map_err(|err| ControllerError::internal(format!("failed to persist run progress: {err}")))?;
             let session = core.session_mut(run_id)?;
-            session.pending.pop_front();
+            session.pending = None;
             session.verified_state = expected_state;
             session.verified_proof_object = Some(proof_object);
         }
@@ -278,13 +283,25 @@ impl ControllerRuntime {
 
 impl ControllerCore {
     fn state_at(&self, height: u32) -> State {
-        self.store.state_at_height::<Mainnet>(height, self.genesis_hash)
+        self.headers.state_at_height::<Mainnet>(height, self.genesis_hash)
     }
 
     fn session_mut(&mut self, run_id: &str) -> Result<&mut RunSession, ControllerError> {
         self.runs
             .get_mut(run_id)
             .ok_or_else(|| ControllerError::bad_request(format!("run {run_id} has no active session")))
+    }
+
+    fn create_run_record(&self, run_id: &str) -> Result<RunRecord, ControllerError> {
+        let record = RunRecord {
+            verifier_key: self.verifier_key,
+            verified_height: 0,
+            proof_object: None,
+        };
+        self.store
+            .create_run(run_id, &record)
+            .map_err(|err| ControllerError::internal(format!("run ledger create failed: {err}")))?;
+        Ok(record)
     }
 
     fn ensure_session(&mut self, run_id: &str) -> Result<(), ControllerError> {
@@ -297,29 +314,43 @@ impl ControllerCore {
             .map_err(|err| ControllerError::internal(format!("run ledger read failed: {err}")))?;
         let record = match record {
             Some(record) if record.verifier_key != self.verifier_key => {
-                return Err(ControllerError::conflict(format!(
-                    "run {run_id} belongs to a different controller verifier key"
-                )));
+                if record.verified_height == 0 && record.proof_object.is_none() {
+                    tracing::warn!(
+                        run_id,
+                        stored = %hex::encode(record.verifier_key.to_bytes()),
+                        current = %hex::encode(self.verifier_key.to_bytes()),
+                        "run has no verified progress; rebinding to this controller's verifier key"
+                    );
+                    self.store.delete_run(run_id).map_err(|err| {
+                        ControllerError::internal(format!("run ledger delete failed: {err}"))
+                    })?;
+                    self.create_run_record(run_id)?
+                } else {
+                    return Err(ControllerError::conflict(format!(
+                        "run {run_id} is pinned to verifier key {} at height {}; this controller has {}",
+                        hex::encode(record.verifier_key.to_bytes()),
+                        record.verified_height,
+                        hex::encode(self.verifier_key.to_bytes()),
+                    )));
+                }
             },
             Some(record) => record,
-            None => {
-                let record = RunRecord {
-                    verifier_key: self.verifier_key,
-                    verified_height: 0,
-                    proof_object: None,
-                };
-                self.store
-                    .create_run(run_id, &record)
-                    .map_err(|err| ControllerError::internal(format!("run ledger create failed: {err}")))?;
-                record
-            },
+            None => self.create_run_record(run_id)?,
         };
+        if record.verified_height as u64 >= self.headers.header_count() {
+            return Err(ControllerError::internal(format!(
+                "run {run_id} has verified progress up to height {}, but headers.bin only covers {} headers; \
+                 regenerate it with `zkpow-cli dump-bin`",
+                record.verified_height,
+                self.headers.header_count(),
+            )));
+        }
         self.runs.insert(
             run_id.to_owned(),
             RunSession {
                 verified_state: self.state_at(record.verified_height),
                 verified_proof_object: record.proof_object,
-                pending: VecDeque::new(),
+                pending: None,
                 halted: None,
             },
         );
@@ -333,7 +364,7 @@ impl ControllerCore {
             if let Some(reason) = &session.halted {
                 return Err(ControllerError::conflict(format!("run {run_id} is halted: {reason}")));
             }
-            if session.pending.len() >= MAX_OUTSTANDING_BATCHES {
+            if session.pending.is_some() {
                 return Ok(Pull::Wait);
             }
             (session.tip_state(), session.tip_proof_object())
@@ -342,7 +373,7 @@ impl ControllerCore {
         let mut fetched = self.fetch_batch(tip_state)?;
         let proof_object = format!("proof_{}.bin", fetched.end_height);
         let session = self.session_mut(run_id)?;
-        session.pending.push_back(PendingBatch {
+        session.pending = Some(PendingBatch {
             end_height: fetched.end_height,
             expected_state: fetched.expected_state,
             expected_public_values: std::mem::take(&mut fetched.expected_public_values),
@@ -361,7 +392,7 @@ impl ControllerCore {
         }
         let first_new_height = current_state.height + 1;
         let witness = self
-            .store
+            .headers
             .load_header_batch_witness(first_new_height as u64, self.batch_size as u64);
         if witness.headers.is_empty() {
             return Err(ControllerError::exhausted(format!(
@@ -391,4 +422,14 @@ impl ControllerCore {
             end_height,
         })
     }
+}
+
+/// Compute the continuation digest: SHA-256 of the serialized continuation data.
+pub fn continuation_digest(data: &ContinuationData) -> [u8; 32] {
+    Sha256::digest(data.to_bytes()).into()
+}
+
+/// Compute the continuation digest directly from a [`State`].
+pub fn continuation_digest_from_state(state: &State) -> [u8; 32] {
+    continuation_digest(&ContinuationData::from_state(state))
 }

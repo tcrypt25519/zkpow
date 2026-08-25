@@ -7,33 +7,33 @@
 //! here, on the controller's side of the trust boundary.
 //!
 //! Module map:
-//! * [`runtime`] — run sessions, the double-buffered grant pipeline, long-polling, completion validation. Verified
+//! * [`runtime`] — run sessions, long-polling, completion validation. Verified
 //!   progress persists in the header database's `runs` table (see `zkpow_store`).
-//! * [`protocol`] — typed host/controller messages and their HTTP codec.
-//! * [`http`] — postcard boundary around the typed runtime API.
-//! * [`storage`] — artifact targets (local paths or pre-signed S3 URLs).
+//! * [`protocol`] — typed host/controller messages.
+//! * [`storage`] — local-disk artifact targets.
 //! * [`verify`] — pluggable cryptographic proof verification.
 
 #[cfg(test)]
 mod tests;
 
-pub mod http;
 pub mod protocol;
 pub mod runtime;
 pub mod storage;
 pub mod verify;
 
-mod digest;
 mod validation;
 
-pub use digest::{continuation_digest, continuation_digest_from_state};
+pub use runtime::{continuation_digest, continuation_digest_from_state};
 pub use validation::{compute_final_state_with_hints, records_to_new_headers};
 
 /// Headers per controller-selected batch: one difficulty epoch.
 pub const DEFAULT_BATCH_SIZE: u32 = Mainnet::PARAMS.epoch_length;
 pub use zkpow_core::{requires_median_hint, BlockHash, BlockTimestamp, Claim, HeaderInput, State};
 use zkpow_params::{Consensus, Mainnet};
-pub use zkpow_store::{db_path, genesis_state_from_record, HeaderBatchWitness, HeaderRecord, HeaderStore, RunRecord};
+pub use zkpow_store::{
+    db_path, genesis_state_from_record, headers_bin_path, HeaderBatchWitness, HeaderBinReader, HeaderRecord,
+    HeaderStore, RunRecord,
+};
 
 pub type BoxError = Box<dyn std::error::Error + Send + Sync + 'static>;
 

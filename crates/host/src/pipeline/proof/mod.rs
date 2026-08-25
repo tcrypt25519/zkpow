@@ -104,8 +104,9 @@ pub(crate) async fn get_prepared_prover(
             PreparedProver::Mock { prover, proving_key }
         },
         ProverBackend::Cpu => {
+            let worker_config = zkpow_worker::WorkerConfig::from_env();
             let prover = timed_async("build_cpu_prover", || async {
-                Ok::<_, BoxError>(ProverClient::builder().cpu().build().await)
+                Ok::<_, BoxError>(zkpow_worker::build_cpu_worker(&worker_config).await)
             })
             .await?;
             let proving_key = timed_async("setup_vkey", || async { prover.setup(ELF).await }).await?;

@@ -3,7 +3,6 @@
 use std::path::PathBuf;
 
 use sp1_sdk::{prelude::*, SP1Proof};
-use zkpow_controller::storage::S3Config;
 
 use crate::{
     pipeline::{BoxError, PipelineMode, ProofGenerationConfig, ProverBackend},
@@ -15,15 +14,9 @@ pub const ENV_ZKPOW_RUN_ID: &str = "ZKPOW_RUN_ID";
 pub const ENV_ZKPOW_BATCH_SIZE: &str = "ZKPOW_BATCH_SIZE";
 pub const ENV_ZKPOW_BATCH_COUNT: &str = "ZKPOW_BATCH_COUNT";
 pub const ENV_ZKPOW_DB_PATH: &str = "ZKPOW_DB_PATH";
+pub const ENV_ZKPOW_HEADERS_BIN_PATH: &str = "ZKPOW_HEADERS_BIN_PATH";
 pub const ENV_ZKPOW_PROOF_STORE_DIR: &str = "ZKPOW_PROOF_STORE_DIR";
 pub const ENV_ZKPOW_SHOW_COMPRESSED_PROOF_SPANS: &str = "ZKPOW_SHOW_COMPRESSED_PROOF_SPANS";
-pub const ENV_ZKPOW_CONTROLLER_URL: &str = "ZKPOW_CONTROLLER_URL";
-pub const ENV_ZKPOW_S3_BUCKET: &str = "ZKPOW_S3_BUCKET";
-pub const ENV_ZKPOW_S3_REGION: &str = "ZKPOW_S3_REGION";
-pub const ENV_ZKPOW_S3_ENDPOINT: &str = "ZKPOW_S3_ENDPOINT";
-pub const ENV_ZKPOW_S3_ACCESS_KEY: &str = "ZKPOW_S3_ACCESS_KEY";
-pub const ENV_ZKPOW_S3_SECRET_KEY: &str = "ZKPOW_S3_SECRET_KEY";
-pub const ENV_ZKPOW_S3_PREFIX: &str = "ZKPOW_S3_PREFIX";
 
 pub const ENV_ZKPOW_EXECUTE_ONLY: &str = "ZKPOW_EXECUTE_ONLY";
 pub const ENV_ZKPOW_GENERATE_GROTH16: &str = "ZKPOW_GENERATE_GROTH16";
@@ -121,6 +114,7 @@ pub fn config_from_env() -> Result<ProofGenerationConfig, BoxError> {
         local_batch_size,
         batch_count,
         db_path: parse_path_env(ENV_ZKPOW_DB_PATH).unwrap_or_else(zkpow_controller::db_path),
+        headers_bin_path: parse_path_env(ENV_ZKPOW_HEADERS_BIN_PATH).unwrap_or_else(zkpow_controller::headers_bin_path),
         mode: if execute_only {
             PipelineMode::ExecuteOnly
         } else if generate_groth16 {
@@ -135,31 +129,6 @@ pub fn config_from_env() -> Result<ProofGenerationConfig, BoxError> {
 
 pub fn proof_store_dir_from_env() -> PathBuf {
     parse_path_env(ENV_ZKPOW_PROOF_STORE_DIR).unwrap_or_else(|| PathBuf::from(DEFAULT_PROOF_STORE_DIR))
-}
-
-pub fn controller_url_from_env() -> Option<String> {
-    std::env::var(ENV_ZKPOW_CONTROLLER_URL).ok()
-}
-
-pub fn s3_storage_config_from_env() -> Result<Option<S3Config>, BoxError> {
-    let bucket = match std::env::var(ENV_ZKPOW_S3_BUCKET) {
-        Ok(bucket) => bucket,
-        Err(std::env::VarError::NotPresent) => return Ok(None),
-        Err(err) => return Err(err.into()),
-    };
-
-    let require = |var_name: &'static str| -> Result<String, BoxError> {
-        std::env::var(var_name).map_err(|_| format!("{var_name} is required when {ENV_ZKPOW_S3_BUCKET} is set").into())
-    };
-
-    Ok(Some(S3Config {
-        bucket,
-        region: require(ENV_ZKPOW_S3_REGION)?,
-        endpoint: require(ENV_ZKPOW_S3_ENDPOINT)?,
-        access_key: require(ENV_ZKPOW_S3_ACCESS_KEY)?,
-        secret_key: require(ENV_ZKPOW_S3_SECRET_KEY)?,
-        prefix: std::env::var(ENV_ZKPOW_S3_PREFIX).unwrap_or_default(),
-    }))
 }
 
 /// Assemble the guest's stdin. Header and median-hint bytes come straight

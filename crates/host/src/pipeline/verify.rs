@@ -1,9 +1,8 @@
-//! SP1-backed proof verification for the in-process (local mode) controller.
+//! SP1-backed proof verification for the in-process controller.
 //!
-//! In local mode the controller runs inside the host process, so it borrows
-//! the host's prepared prover to cryptographically verify uploaded proofs —
-//! the same check a standalone `zkpow-controller-serve` performs when built
-//! with its `sp1-verify` feature.
+//! The controller runs inside the host process, so it borrows the host's
+//! already-set-up prepared prover to cryptographically verify uploaded
+//! proofs instead of building a separate one.
 
 use sp1_sdk::{prelude::*, SP1ProofWithPublicValues};
 use zkpow_controller::verify::ProofVerifier;

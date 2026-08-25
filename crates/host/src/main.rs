@@ -6,11 +6,8 @@
 //! continues the run where it left off.
 //!
 //! Usage:
-//!   # Local mode: controller runs in-process against the local headers.db
+//!   # Controller runs in-process against the local headers.db
 //!   cargo run --release -p zkpow-host --bin zkpow-host
-//!
-//!   # Remote mode: pull work from a zkpow-controller-serve instance
-//!   ZKPOW_CONTROLLER_URL=http://100.x.y.z:7878 cargo run --release -p zkpow-host --bin zkpow-host
 //!
 //!   # Name the IVC chain (default: "dev")
 //!   ZKPOW_RUN_ID=mainnet-01 cargo run --release -p zkpow-host --bin zkpow-host

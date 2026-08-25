@@ -33,11 +33,11 @@ else
 fi
 export TRACE_FILE="${TRACE_FILE:-$RUN_DIR/tracing.json}"
 export RUST_BACKTRACE="${RUST_BACKTRACE:-1}"
-export RUST_LOG="${RUST_LOG:-trace}"
-export BATCH_SIZE="${BATCH_SIZE:-100}"
-export BATCH_COUNT="${BATCH_COUNT:-100}"
+#export RUST_LOG="${RUST_LOG:-trace}"
+export BATCH_SIZE="${BATCH_SIZE:-2016}"
+export BATCH_COUNT="${BATCH_COUNT:-10}"
 export OUTPUT_DIR="${OUTPUT_DIR:-$PROOFS_DIR}"
-export GUEST_PROFILING="${GUEST_PROFILING:-1}"
+#export GUEST_PROFILING="${GUEST_PROFILING:-1}"
 export PROVE_COMPRESSED_SPANS="${PROVE_COMPRESSED_SPANS:-0}"
 
 # Force line-buffered output for proper tee capture
