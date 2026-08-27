@@ -15,11 +15,9 @@ zkpow-host
 *.bin
 *.log
 
-# No mds in root except README, AGENTS, and CLAUDE
+# No mds in root except README
 /*.md
 !README.md
-!AGENTS.md
-!CLAUDE.md
 
 # IDE
 .idea/
