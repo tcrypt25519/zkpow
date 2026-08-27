@@ -38,16 +38,6 @@ pub use errors::{InputParseError, ParseError};
 mod input;
 pub use input::{cast_slice, serialize_inputs};
 
-/// Median-time-past window parameters, re-exported from the active consensus parameter set so
-/// callers that need a fixed-size array or a local name can reach them from one place.
-pub const WINDOW_SIZE: usize = Mainnet::PARAMS.window_size;
-
-/// Half the window, rounded down; the number of timestamps that may sit below the median.
-pub const WINDOW_SMALL_HALF_SIZE: usize = Mainnet::PARAMS.window_small_half_size();
-
-/// Maximum index in the sliding window.
-pub const WINDOW_MAX_INDEX: usize = Mainnet::PARAMS.window_max_index();
-
 /// Hashing lives on [`Header`]; this wrapper exists only so tests can substitute a hash without
 /// mining one. It must stay in this crate: `cfg(test)` is per-compilation-unit, so a mock in
 /// `zkpow-types` would not be compiled when `zkpow-core`'s tests run.
@@ -126,18 +116,22 @@ mod test_hash_mock {
 
 #[must_use]
 pub const fn timestamp_slot(height: u64) -> usize {
-    height as usize % WINDOW_SIZE
+    height as usize % Mainnet::PARAMS.window_size
 }
 
 #[must_use]
 pub const fn timestamp_count(height: u64) -> usize {
     let count = height as usize + 1;
-    if count > WINDOW_SIZE { WINDOW_SIZE } else { count }
+    if count > Mainnet::PARAMS.window_size {
+        Mainnet::PARAMS.window_size
+    } else {
+        count
+    }
 }
 
 #[must_use]
 pub const fn has_ordered_timestamp_window(ordered_timestamp_run: u64) -> bool {
-    ordered_timestamp_run >= WINDOW_MAX_INDEX as u64
+    ordered_timestamp_run >= Mainnet::PARAMS.window_max_index() as u64
 }
 
 #[must_use]
@@ -150,11 +144,11 @@ pub const fn advance_ordered_timestamp_run(ordered_timestamp_run: u64, previous_
 }
 
 #[must_use]
-pub fn ordered_timestamp_run(timestamps: &[BlockTimestamp; WINDOW_SIZE], height: u64) -> u64 {
+pub fn ordered_timestamp_run(timestamps: &[BlockTimestamp; Mainnet::PARAMS.window_size], height: u64) -> u64 {
     let mut run = 0;
     let mut newer = timestamps[timestamp_slot(height)];
-    for offset in 1..WINDOW_SIZE {
-        let older = timestamps[(timestamp_slot(height) + WINDOW_SIZE - offset) % WINDOW_SIZE];
+    for offset in 1..Mainnet::PARAMS.window_size {
+        let older = timestamps[(timestamp_slot(height) + Mainnet::PARAMS.window_size - offset) % Mainnet::PARAMS.window_size];
         if older > newer {
             break;
         }
@@ -166,12 +160,12 @@ pub fn ordered_timestamp_run(timestamps: &[BlockTimestamp; WINDOW_SIZE], height:
 
 #[must_use]
 pub const fn ordered_median_timestamp_slot(height: u64) -> usize {
-    (timestamp_slot(height) + WINDOW_SIZE - (WINDOW_SMALL_HALF_SIZE)) % WINDOW_SIZE
+    (timestamp_slot(height) + Mainnet::PARAMS.window_size - (Mainnet::PARAMS.window_small_half_size())) % Mainnet::PARAMS.window_size
 }
 
 #[must_use]
 pub const fn requires_median_hint(height: u64, previous_ordered_timestamp_run: u64) -> bool {
-    height >= WINDOW_SIZE as u64 && !has_ordered_timestamp_window(previous_ordered_timestamp_run)
+    height >= Mainnet::PARAMS.window_size as u64 && !has_ordered_timestamp_window(previous_ordered_timestamp_run)
 }
 
 #[sp1_cycle::tracked]

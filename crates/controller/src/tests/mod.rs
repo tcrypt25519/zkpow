@@ -1,6 +1,6 @@
 use super::*;
 use crate::validation::header_to_input;
-use zkpow_core::{BlockTimestamp as BTimestamp, ContinuationData, WINDOW_SIZE};
+use zkpow_core::{BlockTimestamp as BTimestamp, ContinuationData};
 use zkpow_params::{Consensus, Mainnet};
 
 mod protocol;
@@ -15,7 +15,7 @@ fn make_pcs() -> ContinuationData {
     ContinuationData {
         current_nbits: Mainnet::PARAMS.genesis.compact_target,
         epoch_start_timestamp: BTimestamp::new(500),
-        timestamps: [BTimestamp::new(10); WINDOW_SIZE],
+        timestamps: [BTimestamp::new(10); Mainnet::PARAMS.window_size],
     }
 }
 

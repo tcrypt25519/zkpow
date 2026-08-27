@@ -1,6 +1,5 @@
 use zkpow_core::{
     check_proof_of_work, target_from_bits, BlockHash, BlockTimestamp, CompactTarget, Header as CoreHeader, Target,
-    WINDOW_SIZE,
 };
 use zkpow_params::{Consensus, Mainnet};
 
@@ -65,7 +64,7 @@ fn synthetic_anchor(height: u64, nbits: u32) -> Tip {
         BlockHash::new([0xAB; 32]),
         height,
         chainwork,
-        [2_000_000_000u32; WINDOW_SIZE],
+        [2_000_000_000u32; Mainnet::PARAMS.window_size],
         height,
         current_nbits,
         current_target,
@@ -76,8 +75,8 @@ fn synthetic_anchor(height: u64, nbits: u32) -> Tip {
 #[test]
 fn connect_headers_wraps_the_timestamp_window_across_batches() {
     let anchor = synthetic_anchor(100, TRIVIAL_NBITS_A);
-    // Longer than 2*WINDOW_SIZE so the ring buffer wraps more than once.
-    let total = (WINDOW_SIZE as u32) * 2 + 3;
+    // Longer than 2*Mainnet::PARAMS.window_size so the ring buffer wraps more than once.
+    let total = (Mainnet::PARAMS.window_size as u32) * 2 + 3;
     let headers = build_chain(&anchor, total, |_| TRIVIAL_NBITS_A);
 
     let connected = connect_headers::<Mainnet>(&anchor, &headers);
@@ -150,7 +149,7 @@ fn median_time_past_matches_hand_computed_values_through_a_wrap() {
     let base = 2_000_000_000u32;
     let (current_nbits, current_target, current_block_work) = expand_target(CompactTarget::new(TRIVIAL_NBITS_A));
     let chainwork = current_block_work * 1u32;
-    let mut timestamps = [0u32; WINDOW_SIZE];
+    let mut timestamps = [0u32; Mainnet::PARAMS.window_size];
     timestamps[0] = base;
     let anchor = Tip::new(
         BlockHash::new([0xCD; 32]),
@@ -180,15 +179,15 @@ fn median_time_past_matches_hand_computed_values_through_a_wrap() {
 
     let expected_mtp = |height: u64| -> u32 {
         let h = height as u32;
-        if height <= WINDOW_SIZE as u64 {
+        if height <= Mainnet::PARAMS.window_size as u64 {
             // Window = {base, base+1, ..., base+(h-1)}, ascending, h
             // values; `sorted[window_len / 2]` picks index h/2.
             base + h / 2
         } else {
-            // Past the first wrap: window = the *previous* WINDOW_SIZE
-            // timestamps, {base+(h-WINDOW_SIZE) ..= base+(h-1)}, ascending;
-            // median is at index WINDOW_SIZE/2 within that.
-            base + (h - WINDOW_SIZE as u32) + (WINDOW_SIZE as u32 / 2)
+            // Past the first wrap: window = the *previous* Mainnet::PARAMS.window_size
+            // timestamps, {base+(h-Mainnet::PARAMS.window_size) ..= base+(h-1)}, ascending;
+            // median is at index Mainnet::PARAMS.window_size/2 within that.
+            base + (h - Mainnet::PARAMS.window_size as u32) + (Mainnet::PARAMS.window_size as u32 / 2)
         }
     };
 

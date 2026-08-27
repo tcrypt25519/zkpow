@@ -8,9 +8,9 @@ use rusqlite::{params, Connection, OptionalExtension};
 use sync_headers::{ConnectedHeader, Tip};
 use zkpow_core::{
     requires_median_hint, BlockHash, BlockTimestamp, ByteInfo, ChainWork, Claim, CompactTarget, Header, HeaderInput,
-    State, VerifierKeyDigest, WINDOW_SIZE,
+    State, VerifierKeyDigest,
 };
-use zkpow_params::Consensus;
+use zkpow_params::{Consensus, Mainnet};
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -166,15 +166,15 @@ impl HeaderStore {
                 let mut stmt = self
                     .conn
                     .prepare("SELECT height, timestamp FROM headers ORDER BY height DESC LIMIT ?1")?;
-                let mut timestamps = [0u32; WINDOW_SIZE];
-                let rows = stmt.query_map(params![WINDOW_SIZE as i64], |row| {
+                let mut timestamps = [0u32; Mainnet::PARAMS.window_size];
+                let rows = stmt.query_map(params![Mainnet::PARAMS.window_size as i64], |row| {
                     let row_height: i64 = row.get(0)?;
                     let timestamp: u32 = row.get(1)?;
                     Ok((row_height, timestamp))
                 })?;
                 for row in rows {
                     let (row_height, timestamp) = row?;
-                    timestamps[row_height as usize % WINDOW_SIZE] = timestamp;
+                    timestamps[row_height as usize % Mainnet::PARAMS.window_size] = timestamp;
                 }
 
                 Ok(Some(Tip::new(
@@ -406,13 +406,13 @@ impl HeaderStore {
         let epoch_length = C::PARAMS.epoch_length;
         let epoch_start_height = (height / epoch_length) * epoch_length;
         let epoch_start = self.load_header_record(epoch_start_height as u64);
-        let window_count = (height as usize + 1).min(zkpow_core::WINDOW_SIZE) as u64;
+        let window_count = (height as usize + 1).min(Mainnet::PARAMS.window_size) as u64;
         let window_start = height as u64 + 1 - window_count;
         let window = self.load_header_records(window_start, window_count);
 
-        let mut timestamps = [BlockTimestamp::default(); zkpow_core::WINDOW_SIZE];
+        let mut timestamps = [BlockTimestamp::default(); Mainnet::PARAMS.window_size];
         for r in &window {
-            timestamps[r.height as usize % zkpow_core::WINDOW_SIZE] = r.header.timestamp;
+            timestamps[r.height as usize % Mainnet::PARAMS.window_size] = r.header.timestamp;
         }
         // The window's last row is the requested height itself; no separate
         // query for the current header.
@@ -543,7 +543,7 @@ pub fn genesis_state_from_record(genesis: HeaderRecord, genesis_hash: BlockHash)
     let block_hash = BlockHash::from(&genesis.header);
     assert_eq!(block_hash, genesis_hash, "genesis hash mismatch");
 
-    let mut timestamps = [BlockTimestamp::default(); zkpow_core::WINDOW_SIZE];
+    let mut timestamps = [BlockTimestamp::default(); Mainnet::PARAMS.window_size];
     timestamps[0] = genesis.header.timestamp;
 
     State {

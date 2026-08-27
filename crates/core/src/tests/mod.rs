@@ -62,9 +62,9 @@ fn test_state() -> State {
 pub(crate) fn median_time_past(state: &State) -> BlockTimestamp {
     let count = timestamp_count(state.height as u64);
     let mut sorted = state.timestamps;
-    if count >= WINDOW_SIZE {
+    if count >= TestConsensus::PARAMS.window_size {
         sorted.sort_unstable();
-        sorted[WINDOW_SIZE / 2]
+        sorted[TestConsensus::PARAMS.window_size / 2]
     } else {
         sorted[..count].sort_unstable();
         sorted[count / 2]
@@ -88,7 +88,7 @@ fn dense_median_hints_for_headers(initial_state: &State, headers: &[HeaderInput]
     let mut medians = Vec::with_capacity(headers.len());
     for header in headers {
         medians.push(median_time_past(&state));
-        let timestamp_slot = (state.height as usize + 1) % WINDOW_SIZE;
+        let timestamp_slot = (state.height as usize + 1) % TestConsensus::PARAMS.window_size;
         state.timestamps[timestamp_slot] = header.timestamp;
         state.height += 1;
     }
@@ -98,10 +98,10 @@ fn dense_median_hints_for_headers(initial_state: &State, headers: &[HeaderInput]
 fn median_hints_for_headers(initial_state: &State, headers: &[HeaderInput]) -> Vec<BlockTimestamp> {
     let dense_hints = dense_median_hints_for_headers(initial_state, headers);
     let mut state = *initial_state;
-    let warm_start = (WINDOW_SIZE - 1).saturating_sub(state.height as usize).min(headers.len());
+    let warm_start = (TestConsensus::PARAMS.window_size - 1).saturating_sub(state.height as usize).min(headers.len());
     for header in &headers[..warm_start] {
         state.height += 1;
-        state.timestamps[state.height as usize % WINDOW_SIZE] = header.timestamp;
+        state.timestamps[state.height as usize % TestConsensus::PARAMS.window_size] = header.timestamp;
     }
 
     let mut hints = Vec::new();
@@ -114,9 +114,9 @@ fn median_hints_for_headers(initial_state: &State, headers: &[HeaderInput]) -> V
         if !has_ordered_timestamp_window(ordered_run_len) {
             hints.push(dense_hints[index]);
         }
-        let previous_timestamp = state.timestamps[state.height as usize % WINDOW_SIZE];
+        let previous_timestamp = state.timestamps[state.height as usize % TestConsensus::PARAMS.window_size];
         state.height += 1;
-        state.timestamps[state.height as usize % WINDOW_SIZE] = headers[index].timestamp;
+        state.timestamps[state.height as usize % TestConsensus::PARAMS.window_size] = headers[index].timestamp;
         ordered_run_len = advance_ordered_timestamp_run(
             ordered_run_len,
             previous_timestamp.into_inner(),
@@ -140,10 +140,10 @@ fn failure_public_value_bytes(state: &State, error_code: ErrorCode) -> [u8; Mini
 }
 
 fn expected_upper_median(height: u32) -> BlockTimestamp {
-    if height < WINDOW_SIZE as u32 {
+    if height < TestConsensus::PARAMS.window_size as u32 {
         ts(height.div_ceil(2))
     } else {
-        ts(height - (WINDOW_SIZE as u32 / 2))
+        ts(height - (TestConsensus::PARAMS.window_size as u32 / 2))
     }
 }
 
@@ -512,7 +512,7 @@ fn hinted_apply_headers_matches_sorted_apply_headers_across_window_wrap() {
 fn hinted_median_validation_accepts_duplicate_median_values() {
     let _hash_guard = set_hash_success();
     let mut state: State = State {
-        height: WINDOW_SIZE as u32,
+        height: TestConsensus::PARAMS.window_size as u32,
         current_nbits: CompactTarget::new(GENESIS_NBITS),
         timestamps: [ts(1), ts(2), ts(3), ts(4), ts(5), ts(6), ts(6), ts(6), ts(7), ts(8), ts(9)],
         ..State::default()
@@ -532,7 +532,7 @@ fn hinted_median_validation_accepts_duplicate_median_values() {
 #[test]
 fn hinted_median_validation_rejects_wrong_rank_hint() {
     let state: State = State {
-        height: WINDOW_SIZE as u32,
+        height: TestConsensus::PARAMS.window_size as u32,
         current_nbits: CompactTarget::new(GENESIS_NBITS),
         timestamps: [ts(1), ts(2), ts(3), ts(4), ts(5), ts(6), ts(7), ts(8), ts(9), ts(10), ts(11)],
         ..State::default()
@@ -619,7 +619,7 @@ fn next_overwrites_only_the_next_ring_slot() {
     let mut state: State = State {
         block_hash: BlockHash::new([0x11; 32]),
         current_nbits: CompactTarget::new(GENESIS_NBITS),
-        height: WINDOW_SIZE as u32,
+        height: TestConsensus::PARAMS.window_size as u32,
         timestamps: original,
         ..State::default()
     };
@@ -642,7 +642,7 @@ fn continuation_data_serializes_to_fixed_width() {
     let pcs = ContinuationData {
         current_nbits: CompactTarget::new(GENESIS_NBITS),
         epoch_start_timestamp: BlockTimestamp::new(500),
-        timestamps: [BlockTimestamp::new(10); WINDOW_SIZE],
+        timestamps: [BlockTimestamp::new(10); TestConsensus::PARAMS.window_size],
     };
     let bytes = pcs.to_bytes();
     assert_eq!(bytes.len(), ContinuationData::SIZE);
@@ -655,7 +655,7 @@ fn state_continuation_bytes_matches_continuation_data_to_bytes() {
     let state = State {
         current_nbits: CompactTarget::new(GENESIS_NBITS),
         epoch_start_timestamp: BlockTimestamp::new(500),
-        timestamps: [BlockTimestamp::new(10); WINDOW_SIZE],
+        timestamps: [BlockTimestamp::new(10); TestConsensus::PARAMS.window_size],
         ..Default::default()
     };
     let pcs = ContinuationData::from_state(&state);
@@ -824,7 +824,7 @@ fn assert_boundary_retargets_once<C: Consensus>() {
     let mut state = test_state();
     state.height = epoch_length - 1;
     state.epoch_start_timestamp = ts(1_000_000);
-    state.timestamps = [ts(1_000_600); WINDOW_SIZE];
+    state.timestamps = [ts(1_000_600); TestConsensus::PARAMS.window_size];
 
     let (expected_nbits, ..) = calculate_next_target_required::<C>(
         target_from_bits(state.current_nbits),
@@ -858,7 +858,7 @@ fn epoch_boundary_is_read_from_the_parameters() {
     let _hash_guard = set_hash_success();
     let mut state = test_state();
     state.epoch_start_timestamp = ts(1_000_000);
-    state.timestamps = [ts(1_000_600); WINDOW_SIZE];
+    state.timestamps = [ts(1_000_600); TestConsensus::PARAMS.window_size];
     state.height = ShortEpoch::PARAMS.epoch_length - 1;
     let starting_nbits = state.current_nbits;
 

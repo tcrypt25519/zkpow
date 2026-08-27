@@ -17,9 +17,8 @@ use std::{
 
 use zkpow_core::{
     requires_median_hint, BlockHash, BlockTimestamp, ChainWork, CompactTarget, Header, HeaderInput, State,
-    WINDOW_SIZE,
 };
-use zkpow_params::Consensus;
+use zkpow_params::{Consensus, Mainnet};
 
 use crate::db::{genesis_state_from_record, HeaderBatchWitness, HeaderRecord};
 
@@ -184,13 +183,13 @@ impl HeaderBinReader {
         let epoch_length = C::PARAMS.epoch_length;
         let epoch_start_height = (height / epoch_length) * epoch_length;
         let epoch_start = self.load_header_record(epoch_start_height as u64);
-        let window_count = (height as usize + 1).min(WINDOW_SIZE) as u64;
+        let window_count = (height as usize + 1).min(Mainnet::PARAMS.window_size) as u64;
         let window_start = height as u64 + 1 - window_count;
         let window = self.load_header_records(window_start, window_count);
 
-        let mut timestamps = [BlockTimestamp::default(); WINDOW_SIZE];
+        let mut timestamps = [BlockTimestamp::default(); Mainnet::PARAMS.window_size];
         for r in &window {
-            timestamps[r.height as usize % WINDOW_SIZE] = r.header.timestamp;
+            timestamps[r.height as usize % Mainnet::PARAMS.window_size] = r.header.timestamp;
         }
         let current = window.last().expect("window covers the requested height");
 

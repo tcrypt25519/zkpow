@@ -1,10 +1,10 @@
 use core::num::NonZeroU8;
 
 use derive_size::Size;
+use zkpow_params::{Consensus, Mainnet};
 
 use crate::{
     check_exact_len, BlockHash, BlockTimestamp, ChainWork, CompactTarget, InputParseError, ParseError, State,
-    WINDOW_SIZE,
 };
 
 /// Digest of a program verifier key.
@@ -151,7 +151,7 @@ impl Claim {
 pub struct ContinuationData {
     pub current_nbits: CompactTarget,
     pub epoch_start_timestamp: BlockTimestamp,
-    pub timestamps: [BlockTimestamp; WINDOW_SIZE],
+    pub timestamps: [BlockTimestamp; Mainnet::PARAMS.window_size],
 }
 
 impl ContinuationData {
@@ -179,7 +179,7 @@ impl ContinuationData {
         check_exact_len(bytes, Self::SIZE)?;
         let current_nbits = CompactTarget::new(u32::from_le_bytes(bytes[0..4].try_into().unwrap()));
         let epoch_start_timestamp = BlockTimestamp::from_le_bytes(bytes[4..8].try_into().unwrap());
-        let mut timestamps = [BlockTimestamp::default(); WINDOW_SIZE];
+        let mut timestamps = [BlockTimestamp::default(); Mainnet::PARAMS.window_size];
         for (i, ts) in timestamps.iter_mut().enumerate() {
             *ts = BlockTimestamp::from_le_bytes(bytes[8 + i * 4..8 + (i + 1) * 4].try_into().unwrap());
         }

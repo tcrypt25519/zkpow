@@ -169,7 +169,7 @@ fn inner_main() -> Result<(), ProgramError> {
         - Continuation
             pub current_nbits: CompactTarget,
             pub epoch_start_timestamp: BlockTimestamp,
-            pub timestamps: [BlockTimestamp; WINDOW_SIZE],
+            pub timestamps: [BlockTimestamp; Mainnet::PARAMS.window_size],
     - Headers
         pub version: u32,
         pub merkle_root: [u8; 32],

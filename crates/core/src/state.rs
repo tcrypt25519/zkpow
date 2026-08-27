@@ -12,9 +12,9 @@ use crate::{
     advance_ordered_timestamp_run, block_work_from_target, calculate_next_target_required, check_proof_of_work,
     copy_to_bytes, has_ordered_timestamp_window, hash_header_input, ordered_median_timestamp_slot, ordered_timestamp_run,
     target_from_bits, timestamp_slot, ApplyFailure, BlockHash, BlockTimestamp, BlockWork, ByteInfo, ChainWork, Claim,
-    CompactTarget, ContinuationData, HeaderInput, ReturnCode, Target, WINDOW_SIZE, WINDOW_SMALL_HALF_SIZE,
+    CompactTarget, ContinuationData, HeaderInput, ReturnCode, Target,
 };
-use zkpow_params::Consensus;
+use zkpow_params::{Consensus, Mainnet};
 
 // use rkyv::{Archive, Serialize, Deserialize};
 
@@ -33,7 +33,7 @@ pub struct State {
 
     pub current_nbits: CompactTarget,
     pub epoch_start_timestamp: BlockTimestamp,
-    pub timestamps: [BlockTimestamp; WINDOW_SIZE],
+    pub timestamps: [BlockTimestamp; Mainnet::PARAMS.window_size],
 }
 
 impl State {
@@ -132,7 +132,7 @@ impl State {
         &mut self,
         header_iter: &mut core::slice::Iter<'_, HeaderInput>,
     ) -> Result<(), ApplyFailure> {
-        let cold_len = (WINDOW_SIZE - 1).saturating_sub(self.height as usize).min(header_iter.len());
+        let cold_len = (Mainnet::PARAMS.window_size - 1).saturating_sub(self.height as usize).min(header_iter.len());
         if cold_len == 0 {
             return Ok(());
         }
@@ -186,7 +186,7 @@ impl State {
                         (counts[0], counts[1])
                     });
                     assert!(
-                        less_count <= WINDOW_SMALL_HALF_SIZE && less_count + equal_count > WINDOW_SMALL_HALF_SIZE,
+                        less_count <= Mainnet::PARAMS.window_small_half_size() && less_count + equal_count > Mainnet::PARAMS.window_small_half_size(),
                         "invalid median time past hint at header index {}",
                         context.state.height
                     );
@@ -229,7 +229,7 @@ impl Default for State {
             height: 0,
             chain_work: ChainWork::default(),
             epoch_start_timestamp: BlockTimestamp::default(),
-            timestamps: [BlockTimestamp::default(); WINDOW_SIZE],
+            timestamps: [BlockTimestamp::default(); Mainnet::PARAMS.window_size],
         }
     }
 }
