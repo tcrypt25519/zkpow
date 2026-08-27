@@ -12,9 +12,6 @@
 //!   # Name the IVC chain (default: "dev")
 //!   ZKPOW_RUN_ID=mainnet-01 cargo run --release -p zkpow-host --bin zkpow-host
 //!
-//!   # Also emit a Groth16-wrapped proof
-//!   ZKPOW_GENERATE_GROTH16=1 cargo run --release -p zkpow-host --bin zkpow-host
-//!
 //!   # Use the CUDA prover (must compile with --features CUDA)
 //!   ZKPOW_USE_CUDA=1 cargo run --release -p zkpow-host --features CUDA --bin zkpow-host
 //!

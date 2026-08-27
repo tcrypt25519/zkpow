@@ -10,10 +10,9 @@ mod artifacts;
 use crate::pipeline::{
     input::{
         config_from_env, ensure_cuda_requested_configuration, parse_bool_env, parse_u32_env, ENV_ZKPOW_BATCH_SIZE,
-        ENV_ZKPOW_CUDA_DEVICE_ID, ENV_ZKPOW_EXECUTE_ONLY, ENV_ZKPOW_GENERATE_GROTH16, ENV_ZKPOW_RUN_ID,
-        ENV_ZKPOW_USE_CUDA,
+        ENV_ZKPOW_CUDA_DEVICE_ID, ENV_ZKPOW_EXECUTE_ONLY, ENV_ZKPOW_RUN_ID, ENV_ZKPOW_USE_CUDA,
     },
-    is_header_exhaustion_error, run_batch_session, BoxError, PipelineMode, ProverBackend,
+    is_header_exhaustion_error, run_batch_session, BoxError, ProverBackend,
 };
 
 fn _env_test_mutex() -> &'static Mutex<()> {
@@ -29,31 +28,6 @@ fn set_env(name: &str, value: &str) {
 fn remove_env(name: &str) {
     // SAFETY: tests hold a global mutex to serialize process-environment mutation.
     unsafe { std::env::remove_var(name) };
-}
-
-#[test]
-fn parses_generate_groth16_env() {
-    let _guard = _env_test_mutex().lock().unwrap();
-    let cases = [
-        (Some("true"), Ok(true)),
-        (Some("false"), Ok(false)),
-        (None, Ok(false)),
-        (Some("invalid"), Err(())),
-    ];
-
-    for (value, expected) in cases {
-        match value {
-            Some(v) => set_env(ENV_ZKPOW_GENERATE_GROTH16, v),
-            None => remove_env(ENV_ZKPOW_GENERATE_GROTH16),
-        }
-
-        let parsed = parse_bool_env(ENV_ZKPOW_GENERATE_GROTH16);
-        match expected {
-            Ok(expected) => assert_eq!(parsed.unwrap(), expected, "value={value:?}"),
-            Err(()) => assert!(parsed.is_err(), "value={value:?} should error"),
-        }
-    }
-    remove_env(ENV_ZKPOW_GENERATE_GROTH16);
 }
 
 #[test]
@@ -86,13 +60,6 @@ fn config_validation_matrix_invalid_values() {
         "{ENV_ZKPOW_CUDA_DEVICE_ID}=abc should be invalid"
     );
     remove_env(ENV_ZKPOW_CUDA_DEVICE_ID);
-
-    set_env(ENV_ZKPOW_GENERATE_GROTH16, "yessir");
-    assert!(
-        parse_bool_env(ENV_ZKPOW_GENERATE_GROTH16).is_err(),
-        "{ENV_ZKPOW_GENERATE_GROTH16}=yessir should be invalid"
-    );
-    remove_env(ENV_ZKPOW_GENERATE_GROTH16);
 }
 
 #[test]
@@ -104,7 +71,7 @@ fn execute_only_defaults_to_mock_backend_and_dev_run() {
     let config = config_from_env().unwrap();
 
     assert_eq!(config.prover_backend, ProverBackend::Mock);
-    assert_eq!(config.mode, PipelineMode::ExecuteOnly);
+    assert!(config.execute_only);
     assert_eq!(config.run_id, "dev");
 
     remove_env(ENV_ZKPOW_EXECUTE_ONLY);

@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use sp1_sdk::{prelude::*, SP1Proof};
 
 use crate::{
-    pipeline::{BoxError, PipelineMode, ProofGenerationConfig, ProverBackend},
+    pipeline::{BoxError, ProofGenerationConfig, ProverBackend},
     util,
     util::VerifierKeyDigest,
 };
@@ -19,7 +19,6 @@ pub const ENV_ZKPOW_PROOF_STORE_DIR: &str = "ZKPOW_PROOF_STORE_DIR";
 pub const ENV_ZKPOW_SHOW_COMPRESSED_PROOF_SPANS: &str = "ZKPOW_SHOW_COMPRESSED_PROOF_SPANS";
 
 pub const ENV_ZKPOW_EXECUTE_ONLY: &str = "ZKPOW_EXECUTE_ONLY";
-pub const ENV_ZKPOW_GENERATE_GROTH16: &str = "ZKPOW_GENERATE_GROTH16";
 
 pub const ENV_ZKPOW_USE_CUDA: &str = "ZKPOW_USE_CUDA";
 pub const ENV_ZKPOW_CUDA_DEVICE_ID: &str = "ZKPOW_CUDA_DEVICE_ID";
@@ -94,10 +93,6 @@ pub fn config_from_env() -> Result<ProofGenerationConfig, BoxError> {
     let cuda_device_id = parse_u32_env(ENV_ZKPOW_CUDA_DEVICE_ID)?;
 
     let execute_only = parse_bool_env(ENV_ZKPOW_EXECUTE_ONLY)?;
-    let generate_groth16 = parse_bool_env(ENV_ZKPOW_GENERATE_GROTH16)?;
-    if execute_only && generate_groth16 {
-        return Err(format!("{ENV_ZKPOW_GENERATE_GROTH16} cannot be enabled when {ENV_ZKPOW_EXECUTE_ONLY}=1").into());
-    }
 
     let local_batch_size = parse_u32_env_or(ENV_ZKPOW_BATCH_SIZE, DEFAULT_BATCH_SIZE)?;
     let batch_count = parse_u32_env_or(ENV_ZKPOW_BATCH_COUNT, DEFAULT_BATCH_COUNT)?;
@@ -115,13 +110,7 @@ pub fn config_from_env() -> Result<ProofGenerationConfig, BoxError> {
         batch_count,
         db_path: parse_path_env(ENV_ZKPOW_DB_PATH).unwrap_or_else(zkpow_controller::db_path),
         headers_bin_path: parse_path_env(ENV_ZKPOW_HEADERS_BIN_PATH).unwrap_or_else(zkpow_controller::headers_bin_path),
-        mode: if execute_only {
-            PipelineMode::ExecuteOnly
-        } else if generate_groth16 {
-            PipelineMode::ProveCompressedAndGroth16
-        } else {
-            PipelineMode::ProveCompressed
-        },
+        execute_only,
         prover_backend,
         cuda_device_id,
     })

@@ -1,5 +1,4 @@
 pub(crate) mod compressed;
-pub(crate) mod groth16;
 
 use std::sync::OnceLock;
 
