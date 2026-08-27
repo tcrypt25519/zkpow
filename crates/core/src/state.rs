@@ -10,7 +10,7 @@ use sp1_cycle::tracked;
 
 use crate::{
     advance_ordered_timestamp_run, block_work_from_target, calculate_next_target_required, check_proof_of_work,
-    copy_to_bytes, has_ordered_timestamp_window, hash_header, ordered_median_timestamp_slot, ordered_timestamp_run,
+    copy_to_bytes, has_ordered_timestamp_window, hash_header_input, ordered_median_timestamp_slot, ordered_timestamp_run,
     target_from_bits, timestamp_slot, ApplyFailure, BlockHash, BlockTimestamp, BlockWork, ByteInfo, ChainWork, Claim,
     CompactTarget, ContinuationData, HeaderInput, ReturnCode, Target, WINDOW_SIZE, WINDOW_SMALL_HALF_SIZE,
 };
@@ -104,8 +104,7 @@ impl State {
             return ReturnCode::TIMESTAMP_TOO_OLD;
         }
 
-        let candidate = new_header.to_header(self.block_hash, active_nbits);
-        let block_hash = sp1_cycle::track!(hash_header(&candidate));
+        let block_hash = sp1_cycle::track!(hash_header_input(new_header, &self.block_hash, &active_nbits));
 
         if !check_proof_of_work(block_hash, &active_target) {
             return ReturnCode::POW_INSUFFICIENT;

@@ -59,6 +59,33 @@ fn hash_header(header: &Header) -> BlockHash {
     BlockHash::from(header)
 }
 
+fn hash_header_input(input: &HeaderInput, prev_blockhash: &BlockHash, compact_target: &CompactTarget) -> BlockHash {
+    #[cfg(target_os = "zkvm")]
+    {
+        BlockHash::new(zkpow_sha256::of_header(
+            input.version,
+            *prev_blockhash.as_inner(),
+            input.merkle_root,
+            *input.timestamp.as_inner(),
+            *compact_target.as_inner(),
+            input.nonce,
+        ))
+    }
+
+    #[cfg(not(target_os = "zkvm"))]
+    {
+        let header = Header {
+            version: input.version,
+            prev_blockhash: *prev_blockhash,
+            merkle_root: input.merkle_root,
+            timestamp: input.timestamp,
+            compact_target: *compact_target,
+            nonce: input.nonce,
+        };
+        hash_header(&header)
+    }
+}
+
 #[cfg(test)]
 mod test_hash_mock {
     extern crate std;

@@ -18,6 +18,7 @@ sp1-cycle = { workspace = true }
 sp1-cycle-macros = { workspace = true }
 zkpow-params = { workspace = true }
 zkpow-types = { workspace = true }
+zkpow-sha256 = { workspace = true }
 rkyv = { workspace = true }
 #bytes = { workspace = true }
 derive-size = { workspace = true }

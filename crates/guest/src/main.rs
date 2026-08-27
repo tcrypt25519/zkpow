@@ -95,8 +95,7 @@ fn read_slice_of_fixed_size_elements_input<'g, T: Pod>() -> Result<&'g [T], PodC
     let read_vec_results = unsafe { read_vec_raw() };
     let input_slice = std::ptr::slice_from_raw_parts(read_vec_results.ptr, read_vec_results.len);
     let input_slice_ref = unsafe { input_slice.as_ref() }.ok_or(PodCastError::OutputSliceWouldHaveSlop)?;
-    let input_type = bytemuck::cast_slice::<u8, T>(input_slice_ref);
-    Ok(input_type)
+    bytemuck::try_cast_slice::<u8, T>(input_slice_ref)
 }
 
 #[derive(Debug, thiserror::Error)]
