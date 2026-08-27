@@ -14,7 +14,7 @@ extern crate self as zkpow_core;
 
 use bytemuck::Pod;
 
-use zkpow_params::Consensus;
+use zkpow_params::{Consensus, Mainnet};
 pub use zkpow_types::{
     BlockHash, BlockTimestamp, BlockWork, ByteInfo, ChainWork, CompactTarget, Header, NonMaxU256, Target, u256,
 };
@@ -38,18 +38,15 @@ pub use errors::{InputParseError, ParseError};
 mod input;
 pub use input::{cast_slice, serialize_inputs};
 
-/// Median-time-past window.
-///
-/// Not a network parameter: [`State`] and [`ContinuationData`] carry a
-/// `[BlockTimestamp; WINDOW_SIZE]`, and an array length cannot come from an associated const on
-/// stable. Changing it changes the proof's wire format, so it is fixed here for every network.
-pub const WINDOW_SIZE: usize = 11;
+/// Median-time-past window parameters, re-exported from the active consensus parameter set so
+/// callers that need a fixed-size array or a local name can reach them from one place.
+pub const WINDOW_SIZE: usize = Mainnet::PARAMS.window_size;
 
 /// Half the window, rounded down; the number of timestamps that may sit below the median.
-pub const WINDOW_SMALL_HALF_SIZE: usize = WINDOW_SIZE / 2;
+pub const WINDOW_SMALL_HALF_SIZE: usize = Mainnet::PARAMS.window_small_half_size();
 
 /// Maximum index in the sliding window.
-pub const WINDOW_MAX_INDEX: usize = WINDOW_SIZE - 1;
+pub const WINDOW_MAX_INDEX: usize = Mainnet::PARAMS.window_max_index();
 
 /// Hashing lives on [`Header`]; this wrapper exists only so tests can substitute a hash without
 /// mining one. It must stay in this crate: `cfg(test)` is per-compilation-unit, so a mock in

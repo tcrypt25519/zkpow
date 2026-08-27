@@ -21,9 +21,23 @@ pub struct ConsensusParams {
     pub max_epoch_over_mul: u8,
     /// ...and this many times shorter.
     pub min_epoch_under_div: u8,
+    /// Number of previous block timestamps kept for median-time-past and ordered-window checks.
+    pub window_size: usize,
 }
 
 impl ConsensusParams {
+    /// Half the window, rounded down; the number of timestamps that may sit below the median.
+    #[must_use]
+    pub const fn window_small_half_size(&self) -> usize {
+        self.window_size / 2
+    }
+
+    /// Maximum index in the sliding window.
+    #[must_use]
+    pub const fn window_max_index(&self) -> usize {
+        self.window_size - 1
+    }
+
     /// SHA-256d of the genesis header. Prefer [`Consensus::GENESIS_HASH`], which holds the result
     /// of evaluating this once at compile time.
     #[must_use]

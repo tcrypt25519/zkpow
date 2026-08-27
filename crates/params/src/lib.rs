@@ -37,6 +37,7 @@ impl Consensus for Mainnet {
         epoch_length: 2016,
         max_epoch_over_mul: 4,
         min_epoch_under_div: 4,
+        window_size: 11,
     };
 }
 
