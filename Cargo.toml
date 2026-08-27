@@ -35,20 +35,24 @@ derive-size = { path = "crates/derive-size" }
 sp1-cycle = { path = "crates/sp1-cycle" }
 sp1-cycle-macros = { path = "crates/sp1-cycle-macros" }
 
-sp1-zkvm = { version = "6.4.0", default-features = false, features = [
+##
+## SP1
+##
+sp1-build = { version = "6.5.0" }
+sp1-derive = { version = "6.5.0" }
+sp1-sdk = { version = "6.5.0", features = ["profiling"] }
+sp1-zkvm = { version = "6.5.0", default-features = false, features = [
     "lib",
     "verify",
 ] }
-sp1-sdk = { version = "6.4.0", features = ["profiling"] }
-sp1-build = { version = "6.4.0" }
-sp1-derive = { version = "6.4.0" }
-sp1-prover = { version = "6.4.0", default-features = false, features = [
+sp1-recursion-gnark-ffi = { version = "6.5.0", default-features = false }
+sp1-prover = { version = "6.5.0", default-features = false, features = [
     "profiling",
     "bigint-rug",
     "debug",
     "mprotect"
 ] }
-sp1-recursion-gnark-ffi = { version = "6.4.0", default-features = false }
+
 
 
 memuse = { path = "../memuse" }
@@ -61,10 +65,10 @@ tracing = { version = "0.1.44" }
 tracing-subscriber = { version = "0.3.23" }
 
 
-tokio = { version = "1.52", features = ["full"] }
+tokio = { version = "1.53.1", features = ["full"] }
 hex = "0.4.3"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
-humantime = "2.3"
+humantime = "2.4"
 num-bigint = "0.4.8"
 clap = { version = "4.6.6", features = ["derive"] }
 thiserror = "2.0.20"
@@ -78,7 +82,7 @@ rkyv = { version = "0.8.18", default-features = false, features = [
     "little_endian",
     "aligned",
 ] }
-bytes = { version = "1.12" }
+bytes = { version = "1.12.1" }
 
 ##
 ## To remove
@@ -95,26 +99,26 @@ const-gen = { version = "1.6.9", default-features = false, features = [
 ] }
 
 [patch.crates-io]
-sp1-sdk = { path = "../../succinctlabs/sp1/crates/sdk" }
-sp1-build = { path = "../../succinctlabs/sp1/crates/build" }
-sp1-derive = { path = "../../succinctlabs/sp1/crates/derive" }
-sp1-prover = { path = "../../succinctlabs/sp1/crates/prover" }
-sp1-zkvm = { path = "../../succinctlabs/sp1/crates/zkvm/entrypoint" }
-sp1-recursion-gnark-ffi = { path = "../../succinctlabs/sp1/crates/recursion/gnark-ffi" }
+#sp1-build = { path = "../../succinctlabs/sp1/crates/build" }
+#sp1-derive = { path = "../../succinctlabs/sp1/crates/derive" }
+#sp1-zkvm = { path = "../../succinctlabs/sp1/crates/zkvm/entrypoint", default-features = false, features = [
+#    "lib",
+#    "verify",
+#] }
+#sp1-sdk = { path = "../../succinctlabs/sp1/crates/sdk", features = ["profiling"] }
+#sp1-recursion-gnark-ffi = { path = "../../succinctlabs/sp1/crates/recursion/gnark-ffi", default-features = false }
+sp1-prover = { path = "../../succinctlabs/sp1/crates/prover", features = ["profiling"] }
 
-[profile.dev.package."*"]
+[profile.release]
 incremental = false
 
 [profile.release.package."*"]
-debug = true
 incremental = false
-
-
-[profile.release]
-debug = true            # Keep debug symbols
-split-debuginfo = "off" # Ensures symbols stay in the binary
 
 [profile.dev]
 incremental = false
 lto = false
 opt-level = 0
+
+[profile.dev.package."*"]
+incremental = false
