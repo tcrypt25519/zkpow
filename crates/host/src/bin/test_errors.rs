@@ -7,16 +7,15 @@
 //!   stdin: verifier key(Vec<u8>) + state witness(Vec<u8>) + header witness(Vec<u8>)
 //!          + median-time-past witness(Vec<u8>)
 //!          → [compressed SP1 proof witness when state.height > 0]
-//!   output: MinimalPublicValues (169 bytes)
+//!   output: PublicValues (185 bytes)
 
 use sp1_sdk::{prelude::*, Elf, HashableKey, Prover, ProverClient, SP1Stdin};
 use zkpow_controller::db_path;
 use zkpow_host::{
     observability, util,
-    util::{ErrorCode, MinimalPublicValues, VerifierKeyDigest},
+    util::{ErrorCode, PublicValues, VerifierKeyDigest},
 };
-use zkpow_params::Consensus;
-use zkpow_params::Mainnet;
+use zkpow_params::{Consensus, Mainnet};
 
 const ELF: Elf = include_elf!("zkpow-guest");
 
@@ -30,27 +29,30 @@ async fn run_and_get_pv(stdin: SP1Stdin) -> Result<Vec<u8>, String> {
     Ok(public_values.to_vec())
 }
 
-fn expect_success(pv: &[u8]) -> Result<util::Claim, String> {
-    let pv = MinimalPublicValues::parse(pv).map_err(|err| format!("failed to parse PV: {err}"))?;
+fn expect_success(pv: &[u8]) -> Result<util::State, String> {
+    let pv = PublicValues::parse(pv).map_err(|err| format!("failed to parse PV: {err}"))?;
     if pv.is_success() {
-        Ok(pv.claim())
+        Ok(pv.state)
     } else {
-        Err(format!("expected success, got error at height {}", pv.height + 1))
+        Err(format!("expected success, got error at height {}", pv.state.height + 1))
     }
 }
 
 fn expect_failure(pv: &[u8], expected_code: ErrorCode, expected_failure_height: u32) -> Result<(), String> {
-    let pv = MinimalPublicValues::parse(pv).map_err(|err| format!("failed to parse PV: {err}"))?;
+    let pv = PublicValues::parse(pv).map_err(|err| format!("failed to parse PV: {err}"))?;
 
     if pv.is_success() {
-        return Err(format!("expected error {}, got success at height {}", expected_code, pv.height));
+        return Err(format!(
+            "expected error {}, got success at height {}",
+            expected_code, pv.state.height
+        ));
     }
 
     let error_code = pv.validation_error_code().ok_or("parsed PV had no error code".to_string())?;
     if error_code != expected_code {
         return Err(format!("expected error {}, got {}", expected_code, error_code));
     }
-    let failure_height = pv.height + 1;
+    let failure_height = pv.state.height + 1;
     if failure_height != expected_failure_height {
         return Err(format!(
             "expected failure height {}, got {}",
@@ -126,8 +128,8 @@ async fn main() {
         test_error_recursive_on_tampered_state_witness().await,
     );
 
-    // === Step 6: minimal PV format ===
-    check("pv_minimal_format", test_pv_minimal_format().await);
+    // === Step 6: public values format ===
+    check("pv_public_values_format", test_pv_public_values_format().await);
 
     println!("\nDone.");
 }
@@ -317,9 +319,9 @@ async fn test_recursive_chain_success() -> Result<(), String> {
     let pv1_bytes = proof1.public_values.to_vec();
 
     // Verify Run 1 state
-    let claim1 = expect_success(&pv1_bytes)?;
-    if claim1.height != 10 {
-        return Err(format!("Run 1: expected height 10, got {}", claim1.height));
+    let state1 = expect_success(&pv1_bytes)?;
+    if state1.height != 10 {
+        return Err(format!("Run 1: expected height 10, got {}", state1.height));
     }
 
     // === Run 2: Extend from Run 1 (blocks 11-20) ===
@@ -369,7 +371,7 @@ async fn test_error_recursive_on_failed_proof() -> Result<(), String> {
         Err(_) => Ok(()),
         Ok((pv, _)) => {
             let pv_bytes = pv.to_vec();
-            match MinimalPublicValues::parse(&pv_bytes) {
+            match PublicValues::parse(&pv_bytes) {
                 Ok(pv) if pv.is_success() => {
                     Err("expected guest to reject failed prior proof, but got a success state".to_string())
                 },
@@ -403,7 +405,7 @@ async fn test_error_recursive_on_tampered_state_witness() -> Result<(), String> 
         Err(_) => Ok(()),
         Ok((pv, _)) => {
             let pv_bytes = pv.to_vec();
-            match MinimalPublicValues::parse(&pv_bytes) {
+            match PublicValues::parse(&pv_bytes) {
                 Ok(pv) if pv.is_success() => {
                     Err("expected guest to reject tampered continuation state, but got success".to_string())
                 },
@@ -413,10 +415,8 @@ async fn test_error_recursive_on_tampered_state_witness() -> Result<(), String> 
     }
 }
 
-/// Verify the public-value format is the minimal 169-byte layout.
-async fn test_pv_minimal_format() -> Result<(), String> {
-    use zkpow_core::MinimalPublicValues;
-
+/// Verify the public-value format is the 185-byte full-state layout.
+async fn test_pv_public_values_format() -> Result<(), String> {
     let genesis_state = mainnet_genesis_state();
     let witness = open_db().load_header_batch_witness(1, 10);
     let stdin = build_stdin(
@@ -428,39 +428,28 @@ async fn test_pv_minimal_format() -> Result<(), String> {
 
     let pv = run_and_get_pv(stdin).await?;
 
-    if pv.len() != MinimalPublicValues::SIZE {
+    if pv.len() != PublicValues::SIZE {
         return Err(format!(
-            "expected {} bytes (MinimalPublicValues::SIZE), got {}",
-            MinimalPublicValues::SIZE,
+            "expected {} bytes (PublicValues::SIZE), got {}",
+            PublicValues::SIZE,
             pv.len()
         ));
     }
 
-    let claim = expect_success(&pv)?;
-    if claim.height != 10 {
-        return Err(format!("expected height 10, got {}", claim.height));
+    let parsed = PublicValues::parse(&pv).map_err(|e| format!("PublicValues::parse: {e}"))?;
+    if parsed.is_failure() {
+        return Err(format!("expected success error_code, got {:?}", parsed.return_code));
+    }
+    if parsed.state.height != 10 {
+        return Err(format!("expected height 10, got {}", parsed.state.height));
     }
 
-    // Parse as MinimalPublicValues and verify continuation digest is non-zero.
-    let mpv = MinimalPublicValues::parse(&pv).map_err(|e| format!("MinimalPublicValues::parse: {e}"))?;
-    if mpv.continuation_digest == [0u8; 32] {
-        return Err("continuation digest is all zeros".to_string());
-    }
-    if mpv.is_failure() {
-        return Err(format!("expected success error_code, got {:?}", mpv.return_code));
-    }
-
-    // Host-computed continuation digest must match.
+    // Host-computed final state must match the committed state.
     let genesis_state2 = mainnet_genesis_state();
     let final_state =
         compute_final_state_with_sparse_hints(&genesis_state2, &witness.headers, &witness.median_time_past_hints);
-    let host_digest = util::continuation_digest_from_state(&final_state);
-    if host_digest != mpv.continuation_digest {
-        return Err(format!(
-            "host digest {:?} != committed digest {:?}",
-            &host_digest[..4],
-            &mpv.continuation_digest[..4]
-        ));
+    if parsed.state != final_state {
+        return Err("committed state does not match host-computed final state".to_string());
     }
 
     Ok(())

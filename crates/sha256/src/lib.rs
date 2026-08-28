@@ -3,15 +3,15 @@
 #![allow(clippy::needless_range_loop)]
 //!
 //! Specialized guest functions for the exact sizes we need:
-//! - `sha256_32bytes`: hashes exactly 32 bytes (intermediate hash output)
-//! - `of_minimal_public_values`: hashes minimal public values from their fields
-//! - `sha256_52bytes`: hashes exactly 52 bytes (continuation data)
+//! - `of_public_values`: hashes the complete 185 byte public values
 //! - `of_header`: hashes a full Bitcoin header from disjoint fields
 //!
 //! No loops, no branching on block count. The padding and block layout
 //! are hardcoded for each size.
+#[cfg(target_os = "zkvm")]
 use core::mem::MaybeUninit;
 
+#[cfg(target_os = "zkvm")]
 use sp1_zkvm::syscalls::{syscall_sha256_compress, syscall_sha256_extend};
 
 const SHA256_IV: [u64; 8] = [
@@ -74,6 +74,7 @@ const fn word_from_bytes(bytes: &[u8], word_index: usize) -> u64 {
 /// Only the 16 low words carry data; the message schedule fills w[16..64],
 /// so the 48-word tail is never zero-initialized — the single largest source
 /// of dead work in the per-header hash path.
+#[cfg(target_os = "zkvm")]
 #[inline]
 fn of_block(low16: &[u64; 16], state: &mut [u64; 8]) {
     let mut w = MaybeUninit::<[u64; 64]>::uninit();
@@ -87,6 +88,39 @@ fn of_block(low16: &[u64; 16], state: &mut [u64; 8]) {
         core::ptr::copy_nonoverlapping(low16.as_ptr(), w.cast::<u64>(), 16);
         syscall_sha256_extend(w);
         syscall_sha256_compress(w, state);
+    }
+}
+
+/// Host fallback using the `sha2` crate's compression function.
+///
+/// The 16 u64 words each hold a big-endian 32-bit SHA message word in their
+/// low bits; this routine rebuilds the 64-byte block and applies one round of
+/// SHA-256 compression, matching the zkvm syscall semantics byte-for-byte.
+#[cfg(not(target_os = "zkvm"))]
+#[allow(deprecated)]
+#[inline]
+fn of_block(low16: &[u64; 16], state: &mut [u64; 8]) {
+    use sha2::{
+        compress256,
+        digest::generic_array::{GenericArray, typenum::U64},
+    };
+
+    let mut block = [0u8; 64];
+    for (i, word) in low16.iter().enumerate() {
+        block[i * 4] = ((word >> 24) & 0xff) as u8;
+        block[i * 4 + 1] = ((word >> 16) & 0xff) as u8;
+        block[i * 4 + 2] = ((word >> 8) & 0xff) as u8;
+        block[i * 4 + 3] = (word & 0xff) as u8;
+    }
+
+    let mut state_u32 = [0u32; 8];
+    for i in 0..8 {
+        state_u32[i] = state[i] as u32;
+    }
+    let block = GenericArray::<u8, U64>::clone_from_slice(&block);
+    compress256(&mut state_u32, &[block]);
+    for i in 0..8 {
+        state[i] = state_u32[i] as u64;
     }
 }
 
@@ -113,72 +147,40 @@ fn of_digest(prev_state: &[u64; 8]) -> [u8; 32] {
     state_to_hash(&state)
 }
 
-/// Compute SHA-256 of minimal public values from their individual fields.
+/// Compute SHA-256 of the complete 185 byte public values.
 ///
-/// Equivalent to serializing the fields to 165 bytes and hashing them, but avoids
-/// materializing the intermediate byte array. The field order matches
-/// [`MinimalPublicValues::to_bytes`]:
-/// - Block 1: chain_work (32) + verifier_key (32)
-/// - Block 2: continuation_digest (32) + genesis_hash (32)
-/// - Block 3: tip_hash (32) + height (4) + error_code (1) + padding + length
-pub fn of_minimal_public_values(
-    chain_work: &[u8],
-    verifier_key: &[u8],
-    continuation_digest: &[u8],
-    genesis_hash: &[u8],
-    tip_hash: &[u8],
-    height: u32,
-    error_code: u8,
-) -> [u8; 32] {
-    let mut state = SHA256_IV;
-
-    // Block 1: chain_work + verifier_key
-    let mut w = [0u64; 16];
-    for i in 0..8 {
-        w[i] = be_u64_from_slice(chain_work, i);
-    }
-    for i in 0..8 {
-        w[8 + i] = be_u64_from_slice(verifier_key, i);
-    }
-    of_block(&w, &mut state);
-
-    // Block 2: continuation_digest + genesis_hash
-    let mut w = [0u64; 16];
-    for i in 0..8 {
-        w[i] = be_u64_from_slice(continuation_digest, i);
-    }
-    for i in 0..8 {
-        w[8 + i] = be_u64_from_slice(genesis_hash, i);
-    }
-    of_block(&w, &mut state);
-
-    // Block 3: tip_hash + height + error_code + padding + length
-    let mut w = [0u64; 16];
-    for i in 0..8 {
-        w[i] = be_u64_from_slice(tip_hash, i);
-    }
-    let height_bytes = height.to_le_bytes();
-    w[8] = be_u64_from_slice(&height_bytes, 0);
-    w[9] = ((error_code as u64) << 24) | 0x0080_0000;
-    w[15] = 0x528;
-    of_block(&w, &mut state);
-
-    state_to_hash(&state)
-}
-
-/// Compute SHA-256 of exactly 52 bytes.
-///
-/// Produces one block:
-/// bytes 0-51 (all data) + 0x80 + 3 zeros + 8-byte length (416 bits = 0x1A0)
-pub fn of_52bytes(data: &[u8; 52]) -> [u8; 32] {
+/// Layout matches [`zkpow_core::PublicValues::to_bytes`]:
+/// - Block 1: state[0..64]
+/// - Block 2: state[64..128]
+/// - Block 3: state[128..152] || verifier_key (32) || return_code (1) + padding
+/// - Block 4: length (1480 bits = 0x5C8)
+pub fn of_public_values(state_bytes: &[u8], verifier_key: &[u8], return_code: u8) -> [u8; 32] {
     let mut state = SHA256_IV;
 
     let mut w = [0u64; 16];
-    for i in 0..13 {
-        w[i] = be_u64_from_slice(data, i);
+    for i in 0..16 {
+        w[i] = be_u64_from_slice(state_bytes, i);
     }
-    w[13] = 0x80000000;
-    w[15] = 0x1A0;
+    of_block(&w, &mut state);
+
+    let mut w = [0u64; 16];
+    for i in 0..16 {
+        w[i] = be_u64_from_slice(state_bytes, 16 + i);
+    }
+    of_block(&w, &mut state);
+
+    let mut w = [0u64; 16];
+    for i in 0..6 {
+        w[i] = be_u64_from_slice(state_bytes, 32 + i);
+    }
+    for i in 0..8 {
+        w[6 + i] = be_u64_from_slice(verifier_key, i);
+    }
+    w[14] = ((return_code as u64) << 24) | 0x0080_0000;
+    of_block(&w, &mut state);
+
+    let mut w = [0u64; 16];
+    w[15] = 0x5C8;
     of_block(&w, &mut state);
 
     state_to_hash(&state)
@@ -244,3 +246,6 @@ pub fn of_header(
 
     of_digest(&state)
 }
+
+#[cfg(test)]
+mod tests;

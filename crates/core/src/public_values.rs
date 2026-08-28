@@ -1,12 +1,8 @@
 use core::num::NonZeroU8;
 
 use bytemuck::{Pod, Zeroable};
-use derive_size::Size;
-use zkpow_params::{Consensus, Mainnet};
 
-use crate::{
-    check_exact_len, BlockHash, BlockTimestamp, ChainWork, CompactTarget, InputParseError, ParseError, State,
-};
+use crate::{check_exact_len, InputParseError, State};
 
 /// Digest of a program verifier key.
 #[repr(transparent)]
@@ -23,7 +19,6 @@ impl VerifierKeyDigest {
     pub fn to_le_bytes_slice(&self) -> &[u8] {
         bytemuck::bytes_of(self)
     }
-    // pub const SIZE: usize = 32;
 
     #[must_use]
     pub const fn from_raw(raw: [u32; 8]) -> Self {
@@ -68,132 +63,6 @@ impl From<[u32; 8]> for VerifierKeyDigest {
 impl From<VerifierKeyDigest> for [u32; 8] {
     fn from(value: VerifierKeyDigest) -> Self {
         value.0
-    }
-}
-
-/// Digest of committed public values.
-#[repr(transparent)]
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct PublicValuesDigest([u8; 32]);
-
-impl PublicValuesDigest {
-    #[must_use]
-    pub const fn from_raw(raw: [u8; 32]) -> Self {
-        Self(raw)
-    }
-
-    #[must_use]
-    pub const fn as_raw(&self) -> &[u8; 32] {
-        &self.0
-    }
-
-    #[must_use]
-    pub const fn into_raw(self) -> [u8; 32] {
-        self.0
-    }
-}
-
-impl From<[u8; 32]> for PublicValuesDigest {
-    fn from(value: [u8; 32]) -> Self {
-        Self(value)
-    }
-}
-
-impl From<PublicValuesDigest> for [u8; 32] {
-    fn from(value: PublicValuesDigest) -> Self {
-        value.0
-    }
-}
-
-/// The verifier-visible portion of a validated chain segment.
-#[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Size)]
-pub struct Claim {
-    pub chain_work: ChainWork,
-    pub genesis_hash: BlockHash,
-    pub tip_hash: BlockHash,
-    pub height: u32,
-}
-
-impl Claim {
-    #[must_use]
-    pub fn to_bytes(&self) -> [u8; Self::SIZE_NO_TAIL_PAD] {
-        let mut out = [0u8; Self::SIZE_NO_TAIL_PAD];
-        out[0..32].copy_from_slice(self.chain_work.to_le_bytes_slice());
-        out[32..64].copy_from_slice(self.genesis_hash.to_le_bytes_slice());
-        out[64..96].copy_from_slice(self.tip_hash.to_le_bytes_slice());
-        out[96..100].copy_from_slice(&self.height.to_le_bytes());
-        out
-    }
-
-    pub fn parse(bytes: &[u8]) -> Result<Self, ParseError> {
-        check_exact_len(bytes, Self::SIZE_NO_TAIL_PAD)?;
-        let chain_work = ChainWork::from_le_bytes(bytes[0..32].try_into().unwrap());
-        let genesis_hash = BlockHash::new(bytes[32..64].try_into().unwrap());
-        let tip_hash = BlockHash::new(bytes[64..96].try_into().unwrap());
-        let height = u32::from_le_bytes(bytes[96..100].try_into().unwrap());
-        Ok(Self {
-            chain_work,
-            genesis_hash,
-            tip_hash,
-            height,
-        })
-    }
-}
-
-/// Continuation data carried forward at each proof step.
-///
-/// Committed only as a digest in the public values; the raw bytes are
-/// supplied as a private witness when extending to the next step.
-///
-/// Serialized without struct padding (52 bytes):
-/// ```text
-///  0..  4  current_nbits           u32 LE
-///  4..  8  epoch_start_timestamp   u32 LE
-///  8.. 52  timestamps              [u32; 11] LE
-/// ```
-#[repr(C)]
-#[derive(Debug, Clone, PartialEq, Eq, Size)]
-pub struct ContinuationData {
-    pub current_nbits: CompactTarget,
-    pub epoch_start_timestamp: BlockTimestamp,
-    pub timestamps: [BlockTimestamp; Mainnet::PARAMS.window_size],
-}
-
-impl ContinuationData {
-    #[must_use]
-    pub fn from_state(state: &State) -> Self {
-        Self {
-            current_nbits: state.current_nbits,
-            epoch_start_timestamp: state.epoch_start_timestamp,
-            timestamps: state.timestamps,
-        }
-    }
-
-    #[must_use]
-    pub fn to_bytes(&self) -> [u8; Self::SIZE] {
-        let mut out = [0u8; Self::SIZE];
-        out[0..4].copy_from_slice(self.current_nbits.to_le_bytes_slice());
-        out[4..8].copy_from_slice(self.epoch_start_timestamp.to_le_bytes_slice());
-        for (i, ts) in self.timestamps.iter().enumerate() {
-            out[8 + i * 4..8 + (i + 1) * 4].copy_from_slice(ts.to_le_bytes_slice());
-        }
-        out
-    }
-
-    pub fn parse(bytes: &[u8]) -> Result<Self, ParseError> {
-        check_exact_len(bytes, Self::SIZE)?;
-        let current_nbits = CompactTarget::new(u32::from_le_bytes(bytes[0..4].try_into().unwrap()));
-        let epoch_start_timestamp = BlockTimestamp::from_le_bytes(bytes[4..8].try_into().unwrap());
-        let mut timestamps = [BlockTimestamp::default(); Mainnet::PARAMS.window_size];
-        for (i, ts) in timestamps.iter_mut().enumerate() {
-            *ts = BlockTimestamp::from_le_bytes(bytes[8 + i * 4..8 + (i + 1) * 4].try_into().unwrap());
-        }
-        Ok(Self {
-            current_nbits,
-            epoch_start_timestamp,
-            timestamps,
-        })
     }
 }
 
@@ -258,10 +127,10 @@ impl core::fmt::Display for ErrorCode {
 #[repr(u8)]
 pub enum ErrorCodeNames {
     HeaderPayloadLengthInvalid = 1,
-    PowInsufficient = 2,
-    TimestampTooOld = 3,
+    PowInsufficient     = 2,
+    TimestampTooOld     = 3,
     GenesisHashMismatch = 4,
-    UnknownError = 255,
+    UnknownError        = 255,
 }
 
 impl TryFrom<u8> for ErrorCodeNames {
@@ -387,116 +256,65 @@ pub struct ApplyFailure {
     pub error_code: ErrorCode,
 }
 
-// impl From<ApplyFailure> for u8 {
-//     fn from(value: ApplyFailure) -> u8 {
-//         value.i
-//     }
-// }
-
-/// Wire layout of the minimal public values committed by the prover.
+/// Wire layout of the public values committed by the prover.
 ///
-/// Layout (165 bytes, little-endian):
+/// Layout (185 bytes, little-endian):
 /// ```text
-///  0.. 32  chain_work          [u8; 32]  (four little-endian u64 limbs)
-/// 32.. 64  verifier_key        [u8; 32]  ([u32; 8] LE words)
-/// 64.. 96  continuation_digest [u8; 32]
-/// 96..128  genesis_hash        [u8; 32]
-/// 128..160 tip_hash            [u8; 32]
-/// 160..164 height              u32 LE
-/// 164      error_code          u8        (0 = success, >0 = failure)
+///  0..152  state                 [u8; 152]  complete State bytes
+/// 152..184 verifier_key          [u8; 32]   ([u32; 8] LE words)
+/// 184      return_code            u8         (0 = success, >0 = failure)
 /// ```
 ///
 /// Serialized manually to avoid struct padding; use [`PublicValues::to_bytes`]
 /// and [`PublicValues::parse`] rather than transmuting.
-#[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MinimalPublicValues {
-    pub chain_work: ChainWork,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PublicValues {
+    pub state:        State,
     pub verifier_key: VerifierKeyDigest,
-    pub continuation_digest: [u8; 32],
-    pub genesis_hash: BlockHash,
-    pub tip_hash: BlockHash,
-    pub height: u32,
-    pub return_code: ReturnCode,
+    pub return_code:  ReturnCode,
 }
 
-/// Serialize minimal public values from their individual fields.
-///
-/// Equivalent to constructing a [`MinimalPublicValues`] and calling `to_bytes`,
-/// but avoids materializing the struct.
-#[must_use]
-pub fn serialize_minimal_public_values(
-    chain_work: &ChainWork,
-    verifier_key: &[u8],
-    continuation_digest: &[u8],
-    genesis_hash: &BlockHash,
-    tip_hash: &BlockHash,
-    height: u32,
-    return_code: u8,
-) -> [u8; MinimalPublicValues::SIZE] {
-    let mut out = [0u8; MinimalPublicValues::SIZE];
-    out[0..32].copy_from_slice(chain_work.to_le_bytes_slice());
-    out[32..64].copy_from_slice(verifier_key);
-    out[64..96].copy_from_slice(continuation_digest);
-    out[96..128].copy_from_slice(genesis_hash.to_le_bytes_slice());
-    out[128..160].copy_from_slice(tip_hash.to_le_bytes_slice());
-    out[160..164].copy_from_slice(&height.to_le_bytes());
-    out[164] = return_code;
-    out
-}
+impl PublicValues {
+    pub const SIZE: usize = 185;
 
-impl MinimalPublicValues {
-    pub const SIZE: usize = 165;
-
-    /// Serialize to exactly [`MinimalPublicValues::SIZE`] bytes (no padding).
+    /// Create public values from their constituent parts.
     #[must_use]
-    pub fn to_bytes(&self) -> [u8; MinimalPublicValues::SIZE] {
-        serialize_minimal_public_values(
-            &self.chain_work,
-            self.verifier_key.to_le_bytes_slice(),
-            &self.continuation_digest,
-            &self.genesis_hash,
-            &self.tip_hash,
-            self.height,
-            self.return_code.into_u8(),
-        )
+    pub fn new(state: State, verifier_key: VerifierKeyDigest, return_code: ReturnCode) -> Self {
+        Self {
+            state,
+            verifier_key,
+            return_code,
+        }
     }
 
-    /// Deserialize from exactly [`MinimalPublicValues::SIZE`] bytes.
+    /// Serialize to exactly [`PublicValues::SIZE`] bytes (no padding).
+    #[must_use]
+    pub fn to_bytes(&self) -> [u8; Self::SIZE] {
+        Self::serialize(&self.state, &self.verifier_key, self.return_code)
+    }
+
+    #[must_use]
+    pub fn serialize(state: &State, verifier_key: &VerifierKeyDigest, return_code: ReturnCode) -> [u8; Self::SIZE] {
+        let mut out = [0u8; Self::SIZE];
+        out[0..State::SIZE].copy_from_slice(bytemuck::bytes_of(state));
+        out[State::SIZE..State::SIZE + 32].copy_from_slice(verifier_key.to_le_bytes_slice());
+        out[Self::SIZE - 1] = return_code.into_u8();
+        out
+    }
+
+    /// Deserialize from exactly [`PublicValues::SIZE`] bytes.
     pub fn parse(bytes: &[u8]) -> Result<Self, InputParseError> {
-        if bytes.len() != Self::SIZE {
-            return Err(InputParseError::InvalidLength {
-                expected: Self::SIZE,
-                actual: bytes.len(),
-            });
-        }
-        let chain_work = ChainWork::new(bytes[0..32].try_into().unwrap());
-        let verifier_key = VerifierKeyDigest::from_bytes(bytes[32..64].try_into().unwrap());
-        let continuation_digest: [u8; 32] = bytes[64..96].try_into().unwrap();
-        let genesis_hash = BlockHash::new(bytes[96..128].try_into().unwrap());
-        let tip_hash = BlockHash::new(bytes[128..160].try_into().unwrap());
-        let height = u32::from_le_bytes(bytes[160..164].try_into().unwrap());
-        let return_code = ReturnCode::from(bytes[164]);
+        check_exact_len(bytes, Self::SIZE)?;
+        let state = bytemuck::pod_read_unaligned::<State>(&bytes[0..State::SIZE]);
+        let mut verifier_key_bytes = [0; 32];
+        verifier_key_bytes.copy_from_slice(&bytes[State::SIZE..State::SIZE + 32]);
+        let verifier_key = VerifierKeyDigest::from_bytes(verifier_key_bytes);
+        let return_code = ReturnCode::from(bytes[Self::SIZE - 1]);
         Ok(Self {
-            chain_work,
+            state,
             verifier_key,
-            continuation_digest,
-            genesis_hash,
-            tip_hash,
-            height,
             return_code,
         })
-    }
-
-    /// Return the public claim encoded in these public values.
-    #[must_use]
-    pub fn claim(&self) -> Claim {
-        Claim {
-            genesis_hash: self.genesis_hash,
-            tip_hash: self.tip_hash,
-            chain_work: self.chain_work,
-            height: self.height,
-        }
     }
 
     /// Return `true` if the public values report success.

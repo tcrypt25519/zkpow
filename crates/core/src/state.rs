@@ -4,6 +4,7 @@ compile_error!("zkpow wire types require a little-endian target");
 use core::marker::PhantomData;
 
 use bytemuck::{Pod, PodCastError, Zeroable};
+use derive_size::Size;
 // #[cfg(feature = "host")]
 // use serde::{Deserialize, Serialize};
 use sp1_cycle::tracked;
@@ -13,27 +14,27 @@ use crate::{
     advance_ordered_timestamp_run, block_work_from_target, calculate_next_target_required, check_proof_of_work,
     copy_to_bytes, has_ordered_timestamp_window, hash_header_input, ordered_median_timestamp_slot,
     ordered_timestamp_run, target_from_bits, timestamp_slot, ApplyFailure, BlockHash, BlockTimestamp, BlockWork,
-    ByteInfo, ChainWork, Claim, CompactTarget, ContinuationData, HeaderInput, ReturnCode, Target,
+    ChainWork, CompactTarget, HeaderInput, ReturnCode, Target,
 };
 
 // use rkyv::{Archive, Serialize, Deserialize};
 
 /// Complete authenticated validation state, serialized between recursive iterations.
 #[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Pod, Zeroable)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Pod, Zeroable, Size)]
 #[cfg_attr(
     not(target_os = "zkvm"),
     derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
 )]
 pub struct State {
-    pub chain_work:   ChainWork,
+    pub chain_work: ChainWork,
     pub genesis_hash: BlockHash,
-    pub block_hash:   BlockHash,
-    pub height:       u32,
+    pub block_hash: BlockHash,
+    pub height: u32,
 
-    pub current_nbits:         CompactTarget,
+    pub current_nbits: CompactTarget,
     pub epoch_start_timestamp: BlockTimestamp,
-    pub timestamps:            [BlockTimestamp; Mainnet::PARAMS.window_size],
+    pub timestamps: [BlockTimestamp; Mainnet::PARAMS.window_size],
 }
 
 impl State {
@@ -60,25 +61,6 @@ impl State {
     #[tracked]
     pub fn parse(bytes: &[u8]) -> Result<&Self, PodCastError> {
         bytemuck::try_from_bytes::<Self>(bytes)
-    }
-
-    /// Extract the verifier-visible public claim from this state.
-    #[must_use]
-    pub fn public_claim(&self) -> Claim {
-        Claim {
-            chain_work:   self.chain_work,
-            genesis_hash: self.genesis_hash,
-            tip_hash:     self.block_hash,
-            height:       self.height,
-        }
-    }
-
-    /// The continuation data bytes as a view into `State`'s serialized form.
-    #[must_use]
-    pub fn continuation_bytes(&self) -> &[u8; ContinuationData::SIZE] {
-        let start = core::mem::offset_of!(Self, current_nbits);
-        let bytes = bytemuck::bytes_of(self);
-        bytes[start..start + ContinuationData::SIZE].try_into().unwrap()
     }
 
     /// Compute the difficulty values that become active at a new epoch boundary.
@@ -224,23 +206,23 @@ impl State {
 impl Default for State {
     fn default() -> Self {
         Self {
-            block_hash:            BlockHash::default(),
-            genesis_hash:          BlockHash::default(),
-            current_nbits:         CompactTarget::default(),
-            height:                0,
-            chain_work:            ChainWork::default(),
+            block_hash: BlockHash::default(),
+            genesis_hash: BlockHash::default(),
+            current_nbits: CompactTarget::default(),
+            height: 0,
+            chain_work: ChainWork::default(),
             epoch_start_timestamp: BlockTimestamp::default(),
-            timestamps:            [BlockTimestamp::default(); Mainnet::PARAMS.window_size],
+            timestamps: [BlockTimestamp::default(); Mainnet::PARAMS.window_size],
         }
     }
 }
 
 struct EpochManager<'a> {
-    state:             &'a mut State,
-    start_height:      u32,
+    state: &'a mut State,
+    start_height: u32,
     active_block_work: BlockWork,
-    active_nbits:      CompactTarget,
-    active_target:     Target,
+    active_nbits: CompactTarget,
+    active_target: Target,
 }
 
 impl<'a> EpochManager<'a> {
@@ -294,12 +276,12 @@ impl<'a> Drop for EpochManager<'a> {
 }
 
 struct HeaderUpdate<'a, C: Consensus> {
-    state:          &'a mut State,
-    height:         u32,
+    state: &'a mut State,
+    height: u32,
     timestamp_slot: usize,
-    timestamp:      BlockTimestamp,
-    block_hash:     BlockHash,
-    consensus:      PhantomData<fn() -> C>,
+    timestamp: BlockTimestamp,
+    block_hash: BlockHash,
+    consensus: PhantomData<fn() -> C>,
 }
 
 impl<'a, C: Consensus> HeaderUpdate<'a, C> {

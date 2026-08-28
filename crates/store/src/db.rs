@@ -7,8 +7,8 @@ use std::path::Path;
 use rusqlite::{params, Connection, OptionalExtension};
 use sync_headers::{ConnectedHeader, Tip};
 use zkpow_core::{
-    requires_median_hint, BlockHash, BlockTimestamp, ByteInfo, ChainWork, Claim, CompactTarget, Header, HeaderInput,
-    State, VerifierKeyDigest,
+    requires_median_hint, BlockHash, BlockTimestamp, ByteInfo, ChainWork, CompactTarget, Header, HeaderInput, State,
+    VerifierKeyDigest,
 };
 use zkpow_params::{Consensus, Mainnet};
 
@@ -246,23 +246,6 @@ impl HeaderStore {
             ],
         )?;
         Ok(())
-    }
-
-    pub fn load_public_claim(&self, height: u64, genesis_hash: BlockHash) -> Claim {
-        const SQL: &str = "SELECT block_hash, chainwork FROM headers WHERE height = ?1";
-
-        let mut stmt = self.conn.prepare_cached(SQL).expect("prepare");
-        stmt.query_row(params![height as i64], |row| {
-            let block_hash: Vec<u8> = row.get(0)?;
-            let chainwork: Vec<u8> = row.get(1)?;
-            Ok(Claim {
-                genesis_hash,
-                tip_hash: hash_from_bytes(&block_hash)?,
-                chain_work: work_from_bytes(&chainwork)?,
-                height: height as u32,
-            })
-        })
-        .expect("load_public_claim")
     }
 
     pub fn load_compact_target(&self, height: u64) -> CompactTarget {
@@ -518,17 +501,6 @@ pub struct HeaderRecord {
     pub chain_work:            ChainWork,
     pub median_time_past:      BlockTimestamp,
     pub ordered_timestamp_run: u64,
-}
-
-impl HeaderRecord {
-    pub fn public_claim(&self, genesis_hash: BlockHash) -> Claim {
-        Claim {
-            genesis_hash,
-            tip_hash: BlockHash::from(&self.header),
-            chain_work: self.chain_work,
-            height: self.height as u32,
-        }
-    }
 }
 
 /// The SP1 stdin witness for a batch: the new headers plus their median-time-past hints.

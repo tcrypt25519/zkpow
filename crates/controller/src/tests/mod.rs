@@ -1,7 +1,7 @@
+use zkpow_params::Mainnet;
+
 use super::*;
 use crate::validation::header_to_input;
-use zkpow_core::{BlockTimestamp as BTimestamp, ContinuationData};
-use zkpow_params::{Consensus, Mainnet};
 
 mod protocol;
 mod runtime;
@@ -9,36 +9,6 @@ mod storage;
 
 fn open_db() -> HeaderStore {
     HeaderStore::open(db_path()).expect("failed to open test database")
-}
-
-fn make_pcs() -> ContinuationData {
-    ContinuationData {
-        current_nbits: Mainnet::PARAMS.genesis.compact_target,
-        epoch_start_timestamp: BTimestamp::new(500),
-        timestamps: [BTimestamp::new(10); Mainnet::PARAMS.window_size],
-    }
-}
-
-#[test]
-fn continuation_digest_changes_on_any_byte_mutation() {
-    let pcs = make_pcs();
-    let base_digest = continuation_digest(&pcs);
-
-    let bytes = pcs.to_bytes();
-    for i in 0..bytes.len() {
-        let mut mutated = bytes;
-        mutated[i] ^= 0xFF;
-        if let Ok(pcs2) = ContinuationData::parse(&mutated) {
-            let digest2 = continuation_digest(&pcs2);
-            assert_ne!(base_digest, digest2, "digest unchanged after mutating byte {i}");
-        }
-    }
-}
-
-#[test]
-fn continuation_digest_is_deterministic() {
-    let pcs = make_pcs();
-    assert_eq!(continuation_digest(&pcs), continuation_digest(&pcs));
 }
 
 #[test]
@@ -98,8 +68,10 @@ fn applying_headers_one_at_a_time_matches_db_claims() {
             )
             .expect("header should apply");
         let height = (index as u32) + 1;
-        let db_claim = db.load_public_claim(height as u64, genesis_hash);
-        assert_eq!(state.public_claim(), db_claim);
+        assert_eq!(state.height, height);
+        assert_eq!(state.chain_work, record.chain_work);
+        assert_eq!(state.block_hash, BlockHash::from(&record.header));
+        assert_eq!(state.genesis_hash, genesis_hash);
         previous_ordered_run = record.ordered_timestamp_run;
     }
 }
@@ -156,12 +128,12 @@ fn db_chainwork_matches_simulated_batches() {
             &witness.headers,
             &witness.median_time_past_hints,
         );
-        let db_claim = db.load_public_claim(expected_height as u64, genesis_hash);
+        let db_record = db.load_header_record(expected_height as u64);
         let db_nbits = db.load_compact_target(expected_height as u64);
 
         assert_eq!(final_state.height, expected_height, "{name}: height");
-        assert_eq!(final_state.public_claim(), db_claim, "{name}: claim");
+        assert_eq!(final_state.block_hash, BlockHash::from(&db_record.header), "{name}: tip hash");
+        assert_eq!(final_state.chain_work, db_record.chain_work, "{name}: chainwork");
         assert_eq!(final_state.current_nbits, db_nbits, "{name}: nbits");
-        assert_eq!(final_state.chain_work, db_claim.chain_work, "{name}: chainwork");
     }
 }

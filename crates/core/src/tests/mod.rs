@@ -3,12 +3,13 @@ use alloc::vec::Vec;
 extern crate std;
 
 mod input;
-
-use super::*;
+mod public_values;
 
 /// The transition is generic over the network, so its tests drive it with the real ones.
 /// `ShortEpoch` differs from `Mainnet` only in `epoch_length`, which is what makes it useful here.
 use zkpow_params::{Mainnet as TestConsensus, ShortEpoch};
+
+use super::*;
 
 const GENESIS_NBITS: u32 = *TestConsensus::PARAMS.genesis.compact_target.as_inner();
 const GENESIS_TARGET: Target = TestConsensus::PARAMS.genesis_target;
@@ -60,7 +61,7 @@ fn test_state() -> State {
 }
 
 pub(crate) fn median_time_past(state: &State) -> BlockTimestamp {
-    let count = timestamp_count(state.height as u64);
+    let count = timestamp_count(state.height);
     let mut sorted = state.timestamps;
     if count >= TestConsensus::PARAMS.window_size {
         sorted.sort_unstable();
@@ -98,7 +99,9 @@ fn dense_median_hints_for_headers(initial_state: &State, headers: &[HeaderInput]
 fn median_hints_for_headers(initial_state: &State, headers: &[HeaderInput]) -> Vec<BlockTimestamp> {
     let dense_hints = dense_median_hints_for_headers(initial_state, headers);
     let mut state = *initial_state;
-    let warm_start = (TestConsensus::PARAMS.window_size - 1).saturating_sub(state.height as usize).min(headers.len());
+    let warm_start = (TestConsensus::PARAMS.window_size - 1)
+        .saturating_sub(state.height as usize)
+        .min(headers.len());
     for header in &headers[..warm_start] {
         state.height += 1;
         state.timestamps[state.height as usize % TestConsensus::PARAMS.window_size] = header.timestamp;
@@ -126,17 +129,13 @@ fn median_hints_for_headers(initial_state: &State, headers: &[HeaderInput]) -> V
     hints
 }
 
-fn failure_public_value_bytes(state: &State, error_code: ErrorCode) -> [u8; MinimalPublicValues::SIZE] {
-    let claim = state.public_claim();
-    serialize_minimal_public_values(
-        &claim.chain_work,
-        VerifierKeyDigest::from_raw([0xA5A5_A5A5; 8]).to_le_bytes_slice(),
-        &[0xA5; 32],
-        &claim.genesis_hash,
-        &claim.tip_hash,
-        claim.height,
-        error_code.get(),
+fn failure_public_value_bytes(state: &State, error_code: ErrorCode) -> [u8; PublicValues::SIZE] {
+    PublicValues::new(
+        *state,
+        VerifierKeyDigest::from_raw([0xA5A5_A5A5; 8]),
+        ReturnCode::from(error_code),
     )
+    .to_bytes()
 }
 
 fn expected_upper_median(height: u32) -> BlockTimestamp {
@@ -151,9 +150,7 @@ fn expected_upper_median(height: u32) -> BlockTimestamp {
 fn fixed_width_wire_sizes_match_protocol() {
     assert_eq!(HeaderInput::SIZE, 44);
     assert_eq!(State::SIZE, 152);
-    assert_eq!(Claim::SIZE_NO_TAIL_PAD, 100);
-    assert_eq!(ContinuationData::SIZE, 52);
-    assert_eq!(MinimalPublicValues::SIZE, 165);
+    assert_eq!(PublicValues::SIZE, 185);
     assert_eq!(align_of::<Header>(), 4);
     assert_eq!(align_of::<HeaderInput>(), 4);
     assert_eq!(align_of::<BlockWork>(), 8);
@@ -162,7 +159,7 @@ fn fixed_width_wire_sizes_match_protocol() {
 }
 
 #[test]
-fn minimal_public_values_round_trips() {
+fn public_values_round_trips() {
     let state: State = State {
         block_hash: BlockHash::new([0xAB; 32]),
         genesis_hash: BlockHash::new([0xCD; 32]),
@@ -170,29 +167,17 @@ fn minimal_public_values_round_trips() {
         height: 42,
         ..State::default()
     };
-    let digest = [0x11u8; 32];
     let verifier_key = VerifierKeyDigest::from_raw([9; 8]);
-    let claim = state.public_claim();
-    let bytes = serialize_minimal_public_values(
-        &claim.chain_work,
-        verifier_key.to_le_bytes_slice(),
-        &digest,
-        &claim.genesis_hash,
-        &claim.tip_hash,
-        claim.height,
-        0,
-    );
-    assert_eq!(bytes.len(), MinimalPublicValues::SIZE);
-    assert_eq!(bytes[0..32], state.chain_work.to_le_bytes());
-    assert_eq!(bytes[32..64], verifier_key.to_bytes());
-    assert_eq!(bytes[64..96], digest);
-    let parsed = MinimalPublicValues::parse(&bytes).unwrap();
-    assert_eq!(parsed.genesis_hash, state.genesis_hash);
-    assert_eq!(parsed.tip_hash, state.block_hash);
-    assert_eq!(parsed.height, state.height);
-    assert!(parsed.is_success());
-    assert_eq!(parsed.continuation_digest, digest);
+    let public_values = PublicValues::new(state, verifier_key, ReturnCode::SUCCESS);
+    let bytes = public_values.to_bytes();
+    assert_eq!(bytes.len(), PublicValues::SIZE);
+    assert_eq!(&bytes[0..State::SIZE], bytemuck::bytes_of(&state));
+    assert_eq!(&bytes[State::SIZE..State::SIZE + 32], verifier_key.to_bytes());
+    assert_eq!(bytes[PublicValues::SIZE - 1], 0);
+    let parsed = PublicValues::parse(&bytes).unwrap();
+    assert_eq!(parsed.state, state);
     assert_eq!(parsed.verifier_key, verifier_key);
+    assert!(parsed.is_success());
 }
 
 #[test]
@@ -451,11 +436,11 @@ fn apply_headers_failure_output_includes_flushed_chain_work() {
         .expect_err("validation should fail on the second header");
 
     let public_values = failure_public_value_bytes(&state, failure.error_code);
-    let parsed = MinimalPublicValues::parse(&public_values).unwrap();
+    let parsed = PublicValues::parse(&public_values).unwrap();
     assert!(parsed.is_failure());
     assert_eq!(parsed.validation_error_code().unwrap(), ErrorCode::TIMESTAMP_TOO_OLD);
-    assert_eq!(parsed.height + 1, 2);
-    assert_eq!(parsed.chain_work, state.chain_work);
+    assert_eq!(parsed.state.height + 1, 2);
+    assert_eq!(parsed.state.chain_work, state.chain_work);
 }
 
 #[test]
@@ -637,48 +622,6 @@ fn next_overwrites_only_the_next_ring_slot() {
     assert_eq!(state.timestamps, expected);
 }
 
-#[test]
-fn continuation_data_serializes_to_fixed_width() {
-    let pcs = ContinuationData {
-        current_nbits: CompactTarget::new(GENESIS_NBITS),
-        epoch_start_timestamp: BlockTimestamp::new(500),
-        timestamps: [BlockTimestamp::new(10); TestConsensus::PARAMS.window_size],
-    };
-    let bytes = pcs.to_bytes();
-    assert_eq!(bytes.len(), ContinuationData::SIZE);
-    let parsed = ContinuationData::parse(&bytes).unwrap();
-    assert_eq!(parsed, pcs);
-}
-
-#[test]
-fn state_continuation_bytes_matches_continuation_data_to_bytes() {
-    let state = State {
-        current_nbits: CompactTarget::new(GENESIS_NBITS),
-        epoch_start_timestamp: BlockTimestamp::new(500),
-        timestamps: [BlockTimestamp::new(10); TestConsensus::PARAMS.window_size],
-        ..Default::default()
-    };
-    let pcs = ContinuationData::from_state(&state);
-    assert_eq!(*state.continuation_bytes(), pcs.to_bytes());
-}
-
-#[test]
-fn claim_serializes_to_fixed_width() {
-    let claim = Claim {
-        chain_work: ChainWork::from_limbs([3, 4, 0, 0]),
-        genesis_hash: BlockHash::new([1; 32]),
-        tip_hash: BlockHash::new([2; 32]),
-        height: 99,
-    };
-    let bytes = claim.to_bytes();
-    assert_eq!(bytes.len(), Claim::SIZE_NO_TAIL_PAD);
-    assert_eq!(bytes[0..8], 3u64.to_le_bytes());
-    assert_eq!(bytes[8..16], 4u64.to_le_bytes());
-    assert_eq!(bytes[96..100], 99u32.to_le_bytes());
-    let parsed = Claim::parse(&bytes).unwrap();
-    assert_eq!(parsed, claim);
-}
-
 // Difficulty retargeting edge cases using the pure helper. These represent
 // the extremes the state machine will clamp to during epoch transitions.
 #[test]
@@ -829,7 +772,7 @@ fn assert_boundary_retargets_once<C: Consensus>() {
     let (expected_nbits, ..) = calculate_next_target_required::<C>(
         target_from_bits(state.current_nbits),
         state.epoch_start_timestamp,
-        state.timestamps[timestamp_slot(state.height as u64)],
+        state.timestamps[timestamp_slot(state.height)],
     );
     assert_ne!(
         expected_nbits, state.current_nbits,

@@ -296,7 +296,7 @@ version = "0.1.101"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "365c0acd5b2e8dd0111a46c4faea83fb3cfb6e39a49a7c73a06e090db7b2eff0"
 dependencies = [
- "bitcoin_hashes 0.14.101",
+ "bitcoin_hashes",
 ]
 
 [[package]]
@@ -334,9 +334,9 @@ checksum = "bb0ce8bd5baaa0d303a19915a6d93afed161f528654e42da2a7a97d05c59499a"
 dependencies = [
  "base58ck",
  "bech32",
- "bitcoin-io 0.1.101",
+ "bitcoin-io",
  "bitcoin-units",
- "bitcoin_hashes 0.14.101",
+ "bitcoin_hashes",
  "hex-conservative 0.2.2",
  "hex_lit",
  "secp256k1",
@@ -370,17 +370,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bitcoin-io"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3949f56a93c642b41dc6eb2969abda0955c80ac750a3cc65a24ba040f34dfb0c"
-dependencies = [
- "bitcoin-consensus-encoding",
- "bitcoin-internals",
- "bitcoin_hashes 1.2.0",
-]
-
-[[package]]
 name = "bitcoin-units"
 version = "0.1.101"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -396,20 +385,9 @@ version = "0.14.101"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bca4c7abb40c8817d77403c880988cfd484f23ab2365726afb2f798363e2c4a2"
 dependencies = [
- "bitcoin-io 0.1.101",
+ "bitcoin-io",
  "hex-conservative 0.2.2",
  "serde",
-]
-
-[[package]]
-name = "bitcoin_hashes"
-version = "1.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5304e53726dbe5f93141535e102ed97b5bf4714fbecefdda8f9fb98d7fdaff0e"
-dependencies = [
- "bitcoin-consensus-encoding",
- "bitcoin-internals",
- "hex-conservative 1.2.0",
 ]
 
 [[package]]
@@ -3756,7 +3734,7 @@ version = "0.29.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9465315bc9d4566e1724f0fffcbcc446268cb522e60f9a27bcded6b19c108113"
 dependencies = [
- "bitcoin_hashes 0.14.101",
+ "bitcoin_hashes",
  "secp256k1-sys",
  "serde",
 ]
@@ -6485,7 +6463,6 @@ name = "zkpow-sync-headers"
 version = "0.1.0"
 dependencies = [
  "bitcoin",
- "bitcoin-io 0.6.0",
  "rand 0.10.2",
  "thiserror 2.0.20",
  "tracing",

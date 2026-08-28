@@ -7,11 +7,11 @@
 //! here, on the controller's side of the trust boundary.
 //!
 //! Module map:
-//! * [`runtime`] — run sessions, long-polling, completion validation. Verified
-//!   progress persists in the header database's `runs` table (see `zkpow_store`).
-//! * [`protocol`] — typed host/controller messages.
-//! * [`storage`] — local-disk artifact targets.
-//! * [`verify`] — pluggable cryptographic proof verification.
+//! * [`runtime`]: run sessions, long-polling, completion validation. Verified progress persists in the header
+//!   database's `runs` table (see `zkpow_store`).
+//! * [`protocol`]: typed host/controller messages.
+//! * [`storage`]: local-disk artifact targets.
+//! * [`verify`]: pluggable cryptographic proof verification.
 
 #[cfg(test)]
 mod tests;
@@ -23,12 +23,11 @@ pub mod verify;
 
 mod validation;
 
-pub use runtime::{continuation_digest, continuation_digest_from_state};
 pub use validation::{compute_final_state_with_hints, records_to_new_headers};
 
 /// Headers per controller-selected batch: one difficulty epoch.
 pub const DEFAULT_BATCH_SIZE: u32 = Mainnet::PARAMS.epoch_length;
-pub use zkpow_core::{requires_median_hint, BlockHash, BlockTimestamp, Claim, HeaderInput, State};
+pub use zkpow_core::{requires_median_hint, BlockHash, BlockTimestamp, HeaderInput, State};
 use zkpow_params::{Consensus, Mainnet};
 pub use zkpow_store::{
     db_path, genesis_state_from_record, headers_bin_path, HeaderBatchWitness, HeaderBinReader, HeaderRecord,

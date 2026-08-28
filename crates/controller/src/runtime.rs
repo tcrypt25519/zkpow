@@ -11,7 +11,7 @@ use std::{
 };
 
 use tokio::sync::Notify;
-use zkpow_core::{serialize_inputs, serialize_minimal_public_values, BlockHash, ContinuationData, State, VerifierKeyDigest};
+use zkpow_core::{serialize_inputs, BlockHash, PublicValues, ReturnCode, State, VerifierKeyDigest};
 use zkpow_params::Mainnet;
 use zkpow_store::{HeaderBinReader, HeaderStore, RunRecord};
 
@@ -22,14 +22,12 @@ use crate::{
     NO_HEADERS_REMAINING_PREFIX,
 };
 
-use sha2::{Digest, Sha256};
-
 const DEFAULT_PULL_TIMEOUT: Duration = Duration::from_secs(600);
 
 #[derive(Debug, Clone)]
 pub struct ControllerConfig {
     pub genesis_hash: BlockHash,
-    pub batch_size: u32,
+    pub batch_size:   u32,
     pub pull_timeout: Duration,
 }
 
@@ -44,34 +42,37 @@ impl ControllerConfig {
 }
 
 struct FetchedBatch {
-    current_state: State,
-    header_bytes: Vec<u8>,
-    median_hint_bytes: Vec<u8>,
-    expected_state: State,
+    current_state:          State,
+    header_bytes:           Vec<u8>,
+    median_hint_bytes:      Vec<u8>,
+    expected_state:         State,
     expected_public_values: Vec<u8>,
-    first_new_height: u32,
-    end_height: u32,
+    first_new_height:       u32,
+    end_height:             u32,
 }
 
 struct PendingBatch {
-    end_height: u32,
-    expected_state: State,
+    end_height:             u32,
+    expected_state:         State,
     expected_public_values: Vec<u8>,
-    proof_object: String,
+    proof_object:           String,
 }
 
 struct RunSession {
-    verified_state: State,
+    verified_state:        State,
     verified_proof_object: Option<String>,
     /// At most one batch outstanding: `pull_batch` refuses a new grant until
     /// this one is verified by `complete`.
-    pending: Option<PendingBatch>,
-    halted: Option<String>,
+    pending:               Option<PendingBatch>,
+    halted:                Option<String>,
 }
 
 impl RunSession {
     fn tip_state(&self) -> State {
-        self.pending.as_ref().map(|batch| batch.expected_state).unwrap_or(self.verified_state)
+        self.pending
+            .as_ref()
+            .map(|batch| batch.expected_state)
+            .unwrap_or(self.verified_state)
     }
 
     fn tip_proof_object(&self) -> Option<String> {
@@ -84,14 +85,14 @@ impl RunSession {
 
 struct ControllerCore {
     /// The run ledger only; header content is read from `headers`.
-    store: HeaderStore,
+    store:        HeaderStore,
     /// Header content: a read-only `headers.bin` snapshot, not the live
     /// database. Regenerate it with `zkpow-cli dump-bin` after syncing.
-    headers: HeaderBinReader,
+    headers:      HeaderBinReader,
     genesis_hash: BlockHash,
     verifier_key: VerifierKeyDigest,
-    batch_size: u32,
-    runs: HashMap<String, RunSession>,
+    batch_size:   u32,
+    runs:         HashMap<String, RunSession>,
 }
 
 enum Pull {
@@ -100,16 +101,16 @@ enum Pull {
 }
 
 struct ReadyBatch {
-    fetched: FetchedBatch,
-    proof_object: String,
+    fetched:               FetchedBatch,
+    proof_object:          String,
     previous_proof_object: Option<String>,
 }
 
 struct RuntimeInner {
-    core: Mutex<ControllerCore>,
-    progress: Notify,
-    storage: Arc<dyn ArtifactStore>,
-    verifier: Arc<dyn ProofVerifier>,
+    core:         Mutex<ControllerCore>,
+    progress:     Notify,
+    storage:      Arc<dyn ArtifactStore>,
+    verifier:     Arc<dyn ProofVerifier>,
     verifier_key: VerifierKeyDigest,
     pull_timeout: Duration,
 }
@@ -294,9 +295,9 @@ impl ControllerCore {
 
     fn create_run_record(&self, run_id: &str) -> Result<RunRecord, ControllerError> {
         let record = RunRecord {
-            verifier_key: self.verifier_key,
+            verifier_key:    self.verifier_key,
             verified_height: 0,
-            proof_object: None,
+            proof_object:    None,
         };
         self.store
             .create_run(run_id, &record)
@@ -321,9 +322,9 @@ impl ControllerCore {
                         current = %hex::encode(self.verifier_key.to_bytes()),
                         "run has no verified progress; rebinding to this controller's verifier key"
                     );
-                    self.store.delete_run(run_id).map_err(|err| {
-                        ControllerError::internal(format!("run ledger delete failed: {err}"))
-                    })?;
+                    self.store
+                        .delete_run(run_id)
+                        .map_err(|err| ControllerError::internal(format!("run ledger delete failed: {err}")))?;
                     self.create_run_record(run_id)?
                 } else {
                     return Err(ControllerError::conflict(format!(
@@ -345,15 +346,12 @@ impl ControllerCore {
                 self.headers.header_count(),
             )));
         }
-        self.runs.insert(
-            run_id.to_owned(),
-            RunSession {
-                verified_state: self.state_at(record.verified_height),
-                verified_proof_object: record.proof_object,
-                pending: None,
-                halted: None,
-            },
-        );
+        self.runs.insert(run_id.to_owned(), RunSession {
+            verified_state:        self.state_at(record.verified_height),
+            verified_proof_object: record.proof_object,
+            pending:               None,
+            halted:                None,
+        });
         Ok(())
     }
 
@@ -374,10 +372,10 @@ impl ControllerCore {
         let proof_object = format!("proof_{}.bin", fetched.end_height);
         let session = self.session_mut(run_id)?;
         session.pending = Some(PendingBatch {
-            end_height: fetched.end_height,
-            expected_state: fetched.expected_state,
+            end_height:             fetched.end_height,
+            expected_state:         fetched.expected_state,
             expected_public_values: std::mem::take(&mut fetched.expected_public_values),
-            proof_object: proof_object.clone(),
+            proof_object:           proof_object.clone(),
         });
         Ok(Pull::Ready(Box::new(ReadyBatch {
             fetched,
@@ -401,17 +399,8 @@ impl ControllerCore {
         }
         let end_height = current_state.height + witness.headers.len() as u32;
         let expected_state = self.state_at(end_height);
-        let expected_claim = expected_state.public_claim();
-        let expected_public_values = serialize_minimal_public_values(
-            &expected_claim.chain_work,
-            self.verifier_key.to_le_bytes_slice(),
-            &continuation_digest_from_state(&expected_state),
-            &expected_claim.genesis_hash,
-            &expected_claim.tip_hash,
-            expected_claim.height,
-            0,
-        )
-        .to_vec();
+        let expected_public_values =
+            PublicValues::serialize(&expected_state, &self.verifier_key, ReturnCode::SUCCESS).to_vec();
         Ok(FetchedBatch {
             current_state,
             header_bytes: serialize_inputs(&witness.headers),
@@ -422,14 +411,4 @@ impl ControllerCore {
             end_height,
         })
     }
-}
-
-/// Compute the continuation digest: SHA-256 of the serialized continuation data.
-pub fn continuation_digest(data: &ContinuationData) -> [u8; 32] {
-    Sha256::digest(data.to_bytes()).into()
-}
-
-/// Compute the continuation digest directly from a [`State`].
-pub fn continuation_digest_from_state(state: &State) -> [u8; 32] {
-    Sha256::digest(&state.continuation_bytes()[..]).into()
 }

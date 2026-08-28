@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use zkpow_core::{serialize_minimal_public_values, VerifierKeyDigest};
+use zkpow_core::{PublicValues, ReturnCode, VerifierKeyDigest};
 use zkpow_store::{db_path, headers_bin_path, HeaderBinReader};
 
 use super::*;
@@ -88,18 +88,9 @@ impl Harness {
         let state = HeaderStore::open(db_path())
             .unwrap()
             .state_at_height::<Mainnet>(batch.end_height, self.genesis_hash());
-        let claim = state.public_claim();
-        let bytes = serialize_minimal_public_values(
-            &claim.chain_work,
-            batch.verifier_key.to_le_bytes_slice(),
-            &continuation_digest_from_state(&state),
-            &claim.genesis_hash,
-            &claim.tip_hash,
-            claim.height,
-            0,
-        );
+        let public_values = PublicValues::new(state, batch.verifier_key, ReturnCode::SUCCESS);
         let path = &batch.proof_upload;
-        std::fs::write(path, bytes).unwrap();
+        std::fs::write(path, public_values.to_bytes()).unwrap();
         assert!(path.contains(run));
     }
 

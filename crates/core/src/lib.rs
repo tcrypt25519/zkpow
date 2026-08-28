@@ -13,7 +13,6 @@ extern crate alloc;
 extern crate self as zkpow_core;
 
 use bytemuck::Pod;
-
 use zkpow_params::{Consensus, Mainnet};
 pub use zkpow_types::{
     BlockHash, BlockTimestamp, BlockWork, ByteInfo, ChainWork, CompactTarget, Header, NonMaxU256, Target, u256,
@@ -23,10 +22,7 @@ mod header;
 pub use header::HeaderInput;
 
 mod public_values;
-pub use public_values::{
-    ApplyFailure, Claim, ContinuationData, ErrorCode, ErrorCodeNames, MinimalPublicValues, PublicValuesDigest,
-    ReturnCode, VerifierKeyDigest, serialize_minimal_public_values,
-};
+pub use public_values::{ApplyFailure, ErrorCode, ErrorCodeNames, PublicValues, ReturnCode, VerifierKeyDigest};
 pub use sp1_cycle;
 
 mod state;
@@ -66,12 +62,12 @@ fn hash_header_input(input: &HeaderInput, prev_blockhash: &BlockHash, compact_ta
     #[cfg(not(target_os = "zkvm"))]
     {
         let header = Header {
-            version: input.version,
+            version:        input.version,
             prev_blockhash: *prev_blockhash,
-            merkle_root: input.merkle_root,
-            timestamp: input.timestamp,
+            merkle_root:    input.merkle_root,
+            timestamp:      input.timestamp,
             compact_target: *compact_target,
-            nonce: input.nonce,
+            nonce:          input.nonce,
         };
         hash_header(&header)
     }
@@ -149,7 +145,8 @@ pub fn ordered_timestamp_run(timestamps: &[BlockTimestamp; Mainnet::PARAMS.windo
     let mut run = 0;
     let mut newer = timestamps[timestamp_slot(height)];
     for offset in 1..Mainnet::PARAMS.window_size {
-        let older = timestamps[(timestamp_slot(height) + Mainnet::PARAMS.window_size - offset) % Mainnet::PARAMS.window_size];
+        let older =
+            timestamps[(timestamp_slot(height) + Mainnet::PARAMS.window_size - offset) % Mainnet::PARAMS.window_size];
         if older > newer {
             break;
         }
@@ -161,7 +158,8 @@ pub fn ordered_timestamp_run(timestamps: &[BlockTimestamp; Mainnet::PARAMS.windo
 
 #[must_use]
 pub const fn ordered_median_timestamp_slot(height: u32) -> usize {
-    (timestamp_slot(height) + Mainnet::PARAMS.window_size - (Mainnet::PARAMS.window_small_half_size())) % Mainnet::PARAMS.window_size
+    (timestamp_slot(height) + Mainnet::PARAMS.window_size - (Mainnet::PARAMS.window_small_half_size()))
+        % Mainnet::PARAMS.window_size
 }
 
 #[must_use]
