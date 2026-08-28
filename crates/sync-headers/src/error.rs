@@ -29,7 +29,7 @@ pub enum SyncHeadersError<E: std::fmt::Debug> {
     Peer {
         source:     Box<std::io::Error>,
         latest_tip: Box<Tip>,
-        synced: u64,
+        synced:     u32,
     },
 
     /// The caller's header-processing callback returned an error.
@@ -37,7 +37,7 @@ pub enum SyncHeadersError<E: std::fmt::Debug> {
     Callback {
         source:     Box<E>,
         latest_tip: Box<Tip>,
-        synced: u64,
+        synced:     u32,
     },
 
     /// No candidate peers available to try.

@@ -131,10 +131,10 @@ impl HeaderStore {
 
     pub fn get_best_tip(&self) -> rusqlite::Result<Option<Tip>> {
         struct BestTipRow {
-            hash_bytes: Vec<u8>,
-            height: i64,
-            chainwork_bytes: Vec<u8>,
-            n_bits: i64,
+            hash_bytes:            Vec<u8>,
+            height:                u32,
+            chainwork_bytes:       Vec<u8>,
+            n_bits:                i64,
             ordered_timestamp_run: i64,
         }
 
@@ -179,7 +179,7 @@ impl HeaderStore {
 
                 Ok(Some(Tip::new(
                     hash,
-                    row.height as u64,
+                    row.height,
                     chainwork,
                     timestamps,
                     ordered_timestamp_run,

@@ -1,5 +1,6 @@
 use core::num::NonZeroU8;
 
+use bytemuck::{Pod, Zeroable};
 use derive_size::Size;
 use zkpow_params::{Consensus, Mainnet};
 
@@ -9,7 +10,7 @@ use crate::{
 
 /// Digest of a program verifier key.
 #[repr(transparent)]
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Pod, Zeroable)]
 #[cfg_attr(
     not(target_os = "zkvm"),
     derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
@@ -17,6 +18,11 @@ use crate::{
 pub struct VerifierKeyDigest([u32; 8]);
 
 impl VerifierKeyDigest {
+    /// The raw wire bytes. Zero-copy; the in-memory layout is already the wire format.
+    #[must_use]
+    pub fn to_le_bytes_slice(&self) -> &[u8] {
+        bytemuck::bytes_of(self)
+    }
     // pub const SIZE: usize = 32;
 
     #[must_use]
@@ -421,8 +427,8 @@ pub struct MinimalPublicValues {
 #[must_use]
 pub fn serialize_minimal_public_values(
     chain_work: &ChainWork,
-    verifier_key: &VerifierKeyDigest,
-    continuation_digest: &[u8; 32],
+    verifier_key: &[u8],
+    continuation_digest: &[u8],
     genesis_hash: &BlockHash,
     tip_hash: &BlockHash,
     height: u32,
@@ -430,8 +436,8 @@ pub fn serialize_minimal_public_values(
 ) -> [u8; MinimalPublicValues::SIZE] {
     let mut out = [0u8; MinimalPublicValues::SIZE];
     out[0..32].copy_from_slice(chain_work.to_le_bytes_slice());
-    out[32..64].copy_from_slice(&verifier_key.to_bytes());
-    out[64..96].copy_from_slice(&continuation_digest[..]);
+    out[32..64].copy_from_slice(verifier_key);
+    out[64..96].copy_from_slice(continuation_digest);
     out[96..128].copy_from_slice(genesis_hash.to_le_bytes_slice());
     out[128..160].copy_from_slice(tip_hash.to_le_bytes_slice());
     out[160..164].copy_from_slice(&height.to_le_bytes());
@@ -447,7 +453,7 @@ impl MinimalPublicValues {
     pub fn to_bytes(&self) -> [u8; MinimalPublicValues::SIZE] {
         serialize_minimal_public_values(
             &self.chain_work,
-            &self.verifier_key,
+            self.verifier_key.to_le_bytes_slice(),
             &self.continuation_digest,
             &self.genesis_hash,
             &self.tip_hash,

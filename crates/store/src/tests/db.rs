@@ -183,6 +183,7 @@ fn stale_ordered_timestamp_run_fails_before_witness_loading() {
 }
 
 #[test]
+// TODO: This repeats flat.rs and probably 5 other places.
 fn bulk_insert_calculates_median_time_past() {
     let path = temp_db_path("bulk-insert-mtp");
     remove_db_files(&path);

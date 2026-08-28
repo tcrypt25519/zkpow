@@ -8,8 +8,8 @@ use crate::types::{expand_target, ConnectedHeader, Header, Tip};
 
 pub fn connect_headers<C: Consensus>(anchor: &Tip, headers: &[Header]) -> Vec<ConnectedHeader> {
     let mut connected = Vec::with_capacity(headers.len());
-    let mut prev_hash = anchor.hash;
     let mut height = anchor.height;
+    let mut prev_hash = anchor.hash;
     let mut cumulative_work = anchor.chainwork;
     let mut timestamps = anchor.timestamps;
     let mut ordered_timestamp_run = anchor.ordered_timestamp_run;
@@ -29,9 +29,9 @@ pub fn connect_headers<C: Consensus>(anchor: &Tip, headers: &[Header]) -> Vec<Co
 
         let hash = header.block_hash();
         let candidate_height = height + 1;
-        let previous_timestamp = timestamps[timestamp_slot(height)];
+        let previous_timestamp = timestamps[timestamp_slot(height.into())];
 
-        if candidate_height.is_multiple_of(C::PARAMS.epoch_length as u64) {
+        if candidate_height.is_multiple_of(C::PARAMS.epoch_length) {
             let (_, target, work) = expand_target(header.inner.compact_target);
             active_target = target;
             active_work = work;
@@ -42,9 +42,9 @@ pub fn connect_headers<C: Consensus>(anchor: &Tip, headers: &[Header]) -> Vec<Co
             break;
         }
 
-        let window_len = zkpow_core::timestamp_count(height);
+        let window_len = zkpow_core::timestamp_count(height.into());
         let mtp = if has_ordered_timestamp_window(ordered_timestamp_run) {
-            timestamps[ordered_median_timestamp_slot(height)]
+            timestamps[ordered_median_timestamp_slot(height.into())]
         } else {
             let mut sorted = timestamps;
             sorted[..window_len].sort_unstable();
@@ -74,7 +74,7 @@ pub fn connect_headers<C: Consensus>(anchor: &Tip, headers: &[Header]) -> Vec<Co
         ));
         prev_hash = hash;
 
-        timestamps[timestamp_slot(height)] = header.inner.timestamp.into_inner();
+        timestamps[timestamp_slot(height.into())] = header.inner.timestamp.into_inner();
     }
 
     connected
@@ -86,7 +86,7 @@ pub fn tip_from_connected(anchor: &Tip, connected: &[ConnectedHeader]) -> Tip {
     let mut timestamps = anchor.timestamps;
     let tail_start = connected.len().saturating_sub(Mainnet::PARAMS.window_size);
     for ch in &connected[tail_start..] {
-        timestamps[timestamp_slot(ch.height)] = ch.header.inner.timestamp.into_inner();
+        timestamps[timestamp_slot(ch.height.into())] = ch.header.inner.timestamp.into_inner();
     }
 
     let (current_nbits, current_target, current_block_work) = expand_target(last.header.inner.compact_target);

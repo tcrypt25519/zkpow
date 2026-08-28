@@ -35,7 +35,7 @@ const CONNECT_RETRIES: u32 = 3;
 pub fn sync<P, C, E>(
     network: Network,
     anchor: &Tip,
-    max_headers: u64,
+    max_headers: u32,
     peer_store: &mut PeerStore,
     mut on_headers: C,
 ) -> Result<Tip, SyncHeadersError<E>>
@@ -45,8 +45,8 @@ where
     E: std::fmt::Debug,
 {
     let mut current_tip = anchor.clone();
-    let mut total_synced: u64 = 0;
-    let mut batch: u64 = 0;
+    let mut total_synced: u32 = 0;
+    let mut batch: u32 = 0;
     let mut rng = rand::rng();
 
     loop {
@@ -107,9 +107,9 @@ fn sync_with_peer<P, C, E>(
     peer_addr: SocketAddr,
     network: Network,
     current_tip: &mut Tip,
-    max_headers: u64,
-    total_synced: &mut u64,
-    batch: &mut u64,
+    max_headers: u32,
+    total_synced: &mut u32,
+    batch: &mut u32,
     on_headers: &mut C,
 ) -> Result<(), SyncHeadersError<E>>
 where

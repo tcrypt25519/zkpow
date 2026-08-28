@@ -91,7 +91,7 @@ impl Harness {
         let claim = state.public_claim();
         let bytes = serialize_minimal_public_values(
             &claim.chain_work,
-            &batch.verifier_key,
+            batch.verifier_key.to_le_bytes_slice(),
             &continuation_digest_from_state(&state),
             &claim.genesis_hash,
             &claim.tip_hash,

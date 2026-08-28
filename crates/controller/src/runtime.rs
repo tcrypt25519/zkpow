@@ -404,7 +404,7 @@ impl ControllerCore {
         let expected_claim = expected_state.public_claim();
         let expected_public_values = serialize_minimal_public_values(
             &expected_claim.chain_work,
-            &self.verifier_key,
+            self.verifier_key.to_le_bytes_slice(),
             &continuation_digest_from_state(&expected_state),
             &expected_claim.genesis_hash,
             &expected_claim.tip_hash,
@@ -431,5 +431,5 @@ pub fn continuation_digest(data: &ContinuationData) -> [u8; 32] {
 
 /// Compute the continuation digest directly from a [`State`].
 pub fn continuation_digest_from_state(state: &State) -> [u8; 32] {
-    continuation_digest(&ContinuationData::from_state(state))
+    Sha256::digest(&state.continuation_bytes()[..]).into()
 }

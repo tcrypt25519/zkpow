@@ -27,6 +27,7 @@ fn remove_db_files(path: &std::path::Path) {
     let _ = fs::remove_file(path.with_extension("sqlite-wal"));
 }
 
+// TODO: This repeats db.rs (bulk_insert_calculates_median_time_past) and probably 5 other places.
 /// A genesis-seeded store with 20 more headers appended, mirroring
 /// `db::tests::bulk_insert_calculates_median_time_past`'s synthetic chain.
 fn seeded_store(test_name: &str) -> (HeaderStore, PathBuf, BlockHash) {

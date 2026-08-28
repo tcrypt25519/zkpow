@@ -130,7 +130,7 @@ fn failure_public_value_bytes(state: &State, error_code: ErrorCode) -> [u8; Mini
     let claim = state.public_claim();
     serialize_minimal_public_values(
         &claim.chain_work,
-        &VerifierKeyDigest::from_raw([0xA5A5_A5A5; 8]),
+        VerifierKeyDigest::from_raw([0xA5A5_A5A5; 8]).to_le_bytes_slice(),
         &[0xA5; 32],
         &claim.genesis_hash,
         &claim.tip_hash,
@@ -175,7 +175,7 @@ fn minimal_public_values_round_trips() {
     let claim = state.public_claim();
     let bytes = serialize_minimal_public_values(
         &claim.chain_work,
-        &verifier_key,
+        verifier_key.to_le_bytes_slice(),
         &digest,
         &claim.genesis_hash,
         &claim.tip_hash,
@@ -659,7 +659,7 @@ fn state_continuation_bytes_matches_continuation_data_to_bytes() {
         ..Default::default()
     };
     let pcs = ContinuationData::from_state(&state);
-    assert_eq!(state.continuation_bytes(), pcs.to_bytes());
+    assert_eq!(*state.continuation_bytes(), pcs.to_bytes());
 }
 
 #[test]

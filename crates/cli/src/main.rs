@@ -28,7 +28,7 @@ struct SyncArgs {
     db: String,
 
     #[arg(short, long, default_value = "0")]
-    max_headers: u64,
+    max_headers: u32,
 
     /// Connect to this peer address instead of discovering peers via DNS seeds.
     #[arg(long, default_value = None)]

@@ -19,7 +19,7 @@ pub enum Network {
 #[derive(Debug, Clone)]
 pub struct Tip {
     pub hash: BlockHash,
-    pub height: u64,
+    pub height: u32,
     pub chainwork: ChainWork,
     /// Ring buffer of the last (up to `Mainnet::PARAMS.window_size`) block timestamps, slot
     /// `height % Mainnet::PARAMS.window_size` — mirrors `zkpow_core::State::timestamps`.
@@ -41,7 +41,7 @@ impl Tip {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         hash: BlockHash,
-        height: u64,
+        height: u32,
         chainwork: ChainWork,
         timestamps: [u32; Mainnet::PARAMS.window_size],
         ordered_timestamp_run: u64,
@@ -108,19 +108,19 @@ impl Header {
 
 #[derive(Debug, Clone)]
 pub struct ConnectedHeader {
-    pub header: Header,
-    pub block_hash: BlockHash,
-    pub height: u64,
-    pub chainwork: ChainWork,
-    pub median_time_past: u32,
+    pub header:                Header,
+    pub block_hash:            BlockHash,
+    pub chainwork:             ChainWork,
     pub ordered_timestamp_run: u64,
+    pub height:                u32,
+    pub median_time_past:      u32,
 }
 
 impl ConnectedHeader {
     pub fn new(
         header: Header,
         block_hash: BlockHash,
-        height: u64,
+        height: u32,
         chainwork: ChainWork,
         median_time_past: u32,
         ordered_timestamp_run: u64,

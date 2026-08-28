@@ -7,14 +7,14 @@ use bytemuck::{Pod, PodCastError, Zeroable};
 // #[cfg(feature = "host")]
 // use serde::{Deserialize, Serialize};
 use sp1_cycle::tracked;
+use zkpow_params::{Consensus, Mainnet};
 
 use crate::{
     advance_ordered_timestamp_run, block_work_from_target, calculate_next_target_required, check_proof_of_work,
-    copy_to_bytes, has_ordered_timestamp_window, hash_header_input, ordered_median_timestamp_slot, ordered_timestamp_run,
-    target_from_bits, timestamp_slot, ApplyFailure, BlockHash, BlockTimestamp, BlockWork, ByteInfo, ChainWork, Claim,
-    CompactTarget, ContinuationData, HeaderInput, ReturnCode, Target,
+    copy_to_bytes, has_ordered_timestamp_window, hash_header_input, ordered_median_timestamp_slot,
+    ordered_timestamp_run, target_from_bits, timestamp_slot, ApplyFailure, BlockHash, BlockTimestamp, BlockWork,
+    ByteInfo, ChainWork, Claim, CompactTarget, ContinuationData, HeaderInput, ReturnCode, Target,
 };
-use zkpow_params::{Consensus, Mainnet};
 
 // use rkyv::{Archive, Serialize, Deserialize};
 
@@ -26,14 +26,14 @@ use zkpow_params::{Consensus, Mainnet};
     derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
 )]
 pub struct State {
-    pub chain_work: ChainWork,
+    pub chain_work:   ChainWork,
     pub genesis_hash: BlockHash,
-    pub block_hash: BlockHash,
-    pub height: u32,
+    pub block_hash:   BlockHash,
+    pub height:       u32,
 
-    pub current_nbits: CompactTarget,
+    pub current_nbits:         CompactTarget,
     pub epoch_start_timestamp: BlockTimestamp,
-    pub timestamps: [BlockTimestamp; Mainnet::PARAMS.window_size],
+    pub timestamps:            [BlockTimestamp; Mainnet::PARAMS.window_size],
 }
 
 impl State {
@@ -66,17 +66,19 @@ impl State {
     #[must_use]
     pub fn public_claim(&self) -> Claim {
         Claim {
-            chain_work: self.chain_work,
+            chain_work:   self.chain_work,
             genesis_hash: self.genesis_hash,
-            tip_hash: self.block_hash,
-            height: self.height,
+            tip_hash:     self.block_hash,
+            height:       self.height,
         }
     }
 
-    /// Serialize the continuation data directly to bytes.
+    /// The continuation data bytes as a view into `State`'s serialized form.
     #[must_use]
-    pub fn continuation_bytes(&self) -> [u8; ContinuationData::SIZE] {
-        ContinuationData::from_state(self).to_bytes()
+    pub fn continuation_bytes(&self) -> &[u8; ContinuationData::SIZE] {
+        let start = core::mem::offset_of!(Self, current_nbits);
+        let bytes = bytemuck::bytes_of(self);
+        bytes[start..start + ContinuationData::SIZE].try_into().unwrap()
     }
 
     /// Compute the difficulty values that become active at a new epoch boundary.
@@ -97,20 +99,18 @@ impl State {
         active_nbits: CompactTarget,
         active_target: Target,
     ) -> ReturnCode {
-        let candidate_height = sp1_cycle::track!(self.height + 1);
-        let timestamp_slot = timestamp_slot(candidate_height.into());
-
         if sp1_cycle::track!(new_header.timestamp <= claimed_median) {
             return ReturnCode::TIMESTAMP_TOO_OLD;
         }
 
-        let block_hash = sp1_cycle::track!(hash_header_input(new_header, &self.block_hash, &active_nbits));
+        let block_hash = hash_header_input(new_header, &self.block_hash, &active_nbits);
 
         if !check_proof_of_work(block_hash, &active_target) {
             return ReturnCode::POW_INSUFFICIENT;
         }
 
-        HeaderUpdate::<C>::new(self, candidate_height, timestamp_slot, new_header.timestamp, block_hash);
+        let candidate_height = self.height + 1;
+        HeaderUpdate::<C>::new(self, candidate_height, new_header.timestamp, block_hash);
 
         ReturnCode::SUCCESS
     }
@@ -132,7 +132,9 @@ impl State {
         &mut self,
         header_iter: &mut core::slice::Iter<'_, HeaderInput>,
     ) -> Result<(), ApplyFailure> {
-        let cold_len = (Mainnet::PARAMS.window_size - 1).saturating_sub(self.height as usize).min(header_iter.len());
+        let cold_len = (Mainnet::PARAMS.window_size - 1)
+            .saturating_sub(self.height as usize)
+            .min(header_iter.len());
         if cold_len == 0 {
             return Ok(());
         }
@@ -160,24 +162,22 @@ impl State {
         header_iter: &mut core::slice::Iter<'_, HeaderInput>,
         median_hints: &[BlockTimestamp],
     ) -> Result<(), ApplyFailure> {
-        let epoch_length = C::PARAMS.epoch_length;
         let mut median_hint_iter = median_hints.iter();
         let mut ordered_run_len =
             sp1_cycle::track!({ ordered_timestamp_run(&self.timestamps, self.height.into()) }) as usize;
 
         while header_iter.len() > 0 {
+            let height = self.height;
             let context = EpochManager::new::<C>(self);
-            let current_height = context.state.height;
-            let headers_to_end_of_epoch = (epoch_length - ((current_height + 1) % epoch_length)) as usize;
-            let chunk_len = header_iter.len().min(headers_to_end_of_epoch);
+            let epoch_len_remaining = (C::PARAMS.epoch_length - ((height + 1) % C::PARAMS.epoch_length)) as usize;
 
-            for new_header in header_iter.take(chunk_len) {
+            for new_header in header_iter.take(epoch_len_remaining) {
                 let claimed_median = if has_ordered_timestamp_window(ordered_run_len as u64) {
-                    context.state.timestamps[ordered_median_timestamp_slot(context.state.height.into())]
+                    context.state.timestamps[ordered_median_timestamp_slot(height.into())]
                 } else {
                     let claimed_median = *median_hint_iter
                         .next()
-                        .unwrap_or_else(|| panic!("missing median time past hint at header {}", context.state.height));
+                        .unwrap_or_else(|| panic!("missing median time past hint at header {}", height));
                     let (less_count, equal_count) = sp1_cycle::track!({
                         let mut counts: [usize; 3] = [0, 0, 0];
                         for &timestamp in &context.state.timestamps {
@@ -186,9 +186,10 @@ impl State {
                         (counts[0], counts[1])
                     });
                     assert!(
-                        less_count <= Mainnet::PARAMS.window_small_half_size() && less_count + equal_count > Mainnet::PARAMS.window_small_half_size(),
+                        less_count <= Mainnet::PARAMS.window_small_half_size()
+                            && less_count + equal_count > Mainnet::PARAMS.window_small_half_size(),
                         "invalid median time past hint at header index {}",
-                        context.state.height
+                        height
                     );
                     claimed_median
                 };
@@ -223,23 +224,23 @@ impl State {
 impl Default for State {
     fn default() -> Self {
         Self {
-            block_hash: BlockHash::default(),
-            genesis_hash: BlockHash::default(),
-            current_nbits: CompactTarget::default(),
-            height: 0,
-            chain_work: ChainWork::default(),
+            block_hash:            BlockHash::default(),
+            genesis_hash:          BlockHash::default(),
+            current_nbits:         CompactTarget::default(),
+            height:                0,
+            chain_work:            ChainWork::default(),
             epoch_start_timestamp: BlockTimestamp::default(),
-            timestamps: [BlockTimestamp::default(); Mainnet::PARAMS.window_size],
+            timestamps:            [BlockTimestamp::default(); Mainnet::PARAMS.window_size],
         }
     }
 }
 
 struct EpochManager<'a> {
-    state: &'a mut State,
-    start_height: u32,
+    state:             &'a mut State,
+    start_height:      u32,
     active_block_work: BlockWork,
-    active_nbits: CompactTarget,
-    active_target: Target,
+    active_nbits:      CompactTarget,
+    active_target:     Target,
 }
 
 impl<'a> EpochManager<'a> {
@@ -293,22 +294,17 @@ impl<'a> Drop for EpochManager<'a> {
 }
 
 struct HeaderUpdate<'a, C: Consensus> {
-    state: &'a mut State,
-    height: u32,
+    state:          &'a mut State,
+    height:         u32,
     timestamp_slot: usize,
-    timestamp: BlockTimestamp,
-    block_hash: BlockHash,
-    consensus: PhantomData<fn() -> C>,
+    timestamp:      BlockTimestamp,
+    block_hash:     BlockHash,
+    consensus:      PhantomData<fn() -> C>,
 }
 
 impl<'a, C: Consensus> HeaderUpdate<'a, C> {
-    fn new(
-        state: &'a mut State,
-        height: u32,
-        timestamp_slot: usize,
-        timestamp: BlockTimestamp,
-        block_hash: BlockHash,
-    ) -> Self {
+    fn new(state: &'a mut State, height: u32, timestamp: BlockTimestamp, block_hash: BlockHash) -> Self {
+        let timestamp_slot = timestamp_slot(height.into());
         Self {
             state,
             height,

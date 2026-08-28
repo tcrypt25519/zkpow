@@ -20,8 +20,7 @@ sp1_zkvm::entrypoint!(main);
 use bytemuck::{self, Pod, PodCastError};
 use sp1_zkvm::lib::read_vec_raw;
 use zkpow_core::{
-    serialize_minimal_public_values, ApplyFailure, BlockTimestamp, Claim, ContinuationData, HeaderInput,
-    MinimalPublicValues, ReturnCode, State, VerifierKeyDigest,
+    serialize_minimal_public_values, ApplyFailure, BlockTimestamp, HeaderInput, MinimalPublicValues, ReturnCode, State,
 };
 use zkpow_params::Mainnet;
 use zkpow_sha256;
@@ -29,58 +28,41 @@ use zkpow_sha256;
 /// Compute the continuation digest: SHA-256 of the serialized continuation data.
 #[sp1_cycle::tracked]
 fn compute_continuation_digest(state: &State) -> [u8; 32] {
-    let cd_bytes: [u8; ContinuationData::SIZE] = state.continuation_bytes();
-    zkpow_sha256::of_52bytes(&cd_bytes)
+    zkpow_sha256::of_52bytes(state.continuation_bytes())
 }
 
 /// Commit the minimal public values and halt.
 fn commit_minimal_pv(
-    claim: &Claim,
-    verifier_key: &VerifierKeyDigest,
-    continuation_digest: &[u8; 32],
+    state: &State,
+    verifier_key: &[u8],
+    continuation_digest: &[u8],
     error_code: u8,
 ) -> ! {
     let bytes: [u8; MinimalPublicValues::SIZE] = serialize_minimal_public_values(
-        &claim.chain_work,
+        &state.chain_work,
         verifier_key,
         continuation_digest,
-        &claim.genesis_hash,
-        &claim.tip_hash,
-        claim.height,
+        &state.genesis_hash,
+        &state.block_hash,
+        state.height,
         error_code,
     );
     sp1_zkvm::io::commit_slice(&bytes);
     sp1_zkvm::syscalls::syscall_halt(0)
 }
 
-//fn read_array_input<'g, T, const N: usize>() -> &'g [T; N] {
-//    let read_vec_results = unsafe { read_vec_raw() };
-//    let input_slice = std::ptr::slice_from_raw_parts(read_vec_results.ptr, read_vec_results.len);
-//    let input_array = input_slice.cast::<[T; N]>();
-//    let input_array_ref = unsafe { input_array.as_ref() }.expect("N byte array");
-//    input_array_ref
-//}
-//
-//fn read_array_input_mut<'g, T, const N: usize>() -> &'g mut [T; N] {
-//    let read_vec_results = unsafe { read_vec_raw() };
-//    let input_slice = std::ptr::slice_from_raw_parts_mut(read_vec_results.ptr, read_vec_results.len);
-//    let input_array = input_slice.cast::<[T; N]>();
-//    let input_array_ref = unsafe { input_array.as_mut() }.expect("N byte array");
-//    input_array_ref
-//}
-
-fn read_fixed_size_input<'g, T>() -> Result<&'g T, PodCastError> {
+fn read_fixed_size_input<'g, T: Pod>() -> Result<&'g T, PodCastError> {
     let read_vec_results = unsafe { read_vec_raw() };
     let input_slice = std::ptr::slice_from_raw_parts(read_vec_results.ptr, read_vec_results.len);
-    let input_sized = input_slice.cast::<T>();
-    unsafe { input_sized.as_ref() }.ok_or(PodCastError::OutputSliceWouldHaveSlop)
+    let input_slice_ref = unsafe { input_slice.as_ref() }.ok_or(PodCastError::OutputSliceWouldHaveSlop)?;
+    bytemuck::try_from_bytes::<T>(input_slice_ref)
 }
 
-fn read_fixed_size_input_mut<'g, T>() -> Result<&'g mut T, PodCastError> {
+fn read_fixed_size_input_mut<'g, T: Pod>() -> Result<&'g mut T, PodCastError> {
     let read_vec_results = unsafe { read_vec_raw() };
     let input_slice = std::ptr::slice_from_raw_parts_mut(read_vec_results.ptr, read_vec_results.len);
-    let input_sized = input_slice.cast::<T>();
-    unsafe { input_sized.as_mut() }.ok_or(PodCastError::OutputSliceWouldHaveSlop)
+    let input_slice_ref = unsafe { input_slice.as_mut() }.ok_or(PodCastError::OutputSliceWouldHaveSlop)?;
+    bytemuck::try_from_bytes_mut::<T>(input_slice_ref)
 }
 
 //fn read_typed_scalar_input_mut<'g, T>() -> Result<&'g mut T, PodCastError> {
@@ -217,21 +199,18 @@ fn inner_main() -> Result<(), ProgramError> {
     let medians: &[BlockTimestamp] = read_slice_of_fixed_size_elements_input::<BlockTimestamp>()?;
 
     if state.height > 0 {
-        let prior_claim = state.public_claim();
-        let prior_continuation_bytes: [u8; ContinuationData::SIZE] = state.continuation_bytes();
+        // 1. Hash the prior continuation data directly from the State bytes.
+        let continuation_digest = sp1_cycle::track!(compute_continuation_digest(&state));
 
-        // 1. Hash the prior continuation data.
-        let continuation_digest = sp1_cycle::track!({ zkpow_sha256::of_52bytes(&prior_continuation_bytes) });
-
-        // 2. Hash the prior proof's minimal public values directly from their fields.
+        // 2. Hash the prior proof's minimal public values directly from State fields.
         let actual_pv_hash = sp1_cycle::track!({
             zkpow_sha256::of_minimal_public_values(
-                &prior_claim.chain_work.to_le_bytes(),
-                &VerifierKeyDigest::from_raw(*verifier_key).to_bytes(),
+                state.chain_work.to_le_bytes_slice(),
+                bytemuck::bytes_of(verifier_key),
                 &continuation_digest,
-                &prior_claim.genesis_hash.to_le_bytes(),
-                &prior_claim.tip_hash.to_le_bytes(),
-                prior_claim.height,
+                state.genesis_hash.to_le_bytes_slice(),
+                state.block_hash.to_le_bytes_slice(),
+                state.height,
                 0,
             )
         });
@@ -242,16 +221,13 @@ fn inner_main() -> Result<(), ProgramError> {
         });
     }
 
-    let vk_digest = VerifierKeyDigest::from_raw(*verifier_key);
-
     // Apply headers; on failure commit minimal PV and halt.
     let return_code = match state.apply_headers::<Mainnet>(headers, medians) {
         Ok(()) => ReturnCode::SUCCESS,
         Err(ApplyFailure { error_code }) => ReturnCode::from(error_code),
     };
     let digest = compute_continuation_digest(&state);
-    let claim = state.public_claim();
-    commit_minimal_pv(&claim, &vk_digest, &digest, return_code.into());
+    commit_minimal_pv(&state, bytemuck::bytes_of(verifier_key), &digest, return_code.into());
 }
 
 pub fn main() {

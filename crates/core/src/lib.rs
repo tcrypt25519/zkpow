@@ -49,6 +49,7 @@ fn hash_header(header: &Header) -> BlockHash {
     BlockHash::from(header)
 }
 
+#[sp1_cycle::tracked]
 fn hash_header_input(input: &HeaderInput, prev_blockhash: &BlockHash, compact_target: &CompactTarget) -> BlockHash {
     #[cfg(target_os = "zkvm")]
     {
@@ -115,12 +116,12 @@ mod test_hash_mock {
 }
 
 #[must_use]
-pub const fn timestamp_slot(height: u64) -> usize {
+pub const fn timestamp_slot(height: u32) -> usize {
     height as usize % Mainnet::PARAMS.window_size
 }
 
 #[must_use]
-pub const fn timestamp_count(height: u64) -> usize {
+pub const fn timestamp_count(height: u32) -> usize {
     let count = height as usize + 1;
     if count > Mainnet::PARAMS.window_size {
         Mainnet::PARAMS.window_size
@@ -144,7 +145,7 @@ pub const fn advance_ordered_timestamp_run(ordered_timestamp_run: u64, previous_
 }
 
 #[must_use]
-pub fn ordered_timestamp_run(timestamps: &[BlockTimestamp; Mainnet::PARAMS.window_size], height: u64) -> u64 {
+pub fn ordered_timestamp_run(timestamps: &[BlockTimestamp; Mainnet::PARAMS.window_size], height: u32) -> u64 {
     let mut run = 0;
     let mut newer = timestamps[timestamp_slot(height)];
     for offset in 1..Mainnet::PARAMS.window_size {
@@ -159,7 +160,7 @@ pub fn ordered_timestamp_run(timestamps: &[BlockTimestamp; Mainnet::PARAMS.windo
 }
 
 #[must_use]
-pub const fn ordered_median_timestamp_slot(height: u64) -> usize {
+pub const fn ordered_median_timestamp_slot(height: u32) -> usize {
     (timestamp_slot(height) + Mainnet::PARAMS.window_size - (Mainnet::PARAMS.window_small_half_size())) % Mainnet::PARAMS.window_size
 }
 

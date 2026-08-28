@@ -54,10 +54,9 @@ fn build_chain(anchor: &Tip, count: u32, nbits_at: impl Fn(u32) -> u32) -> Vec<H
 }
 
 /// A synthetic anchor at `height` with `current_target`/`current_block_work`
-/// already cached from `nbits` — standing in for whatever a real `Tip`
-/// would carry after validating its way there, without having to mine
-/// `height` real headers to construct one.
-fn synthetic_anchor(height: u64, nbits: u32) -> Tip {
+/// already cached from `nbits`, matching what a `Tip` holds after validating
+/// that far without mining `height` real headers.
+fn synthetic_anchor(height: u32, nbits: u32) -> Tip {
     let (current_nbits, current_target, current_block_work) = expand_target(CompactTarget::new(nbits));
     let chainwork = current_block_work * ((height + 1) as u32);
     Tip::new(
@@ -82,7 +81,7 @@ fn connect_headers_wraps_the_timestamp_window_across_batches() {
     let connected = connect_headers::<Mainnet>(&anchor, &headers);
     assert_eq!(connected.len(), total as usize, "every header should connect");
     for (i, ch) in connected.iter().enumerate() {
-        assert_eq!(ch.height, anchor.height + 1 + i as u64);
+        assert_eq!(ch.height, anchor.height + 1 + i as u32);
     }
 
     // Splitting the same chain into two batches through `tip_from_connected`

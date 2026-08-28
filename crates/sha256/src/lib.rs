@@ -122,11 +122,11 @@ fn of_digest(prev_state: &[u64; 8]) -> [u8; 32] {
 /// - Block 2: continuation_digest (32) + genesis_hash (32)
 /// - Block 3: tip_hash (32) + height (4) + error_code (1) + padding + length
 pub fn of_minimal_public_values(
-    chain_work: &[u8; 32],
-    verifier_key: &[u8; 32],
-    continuation_digest: &[u8; 32],
-    genesis_hash: &[u8; 32],
-    tip_hash: &[u8; 32],
+    chain_work: &[u8],
+    verifier_key: &[u8],
+    continuation_digest: &[u8],
+    genesis_hash: &[u8],
+    tip_hash: &[u8],
     height: u32,
     error_code: u8,
 ) -> [u8; 32] {
