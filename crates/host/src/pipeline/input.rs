@@ -14,7 +14,6 @@ pub const ENV_ZKPOW_RUN_ID: &str = "ZKPOW_RUN_ID";
 pub const ENV_ZKPOW_BATCH_SIZE: &str = "ZKPOW_BATCH_SIZE";
 pub const ENV_ZKPOW_BATCH_COUNT: &str = "ZKPOW_BATCH_COUNT";
 pub const ENV_ZKPOW_DB_PATH: &str = "ZKPOW_DB_PATH";
-pub const ENV_ZKPOW_HEADERS_BIN_PATH: &str = "ZKPOW_HEADERS_BIN_PATH";
 pub const ENV_ZKPOW_PROOF_STORE_DIR: &str = "ZKPOW_PROOF_STORE_DIR";
 pub const ENV_ZKPOW_SHOW_COMPRESSED_PROOF_SPANS: &str = "ZKPOW_SHOW_COMPRESSED_PROOF_SPANS";
 
@@ -109,7 +108,6 @@ pub fn config_from_env() -> Result<ProofGenerationConfig, BoxError> {
         local_batch_size,
         batch_count,
         db_path: parse_path_env(ENV_ZKPOW_DB_PATH).unwrap_or_else(zkpow_controller::db_path),
-        headers_bin_path: parse_path_env(ENV_ZKPOW_HEADERS_BIN_PATH).unwrap_or_else(zkpow_controller::headers_bin_path),
         execute_only,
         prover_backend,
         cuda_device_id,

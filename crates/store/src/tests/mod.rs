@@ -11,7 +11,6 @@ use zkpow_params::{Consensus, Mainnet};
 use super::*;
 
 mod db;
-mod flat;
 
 pub(crate) fn temp_db_path(test_name: &str) -> PathBuf {
     let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();

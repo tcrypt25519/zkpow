@@ -13,7 +13,7 @@ use std::{
 use tokio::sync::Notify;
 use zkpow_core::{serialize_inputs, BlockHash, PublicValues, ReturnCode, State, VerifierKeyDigest};
 use zkpow_params::Mainnet;
-use zkpow_store::{HeaderBinReader, HeaderStore, RunRecord};
+use zkpow_store::{HeaderStore, RunRecord};
 
 use crate::{
     protocol::{Batch, ControllerError},
@@ -84,11 +84,8 @@ impl RunSession {
 }
 
 struct ControllerCore {
-    /// The run ledger only; header content is read from `headers`.
+    /// Run ledger and header content; the SQLite database is the system of record.
     store:        HeaderStore,
-    /// Header content: a read-only `headers.bin` snapshot, not the live
-    /// database. Regenerate it with `zkpow-cli dump-bin` after syncing.
-    headers:      HeaderBinReader,
     genesis_hash: BlockHash,
     verifier_key: VerifierKeyDigest,
     batch_size:   u32,
@@ -134,7 +131,6 @@ fn validate_run_id(run_id: &str) -> Result<(), ControllerError> {
 impl ControllerRuntime {
     pub fn new(
         store: HeaderStore,
-        headers: HeaderBinReader,
         storage: Box<dyn ArtifactStore>,
         verifier: Box<dyn ProofVerifier>,
         config: ControllerConfig,
@@ -144,7 +140,6 @@ impl ControllerRuntime {
             inner: Arc::new(RuntimeInner {
                 core: Mutex::new(ControllerCore {
                     store,
-                    headers,
                     genesis_hash: config.genesis_hash,
                     verifier_key,
                     batch_size: config.batch_size,
@@ -284,7 +279,7 @@ impl ControllerRuntime {
 
 impl ControllerCore {
     fn state_at(&self, height: u32) -> State {
-        self.headers.state_at_height::<Mainnet>(height, self.genesis_hash)
+        self.store.state_at_height::<Mainnet>(height, self.genesis_hash)
     }
 
     fn session_mut(&mut self, run_id: &str) -> Result<&mut RunSession, ControllerError> {
@@ -338,12 +333,14 @@ impl ControllerCore {
             Some(record) => record,
             None => self.create_run_record(run_id)?,
         };
-        if record.verified_height as u64 >= self.headers.header_count() {
+        let header_count = self
+            .store
+            .header_count()
+            .map_err(|err| ControllerError::internal(format!("failed to read header count for run {run_id}: {err}")))?;
+        if record.verified_height as u64 >= header_count {
             return Err(ControllerError::internal(format!(
-                "run {run_id} has verified progress up to height {}, but headers.bin only covers {} headers; \
-                 regenerate it with `zkpow-cli dump-bin`",
-                record.verified_height,
-                self.headers.header_count(),
+                "run {run_id} has verified progress up to height {}, but the database only contains {} headers",
+                record.verified_height, header_count,
             )));
         }
         self.runs.insert(run_id.to_owned(), RunSession {
@@ -390,7 +387,7 @@ impl ControllerCore {
         }
         let first_new_height = current_state.height + 1;
         let witness = self
-            .headers
+            .store
             .load_header_batch_witness(first_new_height as u64, self.batch_size as u64);
         if witness.headers.is_empty() {
             return Err(ControllerError::exhausted(format!(

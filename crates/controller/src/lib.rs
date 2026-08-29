@@ -29,10 +29,7 @@ pub use validation::{compute_final_state_with_hints, records_to_new_headers};
 pub const DEFAULT_BATCH_SIZE: u32 = Mainnet::PARAMS.epoch_length;
 pub use zkpow_core::{requires_median_hint, BlockHash, BlockTimestamp, HeaderInput, State};
 use zkpow_params::{Consensus, Mainnet};
-pub use zkpow_store::{
-    db_path, genesis_state_from_record, headers_bin_path, HeaderBatchWitness, HeaderBinReader, HeaderRecord,
-    HeaderStore, RunRecord,
-};
+pub use zkpow_store::{db_path, genesis_state_from_record, HeaderBatchWitness, HeaderRecord, HeaderStore, RunRecord};
 
 pub type BoxError = Box<dyn std::error::Error + Send + Sync + 'static>;
 
