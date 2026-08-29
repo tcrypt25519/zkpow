@@ -158,8 +158,7 @@ pub fn ordered_timestamp_run(timestamps: &[BlockTimestamp; Mainnet::PARAMS.windo
 
 #[must_use]
 pub const fn ordered_median_timestamp_slot(height: u32) -> usize {
-    (timestamp_slot(height) + Mainnet::PARAMS.window_size - (Mainnet::PARAMS.window_small_half_size()))
-        % Mainnet::PARAMS.window_size
+    (timestamp_slot(height) + Mainnet::PARAMS.window_large_half_size()) % Mainnet::PARAMS.window_size
 }
 
 #[must_use]

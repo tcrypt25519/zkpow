@@ -11,18 +11,18 @@ pub struct ConsensusParams {
     /// The PoW limit, which is also the target the genesis header commits to.
     pub genesis_target: Target,
     /// Work proven by one block at [`ConsensusParams::genesis_target`].
-    pub genesis_work: ChainWork,
+    pub genesis_work:   ChainWork,
 
     /// Expected seconds between blocks.
-    pub block_time: u32,
+    pub block_time:          u32,
     /// Blocks per difficulty epoch.
-    pub epoch_length: u32,
+    pub epoch_length:        u32,
     /// A measured epoch may run this many times longer than expected before it is clamped.
-    pub max_epoch_over_mul: u8,
+    pub max_epoch_over_mul:  u8,
     /// ...and this many times shorter.
     pub min_epoch_under_div: u8,
     /// Number of previous block timestamps kept for median-time-past and ordered-window checks.
-    pub window_size: usize,
+    pub window_size:         usize,
 }
 
 impl ConsensusParams {
@@ -30,6 +30,12 @@ impl ConsensusParams {
     #[must_use]
     pub const fn window_small_half_size(&self) -> usize {
         self.window_size / 2
+    }
+
+    /// Half the window, rounded up; the number of timestamps that may sit above the median.
+    #[must_use]
+    pub const fn window_large_half_size(&self) -> usize {
+        (self.window_size + 1) / 2
     }
 
     /// Maximum index in the sliding window.

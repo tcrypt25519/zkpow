@@ -1,26 +1,9 @@
-use std::{
-    fs,
-    path::PathBuf,
-    time::{SystemTime, UNIX_EPOCH},
-};
-
 use sync_headers::{ConnectedHeader, Header as SyncHeader};
-use zkpow_core::{block_work_from_target, target_from_bits, BlockTimestamp, VerifierKeyDigest};
-use zkpow_params::{Consensus, Mainnet};
+use zkpow_core::VerifierKeyDigest;
+use zkpow_params::Mainnet;
 
 use super::*;
 use crate::db::{hash_to_bytes, work_to_bytes};
-
-fn temp_db_path(test_name: &str) -> PathBuf {
-    let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-    std::env::temp_dir().join(format!("zkpow-{test_name}-{}-{nonce}.sqlite", std::process::id()))
-}
-
-fn remove_db_files(path: &std::path::Path) {
-    let _ = fs::remove_file(path);
-    let _ = fs::remove_file(path.with_extension("sqlite-shm"));
-    let _ = fs::remove_file(path.with_extension("sqlite-wal"));
-}
 
 #[test]
 fn run_ledger_round_trips_in_the_header_database() {
@@ -30,9 +13,9 @@ fn run_ledger_round_trips_in_the_header_database() {
     assert_eq!(db.load_run("missing").unwrap(), None);
 
     let record = RunRecord {
-        verifier_key: VerifierKeyDigest::from_raw([7; 8]),
+        verifier_key:    VerifierKeyDigest::from_raw([7; 8]),
         verified_height: 0,
-        proof_object: None,
+        proof_object:    None,
     };
     db.create_run("mainnet-01", &record).unwrap();
     assert_eq!(db.load_run("mainnet-01").unwrap(), Some(record.clone()));
@@ -73,22 +56,19 @@ fn open_creates_current_headers_schema_only() {
             .collect::<Result<_, _>>()
             .unwrap()
     };
-    assert_eq!(
-        columns,
-        vec![
-            "block_hash",
-            "prev",
-            "merkle_root",
-            "version",
-            "timestamp",
-            "n_bits",
-            "nonce",
-            "height",
-            "chainwork",
-            "median_time_past",
-            "ordered_timestamp_run",
-        ]
-    );
+    assert_eq!(columns, vec![
+        "block_hash",
+        "prev",
+        "merkle_root",
+        "version",
+        "timestamp",
+        "n_bits",
+        "nonce",
+        "height",
+        "chainwork",
+        "median_time_past",
+        "ordered_timestamp_run",
+    ]);
 
     let table_names: Vec<String> = {
         let mut stmt = store
@@ -183,49 +163,10 @@ fn stale_ordered_timestamp_run_fails_before_witness_loading() {
 }
 
 #[test]
-// TODO: This repeats flat.rs and probably 5 other places.
 fn bulk_insert_calculates_median_time_past() {
-    let path = temp_db_path("bulk-insert-mtp");
-    remove_db_files(&path);
-    let mut store = HeaderStore::open(path.to_str().unwrap()).unwrap();
+    let (store, path, _genesis_hash) = seeded_store("bulk-insert-mtp");
 
-    let genesis = genesis_connected_header();
-    store.insert_genesis(&genesis).unwrap();
-
-    let tip = store.get_best_tip().unwrap().unwrap();
-
-    let mut headers = Vec::new();
-    let mut prev_hash = genesis.block_hash();
-    let mut cumulative_work = genesis.chainwork;
-    let mut window: Vec<u32> = tip.timestamps[..zkpow_core::timestamp_count(tip.height)].to_vec();
-    let base_time = genesis.header.inner.timestamp.into_inner();
-
-    for i in 1u32..=12 {
-        let mut inner = genesis.header.inner;
-        inner.prev_blockhash = prev_hash;
-        inner.timestamp = BlockTimestamp::new(base_time + i * 600);
-
-        let mut tmp_win = window.clone();
-        tmp_win.sort_unstable();
-        let mtp = tmp_win[tmp_win.len() / 2];
-
-        let header = SyncHeader::new(inner);
-        let work = block_work_from_target(target_from_bits(inner.compact_target));
-        cumulative_work = cumulative_work + work;
-        let ordered_timestamp_run = u64::from(i);
-        let block_hash = header.block_hash();
-        let ch = ConnectedHeader::new(header, block_hash, i.into(), cumulative_work, mtp, ordered_timestamp_run);
-        headers.push(ch);
-
-        window.push(inner.timestamp.into_inner());
-        if window.len() > 11 {
-            window.remove(0);
-        }
-
-        prev_hash = headers.last().unwrap().block_hash();
-    }
-
-    store.bulk_insert(&headers).unwrap();
+    let base_time = Mainnet::PARAMS.genesis.timestamp.into_inner();
 
     let mtp1: i64 = store
         .conn

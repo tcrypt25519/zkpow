@@ -93,20 +93,18 @@ fn inner_main() -> Result<(), ProgramError> {
       `state.to_bytes()` and the next guest deserializes it fresh from stdin.
     */
 
-    let verifier_key = read_fixed_size_input::<[u32; 8]>()?;
+    let verifier_key: &VerifierKeyDigest = read_fixed_size_input::<VerifierKeyDigest>()?;
     let state: &mut State = read_fixed_size_input_mut::<State>()?;
     let headers: &[HeaderInput] = read_slice_of_fixed_size_elements_input::<HeaderInput>()?;
     let medians: &[BlockTimestamp] = read_slice_of_fixed_size_elements_input::<BlockTimestamp>()?;
 
-    let verifier_key_digest = VerifierKeyDigest::from_raw(*verifier_key);
-
     if state.height > 0 {
         let actual_pv_hash = sp1_cycle::track!(zkpow_sha256::of_public_values(
             bytemuck::bytes_of(state),
-            verifier_key_digest.to_le_bytes_slice(),
+            verifier_key.to_le_bytes_slice(),
             ReturnCode::SUCCESS.into_u8(),
         ));
-        sp1_cycle::track!(sp1_zkvm::lib::verify::verify_sp1_proof(verifier_key, &actual_pv_hash));
+        sp1_cycle::track!(sp1_zkvm::lib::verify::verify_sp1_proof(verifier_key.as_raw(), &actual_pv_hash));
     }
 
     // Apply headers; on failure commit public values and halt.
@@ -114,7 +112,7 @@ fn inner_main() -> Result<(), ProgramError> {
         Ok(()) => ReturnCode::SUCCESS,
         Err(ApplyFailure { error_code }) => ReturnCode::from(error_code),
     };
-    commit_public_values(&state, &verifier_key_digest, return_code);
+    commit_public_values(&state, verifier_key, return_code);
 }
 
 pub fn main() {

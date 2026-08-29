@@ -1,8 +1,6 @@
 #[cfg(not(target_endian = "little"))]
 compile_error!("zkpow wire types require a little-endian target");
 
-use core::marker::PhantomData;
-
 use bytemuck::{Pod, PodCastError, Zeroable};
 use derive_size::Size;
 // #[cfg(feature = "host")]
@@ -27,14 +25,14 @@ use crate::{
     derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
 )]
 pub struct State {
-    pub chain_work: ChainWork,
+    pub chain_work:   ChainWork,
     pub genesis_hash: BlockHash,
-    pub block_hash: BlockHash,
-    pub height: u32,
+    pub block_hash:   BlockHash,
+    pub height:       u32,
 
-    pub current_nbits: CompactTarget,
+    pub current_nbits:         CompactTarget,
     pub epoch_start_timestamp: BlockTimestamp,
-    pub timestamps: [BlockTimestamp; Mainnet::PARAMS.window_size],
+    pub timestamps:            [BlockTimestamp; Mainnet::PARAMS.window_size],
 }
 
 impl State {
@@ -92,7 +90,14 @@ impl State {
         }
 
         let candidate_height = self.height + 1;
-        HeaderUpdate::<C>::new(self, candidate_height, new_header.timestamp, block_hash);
+        sp1_cycle::track!({
+            self.height = candidate_height;
+            self.timestamps[timestamp_slot(candidate_height.into())] = new_header.timestamp;
+            if candidate_height.is_multiple_of(C::PARAMS.epoch_length) {
+                self.epoch_start_timestamp = new_header.timestamp;
+            }
+            self.block_hash = block_hash;
+        });
 
         ReturnCode::SUCCESS
     }
@@ -206,23 +211,23 @@ impl State {
 impl Default for State {
     fn default() -> Self {
         Self {
-            block_hash: BlockHash::default(),
-            genesis_hash: BlockHash::default(),
-            current_nbits: CompactTarget::default(),
-            height: 0,
-            chain_work: ChainWork::default(),
+            block_hash:            BlockHash::default(),
+            genesis_hash:          BlockHash::default(),
+            current_nbits:         CompactTarget::default(),
+            height:                0,
+            chain_work:            ChainWork::default(),
             epoch_start_timestamp: BlockTimestamp::default(),
-            timestamps: [BlockTimestamp::default(); Mainnet::PARAMS.window_size],
+            timestamps:            [BlockTimestamp::default(); Mainnet::PARAMS.window_size],
         }
     }
 }
 
 struct EpochManager<'a> {
-    state: &'a mut State,
-    start_height: u32,
+    state:             &'a mut State,
+    start_height:      u32,
     active_block_work: BlockWork,
-    active_nbits: CompactTarget,
-    active_target: Target,
+    active_nbits:      CompactTarget,
+    active_target:     Target,
 }
 
 impl<'a> EpochManager<'a> {
@@ -272,41 +277,5 @@ impl<'a> EpochManager<'a> {
 impl<'a> Drop for EpochManager<'a> {
     fn drop(&mut self) {
         self.flush();
-    }
-}
-
-struct HeaderUpdate<'a, C: Consensus> {
-    state: &'a mut State,
-    height: u32,
-    timestamp_slot: usize,
-    timestamp: BlockTimestamp,
-    block_hash: BlockHash,
-    consensus: PhantomData<fn() -> C>,
-}
-
-impl<'a, C: Consensus> HeaderUpdate<'a, C> {
-    fn new(state: &'a mut State, height: u32, timestamp: BlockTimestamp, block_hash: BlockHash) -> Self {
-        let timestamp_slot = timestamp_slot(height.into());
-        Self {
-            state,
-            height,
-            timestamp_slot,
-            timestamp,
-            block_hash,
-            consensus: PhantomData,
-        }
-    }
-}
-
-impl<'a, C: Consensus> Drop for HeaderUpdate<'a, C> {
-    fn drop(&mut self) {
-        sp1_cycle::track!({
-            self.state.height = self.height;
-            self.state.timestamps[self.timestamp_slot] = self.timestamp;
-            if self.height.is_multiple_of(C::PARAMS.epoch_length) {
-                self.state.epoch_start_timestamp = self.timestamp;
-            }
-            self.state.block_hash = self.block_hash;
-        });
     }
 }

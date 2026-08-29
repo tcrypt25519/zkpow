@@ -30,6 +30,7 @@ zkpow-cli = { path = "crates/cli" }
 zkpow-params = { path = "crates/params" }
 zkpow-types = { path = "crates/types" }
 zkpow-worker = { path = "crates/worker" }
+
 derive-size = { path = "crates/derive-size" }
 sha256_const = { path = "crates/sha256_const" }
 sp1-cycle = { path = "crates/sp1-cycle" }
@@ -67,7 +68,7 @@ tokio = { version = "1.53.1", features = ["full"] }
 hex = "0.4.3"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 humantime = "2.4"
-num-bigint = "0.4.8"
+num-bigint = "0.5.1"
 clap = { version = "4.6.6", features = ["derive"] }
 thiserror = "2.0.20"
 rand = "0.10.2"
@@ -96,7 +97,6 @@ const-gen = { version = "1.6.9", default-features = false, features = [
     "derive",
 ] }
 
-aaxx
 [profile.release]
 incremental = false
 
