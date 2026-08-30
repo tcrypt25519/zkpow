@@ -310,25 +310,16 @@ impl ControllerCore {
             .map_err(|err| ControllerError::internal(format!("run ledger read failed: {err}")))?;
         let record = match record {
             Some(record) if record.verifier_key != self.verifier_key => {
-                if record.verified_height == 0 && record.proof_object.is_none() {
-                    tracing::warn!(
-                        run_id,
-                        stored = %hex::encode(record.verifier_key.to_bytes()),
-                        current = %hex::encode(self.verifier_key.to_bytes()),
-                        "run has no verified progress; rebinding to this controller's verifier key"
-                    );
-                    self.store
-                        .delete_run(run_id)
-                        .map_err(|err| ControllerError::internal(format!("run ledger delete failed: {err}")))?;
-                    self.create_run_record(run_id)?
-                } else {
-                    return Err(ControllerError::conflict(format!(
-                        "run {run_id} is pinned to verifier key {} at height {}; this controller has {}",
-                        hex::encode(record.verifier_key.to_bytes()),
-                        record.verified_height,
-                        hex::encode(self.verifier_key.to_bytes()),
-                    )));
-                }
+                tracing::warn!(
+                    run_id,
+                    stored = %hex::encode(record.verifier_key.to_bytes()),
+                    current = %hex::encode(self.verifier_key.to_bytes()),
+                    "run belongs to a different verifier key; rebinding to this controller's key"
+                );
+                self.store
+                    .delete_run(run_id)
+                    .map_err(|err| ControllerError::internal(format!("run ledger delete failed: {err}")))?;
+                self.create_run_record(run_id)?
             },
             Some(record) => record,
             None => self.create_run_record(run_id)?,
