@@ -840,3 +840,102 @@ fn epoch_boundary_is_read_from_the_parameters() {
         "mainnet is mid-epoch here and must not retarget"
     );
 }
+
+/// A warm chain whose timestamps have been strictly increasing so far, ready for a batch that
+/// contains the first out-of-order block.
+fn ordered_warm_state(height: u32) -> State {
+    let mut state = test_state();
+    for step in 1..=height {
+        apply_header(&mut state, 1_000 + step * 600);
+    }
+    state
+}
+
+fn headers_from_timestamps(timestamps: &[u32]) -> Vec<HeaderInput> {
+    timestamps
+        .iter()
+        .map(|timestamp| HeaderInput {
+            version:     1,
+            merkle_root: [0x22; 32],
+            timestamp:   ts(*timestamp),
+            nonce:       7,
+        })
+        .collect()
+}
+
+fn apply_sequentially(state: &mut State, headers: &[HeaderInput]) -> Result<(), ApplyError> {
+    for header in headers {
+        let hints = median_hints_for_headers(state, core::slice::from_ref(header));
+        state.apply_headers::<TestConsensus>(core::slice::from_ref(header), &hints)?;
+    }
+    Ok(())
+}
+
+/// The ordered-window shortcut reads the median straight out of the ring buffer, so it has to
+/// index by the height being sealed rather than the height the batch started at. Reading by the
+/// batch's starting height aliases a slot that later headers in the same batch have already
+/// overwritten, which silently degrades the median-time-past check into "newer than some recent
+/// block". A strictly increasing chain never notices; the first out-of-order block does.
+#[test]
+fn ordered_window_median_is_batch_split_invariant() {
+    for dip_index in 0..12usize {
+        let state = ordered_warm_state(20);
+
+        let base = 1_000 + 20 * 600;
+        let mut timestamps: Vec<u32> = (1..=12u32).map(|offset| base + offset * 600).collect();
+        // Out of order versus its parent, but still comfortably above the real median-time-past.
+        timestamps[dip_index] -= 1_500;
+        let headers = headers_from_timestamps(&timestamps);
+
+        let _hash_guard = set_hash_success();
+
+        let mut sequential = state;
+        let sequential_result = apply_sequentially(&mut sequential, &headers);
+
+        let mut batched = state;
+        let hints = median_hints_for_headers(&batched, &headers);
+        let batched_result = batched.apply_headers::<TestConsensus>(&headers, &hints);
+
+        assert_eq!(sequential_result, Ok(()), "dip at index {dip_index} is a valid block");
+        assert_eq!(
+            batched_result, sequential_result,
+            "dip at index {dip_index}: batching changed the verdict"
+        );
+        assert_eq!(batched, sequential, "dip at index {dip_index}: batching changed the state");
+    }
+}
+
+/// Pins the boundary itself: deep inside a batch, the accepted timestamp is the one just past the
+/// median-time-past of the header's own parent.
+#[test]
+fn ordered_window_median_boundary_holds_deep_in_a_batch() {
+    const DIP_INDEX: usize = 6;
+
+    let state = ordered_warm_state(20);
+    let base = 1_000 + 20 * 600;
+    let timestamps: Vec<u32> = (1..=12u32).map(|offset| base + offset * 600).collect();
+
+    let _hash_guard = set_hash_success();
+
+    let mut parent = state;
+    apply_sequentially(&mut parent, &headers_from_timestamps(&timestamps[..DIP_INDEX])).unwrap();
+    let median = median_time_past(&parent).into_inner();
+
+    for (dip, expected) in [
+        (median - 1, Err(ApplyError::TimestampTooOld)),
+        (median, Err(ApplyError::TimestampTooOld)),
+        (median + 1, Ok(())),
+    ] {
+        let mut dipped = timestamps.clone();
+        dipped[DIP_INDEX] = dip;
+        let headers = headers_from_timestamps(&dipped);
+
+        let mut batched = state;
+        let hints = median_hints_for_headers(&batched, &headers);
+        assert_eq!(
+            batched.apply_headers::<TestConsensus>(&headers, &hints),
+            expected,
+            "timestamp {dip} against median {median}"
+        );
+    }
+}

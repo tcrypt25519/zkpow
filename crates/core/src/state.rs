@@ -128,12 +128,14 @@ impl State {
         let mut ordered_run_len = sp1_cycle::track!({ ordered_timestamp_run(&self.timestamps, self.height) }) as usize;
 
         while header_iter.len() > 0 {
-            let height = self.height;
+            let epoch_start_height = self.height;
             let mut context = self.new_epoch_manager::<C>();
-            let epoch_len_remaining = (C::PARAMS.epoch_length - ((height + 1) % C::PARAMS.epoch_length)) as usize;
+            let epoch_len_remaining =
+                (C::PARAMS.epoch_length - ((epoch_start_height + 1) % C::PARAMS.epoch_length)) as usize;
 
             for new_header in header_iter.by_ref().take(epoch_len_remaining) {
                 let state = &mut context.state;
+                let height = state.height;
                 let active_nbits = context.active_nbits;
                 let active_target = context.active_target;
 
