@@ -63,9 +63,9 @@ fn applying_headers_one_at_a_time_matches_db_claims() {
             &[]
         };
         let result = if state.height == 0 {
-            state.apply_cold::<Mainnet>(&[header], hints)
+            state.apply_headers_from_genesis::<Mainnet>(&[header], hints)
         } else {
-            state.apply_warm::<Mainnet>(&[header], hints)
+            state.apply_headers::<Mainnet>(&[header], hints)
         };
         result.expect("header should apply");
         let height = (index as u32) + 1;
