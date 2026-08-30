@@ -84,11 +84,8 @@ fn db_retarget_schedule_matches_height_40320() {
     let genesis_hash = BlockHash::from(&genesis.header);
     let genesis_state = genesis_state_from_record(genesis, genesis_hash);
     let witness_1 = db.load_header_batch_witness(1, 40319);
-    let state = compute_final_state_with_hints::<Mainnet>(
-        &genesis_state,
-        &witness_1.headers,
-        &witness_1.median_time_past_hints,
-    );
+    let state =
+        compute_final_state_cold::<Mainnet>(&genesis_state, &witness_1.headers, &witness_1.median_time_past_hints);
     let pre_boundary_nbits = db.load_compact_target(40319);
 
     assert_eq!(state.height, 40319);
@@ -118,13 +115,14 @@ fn db_chainwork_matches_simulated_batches() {
     let genesis = db.load_header_record(0);
     let genesis_hash = BlockHash::from(&genesis.header);
 
-    for (name, initial_state, record_start, record_count, expected_height) in cases {
-        let initial_state = match initial_state {
+    for (name, source, record_start, record_count, expected_height) in cases {
+        let is_genesis = matches!(source, InitialState::Genesis);
+        let initial_state = match source {
             InitialState::Genesis => genesis_state_from_record(genesis.clone(), genesis_hash),
             InitialState::DbHeight(height) => db.state_at_height::<Mainnet>(height, genesis_hash),
         };
         let witness = db.load_header_batch_witness(record_start, record_count);
-        let final_state = if matches!(initial_state, InitialState::Genesis) {
+        let final_state = if is_genesis {
             compute_final_state_cold::<Mainnet>(&initial_state, &witness.headers, &witness.median_time_past_hints)
         } else {
             compute_final_state_warm::<Mainnet>(&initial_state, &witness.headers, &witness.median_time_past_hints)

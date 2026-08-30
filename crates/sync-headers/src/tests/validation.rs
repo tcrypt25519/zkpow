@@ -59,12 +59,13 @@ fn build_chain(anchor: &Tip, count: u32, nbits_at: impl Fn(u32) -> u32) -> Vec<H
 fn synthetic_anchor(height: u32, nbits: u32) -> Tip {
     let (current_nbits, current_target, current_block_work) = expand_target(CompactTarget::new(nbits));
     let chainwork = current_block_work * ((height + 1) as u32);
+    let ordered_run = (height as u64).min(Mainnet::PARAMS.window_max_index() as u64);
     Tip::new(
         BlockHash::new([0xAB; 32]),
         height,
         chainwork,
         [2_000_000_000u32; Mainnet::PARAMS.window_size],
-        height,
+        ordered_run,
         current_nbits,
         current_target,
         current_block_work,
@@ -104,7 +105,7 @@ fn connect_headers_wraps_the_timestamp_window_across_batches() {
 #[test]
 fn connect_headers_only_re_derives_target_at_epoch_boundary() {
     // One header below a retarget boundary, cached on nbits A.
-    let anchor = synthetic_anchor(EPOCH_LENGTH as u64 - 1, TRIVIAL_NBITS_A);
+    let anchor = synthetic_anchor(EPOCH_LENGTH - 1, TRIVIAL_NBITS_A);
     assert_ne!(TRIVIAL_NBITS_A, TRIVIAL_NBITS_B);
 
     // The boundary header (candidate_height == EPOCH_LENGTH) claims a
