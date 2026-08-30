@@ -1,5 +1,5 @@
 use sync_headers::{ConnectedHeader, Header as SyncHeader};
-use zkpow_core::VerifierKeyDigest;
+use zkpow_core::{ChainWork, VerifierKeyDigest};
 use zkpow_params::Mainnet;
 
 use super::*;
@@ -39,7 +39,11 @@ fn run_ledger_round_trips_in_the_header_database() {
 fn genesis_connected_header() -> ConnectedHeader {
     let header = SyncHeader::new(Mainnet::PARAMS.genesis);
     let block_hash = header.block_hash();
-    ConnectedHeader::new(header, block_hash, 0, Mainnet::PARAMS.genesis_work, 0, 0)
+
+    // Genesis is the only block at its height, so `genesis_work` equals the
+    // cumulative `ChainWork` here.
+    let chain_work = ChainWork::new(Mainnet::PARAMS.genesis_work.into_inner());
+    ConnectedHeader::new(header, block_hash, 0, chain_work, 0, 0)
 }
 
 #[test]

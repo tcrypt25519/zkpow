@@ -26,7 +26,7 @@ pub struct State {
 
     pub current_nbits:   CompactTarget,
     pub epoch_timestamp: BlockTimestamp,
-    pub timestamps:      [BlockTimestamp; Mainnet::PARAMS.window_size],
+    pub timestamps: [BlockTimestamp; Mainnet::PARAMS.window_size],
 }
 
 impl State {
@@ -196,16 +196,19 @@ impl State {
             return Err(ApplyError::PowInsufficient);
         }
 
-        sp1_cycle::track!({
-            self.height = self.height + 1;
-            self.block_hash = hash;
-            self.timestamps[timestamp_slot(self.height)] = new_header.timestamp;
-            if (self.height).is_multiple_of(C::PARAMS.epoch_length) {
-                self.epoch_timestamp = new_header.timestamp;
-            }
-        });
+        self.advance_state(new_header, &hash, active_nbits);
 
         Ok(())
+    }
+
+    #[tracked]
+    fn advance_state(&mut self, new_header: &HeaderInput, hash: &BlockHash, new_nbits: CompactTarget) {
+        self.height = self.height + 1;
+        self.block_hash = hash
+        self.timestamps[timestamp_slot(self.height)] = new_header.timestamp;
+        if (self.height).is_multiple_of(Mainnet::PARAMS.epoch_length) {
+            self.epoch_timestamp = new_header.timestamp;
+        }
     }
 }
 
@@ -218,17 +221,17 @@ impl Default for State {
             height:          0,
             chain_work:      ChainWork::default(),
             epoch_timestamp: BlockTimestamp::default(),
-            timestamps:      [BlockTimestamp::default(); Mainnet::PARAMS.window_size],
+            timestamps: [BlockTimestamp::default(); Mainnet::PARAMS.window_size],
         }
     }
 }
 
 struct EpochManager<'a> {
-    state:             &'a mut State,
-    start_height:      u32,
+    state: &'a mut State,
+    start_height: u32,
     active_block_work: BlockWork,
-    active_nbits:      CompactTarget,
-    active_target:     Target,
+    active_nbits: CompactTarget,
+    active_target: Target,
 }
 
 impl<'a> EpochManager<'a> {

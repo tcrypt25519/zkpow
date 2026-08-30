@@ -62,12 +62,12 @@ fn hash_header_input(input: &HeaderInput, prev_blockhash: &BlockHash, compact_ta
     #[cfg(not(target_os = "zkvm"))]
     {
         let header = Header {
-            version:        input.version,
+            version: input.version,
             prev_blockhash: *prev_blockhash,
-            merkle_root:    input.merkle_root,
-            timestamp:      input.timestamp,
+            merkle_root: input.merkle_root,
+            timestamp: input.timestamp,
             compact_target: *compact_target,
-            nonce:          input.nonce,
+            nonce: input.nonce,
         };
         hash_header(&header)
     }

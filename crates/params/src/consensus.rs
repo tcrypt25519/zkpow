@@ -1,5 +1,5 @@
 use sha256_const::double;
-use zkpow_types::{BlockHash, BlockWork, CompactTarget, Header, Target};
+use zkpow_types::{BlockHash, BlockWork, ChainWork, CompactTarget, Header, Target};
 
 /// The parameters that define a network.
 ///
@@ -7,22 +7,22 @@ use zkpow_types::{BlockHash, BlockWork, CompactTarget, Header, Target};
 /// definition of each and a `C: Consensus` bound still folds down to literals at the call site.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ConsensusParams {
-    pub genesis:        Header,
+    pub genesis: Header,
     /// The PoW limit, which is also the target the genesis header commits to.
     pub genesis_target: Target,
     /// Work proven by one block at [`ConsensusParams::genesis_target`].
-    pub genesis_work:   BlockWork,
+    pub genesis_work: BlockWork,
 
     /// Expected seconds between blocks.
-    pub block_time:          u32,
+    pub block_time: u32,
     /// Blocks per difficulty epoch.
-    pub epoch_length:        u32,
+    pub epoch_length: u32,
     /// A measured epoch may run this many times longer than expected before it is clamped.
-    pub max_epoch_over_mul:  u8,
+    pub max_epoch_over_mul: u8,
     /// ...and this many times shorter.
     pub min_epoch_under_div: u8,
     /// Number of previous block timestamps kept for median-time-past and ordered-window checks.
-    pub window_size:         usize,
+    pub window_size: usize,
 }
 
 impl ConsensusParams {
@@ -81,6 +81,10 @@ impl ConsensusParams {
 
     pub const fn block_work(&self) -> BlockWork {
         self.genesis_work
+    }
+
+    pub const fn chain_work(&self) -> ChainWork {
+        ChainWork::new(*self.genesis_work.as_inner())
     }
 }
 

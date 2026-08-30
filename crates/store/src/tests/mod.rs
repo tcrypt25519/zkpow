@@ -31,7 +31,7 @@ pub(crate) fn seeded_store(test_name: &str) -> (HeaderStore, PathBuf, BlockHash)
 
     let genesis_header = SyncHeader::new(Mainnet::PARAMS.genesis);
     let genesis_hash = genesis_header.block_hash();
-    let genesis = ConnectedHeader::new(genesis_header, genesis_hash, 0, Mainnet::PARAMS.genesis_work, 0, 0);
+    let genesis = ConnectedHeader::new(genesis_header, genesis_hash, 0, Mainnet::PARAMS.genesis.chain_work(), 0, 0);
     store.insert_genesis(&genesis).unwrap();
 
     let tip = store.get_best_tip().unwrap().unwrap();

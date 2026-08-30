@@ -6,10 +6,6 @@ use crate::bigint::{u256, NonMaxU256};
 
 /// Generic branded newtype wrapper providing type-safe distinction without runtime overhead.
 #[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Pod, Zeroable)]
-#[cfg_attr(
-    not(target_os = "zkvm"),
-    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
-)]
 #[repr(transparent)]
 pub struct Branded<Tag, T>(T, PhantomData<fn(Tag) -> Tag>);
 
