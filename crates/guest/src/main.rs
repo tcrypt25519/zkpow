@@ -79,8 +79,8 @@ fn inner_main() -> Result<(), ProgramError> {
 
     ## State mutation
 
-    - `State` is mutated in place by `state.apply_cold(headers, medians)` or
-      `state.apply_warm(headers, medians)` depending on `state.height`.
+    - `State` is mutated in place by `state.apply_headers_from_genesis(headers, medians)`
+      on the first IVC batch, otherwise `state.apply_headers(headers, medians)`.
     - On failure, the last valid state is read from the same `&mut State`.
     - Between iterations, the host serializes the updated `State` via
       `state.to_bytes()` and the next guest deserializes it fresh from stdin.
@@ -91,7 +91,9 @@ fn inner_main() -> Result<(), ProgramError> {
     let headers: &[HeaderInput] = read_slice_of_fixed_size_len::<HeaderInput>()?;
     let medians: &[BlockTimestamp] = read_slice_of_fixed_size_len::<BlockTimestamp>()?;
 
-    let apply_result = if state.height > 0 {
+    let apply_result = if state.height == 0 {
+        state.apply_headers_from_genesis::<Mainnet>(headers, medians)
+    } else {
         let actual_pv_hash = sp1_cycle::track!(zkpow_sha256::of_public_values(
             bytemuck::bytes_of(state),
             verifier_key.to_le_bytes_slice(),
@@ -99,9 +101,7 @@ fn inner_main() -> Result<(), ProgramError> {
         ));
         sp1_cycle::track!(sp1_zkvm::lib::verify::verify_sp1_proof(verifier_key.as_raw(), &actual_pv_hash));
 
-        state.apply_warm::<Mainnet>(headers, medians)
-    } else {
-        state.apply_cold::<Mainnet>(headers, medians)
+        state.apply_headers::<Mainnet>(headers, medians)
     };
 
     let return_code = match apply_result {

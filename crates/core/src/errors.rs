@@ -13,7 +13,7 @@ pub enum ParseError {
     },
 }
 
-/// Validation failure during [`State::apply_cold`] or [`State::apply_warm`].
+/// Validation failure during [`State::apply_headers`] or [`State::apply_headers_from_genesis`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum ApplyError {
     #[error("new header timestamp is not greater than the median")]

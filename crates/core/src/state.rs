@@ -78,7 +78,7 @@ impl State {
     /// of the chain, starting from genesis. After those headers are applied any remaining headers
     /// are passed to [`State::apply_warm`].
     #[tracked]
-    pub fn apply_cold<C: Consensus>(
+    pub fn apply_headers_from_genesis<C: Consensus>(
         &mut self,
         headers: &[HeaderInput],
         median_hints: &[BlockTimestamp],
@@ -92,7 +92,7 @@ impl State {
         if warm.is_empty() {
             Ok(())
         } else {
-            self.apply_warm::<C>(warm, median_hints)
+            self.apply_headers::<C>(warm, median_hints)
         }
     }
 
@@ -106,7 +106,7 @@ impl State {
             let active_target = context.active_target;
             context
                 .state
-                .seal_new_header::<C>(active_nbits, active_target, new_header, claimed_median)?;
+                .seal_header::<C>(active_nbits, active_target, new_header, claimed_median)?;
         }
         drop(context);
         Ok(())
@@ -117,7 +117,7 @@ impl State {
     /// `epoch_length`, applying them to the current epoch and then transitioning to the next epoch
     /// when a boundary is reached.
     #[inline(always)]
-    pub fn apply_warm<C: Consensus>(
+    pub fn apply_headers<C: Consensus>(
         &mut self,
         headers: &[HeaderInput],
         median_hints: &[BlockTimestamp],
@@ -166,7 +166,7 @@ impl State {
                     new_header.timestamp.into_inner(),
                 ) as usize;
 
-                state.seal_new_header::<C>(active_nbits, active_target, new_header, claimed_median)?;
+                state.seal_header::<C>(active_nbits, active_target, new_header, claimed_median)?;
             }
         }
 
@@ -177,7 +177,7 @@ impl State {
         Ok(())
     }
 
-    fn seal_new_header<C: Consensus>(
+    fn seal_header<C: Consensus>(
         &mut self,
         active_nbits: CompactTarget,
         active_target: Target,

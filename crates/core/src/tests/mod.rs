@@ -82,9 +82,11 @@ fn apply_header(state: &mut State, timestamp: u32) {
     };
     let median_hints = median_hints_for_headers(state, &[header]);
     if state.height == 0 {
-        state.apply_cold::<TestConsensus>(&[header], &median_hints).unwrap();
+        state
+            .apply_headers_from_genesis::<TestConsensus>(&[header], &median_hints)
+            .unwrap();
     } else {
-        state.apply_warm::<TestConsensus>(&[header], &median_hints).unwrap();
+        state.apply_headers::<TestConsensus>(&[header], &median_hints).unwrap();
     }
 }
 
@@ -316,7 +318,7 @@ fn apply_headers_flushes_deferred_chain_work_on_success() {
 
     let hints = median_hints_for_headers(&state, &headers);
     state
-        .apply_cold::<TestConsensus>(&headers, &hints)
+        .apply_headers_from_genesis::<TestConsensus>(&headers, &hints)
         .expect("headers should validate");
 
     let block_work = block_work_from_target(GENESIS_TARGET);
@@ -353,7 +355,7 @@ fn apply_headers_flushes_deferred_chain_work_for_longer_run() {
 
     let hints = median_hints_for_headers(&state, &headers);
     state
-        .apply_cold::<TestConsensus>(&headers, &hints)
+        .apply_headers_from_genesis::<TestConsensus>(&headers, &hints)
         .expect("validation should succeed");
 
     let block_work = block_work_from_target(GENESIS_TARGET);
@@ -380,7 +382,7 @@ fn failure_height_is_absolute_chain_height() {
     let hints = median_hints_for_headers(&state, &headers);
     // Use a hash that exceeds the target to trigger PowInsufficient.
     let failure = state
-        .apply_warm::<TestConsensus>(&headers, &hints)
+        .apply_headers::<TestConsensus>(&headers, &hints)
         .expect_err("should fail PoW");
 
     assert_eq!(failure.error_code(), ErrorCode::POW_INSUFFICIENT);
@@ -409,7 +411,7 @@ fn apply_headers_flushes_deferred_chain_work_before_failure() {
     let hints = median_hints_for_headers(&state, &headers);
 
     state
-        .apply_cold::<TestConsensus>(&headers, &hints)
+        .apply_headers_from_genesis::<TestConsensus>(&headers, &hints)
         .expect_err("second header should fail timestamp validation");
 
     let work = block_work_from_target(GENESIS_TARGET);
@@ -438,7 +440,7 @@ fn apply_headers_failure_output_includes_flushed_chain_work() {
 
     let hints = median_hints_for_headers(&state, &headers);
     let failure = state
-        .apply_cold::<TestConsensus>(&headers, &hints)
+        .apply_headers_from_genesis::<TestConsensus>(&headers, &hints)
         .expect_err("validation should fail on the second header");
 
     let public_values = failure_public_value_bytes(&state, failure.error_code());
@@ -465,19 +467,19 @@ fn apply_headers_matches_sequential_next_across_median_window_wrap() {
     let (first, rest) = headers.split_first().unwrap();
     let median_hints = median_hints_for_headers(&sequential, &[*first]);
     sequential
-        .apply_cold::<TestConsensus>(&[*first], &median_hints)
+        .apply_headers_from_genesis::<TestConsensus>(&[*first], &median_hints)
         .expect("first header should validate");
     for header in rest {
         let median_hints = median_hints_for_headers(&sequential, &[*header]);
         sequential
-            .apply_warm::<TestConsensus>(&[*header], &median_hints)
+            .apply_headers::<TestConsensus>(&[*header], &median_hints)
             .expect("sequential validation should succeed");
     }
 
     let hints = median_hints_for_headers(&test_state(), &headers);
     let mut batched = test_state();
     batched
-        .apply_cold::<TestConsensus>(&headers, &hints)
+        .apply_headers_from_genesis::<TestConsensus>(&headers, &hints)
         .expect("batched validation should succeed");
 
     assert_eq!(batched, sequential);
@@ -499,7 +501,7 @@ fn hinted_apply_headers_matches_sorted_apply_headers_across_window_wrap() {
 
     let mut hinted = state;
     hinted
-        .apply_cold::<TestConsensus>(&headers, &hints)
+        .apply_headers_from_genesis::<TestConsensus>(&headers, &hints)
         .expect("hinted validation should succeed");
     assert_eq!(hinted.height, 23);
 }
@@ -521,7 +523,7 @@ fn hinted_median_validation_accepts_duplicate_median_values() {
     }];
 
     state
-        .apply_warm::<TestConsensus>(&headers, &[ts(6)])
+        .apply_headers::<TestConsensus>(&headers, &[ts(6)])
         .expect("duplicate median values should be accepted");
 }
 
@@ -543,7 +545,7 @@ fn hinted_median_validation_rejects_wrong_rank_hint() {
     let result = std::panic::catch_unwind(|| {
         let _hash_guard = set_hash_success();
         let mut state = state;
-        state.apply_warm::<TestConsensus>(&headers, &[ts(4)]).unwrap();
+        state.apply_headers::<TestConsensus>(&headers, &[ts(4)]).unwrap();
     });
 
     assert!(result.is_err());
@@ -563,7 +565,7 @@ fn apply_headers_treats_height_zero_state_as_trusted_anchor() {
     }];
     let hints = median_hints_for_headers(&state, &headers);
     state
-        .apply_cold::<TestConsensus>(&headers, &hints)
+        .apply_headers_from_genesis::<TestConsensus>(&headers, &hints)
         .expect("height-zero anchor should already be trusted");
 
     assert_eq!(state.height, 1);
@@ -626,7 +628,7 @@ fn next_overwrites_only_the_next_ring_slot() {
         nonce:       7,
     };
     let median_hints = median_hints_for_headers(&state, &[header]);
-    state.apply_warm::<TestConsensus>(&[header], &median_hints).unwrap();
+    state.apply_headers::<TestConsensus>(&[header], &median_hints).unwrap();
 
     let mut expected = original;
     expected[1] = ts(999);
@@ -694,7 +696,7 @@ fn malformed_header_pow_and_timestamp_errors() {
     {
         let _hash_guard = set_hash_fail();
         state
-            .apply_cold::<TestConsensus>(&[hdr1], &hints)
+            .apply_headers_from_genesis::<TestConsensus>(&[hdr1], &hints)
             .expect_err("expected PoW failure");
     }
 
@@ -709,7 +711,8 @@ fn malformed_header_pow_and_timestamp_errors() {
         nonce:       9,
     };
     let median_hints = median_hints_for_headers(&s2, &[ok_hdr]);
-    s2.apply_cold::<TestConsensus>(&[ok_hdr], &median_hints).unwrap();
+    s2.apply_headers_from_genesis::<TestConsensus>(&[ok_hdr], &median_hints)
+        .unwrap();
     let median_after_1 = median_time_past(&s2);
     let bad_hdr = HeaderInput {
         version:     42,
@@ -719,7 +722,7 @@ fn malformed_header_pow_and_timestamp_errors() {
     };
     let median_hints = median_hints_for_headers(&s2, &[bad_hdr]);
     let failure = s2
-        .apply_warm::<TestConsensus>(&[bad_hdr], &median_hints)
+        .apply_headers::<TestConsensus>(&[bad_hdr], &median_hints)
         .expect_err("timestamp equal to median must fail");
     assert_eq!(failure.error_code(), ErrorCode::TIMESTAMP_TOO_OLD);
 
@@ -733,7 +736,7 @@ fn malformed_header_pow_and_timestamp_errors() {
         nonce:       1,
     };
     let median_hints = median_hints_for_headers(&s3, &[odd_version_hdr]);
-    s3.apply_cold::<TestConsensus>(&[odd_version_hdr], &median_hints)
+    s3.apply_headers_from_genesis::<TestConsensus>(&[odd_version_hdr], &median_hints)
         .expect("unexpected failure due to version only");
 }
 
@@ -754,7 +757,7 @@ fn median_time_boundary_equality_fails() {
     };
     let median_hints = median_hints_for_headers(&state, &[hdr]);
     let failure = state
-        .apply_warm::<TestConsensus>(&[hdr], &median_hints)
+        .apply_headers::<TestConsensus>(&[hdr], &median_hints)
         .expect_err("timestamp equal to median must fail");
     assert_eq!(failure.error_code(), ErrorCode::TIMESTAMP_TOO_OLD);
 }
@@ -796,7 +799,7 @@ fn assert_boundary_retargets_once<C: Consensus>() {
         timestamp:   ts(1_000_700),
         nonce:       7,
     };
-    state.apply_warm::<C>(&[header], &[]).expect("boundary header should apply");
+    state.apply_headers::<C>(&[header], &[]).expect("boundary header should apply");
 
     assert_eq!(state.height, epoch_length);
     assert_eq!(state.current_nbits, expected_nbits);
@@ -824,14 +827,14 @@ fn epoch_boundary_is_read_from_the_parameters() {
     };
 
     let mut short = state;
-    short.apply_warm::<ShortEpoch>(&[header], &[]).expect("should apply");
+    short.apply_headers::<ShortEpoch>(&[header], &[]).expect("should apply");
     assert_ne!(
         short.current_nbits, starting_nbits,
         "ShortEpoch crossed a boundary and must retarget"
     );
 
     let mut main = state;
-    main.apply_warm::<TestConsensus>(&[header], &[]).expect("should apply");
+    main.apply_headers::<TestConsensus>(&[header], &[]).expect("should apply");
     assert_eq!(
         main.current_nbits, starting_nbits,
         "mainnet is mid-epoch here and must not retarget"

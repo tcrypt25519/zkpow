@@ -10,7 +10,7 @@ pub fn compute_final_state_cold<C: Consensus>(
 ) -> State {
     let mut state = *initial_state;
     state
-        .apply_cold::<C>(headers, hints)
+        .apply_headers_from_genesis::<C>(headers, hints)
         .expect("host cold start transition should succeed");
     state
 }
@@ -23,7 +23,7 @@ pub fn compute_final_state_warm<C: Consensus>(
 ) -> State {
     let mut state = *initial_state;
     state
-        .apply_warm::<C>(headers, hints)
+        .apply_headers::<C>(headers, hints)
         .expect("host warm transition should succeed");
     state
 }
