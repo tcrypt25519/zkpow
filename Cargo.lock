@@ -6373,6 +6373,7 @@ dependencies = [
  "zkpow-params",
  "zkpow-store",
  "zkpow-sync-headers",
+ "zkpow-types",
 ]
 
 [[package]]

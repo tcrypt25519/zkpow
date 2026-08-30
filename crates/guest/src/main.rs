@@ -19,7 +19,7 @@ sp1_zkvm::entrypoint!(main);
 
 use bytemuck::{self, Pod, PodCastError};
 use sp1_zkvm::lib::read_vec_raw;
-use zkpow_core::{ApplyFailure, BlockTimestamp, HeaderInput, PublicValues, ReturnCode, State, VerifierKeyDigest};
+use zkpow_core::{BlockTimestamp, HeaderInput, PublicValues, ReturnCode, State, VerifierKeyDigest};
 use zkpow_params::Mainnet;
 use zkpow_sha256;
 
@@ -44,15 +44,7 @@ fn read_fixed_size_input_mut<'g, T: Pod>() -> Result<&'g mut T, PodCastError> {
     bytemuck::try_from_bytes_mut::<T>(input_slice_ref)
 }
 
-//fn read_typed_scalar_input_mut<'g, T>() -> Result<&'g mut T, PodCastError> {
-//    let read_vec_results = unsafe { read_vec_raw() };
-//    let input_slice = std::ptr::slice_from_raw_parts_mut(read_vec_results.ptr, read_vec_results.len);
-//    let input_slice_ref = unsafe { input_slice.as_mut() }.ok_or(PodCastError::OutputSliceWouldHaveSlop)?;
-// //.expect("dynamic size input");    let input_type = input_slice.cast::<T>();
-//    unsafe { input_type.as_mut() }.ok_or(PodCastError::OutputSliceWouldHaveSlop)
-//}
-
-fn read_slice_of_fixed_size_elements_input<'g, T: Pod>() -> Result<&'g [T], PodCastError> {
+fn read_slice_of_fixed_size_len<'g, T: Pod>() -> Result<&'g [T], PodCastError> {
     let read_vec_results = unsafe { read_vec_raw() };
     let input_slice = std::ptr::slice_from_raw_parts(read_vec_results.ptr, read_vec_results.len);
     let input_slice_ref = unsafe { input_slice.as_ref() }.ok_or(PodCastError::OutputSliceWouldHaveSlop)?;
@@ -87,7 +79,8 @@ fn inner_main() -> Result<(), ProgramError> {
 
     ## State mutation
 
-    - `State` is mutated in place by `state.apply_headers(headers, medians)`.
+    - `State` is mutated in place by `state.apply_cold(headers, medians)` or
+      `state.apply_warm(headers, medians)` depending on `state.height`.
     - On failure, the last valid state is read from the same `&mut State`.
     - Between iterations, the host serializes the updated `State` via
       `state.to_bytes()` and the next guest deserializes it fresh from stdin.
@@ -95,22 +88,25 @@ fn inner_main() -> Result<(), ProgramError> {
 
     let verifier_key: &VerifierKeyDigest = read_fixed_size_input::<VerifierKeyDigest>()?;
     let state: &mut State = read_fixed_size_input_mut::<State>()?;
-    let headers: &[HeaderInput] = read_slice_of_fixed_size_elements_input::<HeaderInput>()?;
-    let medians: &[BlockTimestamp] = read_slice_of_fixed_size_elements_input::<BlockTimestamp>()?;
+    let headers: &[HeaderInput] = read_slice_of_fixed_size_len::<HeaderInput>()?;
+    let medians: &[BlockTimestamp] = read_slice_of_fixed_size_len::<BlockTimestamp>()?;
 
-    if state.height > 0 {
+    let apply_result = if state.height > 0 {
         let actual_pv_hash = sp1_cycle::track!(zkpow_sha256::of_public_values(
             bytemuck::bytes_of(state),
             verifier_key.to_le_bytes_slice(),
             ReturnCode::SUCCESS.into_u8(),
         ));
         sp1_cycle::track!(sp1_zkvm::lib::verify::verify_sp1_proof(verifier_key.as_raw(), &actual_pv_hash));
-    }
 
-    // Apply headers; on failure commit public values and halt.
-    let return_code = match state.apply_headers::<Mainnet>(headers, medians) {
+        state.apply_warm::<Mainnet>(headers, medians)
+    } else {
+        state.apply_cold::<Mainnet>(headers, medians)
+    };
+
+    let return_code = match apply_result {
         Ok(()) => ReturnCode::SUCCESS,
-        Err(ApplyFailure { error_code }) => ReturnCode::from(error_code),
+        Err(err) => ReturnCode::from(err.error_code()),
     };
     commit_public_values(&state, verifier_key, return_code);
 }

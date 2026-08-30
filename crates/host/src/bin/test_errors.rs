@@ -102,7 +102,11 @@ fn compute_final_state_with_sparse_hints(
     headers: &[util::HeaderInput],
     sparse_hints: &[util::BlockTimestamp],
 ) -> util::State {
-    util::compute_final_state_with_hints::<Mainnet>(initial_state, headers, sparse_hints)
+    if initial_state.height == 0 {
+        util::compute_final_state_cold::<Mainnet>(initial_state, headers, sparse_hints)
+    } else {
+        util::compute_final_state_warm::<Mainnet>(initial_state, headers, sparse_hints)
+    }
 }
 
 #[tokio::main]
@@ -392,7 +396,7 @@ async fn test_error_recursive_on_tampered_state_witness() -> Result<(), String> 
     let verifier_key = VerifierKeyDigest::from_raw([0u32; 8]);
 
     let mut tampered_state = state_at_5;
-    tampered_state.epoch_start_timestamp = util::BlockTimestamp::default();
+    tampered_state.epoch_timestamp = util::BlockTimestamp::default();
 
     let empty_headers = [];
     let empty_hints = Vec::new();

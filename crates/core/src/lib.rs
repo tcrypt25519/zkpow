@@ -12,7 +12,6 @@ mod tests;
 extern crate alloc;
 extern crate self as zkpow_core;
 
-use bytemuck::Pod;
 use zkpow_params::{Consensus, Mainnet};
 pub use zkpow_types::{
     BlockHash, BlockTimestamp, BlockWork, ByteInfo, ChainWork, CompactTarget, Header, NonMaxU256, Target, u256,
@@ -22,14 +21,14 @@ mod header;
 pub use header::HeaderInput;
 
 mod public_values;
-pub use public_values::{ApplyFailure, ErrorCode, ErrorCodeNames, PublicValues, ReturnCode, VerifierKeyDigest};
+pub use public_values::{ErrorCode, ErrorCodeNames, PublicValues, ReturnCode, VerifierKeyDigest};
 pub use sp1_cycle;
 
 mod state;
 pub use state::State;
 
 mod errors;
-pub use errors::{InputParseError, ParseError};
+pub use errors::{ApplyError, InputParseError, ParseError};
 
 mod input;
 pub use input::{cast_slice, serialize_inputs};
@@ -37,6 +36,7 @@ pub use input::{cast_slice, serialize_inputs};
 /// Hashing lives on [`Header`]; this wrapper exists only so tests can substitute a hash without
 /// mining one. It must stay in this crate: `cfg(test)` is per-compilation-unit, so a mock in
 /// `zkpow-types` would not be compiled when `zkpow-core`'s tests run.
+#[sp1_cycle::tracked]
 fn hash_header(header: &Header) -> BlockHash {
     #[cfg(test)]
     if let Some(hash) = test_hash_mock::get() {
@@ -142,11 +142,11 @@ pub const fn advance_ordered_timestamp_run(ordered_timestamp_run: u64, previous_
 
 #[must_use]
 pub fn ordered_timestamp_run(timestamps: &[BlockTimestamp; Mainnet::PARAMS.window_size], height: u32) -> u64 {
+    let count = timestamp_count(height);
     let mut run = 0;
     let mut newer = timestamps[timestamp_slot(height)];
-    for offset in 1..Mainnet::PARAMS.window_size {
-        let older =
-            timestamps[(timestamp_slot(height) + Mainnet::PARAMS.window_size - offset) % Mainnet::PARAMS.window_size];
+    for offset in 1..count {
+        let older = timestamps[timestamp_slot(height + (Mainnet::PARAMS.window_size - offset) as u32)];
         if older > newer {
             break;
         }
@@ -158,7 +158,7 @@ pub fn ordered_timestamp_run(timestamps: &[BlockTimestamp; Mainnet::PARAMS.windo
 
 #[must_use]
 pub const fn ordered_median_timestamp_slot(height: u32) -> usize {
-    (timestamp_slot(height) + Mainnet::PARAMS.window_large_half_size()) % Mainnet::PARAMS.window_size
+    timestamp_slot(height + Mainnet::PARAMS.window_large_half_size() as u32)
 }
 
 #[must_use]
@@ -175,11 +175,6 @@ pub(crate) fn check_exact_len(bytes: &[u8], expected: usize) -> Result<(), Parse
         });
     }
     Ok(())
-}
-
-#[sp1_cycle::tracked]
-pub(crate) fn copy_to_bytes<const N: usize, T: Pod>(value: &T) -> [u8; N] {
-    *bytemuck::bytes_of::<T>(value).as_array().expect("a")
 }
 
 /// Convert a full 256-bit target into compact `bits` encoding.

@@ -23,7 +23,7 @@ pub mod verify;
 
 mod validation;
 
-pub use validation::{compute_final_state_with_hints, records_to_new_headers};
+pub use validation::{compute_final_state_cold, compute_final_state_warm, records_to_new_headers};
 
 /// Headers per controller-selected batch: one difficulty epoch.
 pub const DEFAULT_BATCH_SIZE: u32 = Mainnet::PARAMS.epoch_length;

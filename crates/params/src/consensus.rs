@@ -1,5 +1,5 @@
 use sha256_const::double;
-use zkpow_types::{BlockHash, ChainWork, Header, Target};
+use zkpow_types::{BlockHash, BlockWork, CompactTarget, Header, Target};
 
 /// The parameters that define a network.
 ///
@@ -11,7 +11,7 @@ pub struct ConsensusParams {
     /// The PoW limit, which is also the target the genesis header commits to.
     pub genesis_target: Target,
     /// Work proven by one block at [`ConsensusParams::genesis_target`].
-    pub genesis_work:   ChainWork,
+    pub genesis_work:   BlockWork,
 
     /// Expected seconds between blocks.
     pub block_time:          u32,
@@ -69,6 +69,18 @@ impl ConsensusParams {
     #[must_use]
     pub const fn min_epoch_timespan(&self) -> i64 {
         (self.expected_epoch_time() / self.min_epoch_under_div as u32) as i64
+    }
+
+    pub const fn compact_target(&self) -> CompactTarget {
+        self.genesis.compact_target
+    }
+
+    pub const fn target(&self) -> Target {
+        self.genesis_target
+    }
+
+    pub const fn block_work(&self) -> BlockWork {
+        self.genesis_work
     }
 }
 

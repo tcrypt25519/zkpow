@@ -2,6 +2,7 @@ use clap::{Args, Parser, Subcommand};
 use sync_headers::{connect_headers, tip_from_connected, ConnectedHeader, Header, Network, PeerStore, Tip};
 use zkpow_params::{Consensus, Mainnet};
 use zkpow_store::HeaderStore;
+use zkpow_types::ChainWork;
 
 #[derive(Parser, Debug)]
 #[command(name = "zkpow-cli")]
@@ -123,7 +124,8 @@ fn sync_p2p(args: &SyncArgs) -> Result<(), Box<dyn std::error::Error>> {
 fn genesis_connected_header() -> ConnectedHeader {
     let header = Header::new(Mainnet::PARAMS.genesis);
     let block_hash = header.block_hash();
-    ConnectedHeader::new(header, block_hash, 0, Mainnet::PARAMS.genesis_work, 0, 0)
+    let chainwork = ChainWork::from_limbs(Mainnet::PARAMS.genesis_work.into_inner().into_limbs());
+    ConnectedHeader::new(header, block_hash, 0, chainwork, 0, 0)
 }
 
 fn parse_network(s: &str) -> Result<Network, Box<dyn std::error::Error>> {

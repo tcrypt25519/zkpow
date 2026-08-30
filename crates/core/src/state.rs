@@ -1,208 +1,207 @@
 #[cfg(not(target_endian = "little"))]
 compile_error!("zkpow wire types require a little-endian target");
 
-use bytemuck::{Pod, PodCastError, Zeroable};
+use bytemuck::{Pod, Zeroable};
 use derive_size::Size;
-// #[cfg(feature = "host")]
-// use serde::{Deserialize, Serialize};
 use sp1_cycle::tracked;
 use zkpow_params::{Consensus, Mainnet};
 
 use crate::{
     advance_ordered_timestamp_run, block_work_from_target, calculate_next_target_required, check_proof_of_work,
-    copy_to_bytes, has_ordered_timestamp_window, hash_header_input, ordered_median_timestamp_slot,
-    ordered_timestamp_run, target_from_bits, timestamp_slot, ApplyFailure, BlockHash, BlockTimestamp, BlockWork,
-    ChainWork, CompactTarget, HeaderInput, ReturnCode, Target,
+    has_ordered_timestamp_window, hash_header_input, ordered_median_timestamp_slot, ordered_timestamp_run,
+    target_from_bits, timestamp_count, timestamp_slot, ApplyError, BlockHash, BlockTimestamp, BlockWork, ChainWork,
+    CompactTarget, HeaderInput, Target,
 };
 
-// use rkyv::{Archive, Serialize, Deserialize};
-
 /// Complete authenticated validation state, serialized between recursive iterations.
+/// This is the state of the *last* block header processed.
+/// When appending blocks, this is the state of the parent block of the block being appended.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Pod, Zeroable, Size)]
-#[cfg_attr(
-    not(target_os = "zkvm"),
-    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
-)]
 pub struct State {
     pub chain_work:   ChainWork,
     pub genesis_hash: BlockHash,
     pub block_hash:   BlockHash,
     pub height:       u32,
 
-    pub current_nbits:         CompactTarget,
-    pub epoch_start_timestamp: BlockTimestamp,
-    pub timestamps:            [BlockTimestamp; Mainnet::PARAMS.window_size],
+    pub current_nbits:   CompactTarget,
+    pub epoch_timestamp: BlockTimestamp,
+    pub timestamps:      [BlockTimestamp; Mainnet::PARAMS.window_size],
 }
 
 impl State {
-    /// The circular-buffer slot containing the current tip timestamp.
     #[must_use]
     #[inline]
-    fn current_timestamp_slot(&self) -> usize {
-        timestamp_slot(self.height.into())
+    fn current_timestamp(&self) -> BlockTimestamp {
+        self.timestamps[timestamp_slot(self.height)]
     }
 
-    #[must_use]
-    #[inline]
-    fn previous_timestamp(&self) -> BlockTimestamp {
-        self.timestamps[self.current_timestamp_slot()]
-    }
-
-    /// Serialize to exactly [`STATE_SIZE`] bytes.ff
+    /// Serialize to exactly [`STATE_SIZE`] bytes.
     #[must_use]
     pub fn to_bytes(&self) -> [u8; Self::SIZE] {
-        copy_to_bytes(self)
+        *bytemuck::bytes_of::<Self>(self)
+            .as_array()
+            .expect("bytes_of(State)'s len should equal State::SIZE")
     }
 
-    /// Deserialize from exactly [`STATE_SIZE`] bytes.
+    /// Called when the State reflects the final block of epoch N
+    /// to compute the difficulty values that are active in epoch N+1.
     #[tracked]
-    pub fn parse(bytes: &[u8]) -> Result<&Self, PodCastError> {
-        bytemuck::try_from_bytes::<Self>(bytes)
+    fn prepare_next_epoch<C: Consensus>(&self) -> (CompactTarget, Target, BlockWork) {
+        let current_target = target_from_bits(self.current_nbits);
+        let current_timestamp = self.current_timestamp();
+        calculate_next_target_required::<C>(current_target, self.epoch_timestamp, current_timestamp)
     }
 
-    /// Compute the difficulty values that become active at a new epoch boundary.
-    #[tracked]
-    fn prepare_new_epoch<C: Consensus>(
-        &self,
-        current_target: Target,
-        previous_timestamp: BlockTimestamp,
-    ) -> (CompactTarget, Target, BlockWork) {
-        calculate_next_target_required::<C>(current_target, self.epoch_start_timestamp, previous_timestamp)
-    }
+    fn new_epoch_manager<'a, C: Consensus>(&'a mut self) -> EpochManager<'a> {
+        let (active_nbits, active_target, active_block_work) =
+            if (self.height + 1).is_multiple_of(C::PARAMS.epoch_length) {
+                self.prepare_next_epoch::<C>()
+            } else {
+                let active_nbits = self.current_nbits;
+                let active_target = target_from_bits(active_nbits);
+                let active_block_work = block_work_from_target(active_target);
+                (active_nbits, active_target, active_block_work)
+            };
 
-    #[allow(clippy::result_large_err)]
-    fn apply_header_after_median_check<C: Consensus>(
-        &mut self,
-        new_header: &HeaderInput,
-        claimed_median: BlockTimestamp,
-        active_nbits: CompactTarget,
-        active_target: Target,
-    ) -> ReturnCode {
-        if sp1_cycle::track!(new_header.timestamp <= claimed_median) {
-            return ReturnCode::TIMESTAMP_TOO_OLD;
+        let start_height = self.height;
+        EpochManager {
+            state: self,
+            start_height,
+            active_block_work,
+            active_nbits,
+            active_target,
         }
-
-        let block_hash = hash_header_input(new_header, &self.block_hash, &active_nbits);
-
-        if !check_proof_of_work(block_hash, &active_target) {
-            return ReturnCode::POW_INSUFFICIENT;
-        }
-
-        let candidate_height = self.height + 1;
-        sp1_cycle::track!({
-            self.height = candidate_height;
-            self.timestamps[timestamp_slot(candidate_height.into())] = new_header.timestamp;
-            if candidate_height.is_multiple_of(C::PARAMS.epoch_length) {
-                self.epoch_start_timestamp = new_header.timestamp;
-            }
-            self.block_hash = block_hash;
-        });
-
-        ReturnCode::SUCCESS
     }
 
-    #[allow(clippy::result_large_err)]
+    /// Apply the cold start batch. This path is intended for the first `window_size - 1` headers
+    /// of the chain, starting from genesis. After those headers are applied any remaining headers
+    /// are passed to [`State::apply_warm`].
     #[tracked]
-    pub fn apply_headers<C: Consensus>(
+    pub fn apply_cold<C: Consensus>(
         &mut self,
         headers: &[HeaderInput],
         median_hints: &[BlockTimestamp],
-    ) -> Result<(), ApplyFailure> {
-        let mut header_iter = headers.iter();
-        self.apply_cold_start_headers::<C>(&mut header_iter)?;
-        self.apply_warm_headers::<C>(&mut header_iter, median_hints)?;
-        Ok(())
+    ) -> Result<(), ApplyError> {
+        let cold_count = C::PARAMS.window_size - 1;
+        let to_apply = headers.len().min(cold_count);
+        let (cold, warm) = headers.split_at(to_apply);
+
+        self.apply_cold_batch::<C>(cold)?;
+
+        if warm.is_empty() {
+            Ok(())
+        } else {
+            self.apply_warm::<C>(warm, median_hints)
+        }
     }
 
-    fn apply_cold_start_headers<C: Consensus>(
-        &mut self,
-        header_iter: &mut core::slice::Iter<'_, HeaderInput>,
-    ) -> Result<(), ApplyFailure> {
-        let cold_len = (Mainnet::PARAMS.window_size - 1)
-            .saturating_sub(self.height as usize)
-            .min(header_iter.len());
-        if cold_len == 0 {
-            return Ok(());
-        }
-
-        let context = EpochManager::new::<C>(self);
-        for new_header in header_iter.take(cold_len) {
+    // Applies the first headers of the chain, before the MTP window has been filled. This lets the
+    // warm path assume it always has a full window.
+    fn apply_cold_batch<C: Consensus>(&mut self, headers: &[HeaderInput]) -> Result<(), ApplyError> {
+        let context = EpochManager::from_genesis::<C>(self);
+        for new_header in headers {
             let claimed_median = context.state.timestamps[(context.state.height as usize).div_ceil(2)];
-            let return_code = context.state.apply_header_after_median_check::<C>(
-                new_header,
-                claimed_median,
-                context.active_nbits,
-                context.active_target,
-            );
-            if return_code.is_failure() {
-                return Err(ApplyFailure {
-                    error_code: return_code.error_code().unwrap(),
-                });
-            }
+            let active_nbits = context.active_nbits;
+            let active_target = context.active_target;
+            context
+                .state
+                .seal_new_header::<C>(active_nbits, active_target, new_header, claimed_median)?;
         }
+        drop(context);
         Ok(())
     }
 
-    fn apply_warm_headers<C: Consensus>(
+    /// Apply headers while assuming the MTP window is full. The caller is responsible for only
+    /// invoking this once the window has been filled. It processes headers in batches of
+    /// `epoch_length`, applying them to the current epoch and then transitioning to the next epoch
+    /// when a boundary is reached.
+    #[inline(always)]
+    pub fn apply_warm<C: Consensus>(
         &mut self,
-        header_iter: &mut core::slice::Iter<'_, HeaderInput>,
+        headers: &[HeaderInput],
         median_hints: &[BlockTimestamp],
-    ) -> Result<(), ApplyFailure> {
-        let mut median_hint_iter = median_hints.iter();
-        let mut ordered_run_len =
-            sp1_cycle::track!({ ordered_timestamp_run(&self.timestamps, self.height.into()) }) as usize;
+    ) -> Result<(), ApplyError> {
+        let mut header_iter = headers.iter();
+        let mut hint_iter = median_hints.iter();
+
+        let mut ordered_run_len = sp1_cycle::track!({ ordered_timestamp_run(&self.timestamps, self.height) }) as usize;
 
         while header_iter.len() > 0 {
             let height = self.height;
-            let context = EpochManager::new::<C>(self);
+            let mut context = self.new_epoch_manager::<C>();
             let epoch_len_remaining = (C::PARAMS.epoch_length - ((height + 1) % C::PARAMS.epoch_length)) as usize;
 
-            for new_header in header_iter.take(epoch_len_remaining) {
+            for new_header in header_iter.by_ref().take(epoch_len_remaining) {
+                let state = &mut context.state;
+                let active_nbits = context.active_nbits;
+                let active_target = context.active_target;
+
                 let claimed_median = if has_ordered_timestamp_window(ordered_run_len as u64) {
-                    context.state.timestamps[ordered_median_timestamp_slot(height.into())]
+                    state.timestamps[ordered_median_timestamp_slot(height)]
                 } else {
-                    let claimed_median = *median_hint_iter
-                        .next()
-                        .unwrap_or_else(|| panic!("missing median time past hint at header {}", height));
+                    let claimed_median = *hint_iter.next().ok_or(ApplyError::InvalidMedianHint)?;
+
                     let (less_count, equal_count) = sp1_cycle::track!({
                         let mut counts: [usize; 3] = [0, 0, 0];
-                        for &timestamp in &context.state.timestamps {
+                        let count = timestamp_count(height);
+                        for i in 0..count {
+                            let timestamp = state.timestamps[timestamp_slot(height.wrapping_sub(i as u32))];
                             counts[((timestamp.cmp(&claimed_median) as i8) + 1) as usize] += 1;
                         }
                         (counts[0], counts[1])
                     });
-                    assert!(
-                        less_count <= Mainnet::PARAMS.window_small_half_size()
-                            && less_count + equal_count > Mainnet::PARAMS.window_small_half_size(),
-                        "invalid median time past hint at header index {}",
-                        height
-                    );
+
+                    let half = timestamp_count(height) / 2;
+                    if less_count > half || less_count + equal_count <= half {
+                        return Err(ApplyError::InvalidMedianHint);
+                    }
                     claimed_median
                 };
 
-                let previous_timestamp = sp1_cycle::track!({ context.state.previous_timestamp() });
+                let current_timestamp = state.current_timestamp();
                 ordered_run_len = advance_ordered_timestamp_run(
                     ordered_run_len as u64,
-                    previous_timestamp.into_inner(),
+                    current_timestamp.into_inner(),
                     new_header.timestamp.into_inner(),
                 ) as usize;
 
-                let return_code = context.state.apply_header_after_median_check::<C>(
-                    new_header,
-                    claimed_median,
-                    context.active_nbits,
-                    context.active_target,
-                );
-                if return_code.is_failure() {
-                    return Err(ApplyFailure {
-                        error_code: return_code.error_code().unwrap(),
-                    });
-                }
+                state.seal_new_header::<C>(active_nbits, active_target, new_header, claimed_median)?;
             }
         }
 
-        assert_eq!(median_hint_iter.next(), None, "unused sparse median time past hints");
+        if hint_iter.next().is_some() {
+            return Err(ApplyError::InvalidMedianHint);
+        }
+
+        Ok(())
+    }
+
+    fn seal_new_header<C: Consensus>(
+        &mut self,
+        active_nbits: CompactTarget,
+        active_target: Target,
+        new_header: &HeaderInput,
+        known_median: BlockTimestamp,
+    ) -> Result<(), ApplyError> {
+        if new_header.timestamp <= known_median {
+            return Err(ApplyError::TimestampTooOld);
+        }
+
+        let hash = hash_header_input(new_header, &self.block_hash, &active_nbits);
+
+        if !check_proof_of_work(hash, &active_target) {
+            return Err(ApplyError::PowInsufficient);
+        }
+
+        sp1_cycle::track!({
+            self.height = self.height + 1;
+            self.block_hash = hash;
+            self.timestamps[timestamp_slot(self.height)] = new_header.timestamp;
+            if (self.height).is_multiple_of(C::PARAMS.epoch_length) {
+                self.epoch_timestamp = new_header.timestamp;
+            }
+        });
 
         Ok(())
     }
@@ -211,13 +210,13 @@ impl State {
 impl Default for State {
     fn default() -> Self {
         Self {
-            block_hash:            BlockHash::default(),
-            genesis_hash:          BlockHash::default(),
-            current_nbits:         CompactTarget::default(),
-            height:                0,
-            chain_work:            ChainWork::default(),
-            epoch_start_timestamp: BlockTimestamp::default(),
-            timestamps:            [BlockTimestamp::default(); Mainnet::PARAMS.window_size],
+            block_hash:      BlockHash::default(),
+            genesis_hash:    BlockHash::default(),
+            current_nbits:   CompactTarget::default(),
+            height:          0,
+            chain_work:      ChainWork::default(),
+            epoch_timestamp: BlockTimestamp::default(),
+            timestamps:      [BlockTimestamp::default(); Mainnet::PARAMS.window_size],
         }
     }
 }
@@ -231,30 +230,13 @@ struct EpochManager<'a> {
 }
 
 impl<'a> EpochManager<'a> {
-    fn new<C: Consensus>(state: &'a mut State) -> Self {
-        let (active_nbits, active_target, active_work);
-
-        if (state.height + 1).is_multiple_of(C::PARAMS.epoch_length) {
-            let previous_timestamp = sp1_cycle::track!({ state.previous_timestamp() });
-            let prepared = sp1_cycle::track!({
-                state.prepare_new_epoch::<C>(target_from_bits(state.current_nbits), previous_timestamp)
-            });
-            active_nbits = prepared.0;
-            active_target = prepared.1;
-            active_work = prepared.2;
-        } else {
-            active_nbits = state.current_nbits;
-            active_target = target_from_bits(active_nbits);
-            active_work = block_work_from_target(active_target);
-        }
-
-        let start_height = state.height;
+    fn from_genesis<C: Consensus>(state: &'a mut State) -> Self {
         Self {
             state,
-            start_height,
-            active_block_work: active_work,
-            active_nbits,
-            active_target,
+            start_height: 0,
+            active_block_work: C::PARAMS.block_work(),
+            active_nbits: C::PARAMS.compact_target(),
+            active_target: C::PARAMS.target(),
         }
     }
 

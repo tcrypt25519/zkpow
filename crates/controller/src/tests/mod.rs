@@ -19,7 +19,7 @@ fn db_median_time_hints_match_genesis_seeded_state() {
     let genesis_state = genesis_state_from_record(genesis, genesis_hash);
     let witness = db.load_header_batch_witness(1, 13);
 
-    compute_final_state_with_hints::<Mainnet>(&genesis_state, &witness.headers, &witness.median_time_past_hints);
+    compute_final_state_cold::<Mainnet>(&genesis_state, &witness.headers, &witness.median_time_past_hints);
 }
 
 #[test]
@@ -40,7 +40,7 @@ fn compute_final_state_with_hints_reaches_expected_height() {
     let genesis_state = genesis_state_from_record(genesis, genesis_hash);
     let witness = db.load_header_batch_witness(1, 128);
     let final_state =
-        compute_final_state_with_hints::<Mainnet>(&genesis_state, &witness.headers, &witness.median_time_past_hints);
+        compute_final_state_cold::<Mainnet>(&genesis_state, &witness.headers, &witness.median_time_past_hints);
 
     assert_eq!(final_state.height, 128);
 }
@@ -57,16 +57,17 @@ fn applying_headers_one_at_a_time_matches_db_claims() {
     for (index, record) in records.iter().enumerate() {
         let header = header_to_input(&record.header);
         let needs_hint = requires_median_hint(record.height, previous_ordered_run);
-        state
-            .apply_headers::<Mainnet>(
-                &[header],
-                if needs_hint {
-                    core::slice::from_ref(&record.median_time_past)
-                } else {
-                    &[]
-                },
-            )
-            .expect("header should apply");
+        let hints = if needs_hint {
+            core::slice::from_ref(&record.median_time_past)
+        } else {
+            &[]
+        };
+        let result = if state.height == 0 {
+            state.apply_cold::<Mainnet>(&[header], hints)
+        } else {
+            state.apply_warm::<Mainnet>(&[header], hints)
+        };
+        result.expect("header should apply");
         let height = (index as u32) + 1;
         assert_eq!(state.height, height);
         assert_eq!(state.chain_work, record.chain_work);
@@ -95,7 +96,7 @@ fn db_retarget_schedule_matches_height_40320() {
 
     let witness_2 = db.load_header_batch_witness(40320, 1);
     let boundary_state =
-        compute_final_state_with_hints::<Mainnet>(&state, &witness_2.headers, &witness_2.median_time_past_hints);
+        compute_final_state_warm::<Mainnet>(&state, &witness_2.headers, &witness_2.median_time_past_hints);
     assert_eq!(boundary_state.height, 40320);
     let boundary_nbits = db.load_compact_target(40320);
     assert_eq!(boundary_state.current_nbits, boundary_nbits);
@@ -123,11 +124,11 @@ fn db_chainwork_matches_simulated_batches() {
             InitialState::DbHeight(height) => db.state_at_height::<Mainnet>(height, genesis_hash),
         };
         let witness = db.load_header_batch_witness(record_start, record_count);
-        let final_state = compute_final_state_with_hints::<Mainnet>(
-            &initial_state,
-            &witness.headers,
-            &witness.median_time_past_hints,
-        );
+        let final_state = if matches!(initial_state, InitialState::Genesis) {
+            compute_final_state_cold::<Mainnet>(&initial_state, &witness.headers, &witness.median_time_past_hints)
+        } else {
+            compute_final_state_warm::<Mainnet>(&initial_state, &witness.headers, &witness.median_time_past_hints)
+        };
         let db_record = db.load_header_record(expected_height as u64);
         let db_nbits = db.load_compact_target(expected_height as u64);
 

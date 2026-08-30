@@ -407,7 +407,7 @@ impl HeaderStore {
             current_nbits: current.header.compact_target,
             height,
             chain_work: current.chain_work,
-            epoch_start_timestamp: epoch_start.header.timestamp,
+            epoch_timestamp: epoch_start.header.timestamp,
             timestamps,
         }
     }
@@ -524,7 +524,7 @@ pub fn genesis_state_from_record(genesis: HeaderRecord, genesis_hash: BlockHash)
         current_nbits: genesis.header.compact_target,
         height: genesis.height as u32,
         chain_work: genesis.chain_work,
-        epoch_start_timestamp: genesis.header.timestamp,
+        epoch_timestamp: genesis.header.timestamp,
         timestamps,
     }
 }

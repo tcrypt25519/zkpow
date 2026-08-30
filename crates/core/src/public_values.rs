@@ -37,11 +37,7 @@ impl VerifierKeyDigest {
 
     #[must_use]
     pub fn to_bytes(self) -> [u8; 32] {
-        let mut out = [0u8; 32];
-        for (i, word) in self.0.iter().enumerate() {
-            out[i * 4..(i + 1) * 4].copy_from_slice(&word.to_le_bytes());
-        }
-        out
+        bytemuck::cast::<VerifierKeyDigest, [u8; 32]>(self)
     }
 
     #[must_use]
@@ -71,6 +67,11 @@ impl From<VerifierKeyDigest> for [u32; 8] {
 /// `0` is reserved for success, so an `ErrorCode` is always non-zero.
 /// Converting a raw `u8` into an `ErrorCode` is fallible because `0` is not a
 /// valid error code.
+///
+/// TODO: This type is being used incorrectly.
+/// It is not a regular Erorr type, e.g. for a Result<T, E>.
+/// It specifically represents the exit status of the guest program when
+/// the status is not a successful status.
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ErrorCode(NonZeroU8);
@@ -80,6 +81,7 @@ impl ErrorCode {
     pub const POW_INSUFFICIENT: Self = unsafe { Self(NonZeroU8::new_unchecked(2)) };
     pub const TIMESTAMP_TOO_OLD: Self = unsafe { Self(NonZeroU8::new_unchecked(3)) };
     pub const GENESIS_HASH_MISMATCH: Self = unsafe { Self(NonZeroU8::new_unchecked(4)) };
+    pub const INSUFFICIENT_COLD_HEADERS: Self = unsafe { Self(NonZeroU8::new_unchecked(5)) };
     pub const UNKNOWN_ERROR: Self = unsafe { Self(NonZeroU8::new_unchecked(255)) };
 
     /// Create an `ErrorCode` from a raw byte, returning `None` for `0`.
@@ -191,6 +193,7 @@ impl ReturnCode {
     pub const POW_INSUFFICIENT: Self = Self(Some(ErrorCode::POW_INSUFFICIENT));
     pub const TIMESTAMP_TOO_OLD: Self = Self(Some(ErrorCode::TIMESTAMP_TOO_OLD));
     pub const GENESIS_HASH_MISMATCH: Self = Self(Some(ErrorCode::GENESIS_HASH_MISMATCH));
+    pub const INSUFFICIENT_COLD_HEADERS: Self = Self(Some(ErrorCode::INSUFFICIENT_COLD_HEADERS));
     pub const UNKNOWN_ERROR: Self = Self(Some(ErrorCode::UNKNOWN_ERROR));
 
     /// Create a `ReturnCode` from a raw byte. `0` is success, any non-zero
@@ -248,12 +251,6 @@ impl core::fmt::Display for ReturnCode {
             Some(code) => code.fmt(f),
         }
     }
-}
-
-/// Failure information returned by [`State::apply_headers`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ApplyFailure {
-    pub error_code: ErrorCode,
 }
 
 /// Wire layout of the public values committed by the prover.

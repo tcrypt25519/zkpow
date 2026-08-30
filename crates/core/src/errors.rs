@@ -13,6 +13,31 @@ pub enum ParseError {
     },
 }
 
+/// Validation failure during [`State::apply_cold`] or [`State::apply_warm`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum ApplyError {
+    #[error("new header timestamp is not greater than the median")]
+    TimestampTooOld,
+    #[error("new header proof-of-work is insufficient")]
+    PowInsufficient,
+    #[error("not enough cold headers to fill the median window")]
+    InsufficientColdHeaders,
+    #[error("median time past hint is invalid")]
+    InvalidMedianHint,
+}
+
+impl ApplyError {
+    #[must_use]
+    pub fn error_code(&self) -> crate::ErrorCode {
+        match self {
+            Self::TimestampTooOld => crate::ErrorCode::TIMESTAMP_TOO_OLD,
+            Self::PowInsufficient => crate::ErrorCode::POW_INSUFFICIENT,
+            Self::InsufficientColdHeaders => crate::ErrorCode::INSUFFICIENT_COLD_HEADERS,
+            Self::InvalidMedianHint => crate::ErrorCode::UNKNOWN_ERROR,
+        }
+    }
+}
+
 /// Parse errors for witness (hints) data.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum InputParseError {
