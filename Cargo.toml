@@ -15,6 +15,7 @@ members = [
   "crates/types",
   "crates/sha256_const",
   "crates/worker",
+  "crates/zkvm-test-runner",
 ]
 resolver = "3"
 

@@ -1,3 +1,24 @@
 [build]
 rustflags = ["--cfg", "tokio_unstable"]
 
+# --lib because the succinct toolchain ships no rustdoc, so doctest runs fail
+# after the unit tests pass. Invoke as: cargo +succinct zkvm-test -p <crate>
+[alias]
+zkvm-test = "test --lib --target riscv64im-succinct-zkvm-elf"
+
+# The rustflags mirror sp1-build's get_rust_compiler_flags (sp1-build/src/command/utils.rs)
+# and must track it when sp1 is upgraded. 2013265920 = 0x78000000 = sp1 STACK_TOP.
+[target.riscv64im-succinct-zkvm-elf]
+runner = [
+  "sh",
+  "-c",
+  'bin="$(git rev-parse --show-toplevel)/target/release/zkvm-test-runner"; [ -x "$bin" ] || { echo "zkvm-test-runner is not built; run: cargo build --release -p zkvm-test-runner" >&2; exit 2; }; exec "$bin" "$@"',
+  "zkvm-test-runner",
+]
+rustflags = [
+  "-C", "passes=lower-atomic",
+  "-C", "link-arg=--image-base=2013265920",
+  "-C", "panic=abort",
+  "--cfg", 'getrandom_backend="custom"',
+]
+

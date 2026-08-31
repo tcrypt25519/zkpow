@@ -6610,6 +6610,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "zkvm-test-runner"
+version = "0.1.0"
+dependencies = [
+ "sp1-sdk",
+ "tokio",
+]
+
+[[package]]
 name = "zlib-rs"
 version = "0.6.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
