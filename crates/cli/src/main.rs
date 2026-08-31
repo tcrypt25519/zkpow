@@ -33,10 +33,6 @@ struct SyncArgs {
     /// Bitcoin network to sync.
     #[arg(long, default_value = "bitcoin")]
     p2p_network: String,
-
-    /// Delete the database before syncing.
-    #[arg(long)]
-    p2p_reset: bool,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -62,11 +58,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn sync_p2p(args: &SyncArgs) -> Result<(), Box<dyn std::error::Error>> {
     let network = parse_network(&args.p2p_network)?;
     tracing::info!(?network, db = %args.db, "Starting P2P sync");
-
-    if args.p2p_reset {
-        tracing::warn!("Resetting database");
-        std::fs::remove_file(&args.db).ok();
-    }
 
     let mut store = HeaderStore::open(&args.db)?;
 
