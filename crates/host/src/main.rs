@@ -19,13 +19,14 @@
 //!   ZKPOW_BATCH_COUNT=10 cargo run --release -p zkpow-host --bin zkpow-host
 
 use zkpow_host::{observability, pipeline::run_batch_session};
+use zkpow_params::Mainnet;
 
 #[tokio::main]
 async fn main() {
     println!("Host script started. For detailed tracing, set RUST_LOG=info.");
     observability::init();
 
-    if let Err(e) = run_batch_session().await {
+    if let Err(e) = run_batch_session::<Mainnet>().await {
         tracing::error!("proof generation pipeline failed: {e}");
         std::process::exit(1);
     }

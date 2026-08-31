@@ -24,11 +24,7 @@ pub mod verify;
 mod validation;
 
 pub use validation::{compute_final_state_cold, compute_final_state_warm, records_to_new_headers};
-
-/// Headers per controller-selected batch: one difficulty epoch.
-pub const DEFAULT_BATCH_SIZE: u32 = Mainnet::PARAMS.epoch_length;
 pub use zkpow_core::{requires_median_hint, BlockHash, BlockTimestamp, HeaderInput, State};
-use zkpow_params::{Consensus, Mainnet};
 pub use zkpow_store::{db_path, genesis_state_from_record, HeaderBatchWitness, HeaderRecord, HeaderStore, RunRecord};
 
 pub type BoxError = Box<dyn std::error::Error + Send + Sync + 'static>;

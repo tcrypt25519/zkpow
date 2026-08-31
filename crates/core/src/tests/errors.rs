@@ -155,7 +155,7 @@ fn a_cold_start_reports_how_short_the_batch_was() {
         .expect_err("one header cannot fill the median window");
 
     assert_eq!(failure, ApplyError::InsufficientColdHeaders {
-        required: TestConsensus::PARAMS.window_size - 1,
+        required: WINDOW_SIZE - 1,
         actual:   1,
     });
 }

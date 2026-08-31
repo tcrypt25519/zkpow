@@ -2,7 +2,7 @@ use zkpow_core::{
     advance_ordered_timestamp_run, check_proof_of_work, has_ordered_timestamp_window, ordered_median_timestamp_slot,
     timestamp_slot,
 };
-use zkpow_params::{Consensus, Mainnet};
+use zkpow_params::{Consensus, WINDOW_SIZE};
 
 use crate::types::{expand_target, ConnectedHeader, Header, Tip};
 
@@ -84,7 +84,7 @@ pub fn tip_from_connected(anchor: &Tip, connected: &[ConnectedHeader]) -> Tip {
     let last = connected.last().expect("non-empty slice");
 
     let mut timestamps = anchor.timestamps;
-    let tail_start = connected.len().saturating_sub(Mainnet::PARAMS.window_size);
+    let tail_start = connected.len().saturating_sub(WINDOW_SIZE);
     for ch in &connected[tail_start..] {
         timestamps[timestamp_slot(ch.height.into())] = ch.header.inner.timestamp.into_inner();
     }

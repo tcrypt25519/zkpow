@@ -24,7 +24,7 @@ pub const ENV_ZKPOW_CUDA_DEVICE_ID: &str = "ZKPOW_CUDA_DEVICE_ID";
 
 const DEFAULT_RUN_ID: &str = "dev";
 const DEFAULT_PROOF_STORE_DIR: &str = "proof_store";
-use zkpow_controller::DEFAULT_BATCH_SIZE;
+use zkpow_params::Consensus;
 const DEFAULT_BATCH_COUNT: u32 = 500;
 
 pub(crate) fn parse_bool_env(var_name: &'static str) -> Result<bool, BoxError> {
@@ -87,13 +87,14 @@ pub(crate) fn ensure_cuda_requested_configuration(
     Err(format!("{ENV_ZKPOW_USE_CUDA}=1 requires building zkpow-host with `--features CUDA`").into())
 }
 
-pub fn config_from_env() -> Result<ProofGenerationConfig, BoxError> {
+pub fn config_from_env<C: Consensus>() -> Result<ProofGenerationConfig, BoxError> {
     let use_cuda = parse_bool_env(ENV_ZKPOW_USE_CUDA)?;
     let cuda_device_id = parse_u32_env(ENV_ZKPOW_CUDA_DEVICE_ID)?;
 
     let execute_only = parse_bool_env(ENV_ZKPOW_EXECUTE_ONLY)?;
 
-    let local_batch_size = parse_u32_env_or(ENV_ZKPOW_BATCH_SIZE, DEFAULT_BATCH_SIZE)?;
+    // One difficulty epoch per controller-selected batch unless overridden.
+    let local_batch_size = parse_u32_env_or(ENV_ZKPOW_BATCH_SIZE, C::PARAMS.epoch_length)?;
     let batch_count = parse_u32_env_or(ENV_ZKPOW_BATCH_COUNT, DEFAULT_BATCH_COUNT)?;
 
     let configured_backend = ensure_cuda_requested_configuration(use_cuda, cuda_device_id)?;

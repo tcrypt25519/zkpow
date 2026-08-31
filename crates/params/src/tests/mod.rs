@@ -36,6 +36,17 @@ fn params_are_usable_in_a_const_context() {
     assert_eq!(EXPECTED, 600 * 2016);
 }
 
+/// The two halves partition the window around its median, and the max index is the run length
+/// needed to prove the whole window is ordered.
+#[test]
+fn derived_window_bounds() {
+    assert_eq!(WINDOW_SIZE, 11);
+    assert_eq!(WINDOW_SMALL_HALF_SIZE, 5);
+    assert_eq!(WINDOW_LARGE_HALF_SIZE, 6);
+    assert_eq!(WINDOW_SMALL_HALF_SIZE + WINDOW_LARGE_HALF_SIZE, WINDOW_SIZE);
+    assert_eq!(WINDOW_MAX_INDEX, WINDOW_SIZE - 1);
+}
+
 /// `ShortEpoch` exists to give the transition tests a second `epoch_length`. If it ever matched
 /// mainnet it would silently stop testing anything.
 #[test]

@@ -4,7 +4,7 @@ compile_error!("zkpow wire types require a little-endian target");
 use bytemuck::{Pod, Zeroable};
 use derive_size::Size;
 use sp1_cycle::tracked;
-use zkpow_params::{Consensus, Mainnet};
+use zkpow_params::{Consensus, WINDOW_SIZE, WINDOW_SMALL_HALF_SIZE};
 
 use crate::{
     advance_ordered_timestamp_run, block_work_from_target, calculate_next_target_required, check_proof_of_work,
@@ -26,7 +26,7 @@ pub struct State {
 
     pub current_nbits:   CompactTarget,
     pub epoch_timestamp: BlockTimestamp,
-    pub timestamps: [BlockTimestamp; Mainnet::PARAMS.window_size],
+    pub timestamps:      [BlockTimestamp; WINDOW_SIZE],
 }
 
 impl State {
@@ -84,7 +84,7 @@ impl State {
         median_hints: &[BlockTimestamp],
     ) -> Result<(), ApplyError> {
         // The first run *MUST* contain at least `window_size - 1` headers
-        let cold_count = C::PARAMS.window_size - 1;
+        let cold_count = WINDOW_SIZE - 1;
         if headers.len() < cold_count {
             return Err(ApplyError::InsufficientColdHeaders {
                 required: cold_count,
@@ -158,13 +158,13 @@ impl State {
 
                     let (less_count, equal_count) = sp1_cycle::track!({
                         let mut counts: [usize; 3] = [0, 0, 0];
-                        for i in 0..C::PARAMS.window_size {
+                        for i in 0..WINDOW_SIZE {
                             let timestamp = state.timestamps[timestamp_slot(height.wrapping_sub(i as u32))];
                             counts[((timestamp.cmp(claimed_median) as i8) + 1) as usize] += 1;
                         }
                         (counts[0], counts[1])
                     });
-                    let half = C::PARAMS.window_small_half_size();
+                    let half = WINDOW_SMALL_HALF_SIZE;
                     if less_count > half {
                         crate::invalid_hint!("claimed_median is newer than half of the known window: {claimed_median} (less_count={less_count})");
                     }
@@ -247,7 +247,7 @@ impl Default for State {
             height:          0,
             chain_work:      ChainWork::default(),
             epoch_timestamp: BlockTimestamp::default(),
-            timestamps: [BlockTimestamp::default(); Mainnet::PARAMS.window_size],
+            timestamps:      [BlockTimestamp::default(); WINDOW_SIZE],
         }
     }
 }

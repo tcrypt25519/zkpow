@@ -1,6 +1,21 @@
 use sha256_const::double;
 use zkpow_types::{BlockHash, BlockWork, ChainWork, CompactTarget, Header, Target};
 
+/// Number of previous block timestamps kept for median-time-past and ordered-window checks.
+///
+/// Identical on every Bitcoin network, and kept out of [`ConsensusParams`] because it sizes
+/// arrays: stable Rust cannot use an associated const as a generic array length.
+pub const WINDOW_SIZE: usize = 11;
+
+/// Half the window, rounded down; the number of timestamps that may sit below the median.
+pub const WINDOW_SMALL_HALF_SIZE: usize = WINDOW_SIZE / 2;
+
+/// Half the window, rounded up; the number of timestamps that may sit above the median.
+pub const WINDOW_LARGE_HALF_SIZE: usize = (WINDOW_SIZE + 1) / 2;
+
+/// Maximum index in the sliding window.
+pub const WINDOW_MAX_INDEX: usize = WINDOW_SIZE - 1;
+
 /// The parameters that define a network.
 ///
 /// Only independent values are fields. Anything derivable is a `const fn`, so there is exactly one
@@ -11,7 +26,7 @@ pub struct ConsensusParams {
     /// The PoW limit, which is also the target the genesis header commits to.
     pub genesis_target: Target,
     /// Work proven by one block at [`ConsensusParams::genesis_target`].
-    pub genesis_work: BlockWork,
+    pub genesis_work:   BlockWork,
 
     /// Expected seconds between blocks.
     pub block_time: u32,
@@ -21,29 +36,9 @@ pub struct ConsensusParams {
     pub max_epoch_over_mul: u8,
     /// ...and this many times shorter.
     pub min_epoch_under_div: u8,
-    /// Number of previous block timestamps kept for median-time-past and ordered-window checks.
-    pub window_size: usize,
 }
 
 impl ConsensusParams {
-    /// Half the window, rounded down; the number of timestamps that may sit below the median.
-    #[must_use]
-    pub const fn window_small_half_size(&self) -> usize {
-        self.window_size / 2
-    }
-
-    /// Half the window, rounded up; the number of timestamps that may sit above the median.
-    #[must_use]
-    pub const fn window_large_half_size(&self) -> usize {
-        (self.window_size + 1) / 2
-    }
-
-    /// Maximum index in the sliding window.
-    #[must_use]
-    pub const fn window_max_index(&self) -> usize {
-        self.window_size - 1
-    }
-
     /// SHA-256d of the genesis header. Prefer [`Consensus::GENESIS_HASH`], which holds the result
     /// of evaluating this once at compile time.
     #[must_use]

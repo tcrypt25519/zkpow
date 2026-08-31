@@ -4,6 +4,7 @@ use std::{
 };
 
 use zkpow_controller::{db_path, HeaderStore, NO_HEADERS_REMAINING_PREFIX};
+use zkpow_params::Mainnet;
 
 mod artifacts;
 
@@ -68,7 +69,7 @@ fn execute_only_defaults_to_mock_backend_and_dev_run() {
     set_env(ENV_ZKPOW_EXECUTE_ONLY, "1");
     set_env(ENV_ZKPOW_BATCH_SIZE, "1");
 
-    let config = config_from_env().unwrap();
+    let config = config_from_env::<Mainnet>().unwrap();
 
     assert_eq!(config.prover_backend, ProverBackend::Mock);
     assert!(config.execute_only);
@@ -83,7 +84,7 @@ fn run_id_env_overrides_default() {
     let _guard = _env_test_mutex().lock().unwrap();
     set_env(ENV_ZKPOW_RUN_ID, "mainnet-01");
 
-    let config = config_from_env().unwrap();
+    let config = config_from_env::<Mainnet>().unwrap();
     assert_eq!(config.run_id, "mainnet-01");
 
     remove_env(ENV_ZKPOW_RUN_ID);
@@ -153,7 +154,7 @@ async fn stops_after_reaching_configured_batch_count() {
     set_env(ENV_ZKPOW_BATCH_SIZE, "1");
     set_env("ZKPOW_DB_PATH", env.dir.to_str().unwrap());
 
-    let completed = run_batch_session().await.expect("session should exit cleanly");
+    let completed = run_batch_session::<Mainnet>().await.expect("session should exit cleanly");
     assert_eq!(completed, 0);
 }
 
@@ -165,7 +166,7 @@ async fn stops_after_exhausting_headers_in_database() {
     set_env(ENV_ZKPOW_BATCH_SIZE, "0");
     set_env("ZKPOW_DB_PATH", concat!(env!("CARGO_MANIFEST_DIR"), "/../../headers.db"));
 
-    let completed = run_batch_session()
+    let completed = run_batch_session::<Mainnet>()
         .await
         .expect("session should stop on exhaustion without error");
     assert_eq!(completed, 0);
@@ -180,10 +181,10 @@ async fn execute_only_session_is_separate_from_run_progress() {
     set_env("ZKPOW_BATCH_COUNT", "2");
     set_env(ENV_ZKPOW_BATCH_SIZE, "3");
 
-    let completed = run_batch_session().await.expect("first session should complete");
+    let completed = run_batch_session::<Mainnet>().await.expect("first session should complete");
     assert_eq!(completed, 2);
 
-    let completed = run_batch_session().await.expect("second session should complete");
+    let completed = run_batch_session::<Mainnet>().await.expect("second session should complete");
     assert_eq!(completed, 2);
 
     assert!(HeaderStore::open(db_path()).unwrap().load_run(&env.run_id).unwrap().is_none());

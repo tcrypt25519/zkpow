@@ -1,6 +1,7 @@
 use clap::{Args, Parser, Subcommand};
 use sync_headers::{connect_headers, tip_from_connected, ConnectedHeader, Header, Network, PeerStore, Tip};
 use zkpow_params::{Consensus, Mainnet};
+use zkpow_store::db::Error;
 use zkpow_store::HeaderStore;
 use zkpow_types::ChainWork;
 
@@ -44,19 +45,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let cli = Cli::parse();
     match cli.command {
-        Command::Sync(args) => sync_p2p(&args)?,
+        Command::Sync(args) => sync_p2p_for_network(&args)?,
     }
 
     Ok(())
 }
 
+fn sync_p2p_for_network(args: &SyncArgs) -> Result<(), Box<dyn std::error::Error>> {
+    sync_p2p::<Mainnet>(args)
+}
+
 /// Wire the store-backed callback and run the P2P sync backend.
 ///
 /// `sync_headers::p2p::sync` is callback-based by design: `zkpow-store` depends
-/// on `zkpow-sync-headers`, so the producer cannot call back into the store —
-/// the CLI owns the store and supplies persistence through the callback here.
-fn sync_p2p(args: &SyncArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let network = parse_network(&args.p2p_network)?;
+/// on `zkpow-sync-headers`, so the producer cannot call back into the store.
+/// The CLI owns the store and supplies persistence through the callback here.
+fn sync_p2p<C: Consensus>(args: &SyncArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(network) = Network::parse(&args.p2p_network) else {
+        return Err("network not found".into());
+    };
     tracing::info!(?network, db = %args.db, "Starting P2P sync");
 
     let mut store = HeaderStore::open(&args.db)?;
@@ -68,9 +75,9 @@ fn sync_p2p(args: &SyncArgs) -> Result<(), Box<dyn std::error::Error>> {
         },
         None => {
             tracing::info!("Initializing database with genesis block");
-            let genesis = genesis_connected_header();
+            let genesis = genesis_connected_header::<C>();
             store.insert_genesis(&genesis)?;
-            Tip::genesis::<Mainnet>(genesis.block_hash())
+            Tip::genesis::<C>(genesis.block_hash())
         },
     };
 
@@ -85,13 +92,13 @@ fn sync_p2p(args: &SyncArgs) -> Result<(), Box<dyn std::error::Error>> {
         PeerStore::from_dns_seeds()?
     };
 
-    let final_tip = sync_headers::p2p::sync::<Mainnet, _, _>(
+    let final_tip = sync_headers::p2p::sync::<C, _, _>(
         network,
         &anchor,
         args.max_headers,
         &mut peer_store,
         |raw_headers, tip| -> Result<Tip, String> {
-            let connected = connect_headers::<Mainnet>(tip, raw_headers);
+            let connected = connect_headers::<C>(tip, raw_headers);
             if connected.is_empty() {
                 return Err("no headers could be connected to the tip".into());
             }
@@ -112,19 +119,9 @@ fn sync_p2p(args: &SyncArgs) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn genesis_connected_header() -> ConnectedHeader {
-    let header = Header::new(Mainnet::PARAMS.genesis);
+fn genesis_connected_header<C: Consensus>() -> ConnectedHeader {
+    let header = Header::new(C::PARAMS.genesis);
     let block_hash = header.block_hash();
-    let chainwork = ChainWork::from_limbs(Mainnet::PARAMS.genesis_work.into_inner().into_limbs());
+    let chainwork = ChainWork::from_limbs(C::PARAMS.genesis_work.into_inner().into_limbs());
     ConnectedHeader::new(header, block_hash, 0, chainwork, 0, 0)
-}
-
-fn parse_network(s: &str) -> Result<Network, Box<dyn std::error::Error>> {
-    match s.to_lowercase().as_str() {
-        "bitcoin" | "mainnet" | "main" => Ok(Network::Bitcoin),
-        "testnet" | "test" => Ok(Network::Testnet),
-        "signet" => Ok(Network::Signet),
-        "regtest" | "reg" => Ok(Network::Regtest),
-        other => Err(format!("unknown network '{other}'; use: bitcoin, testnet, signet, regtest").into()),
-    }
 }

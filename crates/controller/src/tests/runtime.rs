@@ -48,7 +48,7 @@ impl ProofVerifier for BytesArePublicValues {
 }
 
 struct Harness {
-    runtime: ControllerRuntime,
+    runtime: ControllerRuntime<Mainnet>,
     root:    std::path::PathBuf,
     run_ids: Mutex<Vec<String>>,
     nonce:   u128,

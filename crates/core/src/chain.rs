@@ -12,7 +12,7 @@
 
 use core::marker::PhantomData;
 
-use zkpow_params::{Consensus, Mainnet};
+use zkpow_params::{Consensus, WINDOW_SIZE};
 
 use crate::{
     calculate_next_target_required, target_from_bits, timestamp_count, timestamp_slot, BlockHash, BlockTimestamp,
@@ -32,7 +32,7 @@ pub struct TestChain<C: Consensus> {
     tip_hash: BlockHash,
     nbits: CompactTarget,
     epoch_timestamp: BlockTimestamp,
-    timestamps: [BlockTimestamp; Mainnet::PARAMS.window_size],
+    timestamps: [BlockTimestamp; WINDOW_SIZE],
     exhausted: bool,
     network: PhantomData<fn() -> C>,
 }
@@ -92,7 +92,7 @@ impl<C: Consensus> TestChain<C> {
 
     /// The sliding timestamp window as of the tip, in [`State`](crate::State)'s slot order.
     #[must_use]
-    pub fn timestamps(&self) -> [BlockTimestamp; Mainnet::PARAMS.window_size] {
+    pub fn timestamps(&self) -> [BlockTimestamp; WINDOW_SIZE] {
         self.timestamps
     }
 
@@ -108,7 +108,7 @@ impl<C: Consensus> TestChain<C> {
             (BlockHash::new(prng.next_bytes()), genesis_timestamp.saturating_add(elapsed))
         };
 
-        let mut timestamps = [BlockTimestamp::default(); Mainnet::PARAMS.window_size];
+        let mut timestamps = [BlockTimestamp::default(); WINDOW_SIZE];
         for offset in 0..timestamp_count(height) as u32 {
             let slot = timestamp_slot(height - offset);
             timestamps[slot] = BlockTimestamp::new(tip_timestamp.saturating_sub(offset.saturating_mul(block_time)));

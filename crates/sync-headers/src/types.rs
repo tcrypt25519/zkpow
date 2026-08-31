@@ -4,26 +4,43 @@ use zkpow_core::{
     block_work_from_target, target_from_bits, BlockHash, BlockWork, ChainWork, CompactTarget, Header as CoreHeader,
     Target,
 };
-use zkpow_params::{Consensus, Mainnet};
-
+use zkpow_params::{Consensus, WINDOW_SIZE};
 /// Network selection for Bitcoin consensus.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Network {
-    Bitcoin,
+    Mainnet,
     Testnet,
-    Signet,
     Regtest,
+}
+
+impl Network {
+    pub fn name(&self) -> &'static str {
+        match self {
+            Network::Mainnet => "mainnet",
+            Network::Testnet => "testnet",
+            Network::Regtest => "regtest",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "bitcoin" | "mainnet" | "main" => Some(Network::Mainnet),
+            "testnet" | "test" => Some(Network::Testnet),
+            "regtest" | "reg" => Some(Network::Regtest),
+            _ => None,
+        }
+    }
 }
 
 /// The tip of the best known chain.
 #[derive(Debug, Clone)]
 pub struct Tip {
-    pub hash: BlockHash,
-    pub height: u32,
-    pub chainwork: ChainWork,
-    /// Ring buffer of the last (up to `Mainnet::PARAMS.window_size`) block timestamps, slot
-    /// `height % Mainnet::PARAMS.window_size` — mirrors `zkpow_core::State::timestamps`.
-    pub timestamps: [u32; Mainnet::PARAMS.window_size],
+    pub hash:                  BlockHash,
+    pub height:                u32,
+    pub chainwork:             ChainWork,
+    /// Ring buffer of the last (up to `WINDOW_SIZE`) block timestamps, slot
+    /// `height % WINDOW_SIZE`, mirroring `zkpow_core::State::timestamps`.
+    pub timestamps:            [u32; WINDOW_SIZE],
     /// Count of consecutive nondecreasing timestamp links ending at this tip.
     /// Genesis has no predecessor, so its run is 0.
     pub ordered_timestamp_run: u64,
@@ -43,7 +60,7 @@ impl Tip {
         hash: BlockHash,
         height: u32,
         chainwork: ChainWork,
-        timestamps: [u32; Mainnet::PARAMS.window_size],
+        timestamps: [u32; WINDOW_SIZE],
         ordered_timestamp_run: u64,
         current_nbits: CompactTarget,
         current_target: Target,
@@ -63,7 +80,7 @@ impl Tip {
 
     pub fn genesis<C: Consensus>(hash: BlockHash) -> Self {
         let genesis = C::PARAMS.genesis;
-        let mut timestamps = [0u32; Mainnet::PARAMS.window_size];
+        let mut timestamps = [0u32; WINDOW_SIZE];
         timestamps[0] = genesis.timestamp.into_inner();
         let (_, target, block_work) = expand_target(genesis.compact_target);
         Self {

@@ -167,9 +167,8 @@ impl PeerConnection {
         stream.set_nodelay(true)?;
 
         let network_magic = match network {
-            Network::Bitcoin => MAINNET_MAGIC,
+            Network::Mainnet => MAINNET_MAGIC,
             Network::Testnet => [0x0B, 0x11, 0x09, 0x07],
-            Network::Signet => [0x0A, 0x03, 0xCF, 0x40],
             Network::Regtest => [0xFA, 0xBF, 0xB5, 0xDA],
         };
 

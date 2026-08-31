@@ -6,13 +6,14 @@
 
 use std::{
     collections::HashMap,
+    marker::PhantomData,
     sync::{Arc, Mutex, MutexGuard},
     time::Duration,
 };
 
 use tokio::sync::Notify;
 use zkpow_core::{serialize_inputs, BlockHash, PublicValues, ReturnCode, State, VerifierKeyDigest};
-use zkpow_params::Mainnet;
+use zkpow_params::Consensus;
 use zkpow_store::{HeaderStore, RunRecord};
 
 use crate::{
@@ -83,13 +84,14 @@ impl RunSession {
     }
 }
 
-struct ControllerCore {
+struct ControllerCore<C: Consensus> {
     /// Run ledger and header content; the SQLite database is the system of record.
     store:        HeaderStore,
     genesis_hash: BlockHash,
     verifier_key: VerifierKeyDigest,
     batch_size:   u32,
     runs:         HashMap<String, RunSession>,
+    network:      PhantomData<fn() -> C>,
 }
 
 enum Pull {
@@ -103,8 +105,8 @@ struct ReadyBatch {
     previous_proof_object: Option<String>,
 }
 
-struct RuntimeInner {
-    core:         Mutex<ControllerCore>,
+struct RuntimeInner<C: Consensus> {
+    core:         Mutex<ControllerCore<C>>,
     progress:     Notify,
     storage:      Arc<dyn ArtifactStore>,
     verifier:     Arc<dyn ProofVerifier>,
@@ -112,12 +114,19 @@ struct RuntimeInner {
     pull_timeout: Duration,
 }
 
-#[derive(Clone)]
-pub struct ControllerRuntime {
-    inner: Arc<RuntimeInner>,
+pub struct ControllerRuntime<C: Consensus> {
+    inner: Arc<RuntimeInner<C>>,
 }
 
-fn lock_core(core: &Mutex<ControllerCore>) -> MutexGuard<'_, ControllerCore> {
+impl<C: Consensus> Clone for ControllerRuntime<C> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+        }
+    }
+}
+
+fn lock_core<C: Consensus>(core: &Mutex<ControllerCore<C>>) -> MutexGuard<'_, ControllerCore<C>> {
     core.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
@@ -128,7 +137,7 @@ fn validate_run_id(run_id: &str) -> Result<(), ControllerError> {
     Ok(())
 }
 
-impl ControllerRuntime {
+impl<C: Consensus> ControllerRuntime<C> {
     pub fn new(
         store: HeaderStore,
         storage: Box<dyn ArtifactStore>,
@@ -144,6 +153,7 @@ impl ControllerRuntime {
                     verifier_key,
                     batch_size: config.batch_size,
                     runs: HashMap::new(),
+                    network: PhantomData,
                 }),
                 progress: Notify::new(),
                 storage: storage.into(),
@@ -277,9 +287,9 @@ impl ControllerRuntime {
     }
 }
 
-impl ControllerCore {
+impl<C: Consensus> ControllerCore<C> {
     fn state_at(&self, height: u32) -> State {
-        self.store.state_at_height::<Mainnet>(height, self.genesis_hash)
+        self.store.state_at_height::<C>(height, self.genesis_hash)
     }
 
     fn session_mut(&mut self, run_id: &str) -> Result<&mut RunSession, ControllerError> {

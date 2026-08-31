@@ -35,7 +35,7 @@ use zkpow_controller::{
     HeaderStore,
 };
 use zkpow_core::PublicValues;
-use zkpow_params::{Consensus, Mainnet};
+use zkpow_params::Consensus;
 
 use crate::memory_monitor;
 
@@ -68,29 +68,29 @@ pub(crate) fn is_header_exhaustion_error(err: &BoxError) -> bool {
     err.to_string().starts_with(NO_HEADERS_REMAINING_PREFIX)
 }
 
-pub async fn run_batch_session() -> Result<u32, BoxError> {
-    let config = config_from_env()?;
+pub async fn run_batch_session<C: Consensus>() -> Result<u32, BoxError> {
+    let config = config_from_env::<C>()?;
     if config.batch_count == 0 {
         tracing::info!("ZKPOW_BATCH_COUNT=0; nothing to do");
         return Ok(0);
     }
 
     if config.execute_only {
-        return run_execution_session(config).await;
+        return run_execution_session::<C>(config).await;
     }
 
     log_prover_backend_selection(config.prover_backend, config.cuda_device_id);
     let prepared = get_prepared_prover(config.prover_backend, config.cuda_device_id).await?;
-    let runtime = build_local_controller(&config, &prepared)?;
+    let runtime = build_local_controller::<C>(&config, &prepared)?;
     run_batch_session_with(runtime, config, prepared).await
 }
 
 /// Build the in-process controller: run ledger, header content, local-disk
 /// artifact storage, and proof verification.
-fn build_local_controller(
+fn build_local_controller<C: Consensus>(
     config: &ProofGenerationConfig,
     prepared: &PreparedProver,
-) -> Result<ControllerRuntime, BoxError> {
+) -> Result<ControllerRuntime<C>, BoxError> {
     let db = HeaderStore::open(&config.db_path).map_err(|err| format!("failed to open database: {err}"))?;
 
     let root = input::proof_store_dir_from_env();
@@ -101,7 +101,7 @@ fn build_local_controller(
     // with the same prepared prover the host proves with.
     let verifier = Box::new(verify::PreparedProverVerifier::new(prepared.clone())) as Box<dyn ProofVerifier>;
 
-    let controller_config = ControllerConfig::new(Mainnet::GENESIS_HASH, config.local_batch_size);
+    let controller_config = ControllerConfig::new(C::GENESIS_HASH, config.local_batch_size);
     Ok(ControllerRuntime::new(db, storage, verifier, controller_config))
 }
 
@@ -110,12 +110,12 @@ struct BatchCompletion {
     proof_bytes:  Vec<u8>,
 }
 
-async fn run_execution_session(config: ProofGenerationConfig) -> Result<u32, BoxError> {
+async fn run_execution_session<C: Consensus>(config: ProofGenerationConfig) -> Result<u32, BoxError> {
     tracing::info!("Execute-only diagnostic; controller progress and artifact storage are disabled");
     let db = HeaderStore::open(&config.db_path).map_err(|err| format!("failed to open database: {err}"))?;
     let prover = ProverClient::builder().mock().build().await;
-    let genesis_hash = Mainnet::GENESIS_HASH;
-    let mut state = db.state_at_height::<Mainnet>(0, genesis_hash);
+    let genesis_hash = C::GENESIS_HASH;
+    let mut state = db.state_at_height::<C>(0, genesis_hash);
     let mut completed = 0;
 
     while completed < config.batch_count {
@@ -138,14 +138,14 @@ async fn run_execution_session(config: ProofGenerationConfig) -> Result<u32, Box
         let elapsed = started.elapsed().as_secs_f64();
         tracing::info!(first_new_height, end_height, "Execution completed in {elapsed:.2} seconds");
         log_execution_report(&report, elapsed);
-        state = db.state_at_height::<Mainnet>(end_height, genesis_hash);
+        state = db.state_at_height::<C>(end_height, genesis_hash);
         completed += 1;
     }
     Ok(completed)
 }
 
-async fn run_batch_session_with(
-    runtime: ControllerRuntime,
+async fn run_batch_session_with<C: Consensus>(
+    runtime: ControllerRuntime<C>,
     config: ProofGenerationConfig,
     prepared: PreparedProver,
 ) -> Result<u32, BoxError> {
@@ -265,8 +265,8 @@ fn classify_pull(result: Result<Batch, BoxError>, completed: u32) -> Result<Opti
     }
 }
 
-async fn complete_batch(
-    runtime: &ControllerRuntime,
+async fn complete_batch<C: Consensus>(
+    runtime: &ControllerRuntime<C>,
     run_id: &str,
     completion: BatchCompletion,
 ) -> Result<(), BoxError> {

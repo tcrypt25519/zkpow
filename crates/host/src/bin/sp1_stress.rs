@@ -72,7 +72,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let start_mem = memory_monitor::sample();
 
         let iter_start = std::time::Instant::now();
-        let completed = zkpow_host::pipeline::run_batch_session().await?;
+        let completed = zkpow_host::pipeline::run_batch_session::<zkpow_params::Mainnet>().await?;
         if completed != 1 {
             return Err(format!("stress iteration {i} completed {completed} batches").into());
         }
