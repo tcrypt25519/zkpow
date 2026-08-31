@@ -1,4 +1,4 @@
-use alloc::vec;
+use alloc::{format, vec};
 
 use super::*;
 
@@ -44,6 +44,7 @@ fn public_values_failure_round_trips() {
         ErrorCode::POW_INSUFFICIENT,
         ErrorCode::TIMESTAMP_TOO_OLD,
         ErrorCode::GENESIS_HASH_MISMATCH,
+        ErrorCode::INSUFFICIENT_COLD_HEADERS,
         ErrorCode::UNKNOWN_ERROR,
     ];
 
@@ -80,11 +81,11 @@ fn public_values_parse_rejects_wrong_length() {
 
     assert!(matches!(
         PublicValues::parse(&too_short).unwrap_err(),
-        InputParseError::Parse(ParseError::InvalidLength { .. })
+        ParseError::InvalidLength { .. }
     ));
     assert!(matches!(
         PublicValues::parse(&too_long).unwrap_err(),
-        InputParseError::Parse(ParseError::InvalidLength { .. })
+        ParseError::InvalidLength { .. }
     ));
 }
 
@@ -99,4 +100,61 @@ fn public_values_success_and_failure_helpers_are_mutually_exclusive() {
     assert!(!failure.is_success());
     assert!(failure.is_failure());
     assert_eq!(failure.validation_error_code(), Some(ErrorCode::TIMESTAMP_TOO_OLD));
+}
+
+/// The return code is one byte on the wire, so the success case has to ride in the `Option`'s
+/// niche rather than a discriminant of its own.
+#[test]
+fn a_return_code_is_one_byte() {
+    assert_eq!(core::mem::size_of::<ErrorCode>(), 1);
+    assert_eq!(core::mem::size_of::<Option<ErrorCode>>(), 1);
+    assert_eq!(core::mem::size_of::<ReturnCode>(), 1);
+}
+
+#[test]
+fn zero_is_success_and_never_an_error_code() {
+    assert_eq!(ErrorCode::new(0), None);
+    assert!(ReturnCode::new(0).is_success());
+    for byte in 1..=u8::MAX {
+        assert_eq!(ErrorCode::new(byte).unwrap().get(), byte);
+        assert!(ReturnCode::new(byte).is_failure());
+    }
+}
+
+#[test]
+fn every_defined_code_has_a_name() {
+    let named = [
+        (ErrorCode::HEADER_PAYLOAD_LENGTH_INVALID, "Header payload length invalid"),
+        (ErrorCode::POW_INSUFFICIENT, "PoW insufficient"),
+        (ErrorCode::TIMESTAMP_TOO_OLD, "Timestamp too old"),
+        (ErrorCode::GENESIS_HASH_MISMATCH, "Genesis hash mismatch"),
+        (ErrorCode::INSUFFICIENT_COLD_HEADERS, "Insufficient cold headers"),
+        (ErrorCode::UNKNOWN_ERROR, "Unknown error"),
+    ];
+
+    for (code, name) in named {
+        assert_eq!(code.name(), Some(name));
+        assert_eq!(format!("{code}"), name);
+        assert_eq!(format!("{}", ReturnCode::from(code)), name);
+    }
+}
+
+/// Public values can come from a build of the guest that defines codes this one does not, so an
+/// unrecognized byte is still a failure and still prints something a reader can act on.
+#[test]
+fn an_undefined_code_is_still_a_failure() {
+    let code = ErrorCode::new(200).unwrap();
+
+    assert_eq!(code.name(), None);
+    assert_eq!(format!("{code}"), "Unrecognized error code 200");
+
+    let parsed =
+        PublicValues::parse(&PublicValues::new(sample_state(), sample_verifier_key(), code.into()).to_bytes()).unwrap();
+    assert!(parsed.is_failure());
+    assert_eq!(parsed.validation_error_code(), Some(code));
+}
+
+#[test]
+fn success_prints_as_success() {
+    assert_eq!(format!("{}", ReturnCode::SUCCESS), "Success");
 }

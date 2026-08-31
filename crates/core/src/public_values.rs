@@ -2,7 +2,7 @@ use core::num::NonZeroU8;
 
 use bytemuck::{Pod, Zeroable};
 
-use crate::{check_exact_len, InputParseError, State};
+use crate::{check_exact_len, ParseError, State};
 
 /// Digest of a program verifier key.
 #[repr(transparent)]
@@ -62,16 +62,15 @@ impl From<VerifierKeyDigest> for [u32; 8] {
     }
 }
 
-/// A non-zero validation error code.
+/// The non-zero exit status the guest commits when validation fails.
 ///
-/// `0` is reserved for success, so an `ErrorCode` is always non-zero.
-/// Converting a raw `u8` into an `ErrorCode` is fallible because `0` is not a
-/// valid error code.
+/// This is not an error type. It is the wire encoding of a failure, laid out like a Unix exit
+/// status: `0` is success, so an `ErrorCode` is always non-zero. It carries a byte and nothing
+/// else, which makes it useless for diagnosing a failure and means it belongs only at the point
+/// where the guest commits its public values.
 ///
-/// TODO: This type is being used incorrectly.
-/// It is not a regular Erorr type, e.g. for a Result<T, E>.
-/// It specifically represents the exit status of the guest program when
-/// the status is not a successful status.
+/// Errors are ordinary enums that carry the context of what went wrong;
+/// [`ReportableError`](crate::ReportableError) is how one is reduced to the byte committed here.
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ErrorCode(NonZeroU8);
@@ -96,13 +95,22 @@ impl ErrorCode {
     pub const fn get(self) -> u8 {
         self.0.get()
     }
-}
 
-impl TryFrom<u8> for ErrorCode {
-    type Error = InputParseError;
-
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        Self::new(value).ok_or(InputParseError::UnknownErrorCode { code: value })
+    /// The name of a code the validator defines, or `None` for any other non-zero byte.
+    ///
+    /// Codes are read back out of public values produced by other builds of the guest, so a byte
+    /// this build does not define is still a valid failure; it just has no name here.
+    #[must_use]
+    pub const fn name(self) -> Option<&'static str> {
+        Some(match self.get() {
+            1 => "Header payload length invalid",
+            2 => "PoW insufficient",
+            3 => "Timestamp too old",
+            4 => "Genesis hash mismatch",
+            5 => "Insufficient cold headers",
+            255 => "Unknown error",
+            _ => return None,
+        })
     }
 }
 
@@ -114,65 +122,10 @@ impl From<ErrorCode> for u8 {
 
 impl core::fmt::Display for ErrorCode {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match ErrorCodeNames::try_from(*self) {
-            Ok(name) => name.fmt(f),
-            Err(_) => write!(f, "unknown error {}", self.get()),
+        match self.name() {
+            Some(name) => f.write_str(name),
+            None => write!(f, "Unrecognized error code {}", self.get()),
         }
-    }
-}
-
-/// Named error codes recognized by the validator.
-///
-/// Other non-zero byte values are valid `ErrorCode`s but map to
-/// [`ErrorCodeNames::UnknownError`] when converted by name.
-#[derive(Debug, Clone, Copy, PartialOrd, Ord, PartialEq, Eq)]
-#[repr(u8)]
-pub enum ErrorCodeNames {
-    HeaderPayloadLengthInvalid = 1,
-    PowInsufficient     = 2,
-    TimestampTooOld     = 3,
-    GenesisHashMismatch = 4,
-    UnknownError        = 255,
-}
-
-impl TryFrom<u8> for ErrorCodeNames {
-    type Error = InputParseError;
-
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        match value {
-            1 => Ok(Self::HeaderPayloadLengthInvalid),
-            2 => Ok(Self::PowInsufficient),
-            3 => Ok(Self::TimestampTooOld),
-            4 => Ok(Self::GenesisHashMismatch),
-            255 => Ok(Self::UnknownError),
-            n => Err(InputParseError::UnknownErrorCode { code: n }),
-        }
-    }
-}
-
-impl TryFrom<ErrorCode> for ErrorCodeNames {
-    type Error = InputParseError;
-
-    fn try_from(code: ErrorCode) -> Result<Self, Self::Error> {
-        Self::try_from(code.get())
-    }
-}
-
-impl From<ErrorCodeNames> for ErrorCode {
-    fn from(name: ErrorCodeNames) -> Self {
-        unsafe { Self(NonZeroU8::new_unchecked(name as u8)) }
-    }
-}
-
-impl core::fmt::Display for ErrorCodeNames {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str(match self {
-            Self::HeaderPayloadLengthInvalid => "Header payload length invalid",
-            Self::PowInsufficient => "PoW insufficient",
-            Self::TimestampTooOld => "Timestamp too old",
-            Self::GenesisHashMismatch => "Genesis hash mismatch",
-            Self::UnknownError => "Unknown error",
-        })
     }
 }
 
@@ -300,7 +253,7 @@ impl PublicValues {
     }
 
     /// Deserialize from exactly [`PublicValues::SIZE`] bytes.
-    pub fn parse(bytes: &[u8]) -> Result<Self, InputParseError> {
+    pub fn parse(bytes: &[u8]) -> Result<Self, ParseError> {
         check_exact_len(bytes, Self::SIZE)?;
         let state = bytemuck::pod_read_unaligned::<State>(&bytes[0..State::SIZE]);
         let mut verifier_key_bytes = [0; 32];

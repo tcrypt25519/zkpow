@@ -5,7 +5,7 @@ use std::{
 };
 
 use sync_headers::{ConnectedHeader, Header as SyncHeader};
-use zkpow_core::{block_work_from_target, target_from_bits, BlockHash, BlockTimestamp};
+use zkpow_core::{block_work_from_target, target_from_bits, BlockHash, BlockTimestamp, ChainWork};
 use zkpow_params::{Consensus, Mainnet};
 
 use super::*;
@@ -31,7 +31,8 @@ pub(crate) fn seeded_store(test_name: &str) -> (HeaderStore, PathBuf, BlockHash)
 
     let genesis_header = SyncHeader::new(Mainnet::PARAMS.genesis);
     let genesis_hash = genesis_header.block_hash();
-    let genesis = ConnectedHeader::new(genesis_header, genesis_hash, 0, Mainnet::PARAMS.genesis.chain_work(), 0, 0);
+    let genesis_chain_work = ChainWork::new(*Mainnet::PARAMS.genesis_work.as_inner());
+    let genesis = ConnectedHeader::new(genesis_header, genesis_hash, 0, genesis_chain_work, 0, 0);
     store.insert_genesis(&genesis).unwrap();
 
     let tip = store.get_best_tip().unwrap().unwrap();
@@ -52,7 +53,7 @@ pub(crate) fn seeded_store(test_name: &str) -> (HeaderStore, PathBuf, BlockHash)
 
         let header = SyncHeader::new(inner);
         let work = block_work_from_target(target_from_bits(inner.compact_target));
-        cumulative_work = cumulative_work + work;
+        cumulative_work += work;
         let block_hash = header.block_hash();
         let ch = ConnectedHeader::new(header, block_hash, i.into(), cumulative_work, mtp, u64::from(i));
         headers.push(ch);

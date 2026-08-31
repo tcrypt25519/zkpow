@@ -2,6 +2,7 @@ use alloc::vec::Vec;
 
 extern crate std;
 
+mod halt;
 mod input;
 mod public_values;
 
@@ -75,10 +76,10 @@ pub(crate) fn median_time_past(state: &State) -> BlockTimestamp {
 fn apply_header(state: &mut State, timestamp: u32) {
     let _hash_guard = set_hash_success();
     let header = HeaderInput {
-        version:     1,
+        version: 1,
         merkle_root: [0x22; 32],
-        timestamp:   ts(timestamp),
-        nonce:       7,
+        timestamp: ts(timestamp),
+        nonce: 7,
     };
     let median_hints = median_hints_for_headers(state, &[header]);
     if state.height == 0 {
@@ -303,16 +304,16 @@ fn apply_headers_flushes_deferred_chain_work_on_success() {
     let mut state = test_state();
     let headers = [
         HeaderInput {
-            version:     1,
+            version: 1,
             merkle_root: [0x22; 32],
-            timestamp:   ts(10),
-            nonce:       7,
+            timestamp: ts(10),
+            nonce: 7,
         },
         HeaderInput {
-            version:     1,
+            version: 1,
             merkle_root: [0x33; 32],
-            timestamp:   ts(20),
-            nonce:       8,
+            timestamp: ts(20),
+            nonce: 8,
         },
     ];
 
@@ -334,22 +335,22 @@ fn apply_headers_flushes_deferred_chain_work_for_longer_run() {
     let mut state = test_state();
     let headers = [
         HeaderInput {
-            version:     1,
+            version: 1,
             merkle_root: [0x22; 32],
-            timestamp:   ts(10),
-            nonce:       7,
+            timestamp: ts(10),
+            nonce: 7,
         },
         HeaderInput {
-            version:     1,
+            version: 1,
             merkle_root: [0x33; 32],
-            timestamp:   ts(20),
-            nonce:       8,
+            timestamp: ts(20),
+            nonce: 8,
         },
         HeaderInput {
-            version:     1,
+            version: 1,
             merkle_root: [0x44; 32],
-            timestamp:   ts(30),
-            nonce:       9,
+            timestamp: ts(30),
+            nonce: 9,
         },
     ];
 
@@ -395,16 +396,16 @@ fn apply_headers_flushes_deferred_chain_work_before_failure() {
     let mut state = test_state();
     let headers = [
         HeaderInput {
-            version:     1,
+            version: 1,
             merkle_root: [0x22; 32],
-            timestamp:   ts(10),
-            nonce:       7,
+            timestamp: ts(10),
+            nonce: 7,
         },
         HeaderInput {
-            version:     1,
+            version: 1,
             merkle_root: [0x33; 32],
-            timestamp:   ts(0),
-            nonce:       8,
+            timestamp: ts(0),
+            nonce: 8,
         },
     ];
 
@@ -425,16 +426,16 @@ fn apply_headers_failure_output_includes_flushed_chain_work() {
     let mut state = test_state();
     let headers = [
         HeaderInput {
-            version:     1,
+            version: 1,
             merkle_root: [0x22; 32],
-            timestamp:   ts(10),
-            nonce:       7,
+            timestamp: ts(10),
+            nonce: 7,
         },
         HeaderInput {
-            version:     1,
+            version: 1,
             merkle_root: [0x33; 32],
-            timestamp:   ts(0),
-            nonce:       8,
+            timestamp: ts(0),
+            nonce: 8,
         },
     ];
 
@@ -558,10 +559,10 @@ fn apply_headers_treats_height_zero_state_as_trusted_anchor() {
     state.genesis_hash = BlockHash::new([0x11; 32]);
     state.block_hash = BlockHash::new([0x22; 32]);
     let headers = [HeaderInput {
-        version:     1,
+        version: 1,
         merkle_root: [0x33; 32],
-        timestamp:   ts(10),
-        nonce:       7,
+        timestamp: ts(10),
+        nonce: 7,
     }];
     let hints = median_hints_for_headers(&state, &headers);
     state
@@ -685,10 +686,10 @@ fn retarget_timespan_cases_adjust_target_direction() {
 fn malformed_header_pow_and_timestamp_errors() {
     let mut state = test_state();
     let hdr1 = HeaderInput {
-        version:     1,
+        version: 1,
         merkle_root: [0x22; 32],
-        timestamp:   ts(1),
-        nonce:       7,
+        timestamp: ts(1),
+        nonce: 7,
     };
     let hints = median_hints_for_headers(&state, &[hdr1]);
 
@@ -705,10 +706,10 @@ fn malformed_header_pow_and_timestamp_errors() {
     let mut s2 = test_state();
     // First, accept a valid header to seed the window deterministically.
     let ok_hdr = HeaderInput {
-        version:     2,
+        version: 2,
         merkle_root: [0x33; 32],
-        timestamp:   ts(1),
-        nonce:       9,
+        timestamp: ts(1),
+        nonce: 9,
     };
     let median_hints = median_hints_for_headers(&s2, &[ok_hdr]);
     s2.apply_headers_from_genesis::<TestConsensus>(&[ok_hdr], &median_hints)
@@ -717,8 +718,8 @@ fn malformed_header_pow_and_timestamp_errors() {
     let bad_hdr = HeaderInput {
         version:     42,
         merkle_root: [0x44; 32],
-        timestamp:   median_after_1,
-        nonce:       10,
+        timestamp: median_after_1,
+        nonce: 10,
     };
     let median_hints = median_hints_for_headers(&s2, &[bad_hdr]);
     let failure = s2
@@ -730,10 +731,10 @@ fn malformed_header_pow_and_timestamp_errors() {
     let mut s3 = test_state();
     let median_start = median_time_past(&s3);
     let odd_version_hdr = HeaderInput {
-        version:     0xFFFF_FFFF,
+        version: 0xFFFF_FFFF,
         merkle_root: [0x55; 32],
-        timestamp:   ts(median_start.into_inner().wrapping_add(1)),
-        nonce:       1,
+        timestamp: ts(median_start.into_inner().wrapping_add(1)),
+        nonce: 1,
     };
     let median_hints = median_hints_for_headers(&s3, &[odd_version_hdr]);
     s3.apply_headers_from_genesis::<TestConsensus>(&[odd_version_hdr], &median_hints)
@@ -939,3 +940,6 @@ fn ordered_window_median_boundary_holds_deep_in_a_batch() {
         );
     }
 }
+
+#[test]
+fn apply_headers_from_genesis_requires_at_least_ten_headers() {}

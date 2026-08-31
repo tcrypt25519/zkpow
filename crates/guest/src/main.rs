@@ -19,7 +19,7 @@ sp1_zkvm::entrypoint!(main);
 
 use bytemuck::{self, Pod, PodCastError};
 use sp1_zkvm::lib::read_vec_raw;
-use zkpow_core::{BlockTimestamp, HeaderInput, PublicValues, ReturnCode, State, VerifierKeyDigest};
+use zkpow_core::{BlockTimestamp, HeaderInput, PublicValues, ReportableError, ReturnCode, State, VerifierKeyDigest};
 use zkpow_params::Mainnet;
 use zkpow_sha256;
 
@@ -106,7 +106,7 @@ fn inner_main() -> Result<(), ProgramError> {
 
     let return_code = match apply_result {
         Ok(()) => ReturnCode::SUCCESS,
-        Err(err) => ReturnCode::from(err.error_code()),
+        Err(err) => err.return_code(),
     };
     commit_public_values(&state, verifier_key, return_code);
 }

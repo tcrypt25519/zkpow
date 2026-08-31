@@ -9,9 +9,12 @@ path = "src/lib.rs"
 
 [features]
 profiling = []
+# The reproducible fake header chain in `chain.rs`, for other crates' tests.
+test-support = []
 
 [dependencies]
 #sp1-zkvm = { workspace = true }
+sp1-lib = { workspace = true }
 thiserror = { version = "2.0", default-features = false }
 bytemuck = { workspace = true }
 sp1-cycle = { workspace = true }

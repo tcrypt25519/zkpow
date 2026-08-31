@@ -1,4 +1,18 @@
-/// Parse errors for fixed-width serialized core types.
+use crate::{BlockHash, BlockTimestamp, CompactTarget, ErrorCode, ReturnCode};
+
+/// An error that can end the guest program. Transforms typed errors into [`ErrorCode`]s.
+pub trait ReportableError {
+    /// The code committed for this error, or `None` when the error has no code of its own.
+    fn error_code(&self) -> Option<ErrorCode>;
+
+    /// The return code the guest commits for this error. An error with no code of its own still
+    /// has to exit non-zero, so it reports [`ErrorCode::UNKNOWN_ERROR`].
+    fn return_code(&self) -> ReturnCode {
+        ReturnCode::from(self.error_code().unwrap_or(ErrorCode::UNKNOWN_ERROR))
+    }
+}
+
+/// Reading a fixed-width wire encoding out of a byte slice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum ParseError {
     #[error("invalid length: expected {expected}, got {actual}")]
@@ -13,38 +27,35 @@ pub enum ParseError {
     },
 }
 
-/// Validation failure during [`State::apply_headers`] or [`State::apply_headers_from_genesis`].
+/// Applying headers to a [`State`](crate::State).
+///
+/// Every variant is a consensus rejection of a specific header, so every variant maps to an
+/// [`ErrorCode`]. Prover hints are not validated here: a bad hint halts with the invalid-hint exit
+/// code rather than returning, so it never becomes an `ApplyError`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum ApplyError {
-    #[error("new header timestamp is not greater than the median")]
-    TimestampTooOld,
-    #[error("new header proof-of-work is insufficient")]
-    PowInsufficient,
-    #[error("not enough cold headers to fill the median window")]
-    InsufficientColdHeaders,
-    #[error("median time past hint is invalid")]
-    InvalidMedianHint,
+    #[error("header {height} timestamp {timestamp} is not greater than the median {median}")]
+    TimestampTooOld {
+        height:    u32,
+        timestamp: BlockTimestamp,
+        median:    BlockTimestamp,
+    },
+    #[error("header {height} hash {hash} does not meet the target for nbits {:#010x}", nbits.as_inner())]
+    PowInsufficient {
+        height: u32,
+        hash:   BlockHash,
+        nbits:  CompactTarget,
+    },
+    #[error("a cold start needs at least {required} headers, got {actual}")]
+    InsufficientColdHeaders { required: usize, actual: usize },
 }
 
-impl ApplyError {
-    #[must_use]
-    pub fn error_code(&self) -> crate::ErrorCode {
-        match self {
-            Self::TimestampTooOld => crate::ErrorCode::TIMESTAMP_TOO_OLD,
-            Self::PowInsufficient => crate::ErrorCode::POW_INSUFFICIENT,
-            Self::InsufficientColdHeaders => crate::ErrorCode::INSUFFICIENT_COLD_HEADERS,
-            Self::InvalidMedianHint => crate::ErrorCode::UNKNOWN_ERROR,
-        }
+impl ReportableError for ApplyError {
+    fn error_code(&self) -> Option<ErrorCode> {
+        Some(match self {
+            Self::TimestampTooOld { .. } => ErrorCode::TIMESTAMP_TOO_OLD,
+            Self::PowInsufficient { .. } => ErrorCode::POW_INSUFFICIENT,
+            Self::InsufficientColdHeaders { .. } => ErrorCode::INSUFFICIENT_COLD_HEADERS,
+        })
     }
-}
-
-/// Parse errors for witness (hints) data.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum InputParseError {
-    #[error("length mismatch: expected {expected} bytes, got {actual}")]
-    InvalidLength { expected: usize, actual: usize },
-    #[error("parse error: {0}")]
-    Parse(#[from] ParseError),
-    #[error("unknown error: {code}")]
-    UnknownErrorCode { code: u8 },
 }

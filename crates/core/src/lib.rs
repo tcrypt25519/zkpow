@@ -21,15 +21,21 @@ mod header;
 pub use header::HeaderInput;
 
 mod public_values;
-pub use public_values::{ErrorCode, ErrorCodeNames, PublicValues, ReturnCode, VerifierKeyDigest};
+pub use public_values::{ErrorCode, PublicValues, ReturnCode, VerifierKeyDigest};
 pub use sp1_cycle;
 
 mod state;
 pub use state::State;
 
-mod errors;
-pub use errors::{ApplyError, InputParseError, ParseError};
+#[cfg(any(test, feature = "test-support"))]
+mod chain;
+#[cfg(any(test, feature = "test-support"))]
+pub use chain::TestChain;
 
+mod errors;
+pub use errors::{ApplyError, ParseError, ReportableError};
+
+pub mod halt;
 mod input;
 pub use input::{cast_slice, serialize_inputs};
 
@@ -46,7 +52,7 @@ fn hash_header(header: &Header) -> BlockHash {
 }
 
 #[sp1_cycle::tracked]
-fn hash_header_input(input: &HeaderInput, prev_blockhash: &BlockHash, compact_target: &CompactTarget) -> BlockHash {
+fn hash_header_input(input: &HeaderInput, prev_blockhash: &BlockHash, compact_target: CompactTarget) -> BlockHash {
     #[cfg(target_os = "zkvm")]
     {
         BlockHash::new(zkpow_sha256::of_header(
@@ -54,7 +60,7 @@ fn hash_header_input(input: &HeaderInput, prev_blockhash: &BlockHash, compact_ta
             *prev_blockhash.as_inner(),
             input.merkle_root,
             *input.timestamp.as_inner(),
-            *compact_target.as_inner(),
+            compact_target.into_inner(),
             input.nonce,
         ))
     }
@@ -66,7 +72,7 @@ fn hash_header_input(input: &HeaderInput, prev_blockhash: &BlockHash, compact_ta
             prev_blockhash: *prev_blockhash,
             merkle_root: input.merkle_root,
             timestamp: input.timestamp,
-            compact_target: *compact_target,
+            compact_target,
             nonce: input.nonce,
         };
         hash_header(&header)

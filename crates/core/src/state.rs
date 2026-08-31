@@ -9,8 +9,8 @@ use zkpow_params::{Consensus, Mainnet};
 use crate::{
     advance_ordered_timestamp_run, block_work_from_target, calculate_next_target_required, check_proof_of_work,
     has_ordered_timestamp_window, hash_header_input, ordered_median_timestamp_slot, ordered_timestamp_run,
-    target_from_bits, timestamp_count, timestamp_slot, ApplyError, BlockHash, BlockTimestamp, BlockWork, ChainWork,
-    CompactTarget, HeaderInput, Target,
+    target_from_bits, timestamp_slot, ApplyError, BlockHash, BlockTimestamp, BlockWork, ChainWork, CompactTarget,
+    HeaderInput, Target,
 };
 
 /// Complete authenticated validation state, serialized between recursive iterations.
@@ -53,7 +53,7 @@ impl State {
         calculate_next_target_required::<C>(current_target, self.epoch_timestamp, current_timestamp)
     }
 
-    fn new_epoch_manager<'a, C: Consensus>(&'a mut self) -> EpochManager<'a> {
+    fn new_epoch_manager<'a, C: Consensus>(&'_ mut self) -> EpochManager<'_> {
         let (active_nbits, active_target, active_block_work) =
             if (self.height + 1).is_multiple_of(C::PARAMS.epoch_length) {
                 self.prepare_next_epoch::<C>()
@@ -83,9 +83,18 @@ impl State {
         headers: &[HeaderInput],
         median_hints: &[BlockTimestamp],
     ) -> Result<(), ApplyError> {
+        // The first run *MUST* contain at least `window_size - 1` headers
         let cold_count = C::PARAMS.window_size - 1;
-        let to_apply = headers.len().min(cold_count);
-        let (cold, warm) = headers.split_at(to_apply);
+        if headers.len() < cold_count {
+            return Err(ApplyError::InsufficientColdHeaders {
+                required: cold_count,
+                actual:   headers.len(),
+            });
+        }
+
+        // Invariant: We rejected calls with less than `cold_count` headers and now we split up to
+        // cold_count` headers, so we necessarily have exactly `cold_count` cold headers
+        let (cold, warm) = headers.split_at(cold_count);
 
         self.apply_cold_batch::<C>(cold)?;
 
@@ -99,16 +108,17 @@ impl State {
     // Applies the first headers of the chain, before the MTP window has been filled. This lets the
     // warm path assume it always has a full window.
     fn apply_cold_batch<C: Consensus>(&mut self, headers: &[HeaderInput]) -> Result<(), ApplyError> {
-        let context = EpochManager::from_genesis::<C>(self);
-        for new_header in headers {
-            let claimed_median = context.state.timestamps[(context.state.height as usize).div_ceil(2)];
-            let active_nbits = context.active_nbits;
-            let active_target = context.active_target;
-            context
-                .state
-                .seal_header::<C>(active_nbits, active_target, new_header, claimed_median)?;
+        for (i, new_header) in headers.iter().enumerate() {
+            let slot = i / 2;
+            self.seal_header::<C>(
+                C::PARAMS.compact_target(),
+                &C::PARAMS.genesis_target,
+                new_header,
+                self.timestamps[slot],
+            )?;
         }
-        drop(context);
+        self.chain_work += C::PARAMS.genesis_work * headers.len() as u32;
+
         Ok(())
     }
 
@@ -142,23 +152,29 @@ impl State {
                 let claimed_median = if has_ordered_timestamp_window(ordered_run_len as u64) {
                     state.timestamps[ordered_median_timestamp_slot(height)]
                 } else {
-                    let claimed_median = *hint_iter.next().ok_or(ApplyError::InvalidMedianHint)?;
+                    let Some(claimed_median) = hint_iter.next() else {
+                        crate::invalid_hint!("median_hint not available for application");
+                    };
 
                     let (less_count, equal_count) = sp1_cycle::track!({
                         let mut counts: [usize; 3] = [0, 0, 0];
-                        let count = timestamp_count(height);
-                        for i in 0..count {
+                        for i in 0..C::PARAMS.window_size {
                             let timestamp = state.timestamps[timestamp_slot(height.wrapping_sub(i as u32))];
-                            counts[((timestamp.cmp(&claimed_median) as i8) + 1) as usize] += 1;
+                            counts[((timestamp.cmp(claimed_median) as i8) + 1) as usize] += 1;
                         }
                         (counts[0], counts[1])
                     });
-
-                    let half = timestamp_count(height) / 2;
-                    if less_count > half || less_count + equal_count <= half {
-                        return Err(ApplyError::InvalidMedianHint);
+                    let half = C::PARAMS.window_small_half_size();
+                    if less_count > half {
+                        crate::invalid_hint!("claimed_median is newer than half of the known window: {claimed_median} (less_count={less_count})");
                     }
-                    claimed_median
+                    if less_count + equal_count <= half {
+                        crate::invalid_hint!("claimed_median is older than half of the known window: {claimed_median} (less_count={less_count}, equal_count={equal_count})");
+                    }
+                    if equal_count == 0 {
+                        crate::invalid_hint!("claimed_median is not in the known window: {claimed_median}");
+                    }
+                    *claimed_median
                 };
 
                 let current_timestamp = state.current_timestamp();
@@ -168,13 +184,13 @@ impl State {
                     new_header.timestamp.into_inner(),
                 ) as usize;
 
-                state.seal_header::<C>(active_nbits, active_target, new_header, claimed_median)?;
+                state.seal_header::<C>(active_nbits, &active_target, new_header, claimed_median)?;
             }
         }
 
-        if hint_iter.next().is_some() {
-            return Err(ApplyError::InvalidMedianHint);
-        }
+        if let Some(median_time) = hint_iter.next() {
+            crate::invalid_hint!("median_hint left over after application: {}", *median_time);
+        };
 
         Ok(())
     }
@@ -182,32 +198,42 @@ impl State {
     fn seal_header<C: Consensus>(
         &mut self,
         active_nbits: CompactTarget,
-        active_target: Target,
+        active_target: &Target,
         new_header: &HeaderInput,
         known_median: BlockTimestamp,
     ) -> Result<(), ApplyError> {
+        // Check that the incoming timestamp is > `known_median`
         if new_header.timestamp <= known_median {
-            return Err(ApplyError::TimestampTooOld);
+            return Err(ApplyError::TimestampTooOld {
+                height:    self.height + 1,
+                timestamp: new_header.timestamp,
+                median:    known_median,
+            });
         }
 
-        let hash = hash_header_input(new_header, &self.block_hash, &active_nbits);
-
-        if !check_proof_of_work(hash, &active_target) {
-            return Err(ApplyError::PowInsufficient);
+        // Compute the block's hash and check that it meets the PoW target
+        let hash = hash_header_input(new_header, &self.block_hash, active_nbits);
+        if !check_proof_of_work(hash, active_target) {
+            return Err(ApplyError::PowInsufficient {
+                height: self.height + 1,
+                hash,
+                nbits: active_nbits,
+            });
         }
 
-        self.advance_state(new_header, &hash, active_nbits);
+        // Advance the state to be after this block; infallible
+        self.advance_state::<C>(new_header.timestamp, hash);
 
         Ok(())
     }
 
     #[tracked]
-    fn advance_state(&mut self, new_header: &HeaderInput, hash: &BlockHash, new_nbits: CompactTarget) {
-        self.height = self.height + 1;
-        self.block_hash = hash
-        self.timestamps[timestamp_slot(self.height)] = new_header.timestamp;
-        if (self.height).is_multiple_of(Mainnet::PARAMS.epoch_length) {
-            self.epoch_timestamp = new_header.timestamp;
+    fn advance_state<C: Consensus>(&mut self, timestamp: BlockTimestamp, hash: BlockHash) {
+        self.height += 1;
+        self.block_hash = hash;
+        self.timestamps[timestamp_slot(self.height)] = timestamp;
+        if self.height.is_multiple_of(C::PARAMS.epoch_length) {
+            self.epoch_timestamp = timestamp;
         }
     }
 }
@@ -235,16 +261,6 @@ struct EpochManager<'a> {
 }
 
 impl<'a> EpochManager<'a> {
-    fn from_genesis<C: Consensus>(state: &'a mut State) -> Self {
-        Self {
-            state,
-            start_height: 0,
-            active_block_work: C::PARAMS.block_work(),
-            active_nbits: C::PARAMS.compact_target(),
-            active_target: C::PARAMS.target(),
-        }
-    }
-
     fn flush(&mut self) {
         let processed = self.state.height - self.start_height;
         // An epoch that took no headers must not commit its prepared nbits: the next manager would
@@ -254,9 +270,10 @@ impl<'a> EpochManager<'a> {
         }
 
         sp1_cycle::track!({
-            let new_chain_work: ChainWork = self.active_block_work * processed;
-            self.state.chain_work = self.state.chain_work + new_chain_work;
+            self.state.chain_work += self.active_block_work * processed;
         });
+
+        // TODO: This only needs to happen after re-calculating difficulty
         self.state.current_nbits = self.active_nbits;
     }
 }

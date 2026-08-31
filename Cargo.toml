@@ -1,20 +1,20 @@
 [workspace]
 members = [
-    "crates/controller",
-    "crates/core",
-    "crates/guest",
-    "crates/host",
-    "crates/sha256",
-    "crates/store",
-    "crates/sync-headers",
-    "crates/cli",
-    "crates/sp1-cycle",
-    "crates/sp1-cycle-macros",
-    "crates/derive-size",
-    "crates/params",
-    "crates/types",
-    "crates/sha256_const",
-    "crates/worker",
+  "crates/controller",
+  "crates/core",
+  "crates/guest",
+  "crates/host",
+  "crates/sha256",
+  "crates/store",
+  "crates/sync-headers",
+  "crates/cli",
+  "crates/sp1-cycle",
+  "crates/sp1-cycle-macros",
+  "crates/derive-size",
+  "crates/params",
+  "crates/types",
+  "crates/sha256_const",
+  "crates/worker",
 ]
 resolver = "3"
 
@@ -41,17 +41,18 @@ sp1-cycle-macros = { path = "crates/sp1-cycle-macros" }
 ##
 sp1-build = { version = "6.5.0" }
 sp1-derive = { version = "6.5.0" }
+sp1-lib = { version = "6.5.0" }
 sp1-sdk = { version = "6.5.0", features = ["profiling"] }
 sp1-zkvm = { version = "6.5.0", default-features = false, features = [
-    "lib",
-    "verify",
+  "lib",
+  "verify",
 ] }
 sp1-recursion-gnark-ffi = { version = "6.5.0", default-features = false }
 sp1-prover = { version = "6.5.0", default-features = false, features = [
-    "profiling",
-    "bigint-rug",
-    "debug",
-    "mprotect",
+  "profiling",
+  "bigint-rug",
+  "debug",
+  "mprotect",
 ] }
 sp1-core-executor = { version = "6.5.0", features = ["profiling"] }
 
@@ -76,10 +77,10 @@ anyhow = "1.0.104"
 
 bytemuck = { version = "1.25.2", features = ["derive"] }
 rkyv = { version = "0.8.18", default-features = false, features = [
-    "alloc",
-    "bytecheck",
-    "little_endian",
-    "aligned",
+  "alloc",
+  "bytecheck",
+  "little_endian",
+  "aligned",
 ] }
 bytes = { version = "1.12.1" }
 
@@ -89,13 +90,16 @@ bytes = { version = "1.12.1" }
 serde_json = "1.0"
 postcard = { version = "1", features = ["alloc"] }
 serde = { version = "1", default-features = false, features = [
-    "derive",
-    "alloc",
+  "derive",
+  "alloc",
 ] }
 
 const-gen = { version = "1.6.9", default-features = false, features = [
-    "derive",
+  "derive",
 ] }
+
+[patch.crates-io]
+sp1-zkvm = { path = "/Users/tcrypt/code/github.com/succinctlabs/sp1/crates/zkvm/entrypoint" }
 
 [profile.release]
 incremental = false

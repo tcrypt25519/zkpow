@@ -67,8 +67,10 @@ fn applying_headers_one_at_a_time_matches_db_claims() {
         } else {
             state.apply_headers::<Mainnet>(&[header], hints)
         };
-        result.expect("header should apply");
         let height = (index as u32) + 1;
+        if let Err(err) = result {
+            panic!("header {height} failed to apply: {err}");
+        }
         assert_eq!(state.height, height);
         assert_eq!(state.chain_work, record.chain_work);
         assert_eq!(state.block_hash, BlockHash::from(&record.header));

@@ -1,4 +1,4 @@
-use core::marker::PhantomData;
+use core::{fmt, marker::PhantomData};
 
 use bytemuck::{Pod, Zeroable};
 
@@ -199,6 +199,12 @@ pub type BlockHash = Branded<BlockHashTag, [u8; 32]>;
 
 /// BlockTimestamp is the timestamp of a block
 pub type BlockTimestamp = Branded<BlockTimestampTag, u32>;
+
+impl fmt::Display for BlockTimestamp {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 
 /// BlockWork is the amount of work proven by a single block
 pub type BlockWork = Branded<BlockWorkTag, u256>;
