@@ -11,10 +11,11 @@ pub const CMD_RUN: u8 = 1;
 
 #[derive(Clone, Copy)]
 pub struct TestCase {
-    pub name: &'static str,
-    pub test_fn: fn(),
-    pub ignore: bool,
-    pub should_panic: bool,
+    pub name:               &'static str,
+    pub test_fn:            fn(),
+    pub ignore:             bool,
+    pub should_panic:       bool,
+    pub expected_exit_code: Option<u32>,
 }
 
 #[cfg(target_os = "zkvm")]
@@ -36,7 +37,13 @@ pub fn test_runner(tests: &[&TestCase]) {
                     if t.should_panic {
                         flags |= 2;
                     }
+                    if t.expected_exit_code.is_some() {
+                        flags |= 4;
+                    }
                     buf.push(flags);
+                    if let Some(code) = t.expected_exit_code {
+                        buf.extend_from_slice(&code.to_le_bytes());
+                    }
                     let name_bytes = t.name.as_bytes();
                     buf.extend_from_slice(&(name_bytes.len() as u32).to_le_bytes());
                     buf.extend_from_slice(name_bytes);

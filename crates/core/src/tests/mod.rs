@@ -1,5 +1,7 @@
 use alloc::vec::Vec;
 
+use zkvm_test::zkvm_test;
+
 extern crate std;
 
 mod halt;
@@ -141,7 +143,7 @@ fn expected_upper_median(height: u32) -> BlockTimestamp {
     }
 }
 
-#[test]
+#[zkvm_test]
 fn fixed_width_wire_sizes_match_protocol() {
     assert_eq!(HeaderInput::SIZE, 44);
     assert_eq!(State::SIZE, 152);
@@ -153,7 +155,7 @@ fn fixed_width_wire_sizes_match_protocol() {
     assert_eq!(align_of::<State>(), 8);
 }
 
-#[test]
+#[zkvm_test]
 fn public_values_round_trips() {
     let state: State = State {
         block_hash: BlockHash::new([0xAB; 32]),
@@ -175,7 +177,7 @@ fn public_values_round_trips() {
     assert!(parsed.is_success());
 }
 
-#[test]
+#[zkvm_test]
 fn header_and_new_header_round_trip_exact_wire_bytes() {
     let mut header_bytes = [0u8; Header::SIZE];
     header_bytes[0..4].copy_from_slice(&0x1122_3344u32.to_le_bytes());
@@ -207,7 +209,7 @@ fn header_and_new_header_round_trip_exact_wire_bytes() {
     assert_eq!(new_header.nonce, 0xbbcc_ddee);
 }
 
-#[test]
+#[zkvm_test]
 fn chain_work_adds_block_work_with_two_limb_carry_and_wrap() {
     let cases = [
         (
@@ -229,7 +231,7 @@ fn chain_work_adds_block_work_with_two_limb_carry_and_wrap() {
     }
 }
 
-#[test]
+#[zkvm_test]
 fn block_work_mul_u32_scales_by_small_count() {
     let value = BlockWork::from_limbs([3, 0, 0, 0]);
 
@@ -237,25 +239,25 @@ fn block_work_mul_u32_scales_by_small_count() {
     assert_eq!(result, ChainWork::from_limbs([21, 0, 0, 0]));
 }
 
-#[test]
+#[zkvm_test]
 fn check_proof_of_work_accepts_exact_target_boundary() {
     let hash = BlockHash::new(GENESIS_TARGET.to_le_bytes());
     assert!(check_proof_of_work(hash, &GENESIS_TARGET));
 }
 
-#[test]
+#[zkvm_test]
 fn target_to_bits_round_trips_genesis_target() {
     let round_trip = target_to_bits(GENESIS_TARGET);
     assert_eq!(round_trip, CompactTarget::new(GENESIS_NBITS));
 }
 
-#[test]
+#[zkvm_test]
 fn target_from_bits_expands_genesis_bits() {
     let expanded = target_from_bits(CompactTarget::new(GENESIS_NBITS));
     assert_eq!(expanded, GENESIS_TARGET);
 }
 
-#[test]
+#[zkvm_test]
 fn scoped_hash_mock_overrides_and_restores_host_hashing() {
     let real_hash = hash_sample_header();
     {
@@ -271,6 +273,7 @@ fn scoped_hash_mock_overrides_and_restores_host_hashing() {
     assert_eq!(hash_sample_header(), real_hash);
 }
 
+#[cfg(not(target_os = "zkvm"))]
 #[test]
 fn scoped_hash_mock_rejects_nested_override() {
     let real_hash = hash_sample_header();
@@ -284,7 +287,7 @@ fn scoped_hash_mock_rejects_nested_override() {
     assert_eq!(hash_sample_header(), real_hash);
 }
 
-#[test]
+#[zkvm_test]
 fn apply_headers_flushes_deferred_chain_work_on_success() {
     let _hash_guard = set_hash_success();
     let mut state = test_state();
@@ -309,7 +312,7 @@ fn apply_headers_flushes_deferred_chain_work_on_success() {
     assert_eq!(state.chain_work, expected);
 }
 
-#[test]
+#[zkvm_test]
 fn apply_headers_flushes_deferred_chain_work_for_longer_run() {
     let _hash_guard = set_hash_success();
     let mut state = test_state();
@@ -333,7 +336,7 @@ fn apply_headers_flushes_deferred_chain_work_for_longer_run() {
     assert_eq!(state.chain_work, expected);
 }
 
-#[test]
+#[zkvm_test]
 fn failure_height_is_absolute_chain_height() {
     let _hash_guard = set_hash_fail();
     // Start at height 5 and fail on the first new header → failure_height = 6.
@@ -358,7 +361,7 @@ fn failure_height_is_absolute_chain_height() {
     assert_eq!(state.height + 1, 6);
 }
 
-#[test]
+#[zkvm_test]
 fn apply_headers_flushes_deferred_chain_work_before_failure() {
     let _hash_guard = set_hash_success();
     let mut state = test_state();
@@ -388,7 +391,7 @@ fn apply_headers_flushes_deferred_chain_work_before_failure() {
     assert_eq!(state.height + 1, 12);
 }
 
-#[test]
+#[zkvm_test]
 fn apply_headers_failure_output_includes_flushed_chain_work() {
     let _hash_guard = set_hash_success();
     let mut state = test_state();
@@ -420,7 +423,7 @@ fn apply_headers_failure_output_includes_flushed_chain_work() {
     assert_eq!(parsed.state.chain_work, state.chain_work);
 }
 
-#[test]
+#[zkvm_test]
 fn apply_headers_matches_sequential_next_across_median_window_wrap() {
     let _hash_guard = set_hash_success();
     let headers: Vec<HeaderInput> = (1..=23)
@@ -454,7 +457,7 @@ fn apply_headers_matches_sequential_next_across_median_window_wrap() {
     assert_eq!(batched, sequential);
 }
 
-#[test]
+#[zkvm_test]
 fn hinted_apply_headers_matches_sorted_apply_headers_across_window_wrap() {
     let _hash_guard = set_hash_success();
     let headers: Vec<HeaderInput> = (1..=23)
@@ -475,7 +478,7 @@ fn hinted_apply_headers_matches_sorted_apply_headers_across_window_wrap() {
     assert_eq!(hinted.height, 23);
 }
 
-#[test]
+#[zkvm_test]
 fn hinted_median_validation_accepts_duplicate_median_values() {
     let _hash_guard = set_hash_success();
     let mut state: State = State {
@@ -496,6 +499,7 @@ fn hinted_median_validation_accepts_duplicate_median_values() {
         .expect("duplicate median values should be accepted");
 }
 
+#[cfg(not(target_os = "zkvm"))]
 #[test]
 fn hinted_median_validation_rejects_wrong_rank_hint() {
     let state: State = State {
@@ -520,7 +524,27 @@ fn hinted_median_validation_rejects_wrong_rank_hint() {
     assert!(result.is_err());
 }
 
-#[test]
+#[cfg(target_os = "zkvm")]
+#[zkvm_test(should_panic, exit_code = 3)]
+fn hinted_median_validation_rejects_wrong_rank_hint_zkvm() {
+    let state: State = State {
+        height: WINDOW_SIZE as u32,
+        current_nbits: CompactTarget::new(GENESIS_NBITS),
+        timestamps: [ts(1), ts(2), ts(3), ts(4), ts(5), ts(6), ts(7), ts(8), ts(9), ts(10), ts(11)],
+        ..State::default()
+    };
+    let headers = [HeaderInput {
+        version:     1,
+        merkle_root: [0x22; 32],
+        timestamp:   ts(12),
+        nonce:       7,
+    }];
+    let _hash_guard = set_hash_success();
+    let mut state = state;
+    state.apply_headers::<TestConsensus>(&headers, &[ts(4)]).unwrap();
+}
+
+#[zkvm_test]
 fn apply_headers_treats_height_zero_state_as_trusted_anchor() {
     let _hash_guard = set_hash_success();
     let mut state = test_state();
@@ -544,7 +568,7 @@ fn apply_headers_treats_height_zero_state_as_trusted_anchor() {
     assert_eq!(state.block_hash, zero_hash());
 }
 
-#[test]
+#[zkvm_test]
 fn median_time_past_uses_upper_median_across_window_sizes() {
     let cases = [("initial through first wrap", 0, 12), ("two wraps", 1, 23)];
 
@@ -570,7 +594,7 @@ fn median_time_past_uses_upper_median_across_window_sizes() {
     }
 }
 
-#[test]
+#[zkvm_test]
 fn next_overwrites_only_the_next_ring_slot() {
     let _hash_guard = set_hash_success();
     let original = [
@@ -609,7 +633,7 @@ fn next_overwrites_only_the_next_ring_slot() {
 
 // Difficulty retargeting edge cases using the pure helper. These represent
 // the extremes the state machine will clamp to during epoch transitions.
-#[test]
+#[zkvm_test]
 fn retarget_timespan_cases_adjust_target_direction() {
     enum ExpectedDirection {
         Equal,
@@ -653,7 +677,7 @@ fn retarget_timespan_cases_adjust_target_direction() {
 }
 
 // Malformed header scenarios mapped to ValidationErrorCode
-#[test]
+#[zkvm_test]
 fn malformed_header_pow_and_timestamp_errors() {
     let mut state = test_state();
     let headers10: Vec<HeaderInput> = (1..=10)
@@ -703,7 +727,7 @@ fn malformed_header_pow_and_timestamp_errors() {
 }
 
 // Median time boundary: timestamp == median must fail
-#[test]
+#[zkvm_test]
 fn median_time_boundary_equality_fails() {
     let _hash_guard = set_hash_success();
     let mut state = test_state();
@@ -736,7 +760,7 @@ fn median_time_boundary_equality_fails() {
 /// cold-start pass builds an `EpochManager` even when it has no headers to process, and that
 /// guard used to commit the new nbits on drop, so the warm pass then retargeted a second time
 /// from the already-retargeted value.
-#[test]
+#[zkvm_test]
 fn boundary_header_retargets_once_per_call() {
     assert_boundary_retargets_once::<TestConsensus>();
     // Same assertion at a different epoch length, so a hardcoded 2016 anywhere in the transition
@@ -777,7 +801,7 @@ fn assert_boundary_retargets_once<C: Consensus>() {
 
 /// The epoch boundary must come from the parameters, not a constant. `ShortEpoch` retargets every
 /// 32 blocks, so a batch that spans one boundary under it spans none under mainnet.
-#[test]
+#[zkvm_test]
 fn epoch_boundary_is_read_from_the_parameters() {
     assert_eq!(TestConsensus::PARAMS.epoch_length, 2016);
     assert_eq!(ShortEpoch::PARAMS.epoch_length, 32);
@@ -848,7 +872,7 @@ fn apply_sequentially(state: &mut State, headers: &[HeaderInput]) -> Result<(), 
 /// batch's starting height aliases a slot that later headers in the same batch have already
 /// overwritten, which silently degrades the median-time-past check into "newer than some recent
 /// block". A strictly increasing chain never notices; the first out-of-order block does.
-#[test]
+#[zkvm_test]
 fn ordered_window_median_is_batch_split_invariant() {
     for dip_index in 0..12usize {
         let state = ordered_warm_state(20);
@@ -879,7 +903,7 @@ fn ordered_window_median_is_batch_split_invariant() {
 
 /// Pins the boundary itself: deep inside a batch, the accepted timestamp is the one just past the
 /// median-time-past of the header's own parent.
-#[test]
+#[zkvm_test]
 fn ordered_window_median_boundary_holds_deep_in_a_batch() {
     const DIP_INDEX: usize = 6;
 
@@ -926,5 +950,5 @@ fn ordered_window_median_boundary_holds_deep_in_a_batch() {
     }
 }
 
-#[test]
+#[zkvm_test]
 fn apply_headers_from_genesis_requires_at_least_ten_headers() {}

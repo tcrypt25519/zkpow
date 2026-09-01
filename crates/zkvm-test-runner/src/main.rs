@@ -3,7 +3,7 @@
 //! Features (Tier 2):
 //! - Per-test isolation: each test executes in an isolated VM instance; a panic never halts other tests.
 //! - Test filtering: test name substring matching, `--exact`, `--list`, `--ignored`.
-//! - `#[should_panic]` support.
+//! - `#[should_panic]` and `#[should_panic, exit_code = N]` support.
 //! - Cycle counts: reports exact VM instruction/cycle counts per test and total.
 //! - Parallel execution: runs test instances concurrently across threads.
 //! - Tier 1 fallback: seamlessly runs legacy/stock libtest binaries if present.
@@ -18,9 +18,10 @@ const CMD_RUN: u8 = 1;
 
 #[derive(Debug, Clone)]
 struct TestDesc {
-    name: String,
-    ignore: bool,
-    should_panic: bool,
+    name:               String,
+    ignore:             bool,
+    should_panic:       bool,
+    expected_exit_code: Option<u32>,
 }
 
 #[derive(Debug, Default)]
@@ -98,11 +99,27 @@ fn decode_test_list(bytes: &[u8]) -> Option<Vec<TestDesc>> {
     let mut tests = Vec::with_capacity(count);
 
     for _ in 0..count {
-        if offset + 5 > bytes.len() {
+        if offset + 1 > bytes.len() {
             return None;
         }
         let flags = bytes[offset];
         offset += 1;
+
+        let has_exit_code = (flags & 4) != 0;
+        let expected_exit_code = if has_exit_code {
+            if offset + 4 > bytes.len() {
+                return None;
+            }
+            let code = u32::from_le_bytes(bytes[offset..offset + 4].try_into().ok()?);
+            offset += 4;
+            Some(code)
+        } else {
+            None
+        };
+
+        if offset + 4 > bytes.len() {
+            return None;
+        }
         let name_len = u32::from_le_bytes(bytes[offset..offset + 4].try_into().ok()?) as usize;
         offset += 4;
         if offset + name_len > bytes.len() {
@@ -115,6 +132,7 @@ fn decode_test_list(bytes: &[u8]) -> Option<Vec<TestDesc>> {
             name,
             ignore: (flags & 1) != 0,
             should_panic: (flags & 2) != 0,
+            expected_exit_code,
         });
     }
 
@@ -152,30 +170,24 @@ async fn main() {
     let list_res = client.execute(Elf::from(elf_bytes.clone()), list_stdin).await;
 
     let test_catalog = match list_res {
-        Ok((public_values, report)) if report.exit_code == 0 => {
-            decode_test_list(public_values.as_slice())
-        }
+        Ok((public_values, report)) if report.exit_code == 0 => decode_test_list(public_values.as_slice()),
         _ => None,
     };
 
-    // If Tier 2 discovery failed, fall back to Tier 1 execution
-    let Some(all_tests) = test_catalog else {
-        if !args.filters.is_empty() || args.list {
-            eprintln!(
-                "zkvm-test-runner: running legacy libtest binary without Tier 2 test harness; \
-                 filtering and --list are not supported for this binary"
-            );
+    let all_tests = match test_catalog {
+        Some(tests) => tests,
+        None => {
+            // Tier 1 Fallback: run the ELF once directly with empty stdin.
+            let (_pv, report) = client
+                .execute(Elf::from(elf_bytes), SP1Stdin::new())
+                .await
+                .unwrap_or_else(|err| {
+                    eprintln!("zkvm-test-runner: execution failed: {err}");
+                    std::process::exit(1);
+                });
+            let exit_code = u8::try_from(report.exit_code).unwrap_or(255);
+            std::process::exit(exit_code.into());
         }
-        let (pv, report) = client
-            .execute(Elf::from(elf_bytes), SP1Stdin::new())
-            .await
-            .unwrap_or_else(|err| {
-                eprintln!("zkvm-test-runner: execution failed: {err}");
-                std::process::exit(1);
-            });
-        let _ = pv;
-        let exit_code = u8::try_from(report.exit_code).unwrap_or(255);
-        std::process::exit(exit_code.into());
     };
 
     // 2. Filter tests
@@ -259,24 +271,38 @@ async fn main() {
                 Ok((_pv, report)) => {
                     let exit_code = report.exit_code;
                     let cycles = report.total_instruction_count();
-                    if test.should_panic {
-                        if exit_code != 0 {
-                            (true, cycles, None)
+
+                    let (passed, failure_reason) = if let Some(expected) = test.expected_exit_code {
+                        if exit_code == u64::from(expected) {
+                            (true, None)
                         } else {
-                            (false, cycles, Some("test did not panic as expected".to_string()))
+                            (false, Some(format!("guest exited with code {exit_code}, expected {expected}")))
+                        }
+                    } else if test.should_panic {
+                        if exit_code != 0 {
+                            (true, None)
+                        } else {
+                            (
+                                false,
+                                Some("test did not panic as expected (guest exited with code 0)".to_string()),
+                            )
                         }
                     } else if exit_code == 0 {
-                        (true, cycles, None)
+                        (true, None)
                     } else {
-                        (false, cycles, Some(format!("guest exited with code {exit_code}")))
-                    }
-                }
+                        (false, Some(format!("guest exited with code {exit_code}")))
+                    };
+
+                    (passed, cycles, failure_reason)
+                },
                 Err(err) => (false, 0, Some(format!("executor error: {err}"))),
             };
 
             if !quiet {
                 if passed {
-                    if test.should_panic {
+                    if let Some(expected) = test.expected_exit_code {
+                        println!("test {} ... ok (exit code: {}) ({} cycles)", test.name, expected, cycles);
+                    } else if test.should_panic {
                         println!("test {} ... ok (should panic) ({} cycles)", test.name, cycles);
                     } else {
                         println!("test {} ... ok ({} cycles)", test.name, cycles);

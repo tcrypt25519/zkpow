@@ -1,5 +1,7 @@
 use alloc::{format, vec};
 
+use zkvm_test::zkvm_test;
+
 use super::*;
 
 fn sample_state() -> State {
@@ -16,14 +18,14 @@ fn sample_verifier_key() -> VerifierKeyDigest {
     VerifierKeyDigest::from_raw([0xA5A5_A5A5; 8])
 }
 
-#[test]
+#[zkvm_test]
 fn public_values_size_is_exactly_state_plus_key_plus_return_code() {
     assert_eq!(State::SIZE, 152);
     assert_eq!(core::mem::size_of::<VerifierKeyDigest>(), 32);
     assert_eq!(PublicValues::SIZE, 152 + 32 + 1);
 }
 
-#[test]
+#[zkvm_test]
 fn public_values_success_round_trips() {
     let state = sample_state();
     let public_values = PublicValues::new(state, sample_verifier_key(), ReturnCode::SUCCESS);
@@ -37,7 +39,7 @@ fn public_values_success_round_trips() {
     assert_eq!(parsed.return_code, ReturnCode::SUCCESS);
 }
 
-#[test]
+#[zkvm_test]
 fn public_values_failure_round_trips() {
     let codes = [
         ErrorCode::HEADER_PAYLOAD_LENGTH_INVALID,
@@ -58,7 +60,7 @@ fn public_values_failure_round_trips() {
     }
 }
 
-#[test]
+#[zkvm_test]
 fn public_values_layout_matches_exact_spec() {
     let state = sample_state();
     let key = sample_verifier_key();
@@ -74,7 +76,7 @@ fn public_values_layout_matches_exact_spec() {
     assert_eq!(bytes[PublicValues::SIZE - 1], ErrorCode::POW_INSUFFICIENT.get());
 }
 
-#[test]
+#[zkvm_test]
 fn public_values_parse_rejects_wrong_length() {
     let too_short = vec![0u8; PublicValues::SIZE - 1];
     let too_long = vec![0u8; PublicValues::SIZE + 1];
@@ -89,7 +91,7 @@ fn public_values_parse_rejects_wrong_length() {
     ));
 }
 
-#[test]
+#[zkvm_test]
 fn public_values_success_and_failure_helpers_are_mutually_exclusive() {
     let success = PublicValues::new(sample_state(), sample_verifier_key(), ReturnCode::SUCCESS);
     assert!(success.is_success());
@@ -104,14 +106,14 @@ fn public_values_success_and_failure_helpers_are_mutually_exclusive() {
 
 /// The return code is one byte on the wire, so the success case has to ride in the `Option`'s
 /// niche rather than a discriminant of its own.
-#[test]
+#[zkvm_test]
 fn a_return_code_is_one_byte() {
     assert_eq!(core::mem::size_of::<ErrorCode>(), 1);
     assert_eq!(core::mem::size_of::<Option<ErrorCode>>(), 1);
     assert_eq!(core::mem::size_of::<ReturnCode>(), 1);
 }
 
-#[test]
+#[zkvm_test]
 fn zero_is_success_and_never_an_error_code() {
     assert_eq!(ErrorCode::new(0), None);
     assert!(ReturnCode::new(0).is_success());
@@ -121,7 +123,7 @@ fn zero_is_success_and_never_an_error_code() {
     }
 }
 
-#[test]
+#[zkvm_test]
 fn every_defined_code_has_a_name() {
     let named = [
         (ErrorCode::HEADER_PAYLOAD_LENGTH_INVALID, "Header payload length invalid"),
@@ -141,7 +143,7 @@ fn every_defined_code_has_a_name() {
 
 /// Public values can come from a build of the guest that defines codes this one does not, so an
 /// unrecognized byte is still a failure and still prints something a reader can act on.
-#[test]
+#[zkvm_test]
 fn an_undefined_code_is_still_a_failure() {
     let code = ErrorCode::new(200).unwrap();
 
@@ -154,7 +156,7 @@ fn an_undefined_code_is_still_a_failure() {
     assert_eq!(parsed.validation_error_code(), Some(code));
 }
 
-#[test]
+#[zkvm_test]
 fn success_prints_as_success() {
     assert_eq!(format!("{}", ReturnCode::SUCCESS), "Success");
 }

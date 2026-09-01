@@ -1,16 +1,16 @@
 use zkvm_test::zkvm_test;
 
-#[zkvm_test(should_panic)]
+#[zkvm_test(should_panic(expected = "halt: invalid hint (3)"), exit_code = 3)]
 fn bare_invalid_hint_panics_off_target() {
     crate::invalid_hint!();
 }
 
-#[zkvm_test(should_panic)]
+#[zkvm_test(should_panic(expected = "halt: invalid hint (3)"), exit_code = 3)]
 fn literal_invalid_hint_panics_off_target() {
     crate::invalid_hint!("median hint missing");
 }
 
-#[zkvm_test(should_panic)]
+#[zkvm_test(should_panic(expected = "halt: invalid hint (3)"), exit_code = 3)]
 fn formatted_invalid_hint_panics_off_target() {
     let (expected, actual) = (4usize, 7usize);
     crate::invalid_hint!("expected {expected} hints, got {}", actual);
