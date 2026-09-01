@@ -27,11 +27,6 @@ pub use sp1_cycle;
 mod state;
 pub use state::State;
 
-#[cfg(any(test, feature = "test-support"))]
-mod chain;
-#[cfg(any(test, feature = "test-support"))]
-pub use chain::TestChain;
-
 mod errors;
 pub use errors::{ApplyError, ParseError, ReportableError};
 

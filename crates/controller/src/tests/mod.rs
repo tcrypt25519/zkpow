@@ -52,9 +52,21 @@ fn applying_headers_one_at_a_time_matches_db_claims() {
     let genesis_hash = BlockHash::from(&genesis.header);
     let mut state = genesis_state_from_record(genesis.clone(), genesis_hash);
     let records = db.load_header_records(1, 64);
-    let mut previous_ordered_run = genesis.ordered_timestamp_run;
 
-    for (index, record) in records.iter().enumerate() {
+    let (initial_records, remaining_records) = records.split_at(10);
+    let initial_headers = records_to_new_headers(initial_records);
+    if let Err(err) = state.apply_headers_from_genesis::<Mainnet>(&initial_headers, &[]) {
+        panic!("initial 10 headers failed to apply: {err}");
+    }
+    let tenth_record = &initial_records[9];
+    assert_eq!(state.height, 10);
+    assert_eq!(state.chain_work, tenth_record.chain_work);
+    assert_eq!(state.block_hash, BlockHash::from(&tenth_record.header));
+    assert_eq!(state.genesis_hash, genesis_hash);
+
+    let mut previous_ordered_run = tenth_record.ordered_timestamp_run;
+
+    for record in remaining_records {
         let header = header_to_input(&record.header);
         let needs_hint = requires_median_hint(record.height, previous_ordered_run);
         let hints = if needs_hint {
@@ -62,12 +74,8 @@ fn applying_headers_one_at_a_time_matches_db_claims() {
         } else {
             &[]
         };
-        let result = if state.height == 0 {
-            state.apply_headers_from_genesis::<Mainnet>(&[header], hints)
-        } else {
-            state.apply_headers::<Mainnet>(&[header], hints)
-        };
-        let height = (index as u32) + 1;
+        let result = state.apply_headers::<Mainnet>(&[header], hints);
+        let height = record.height as u32;
         if let Err(err) = result {
             panic!("header {height} failed to apply: {err}");
         }

@@ -3,7 +3,7 @@
 //! Everything a miner would choose freely (merkle root, nonce, how long a block took) is drawn from
 //! a PRNG seeded once, so a seed plus a starting point names one exact chain. Everything consensus
 //! fixes is not invented: each header links to the previous one's hash, and the chain retargets on
-//! the same schedule and from the same two timestamps [`State`](crate::State) does. A run generated
+//! the same schedule and from the same two timestamps [`State`](zkpow_core::state::State) does. A run generated
 //! from height zero therefore applies cleanly to a state seeded from genesis.
 //!
 //! No nonce search happens, so a header's hash meets the target it carries only by luck. Tests that
@@ -12,32 +12,31 @@
 
 use core::marker::PhantomData;
 
-use zkpow_params::{Consensus, WINDOW_SIZE};
-
-use crate::{
-    calculate_next_target_required, target_from_bits, timestamp_count, timestamp_slot, BlockHash, BlockTimestamp,
-    CompactTarget, Header,
+use zkpow_core::{
+    BlockHash, BlockTimestamp, CompactTarget, Header, calculate_next_target_required, target_from_bits,
+    timestamp_count, timestamp_slot,
 };
+use zkpow_params::{Consensus, WINDOW_SIZE};
 
 /// An endless chain of fake headers for `C`, starting from a tip the seed and the builder methods
 /// determine.
 ///
-/// [`TestChain::new`] starts at the network's genesis block, so the first header yielded is height
-/// one. [`TestChain::at_height`] and [`TestChain::with_nbits`] move the starting point; both replay
+/// [`Chain::new`] starts at the network's genesis block, so the first header yielded is height
+/// one. [`Chain::at_height`] and [`Chain::with_nbits`] move the starting point; both replay
 /// the chain from the seed, so their order does not matter.
-pub struct TestChain<C: Consensus> {
-    seed: u64,
-    prng: SplitMix64,
-    height: u32,
-    tip_hash: BlockHash,
-    nbits: CompactTarget,
+pub struct Chain<C: Consensus> {
+    seed:            u64,
+    prng:            SplitMix64,
+    height:          u32,
+    tip_hash:        BlockHash,
+    nbits:           CompactTarget,
     epoch_timestamp: BlockTimestamp,
-    timestamps: [BlockTimestamp; WINDOW_SIZE],
-    exhausted: bool,
-    network: PhantomData<fn() -> C>,
+    timestamps:      [BlockTimestamp; WINDOW_SIZE],
+    exhausted:       bool,
+    network:         PhantomData<fn() -> C>,
 }
 
-impl<C: Consensus> TestChain<C> {
+impl<C: Consensus> Chain<C> {
     /// A chain seeded from `seed`, sitting on the network's genesis block at its genesis difficulty.
     #[must_use]
     pub fn new(seed: u64) -> Self {
@@ -90,7 +89,7 @@ impl<C: Consensus> TestChain<C> {
         self.epoch_timestamp
     }
 
-    /// The sliding timestamp window as of the tip, in [`State`](crate::State)'s slot order.
+    /// The sliding timestamp window as of the tip, in [`State`](zkpow_core::state::State)'s slot order.
     #[must_use]
     pub fn timestamps(&self) -> [BlockTimestamp; WINDOW_SIZE] {
         self.timestamps
@@ -138,7 +137,7 @@ impl<C: Consensus> TestChain<C> {
     }
 }
 
-impl<C: Consensus> Iterator for TestChain<C> {
+impl<C: Consensus> Iterator for Chain<C> {
     type Item = Header;
 
     fn next(&mut self) -> Option<Header> {
@@ -158,7 +157,7 @@ impl<C: Consensus> Iterator for TestChain<C> {
 
         let opens_epoch = height.is_multiple_of(C::PARAMS.epoch_length);
         if opens_epoch {
-            let (nbits, _, _) = calculate_next_target_required::<C>(
+            let (nbits, ..) = calculate_next_target_required::<C>(
                 target_from_bits(self.nbits),
                 self.epoch_timestamp,
                 self.tip_timestamp(),
@@ -194,7 +193,7 @@ impl<C: Consensus> Iterator for TestChain<C> {
     }
 }
 
-impl<C: Consensus> core::iter::FusedIterator for TestChain<C> {}
+impl<C: Consensus> core::iter::FusedIterator for Chain<C> {}
 
 /// SplitMix64. Small enough to carry rather than depend on, and its sequence is fixed by the
 /// algorithm, so a seed keeps naming the same chain no matter what the crate's dependencies do.

@@ -19,6 +19,11 @@ const EXPECTED_EPOCH_TIMESPAN: u32 = TestConsensus::PARAMS.expected_epoch_time()
 const MIN_EPOCH_TIMESPAN: i64 = TestConsensus::PARAMS.min_epoch_timespan();
 const MAX_EPOCH_TIMESPAN: i64 = TestConsensus::PARAMS.max_epoch_timespan();
 
+fn expect_error_code(e: ApplyError) -> ErrorCode {
+    //fn expect_error_code(e: Option<ErrorCode>) -> ErrorCode {
+    e.error_code().expect("All ApplyErrors return an ErrorCode")
+}
+
 #[cfg(all(not(target_os = "zkvm"), test))]
 #[must_use]
 fn set_hash_success() -> crate::test_hash_mock::MockHashGuard {
@@ -73,23 +78,6 @@ pub(crate) fn median_time_past(state: &State) -> BlockTimestamp {
     }
 }
 
-fn apply_header(state: &mut State, timestamp: u32) {
-    let _hash_guard = set_hash_success();
-    let header = HeaderInput {
-        version: 1,
-        merkle_root: [0x22; 32],
-        timestamp: ts(timestamp),
-        nonce: 7,
-    };
-    let median_hints = median_hints_for_headers(state, &[header]);
-    if state.height == 0 {
-        state
-            .apply_headers_from_genesis::<TestConsensus>(&[header], &median_hints)
-            .unwrap();
-    } else {
-        state.apply_headers::<TestConsensus>(&[header], &median_hints).unwrap();
-    }
-}
 
 fn dense_median_hints_for_headers(initial_state: &State, headers: &[HeaderInput]) -> Vec<BlockTimestamp> {
     let mut state = *initial_state;
@@ -302,20 +290,14 @@ fn scoped_hash_mock_rejects_nested_override() {
 fn apply_headers_flushes_deferred_chain_work_on_success() {
     let _hash_guard = set_hash_success();
     let mut state = test_state();
-    let headers = [
-        HeaderInput {
-            version: 1,
-            merkle_root: [0x22; 32],
-            timestamp: ts(10),
-            nonce: 7,
-        },
-        HeaderInput {
-            version: 1,
-            merkle_root: [0x33; 32],
-            timestamp: ts(20),
-            nonce: 8,
-        },
-    ];
+    let headers: Vec<HeaderInput> = (1..=10)
+        .map(|i| HeaderInput {
+            version:     1,
+            merkle_root: [i as u8; 32],
+            timestamp:   ts(i * 10),
+            nonce:       i,
+        })
+        .collect();
 
     let hints = median_hints_for_headers(&state, &headers);
     state
@@ -323,7 +305,7 @@ fn apply_headers_flushes_deferred_chain_work_on_success() {
         .expect("headers should validate");
 
     let block_work = block_work_from_target(GENESIS_TARGET);
-    let mut new_chain_work = block_work * 2u32;
+    let mut new_chain_work = block_work * 10u32;
     new_chain_work += BlockWork::default();
     let expected = ChainWork::default() + new_chain_work;
     assert_eq!(state.chain_work, expected);
@@ -333,26 +315,14 @@ fn apply_headers_flushes_deferred_chain_work_on_success() {
 fn apply_headers_flushes_deferred_chain_work_for_longer_run() {
     let _hash_guard = set_hash_success();
     let mut state = test_state();
-    let headers = [
-        HeaderInput {
-            version: 1,
-            merkle_root: [0x22; 32],
-            timestamp: ts(10),
-            nonce: 7,
-        },
-        HeaderInput {
-            version: 1,
-            merkle_root: [0x33; 32],
-            timestamp: ts(20),
-            nonce: 8,
-        },
-        HeaderInput {
-            version: 1,
-            merkle_root: [0x44; 32],
-            timestamp: ts(30),
-            nonce: 9,
-        },
-    ];
+    let headers: Vec<HeaderInput> = (1..=12)
+        .map(|i| HeaderInput {
+            version:     1,
+            merkle_root: [i as u8; 32],
+            timestamp:   ts(i * 10),
+            nonce:       i,
+        })
+        .collect();
 
     let hints = median_hints_for_headers(&state, &headers);
     state
@@ -360,7 +330,7 @@ fn apply_headers_flushes_deferred_chain_work_for_longer_run() {
         .expect("validation should succeed");
 
     let block_work = block_work_from_target(GENESIS_TARGET);
-    let expected = block_work * 3;
+    let expected = block_work * 12;
     let expected = ChainWork::default() + expected;
     assert_eq!(state.chain_work, expected);
 }
@@ -386,7 +356,7 @@ fn failure_height_is_absolute_chain_height() {
         .apply_headers::<TestConsensus>(&headers, &hints)
         .expect_err("should fail PoW");
 
-    assert_eq!(failure.error_code(), ErrorCode::POW_INSUFFICIENT);
+    assert_eq!(expect_error_code(failure), ErrorCode::POW_INSUFFICIENT);
     assert_eq!(state.height + 1, 6);
 }
 
@@ -394,61 +364,61 @@ fn failure_height_is_absolute_chain_height() {
 fn apply_headers_flushes_deferred_chain_work_before_failure() {
     let _hash_guard = set_hash_success();
     let mut state = test_state();
-    let headers = [
-        HeaderInput {
-            version: 1,
-            merkle_root: [0x22; 32],
-            timestamp: ts(10),
-            nonce: 7,
-        },
-        HeaderInput {
-            version: 1,
-            merkle_root: [0x33; 32],
-            timestamp: ts(0),
-            nonce: 8,
-        },
-    ];
+    let mut headers: Vec<HeaderInput> = (1..=11)
+        .map(|i| HeaderInput {
+            version:     1,
+            merkle_root: [i as u8; 32],
+            timestamp:   ts(i * 10),
+            nonce:       i,
+        })
+        .collect();
+    headers.push(HeaderInput {
+        version:     1,
+        merkle_root: [12; 32],
+        timestamp:   ts(0),
+        nonce:       12,
+    });
 
     let hints = median_hints_for_headers(&state, &headers);
 
     state
         .apply_headers_from_genesis::<TestConsensus>(&headers, &hints)
-        .expect_err("second header should fail timestamp validation");
+        .expect_err("12th header should fail timestamp validation");
 
     let work = block_work_from_target(GENESIS_TARGET);
-    assert_eq!(state.chain_work, ChainWork::default() + work);
-    assert_eq!(state.height + 1, 2);
+    assert_eq!(state.chain_work, ChainWork::default() + work * 11);
+    assert_eq!(state.height + 1, 12);
 }
 
 #[test]
 fn apply_headers_failure_output_includes_flushed_chain_work() {
     let _hash_guard = set_hash_success();
     let mut state = test_state();
-    let headers = [
-        HeaderInput {
-            version: 1,
-            merkle_root: [0x22; 32],
-            timestamp: ts(10),
-            nonce: 7,
-        },
-        HeaderInput {
-            version: 1,
-            merkle_root: [0x33; 32],
-            timestamp: ts(0),
-            nonce: 8,
-        },
-    ];
+    let mut headers: Vec<HeaderInput> = (1..=11)
+        .map(|i| HeaderInput {
+            version:     1,
+            merkle_root: [i as u8; 32],
+            timestamp:   ts(i * 10),
+            nonce:       i,
+        })
+        .collect();
+    headers.push(HeaderInput {
+        version:     1,
+        merkle_root: [12; 32],
+        timestamp:   ts(0),
+        nonce:       12,
+    });
 
     let hints = median_hints_for_headers(&state, &headers);
     let failure = state
         .apply_headers_from_genesis::<TestConsensus>(&headers, &hints)
-        .expect_err("validation should fail on the second header");
+        .expect_err("validation should fail on the 12th header");
 
-    let public_values = failure_public_value_bytes(&state, failure.error_code());
+    let public_values = failure_public_value_bytes(&state, expect_error_code(failure));
     let parsed = PublicValues::parse(&public_values).unwrap();
     assert!(parsed.is_failure());
     assert_eq!(parsed.validation_error_code().unwrap(), ErrorCode::TIMESTAMP_TOO_OLD);
-    assert_eq!(parsed.state.height + 1, 2);
+    assert_eq!(parsed.state.height + 1, 12);
     assert_eq!(parsed.state.chain_work, state.chain_work);
 }
 
@@ -465,15 +435,15 @@ fn apply_headers_matches_sequential_next_across_median_window_wrap() {
         .collect();
 
     let mut sequential = test_state();
-    let (first, rest) = headers.split_first().unwrap();
-    let median_hints = median_hints_for_headers(&sequential, &[*first]);
+    let (initial, rest) = headers.split_at(10);
+    let median_hints = median_hints_for_headers(&sequential, initial);
     sequential
-        .apply_headers_from_genesis::<TestConsensus>(&[*first], &median_hints)
-        .expect("first header should validate");
+        .apply_headers_from_genesis::<TestConsensus>(initial, &median_hints)
+        .expect("first 10 headers should validate");
     for header in rest {
-        let median_hints = median_hints_for_headers(&sequential, &[*header]);
+        let median_hints = median_hints_for_headers(&sequential, core::slice::from_ref(header));
         sequential
-            .apply_headers::<TestConsensus>(&[*header], &median_hints)
+            .apply_headers::<TestConsensus>(core::slice::from_ref(header), &median_hints)
             .expect("sequential validation should succeed");
     }
 
@@ -558,18 +528,20 @@ fn apply_headers_treats_height_zero_state_as_trusted_anchor() {
     let mut state = test_state();
     state.genesis_hash = BlockHash::new([0x11; 32]);
     state.block_hash = BlockHash::new([0x22; 32]);
-    let headers = [HeaderInput {
-        version: 1,
-        merkle_root: [0x33; 32],
-        timestamp: ts(10),
-        nonce: 7,
-    }];
+    let headers: Vec<HeaderInput> = (1..=10)
+        .map(|i| HeaderInput {
+            version:     1,
+            merkle_root: [i as u8; 32],
+            timestamp:   ts(i * 10),
+            nonce:       i,
+        })
+        .collect();
     let hints = median_hints_for_headers(&state, &headers);
     state
         .apply_headers_from_genesis::<TestConsensus>(&headers, &hints)
         .expect("height-zero anchor should already be trusted");
 
-    assert_eq!(state.height, 1);
+    assert_eq!(state.height, 10);
     assert_eq!(state.genesis_hash, BlockHash::new([0x11; 32]));
     assert_eq!(state.block_hash, zero_hash());
 }
@@ -586,7 +558,8 @@ fn median_time_past_uses_upper_median_across_window_sizes() {
         }
 
         for height in 1..=end_height {
-            apply_header(&mut state, height);
+            state.height = height;
+            state.timestamps[timestamp_slot(height)] = ts(height);
             assert_eq!(state.height, height, "{name}: state height");
             if height >= start_height {
                 assert_eq!(
@@ -685,70 +658,68 @@ fn retarget_timespan_cases_adjust_target_direction() {
 #[test]
 fn malformed_header_pow_and_timestamp_errors() {
     let mut state = test_state();
-    let hdr1 = HeaderInput {
-        version: 1,
-        merkle_root: [0x22; 32],
-        timestamp: ts(1),
-        nonce: 7,
-    };
-    let hints = median_hints_for_headers(&state, &[hdr1]);
+    let headers10: Vec<HeaderInput> = (1..=10)
+        .map(|i| HeaderInput {
+            version:     1,
+            merkle_root: [i as u8; 32],
+            timestamp:   ts(i * 10),
+            nonce:       i,
+        })
+        .collect();
+    let hints = median_hints_for_headers(&state, &headers10);
 
     // PowInsufficient on first header using a deliberately large hash value (> target).
     {
         let _hash_guard = set_hash_fail();
-        state
-            .apply_headers_from_genesis::<TestConsensus>(&[hdr1], &hints)
+        let failure = state
+            .apply_headers_from_genesis::<TestConsensus>(&headers10, &hints)
             .expect_err("expected PoW failure");
+        assert_eq!(expect_error_code(failure), ErrorCode::POW_INSUFFICIENT);
     }
 
     // TimestampTooOld on equality to median (<= median should fail).
     let _hash_guard = set_hash_success();
     let mut s2 = test_state();
-    // First, accept a valid header to seed the window deterministically.
-    let ok_hdr = HeaderInput {
-        version: 2,
-        merkle_root: [0x33; 32],
-        timestamp: ts(1),
-        nonce: 9,
-    };
-    let median_hints = median_hints_for_headers(&s2, &[ok_hdr]);
-    s2.apply_headers_from_genesis::<TestConsensus>(&[ok_hdr], &median_hints)
-        .unwrap();
-    let median_after_1 = median_time_past(&s2);
+    // First, accept 10 valid headers to seed the window deterministically.
+    s2.apply_headers_from_genesis::<TestConsensus>(&headers10, &hints).unwrap();
+    let median_after_10 = median_time_past(&s2);
     let bad_hdr = HeaderInput {
         version:     42,
         merkle_root: [0x44; 32],
-        timestamp: median_after_1,
-        nonce: 10,
+        timestamp:   median_after_10,
+        nonce:       10,
     };
     let median_hints = median_hints_for_headers(&s2, &[bad_hdr]);
     let failure = s2
         .apply_headers::<TestConsensus>(&[bad_hdr], &median_hints)
         .expect_err("timestamp equal to median must fail");
-    assert_eq!(failure.error_code(), ErrorCode::TIMESTAMP_TOO_OLD);
+    assert_eq!(expect_error_code(failure), ErrorCode::TIMESTAMP_TOO_OLD);
 
     // Version field is not validated by consensus here; a weird version should still pass if PoW/timestamp do.
     let mut s3 = test_state();
-    let median_start = median_time_past(&s3);
-    let odd_version_hdr = HeaderInput {
-        version: 0xFFFF_FFFF,
-        merkle_root: [0x55; 32],
-        timestamp: ts(median_start.into_inner().wrapping_add(1)),
-        nonce: 1,
-    };
-    let median_hints = median_hints_for_headers(&s3, &[odd_version_hdr]);
-    s3.apply_headers_from_genesis::<TestConsensus>(&[odd_version_hdr], &median_hints)
+    let mut odd_version_headers = headers10.clone();
+    odd_version_headers[0].version = 0xFFFF_FFFF;
+    let hints3 = median_hints_for_headers(&s3, &odd_version_headers);
+    s3.apply_headers_from_genesis::<TestConsensus>(&odd_version_headers, &hints3)
         .expect("unexpected failure due to version only");
 }
 
 // Median time boundary: timestamp == median must fail
 #[test]
 fn median_time_boundary_equality_fails() {
+    let _hash_guard = set_hash_success();
     let mut state = test_state();
-    // Seed a few headers to make median meaningful.
-    for t in 1..=5 {
-        apply_header(&mut state, t);
-    }
+    let headers10: Vec<HeaderInput> = (1..=10)
+        .map(|i| HeaderInput {
+            version:     1,
+            merkle_root: [i as u8; 32],
+            timestamp:   ts(i * 10),
+            nonce:       i,
+        })
+        .collect();
+    let hints = median_hints_for_headers(&state, &headers10);
+    state.apply_headers_from_genesis::<TestConsensus>(&headers10, &hints).unwrap();
+
     let median = median_time_past(&state);
     let hdr = HeaderInput {
         version:     1,
@@ -760,7 +731,7 @@ fn median_time_boundary_equality_fails() {
     let failure = state
         .apply_headers::<TestConsensus>(&[hdr], &median_hints)
         .expect_err("timestamp equal to median must fail");
-    assert_eq!(failure.error_code(), ErrorCode::TIMESTAMP_TOO_OLD);
+    assert_eq!(expect_error_code(failure), ErrorCode::TIMESTAMP_TOO_OLD);
 }
 
 /// A call that starts exactly one block before a retarget boundary must retarget once. The
@@ -845,10 +816,12 @@ fn epoch_boundary_is_read_from_the_parameters() {
 /// A warm chain whose timestamps have been strictly increasing so far, ready for a batch that
 /// contains the first out-of-order block.
 fn ordered_warm_state(height: u32) -> State {
+    let _hash_guard = set_hash_success();
     let mut state = test_state();
-    for step in 1..=height {
-        apply_header(&mut state, 1_000 + step * 600);
-    }
+    let timestamps: Vec<u32> = (1..=height).map(|step| 1_000 + step * 600).collect();
+    let headers = headers_from_timestamps(&timestamps);
+    let hints = median_hints_for_headers(&state, &headers);
+    state.apply_headers_from_genesis::<TestConsensus>(&headers, &hints).unwrap();
     state
 }
 
@@ -923,8 +896,22 @@ fn ordered_window_median_boundary_holds_deep_in_a_batch() {
     let median = median_time_past(&parent).into_inner();
 
     for (dip, expected) in [
-        (median - 1, Err(ApplyError::TimestampTooOld)),
-        (median, Err(ApplyError::TimestampTooOld)),
+        (
+            median - 1,
+            Err(ApplyError::TimestampTooOld {
+                height:    parent.height + 1,
+                timestamp: ts(median - 1),
+                median:    ts(median),
+            }),
+        ),
+        (
+            median,
+            Err(ApplyError::TimestampTooOld {
+                height:    parent.height + 1,
+                timestamp: ts(median),
+                median:    ts(median),
+            }),
+        ),
         (median + 1, Ok(())),
     ] {
         let mut dipped = timestamps.clone();

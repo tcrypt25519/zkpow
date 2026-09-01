@@ -1,7 +1,6 @@
 use clap::{Args, Parser, Subcommand};
 use sync_headers::{connect_headers, tip_from_connected, ConnectedHeader, Header, Network, PeerStore, Tip};
 use zkpow_params::{Consensus, Mainnet};
-use zkpow_store::db::Error;
 use zkpow_store::HeaderStore;
 use zkpow_types::ChainWork;
 

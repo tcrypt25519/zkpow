@@ -179,7 +179,7 @@ async fn execute_only_session_is_separate_from_run_progress() {
     let _guard = _env_test_mutex().lock().unwrap();
     let env = SessionEnv::new("advance-resume");
     set_env("ZKPOW_BATCH_COUNT", "2");
-    set_env(ENV_ZKPOW_BATCH_SIZE, "3");
+    set_env(ENV_ZKPOW_BATCH_SIZE, "10");
 
     let completed = run_batch_session::<Mainnet>().await.expect("first session should complete");
     assert_eq!(completed, 2);
