@@ -24,13 +24,11 @@ fn expect_error_code(e: ApplyError) -> ErrorCode {
     e.error_code().expect("All ApplyErrors return an ErrorCode")
 }
 
-#[cfg(all(not(target_os = "zkvm"), test))]
 #[must_use]
 fn set_hash_success() -> crate::test_hash_mock::MockHashGuard {
     crate::test_hash_mock::set_success()
 }
 
-#[cfg(all(not(target_os = "zkvm"), test))]
 #[must_use]
 fn set_hash_fail() -> crate::test_hash_mock::MockHashGuard {
     crate::test_hash_mock::set_fail()

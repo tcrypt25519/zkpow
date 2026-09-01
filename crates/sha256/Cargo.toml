@@ -13,3 +13,6 @@ host = []
 [dependencies]
 sha2 = { workspace = true, features = ["compress"] }
 sp1-zkvm = { workspace = true }
+
+[dev-dependencies]
+zkvm-test = { workspace = true }

@@ -4,6 +4,8 @@
 //! them to run the state transition, so neither can depend on the other.
 
 #![no_std]
+#![cfg_attr(all(test, target_os = "zkvm"), feature(custom_test_frameworks))]
+#![cfg_attr(all(test, target_os = "zkvm"), test_runner(zkvm_test::test_runner))]
 
 mod bigint;
 mod brand;

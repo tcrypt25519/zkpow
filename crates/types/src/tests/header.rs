@@ -1,6 +1,7 @@
-extern crate std;
+extern crate alloc;
+use alloc::string::ToString;
 
-use std::string::ToString;
+use zkvm_test::zkvm_test;
 
 use crate::{BlockHash, BlockTimestamp, CompactTarget, Header};
 
@@ -17,21 +18,21 @@ fn sample() -> Header {
 
 /// `to_bytes_const` respells the layout that `as_bytes` gets from `repr(C)`. If they ever drift,
 /// every network's genesis hash silently changes.
-#[test]
+#[zkvm_test]
 fn header_serializations_agree() {
     let header = sample();
     assert_eq!(header.to_bytes_const().as_slice(), header.as_bytes());
     assert_eq!(header.as_bytes().len(), Header::SIZE);
 }
 
-#[test]
+#[zkvm_test]
 fn header_round_trips_through_parse() {
     let header = sample();
     assert_eq!(Header::parse(header.as_bytes()).unwrap(), &header);
 }
 
 /// Mainnet block 1, whose hash is `00000000839a8e...` in display order.
-#[test]
+#[zkvm_test]
 fn block_hash_is_sha256d_of_the_wire_bytes() {
     let header = Header {
         version:        1,

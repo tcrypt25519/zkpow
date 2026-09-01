@@ -1,11 +1,12 @@
 use alloc::vec;
 
 use bytemuck::PodCastError;
+use zkvm_test::zkvm_test;
 
 use super::*;
 use crate::{BlockTimestamp, HeaderInput};
 
-#[test]
+#[zkvm_test]
 fn test_new_header_hints_round_trip() {
     let headers: Vec<HeaderInput> = vec![
         HeaderInput {
@@ -27,7 +28,7 @@ fn test_new_header_hints_round_trip() {
     assert_eq!(parsed, headers.as_slice());
 }
 
-#[test]
+#[zkvm_test]
 fn test_new_header_hints_reject_truncated_payload() {
     let headers = vec![HeaderInput {
         version:     1,
@@ -42,7 +43,7 @@ fn test_new_header_hints_reject_truncated_payload() {
     assert_eq!(err, PodCastError::OutputSliceWouldHaveSlop)
 }
 
-#[test]
+#[zkvm_test]
 fn median_time_past_hints_round_trip() {
     let hints = vec![BlockTimestamp::new(0), BlockTimestamp::new(123), BlockTimestamp::new(456)];
 
@@ -51,7 +52,7 @@ fn median_time_past_hints_round_trip() {
     assert_eq!(parsed, hints.as_slice());
 }
 
-#[test]
+#[zkvm_test]
 fn median_time_past_hints_reject_invalid_lengths() {
     // Variant is placement-dependent (alignment is checked before length),
     // so only assert that a 3-byte payload is rejected.

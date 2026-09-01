@@ -5,6 +5,8 @@
 //! surface for a header chain's vocabulary.
 
 #![no_std]
+#![cfg_attr(all(test, target_os = "zkvm"), feature(custom_test_frameworks))]
+#![cfg_attr(all(test, target_os = "zkvm"), test_runner(zkvm_test::test_runner))]
 
 #[cfg(test)]
 mod tests;
@@ -50,6 +52,10 @@ fn hash_header(header: &Header) -> BlockHash {
 fn hash_header_input(input: &HeaderInput, prev_blockhash: &BlockHash, compact_target: CompactTarget) -> BlockHash {
     #[cfg(target_os = "zkvm")]
     {
+        #[cfg(test)]
+        if let Some(hash) = test_hash_mock::get() {
+            return BlockHash::new(hash);
+        }
         BlockHash::new(zkpow_sha256::of_header(
             input.version,
             *prev_blockhash.as_inner(),

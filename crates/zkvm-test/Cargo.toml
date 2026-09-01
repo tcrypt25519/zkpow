@@ -1,0 +1,11 @@
+[package]
+name = "zkvm-test"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+zkvm-test-macros = { path = "../zkvm-test-macros" }
+
+[target.'cfg(target_os = "zkvm")'.dependencies]
+sp1-zkvm = { workspace = true }

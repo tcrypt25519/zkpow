@@ -1,23 +1,22 @@
-#[test]
-#[should_panic(expected = "halt: invalid hint (3)")]
+use zkvm_test::zkvm_test;
+
+#[zkvm_test(should_panic)]
 fn bare_invalid_hint_panics_off_target() {
     crate::invalid_hint!();
 }
 
-#[test]
-#[should_panic(expected = "halt: invalid hint (3)")]
+#[zkvm_test(should_panic)]
 fn literal_invalid_hint_panics_off_target() {
     crate::invalid_hint!("median hint missing");
 }
 
-#[test]
-#[should_panic(expected = "halt: invalid hint (3)")]
+#[zkvm_test(should_panic)]
 fn formatted_invalid_hint_panics_off_target() {
     let (expected, actual) = (4usize, 7usize);
     crate::invalid_hint!("expected {expected} hints, got {}", actual);
 }
 
-#[test]
+#[zkvm_test]
 fn invalid_hint_is_usable_where_a_diverging_expression_is_required() {
     fn hint(value: Option<u32>) -> u32 {
         let Some(value) = value else {

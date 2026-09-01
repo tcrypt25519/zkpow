@@ -28,3 +28,4 @@ derive-size = { workspace = true }
 
 [dev-dependencies]
 zkpow-params = { workspace = true, features = ["test-networks"] }
+zkvm-test = { workspace = true }

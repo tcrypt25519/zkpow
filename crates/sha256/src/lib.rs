@@ -1,6 +1,8 @@
 //! SHA-256 helpers for zkpow host and guest code.
 #![no_std]
 #![allow(clippy::needless_range_loop)]
+#![cfg_attr(all(test, target_os = "zkvm"), feature(custom_test_frameworks))]
+#![cfg_attr(all(test, target_os = "zkvm"), test_runner(zkvm_test::test_runner))]
 //!
 //! Specialized guest functions for the exact sizes we need:
 //! - `of_public_values`: hashes the complete 185 byte public values
