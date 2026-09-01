@@ -11,8 +11,8 @@ path = "src/lib.rs"
 [dependencies]
 zkpow-core = { workspace = true }
 zkpow-params = { workspace = true }
-zkpow-sha256 = { workspace = true, features = ["host"] }
 bitcoin.workspace = true
 rand.workspace = true
+sha2.workspace = true
 tracing.workspace = true
 thiserror.workspace = true

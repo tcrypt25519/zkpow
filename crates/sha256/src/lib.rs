@@ -50,15 +50,6 @@ const fn be_u64_from_slice(s: &[u8], i: usize) -> u64 {
     ((s[i] as u64) << 24) | ((s[i + 1] as u64) << 16) | ((s[i + 2] as u64) << 8) | (s[i + 3] as u64)
 }
 
-/// Double-SHA256 (`SHA-256(SHA-256(data))`), computed on the host via the `sha2` crate.
-#[cfg(feature = "host")]
-#[must_use]
-pub fn double(data: &[u8]) -> [u8; 32] {
-    use sha2::{Digest, Sha256};
-    let first: [u8; 32] = Sha256::digest(data).into();
-    Sha256::digest(first).into()
-}
-
 #[inline]
 const fn word_from_le_u32(value: u32) -> u64 {
     value.swap_bytes() as u64

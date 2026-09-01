@@ -271,8 +271,8 @@ impl PeerConnection {
         buf.extend_from_slice(&self.network_magic);
         buf.extend_from_slice(&command.as_bytes());
         buf.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-        let checksum = zkpow_sha256::double(payload);
-        buf.extend_from_slice(&checksum[..4]);
+        let checksum = create_checksum(payload);
+        buf.extend_from_slice(&checksum);
         buf.extend_from_slice(payload);
         self.stream.write_all(&buf)
     }
@@ -313,8 +313,7 @@ impl PeerConnection {
             self.stream.read_exact(&mut payload)?;
         }
 
-        let expected_checksum = zkpow_sha256::double(&payload);
-        if checksum_buf != expected_checksum[..4] {
+        if checksum_buf != create_checksum(&payload) {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 format!("Checksum mismatch for message {:?}", command),
@@ -323,6 +322,14 @@ impl PeerConnection {
 
         Ok((command, payload))
     }
+}
+
+#[must_use]
+pub fn create_checksum(data: &[u8]) -> [u8; 4] {
+    use sha2::{Digest, Sha256};
+    let first: [u8; 32] = Sha256::digest(data).into();
+    let second: [u8; 32] = Sha256::digest(first).into();
+    second[..4].try_into().expect("should fit in [u8; 4]")
 }
 
 /// Convert a bitcoin-crate header (decoded from wire) to our core type.
