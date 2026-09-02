@@ -18,23 +18,23 @@ const CMD_RUN: u8 = 1;
 
 #[derive(Debug, Clone)]
 struct TestDesc {
-    name:               String,
-    ignore:             bool,
-    should_panic:       bool,
+    name: String,
+    ignore: bool,
+    should_panic: bool,
     expected_exit_code: Option<u32>,
 }
 
 #[derive(Debug, Default)]
 struct RunnerArgs {
-    elf_path:        String,
-    filters:         Vec<String>,
-    list:            bool,
-    exact:           bool,
-    ignored:         bool,
+    elf_path: String,
+    filters: Vec<String>,
+    list: bool,
+    exact: bool,
+    ignored: bool,
     include_ignored: bool,
-    nocapture:       bool,
-    quiet:           bool,
-    test_threads:    usize,
+    nocapture: bool,
+    quiet: bool,
+    test_threads: usize,
 }
 
 fn parse_args() -> RunnerArgs {
@@ -140,9 +140,9 @@ fn decode_test_list(bytes: &[u8]) -> Option<Vec<TestDesc>> {
 }
 
 struct TestOutcome {
-    desc:           TestDesc,
-    passed:         bool,
-    cycles:         u64,
+    desc: TestDesc,
+    passed: bool,
+    cycles: u64,
     failure_reason: Option<String>,
 }
 
@@ -187,7 +187,7 @@ async fn main() {
                 });
             let exit_code = u8::try_from(report.exit_code).unwrap_or(255);
             std::process::exit(exit_code.into());
-        }
+        },
     };
 
     // 2. Filter tests
