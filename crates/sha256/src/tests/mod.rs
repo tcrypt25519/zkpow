@@ -1,5 +1,5 @@
 use sha2::{Digest, Sha256};
-use zkvm_test::zkvm_test;
+use zkvm_test::test;
 
 use crate::of_public_values;
 
@@ -9,17 +9,28 @@ fn assert_public_values_hash(bytes: [u8; 185]) {
     assert_eq!(actual, expected);
 }
 
-#[zkvm_test]
+#[test]
 fn public_values_optimized_hash_matches_standard_sha256() {
     assert_public_values_hash(core::array::from_fn(|i| (i & 0xFF) as u8));
 }
 
-#[zkvm_test]
+#[test]
 fn public_values_optimized_hash_matches_sha256_for_zero_input() {
     assert_public_values_hash([0u8; 185]);
 }
 
-#[zkvm_test]
+#[test]
 fn public_values_optimized_hash_matches_sha256_for_high_entropy_input() {
     assert_public_values_hash(core::array::from_fn(|i| (i.wrapping_mul(251) as u8).wrapping_add(1)));
 }
+
+#[test]
+fn guest_output_capture_demonstration() {
+    #[cfg(target_os = "zkvm")]
+    {
+        sp1_zkvm::io::write(1, b">>> HELLO FROM SP1 GUEST STDOUT! <<<\n");
+        sp1_zkvm::io::write(2, b">>> HELLO FROM SP1 GUEST STDERR! <<<\n");
+    }
+}
+
+

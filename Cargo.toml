@@ -110,6 +110,13 @@ const-gen = { version = "1.6.9", default-features = false, features = [
 
 [patch.crates-io]
 sp1-zkvm = { path = "/Users/tcrypt/code/github.com/succinctlabs/sp1/crates/zkvm/entrypoint" }
+sp1-sdk = { path = "/Users/tcrypt/code/github.com/succinctlabs/sp1/crates/sdk" }
+sp1-prover = { path = "/Users/tcrypt/code/github.com/succinctlabs/sp1/crates/prover" }
+sp1-core-executor = { path = "/Users/tcrypt/code/github.com/succinctlabs/sp1/crates/core/executor" }
+sp1-core-machine = { path = "/Users/tcrypt/code/github.com/succinctlabs/sp1/crates/core/machine" }
+sp1-build = { path = "/Users/tcrypt/code/github.com/succinctlabs/sp1/crates/build" }
+sp1-lib = { path = "/Users/tcrypt/code/github.com/succinctlabs/sp1/crates/zkvm/lib" }
+sp1-primitives = { path = "/Users/tcrypt/code/github.com/succinctlabs/sp1/crates/primitives" }
 
 [profile.release]
 incremental = false

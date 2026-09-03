@@ -3,7 +3,7 @@
 #[cfg(target_os = "zkvm")]
 extern crate alloc;
 
-pub use zkvm_test_macros::zkvm_test;
+pub use zkvm_test_macros::{test, zkvm_test};
 
 pub const MAGIC: &[u8; 4] = b"ZKVT";
 pub const CMD_LIST: u8 = 0;
