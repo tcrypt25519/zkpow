@@ -2327,9 +2327,9 @@ dependencies = [
 
 [[package]]
 name = "mio"
-version = "1.2.2"
+version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "30d65c71f1ce40ab09135ce117d742b9f8a19ff91a41a8b57ed50bc2de59c427"
+checksum = "4b18443e9c262bfe8fa82f51666e2642c53393f7e5c27b3e1aeab922cff5b9d8"
 dependencies = [
  "libc",
  "wasi",
@@ -4534,9 +4534,7 @@ dependencies = [
 
 [[package]]
 name = "sp1-derive"
-version = "6.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "48ff13c980f45cc98d8a865540fcb6cd7cc770d9eccb6b59ca925cfc150251a2"
+version = "6.6.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4546,6 +4544,8 @@ dependencies = [
 [[package]]
 name = "sp1-derive"
 version = "6.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "84ac827020c92132b3c71b22158afbceb1ea9ee6be3292954f30d2f3c867648e"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4614,21 +4614,10 @@ dependencies = [
 
 [[package]]
 name = "sp1-lib"
-version = "6.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba076f64568aed448368187c20438329ed926f04a2f45e8de2b52671cbf4de0b"
-dependencies = [
- "bincode",
- "elliptic-curve",
- "serde",
- "sp1-primitives",
-]
-
-[[package]]
-name = "sp1-lib"
 version = "6.6.0"
 dependencies = [
  "bincode",
+ "elliptic-curve",
  "serde",
  "sp1-primitives",
 ]
@@ -4920,7 +4909,7 @@ dependencies = [
  "rand 0.8.8",
  "sha2",
  "slop-algebra",
- "sp1-lib 6.6.0",
+ "sp1-lib",
  "sp1-primitives",
 ]
 
@@ -5141,7 +5130,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
@@ -6283,7 +6272,7 @@ dependencies = [
  "rkyv",
  "sp1-cycle",
  "sp1-cycle-macros",
- "sp1-lib 6.5.0",
+ "sp1-lib",
  "thiserror 2.0.20",
  "zkpow-params",
  "zkpow-sha256",
@@ -6297,7 +6286,7 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "sp1-cycle",
- "sp1-derive 6.5.0",
+ "sp1-derive 6.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "sp1-zkvm",
  "thiserror 2.0.20",
  "zkpow-core",

@@ -47,22 +47,22 @@ zkvm-test-macros = { path = "crates/zkvm-test-macros" }
 ##
 ## SP1
 ##
-sp1-build = { version = "6.5.0" }
-sp1-derive = { version = "6.5.0" }
-sp1-lib = { version = "6.5.0" }
-sp1-sdk = { version = "6.5.0", features = ["profiling"] }
-sp1-zkvm = { version = "6.5.0", default-features = false, features = [
+sp1-build = { version = "6.6.0" }
+sp1-derive = { version = "6.6.0" }
+sp1-lib = { version = "6.6.0" }
+sp1-sdk = { version = "6.6.0", features = ["profiling"] }
+sp1-zkvm = { version = "6.6.0", default-features = false, features = [
   "lib",
   "verify",
 ] }
-sp1-recursion-gnark-ffi = { version = "6.5.0", default-features = false }
-sp1-prover = { version = "6.5.0", default-features = false, features = [
+sp1-recursion-gnark-ffi = { version = "6.6.0", default-features = false }
+sp1-prover = { version = "6.6.0", default-features = false, features = [
   "profiling",
   "bigint-rug",
   "debug",
   "mprotect",
 ] }
-sp1-core-executor = { version = "6.5.0", features = ["profiling"] }
+sp1-core-executor = { version = "6.6.0", features = ["profiling"] }
 
 memuse = { path = "../memuse" }
 dhat = "0.3.3"
