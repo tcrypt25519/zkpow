@@ -16,3 +16,5 @@ sp1-zkvm = { workspace = true }
 
 [dev-dependencies]
 zkvm-test = { workspace = true }
+sp1-cycle = { workspace = true }
+

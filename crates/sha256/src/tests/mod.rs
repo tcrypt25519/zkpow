@@ -33,4 +33,27 @@ fn guest_output_capture_demonstration() {
     }
 }
 
+#[test(max_cycles = 500_000)]
+fn budgeted_hash_within_limit() {
+    assert_public_values_hash([1u8; 185]);
+}
+
+#[test(max_cycles = 50_000)]
+#[ignore]
+fn budgeted_hash_exceeding_limit() {
+    assert_public_values_hash([2u8; 185]);
+}
+
+#[test]
+fn subroutine_cycle_profiling_demonstration() {
+    sp1_cycle::run_track("outer_pipeline", || {
+        sp1_cycle::run_track("first_hash_pass", || {
+            assert_public_values_hash([10u8; 185]);
+        });
+        sp1_cycle::run_track("second_hash_pass", || {
+            assert_public_values_hash([20u8; 185]);
+        });
+    });
+}
+
 

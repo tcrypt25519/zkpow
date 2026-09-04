@@ -15,8 +15,8 @@ use zkvm_test_runner::runner::run;
 
 #[derive(Debug, Deserialize)]
 struct Artifact {
-    reason:     String,
-    target:     Option<ArtifactTarget>,
+    reason: String,
+    target: Option<ArtifactTarget>,
     executable: Option<String>,
 }
 
@@ -27,9 +27,58 @@ struct ArtifactTarget {
     kind: Vec<String>,
 }
 
+pub const BIN_NAME: &str = "cargo-zkvm-test";
+pub const TARGET_VENDOR_SUCCINCT: &str = "succinct";
+pub const TARGET_VENDOR_RISC0: &str = "risc0";
+
+pub const DEFAULT_SP1_TARGET: &str = "riscv64im-succinct-zkvm-elf";
+pub const DEFAULT_RISC0_TARGET: &str = "riscv32im-risc0-zkvm-elf";
+
+pub const TOOLCHAIN_SUCCINCT: &str = "+succinct";
+pub const TOOLCHAIN_RISC0: &str = "+risc0";
+
+pub const REASON_COMPILER_ARTIFACT: &str = "compiler-artifact";
+pub const DEFAULT_TARGET_NAME: &str = "test";
+
+const RUNNER_BOOLEAN_FLAGS: &[&str] = &[
+    "--nocapture",
+    "--no-capture",
+    "--exact",
+    "--list",
+    "--ignored",
+    "--include-ignored",
+    "--subcycles",
+    "-q",
+    "--quiet",
+];
+
+const RUNNER_VAL_FLAGS: &[&str] = &["--test-threads", "--prover", "--compare-baseline", "--fail-on-regression"];
+
+const CARGO_VAL_FLAGS: &[&str] = &[
+    "-p",
+    "--package",
+    "--bin",
+    "--test",
+    "--example",
+    "--bench",
+    "--manifest-path",
+    "--features",
+    "--target",
+];
+
+pub fn default_toolchain_for_target(target: &str) -> Option<&'static str> {
+    if target.contains(TARGET_VENDOR_SUCCINCT) {
+        Some(TOOLCHAIN_SUCCINCT)
+    } else if target.contains(TARGET_VENDOR_RISC0) {
+        Some(TOOLCHAIN_RISC0)
+    } else {
+        None
+    }
+}
+
 fn print_help() {
     println!(
-        r#"cargo-zkvm-test: Nextest-grade test runner for zkVM binaries
+        r#"{BIN_NAME}: Nextest-grade test runner for zkVM binaries
 
 USAGE:
     cargo zkvm-test [CARGO_OPTIONS] [--] [RUNNER_OPTIONS] [FILTER]
@@ -41,7 +90,7 @@ OPTIONS:
     --test <NAME>             Test only the specified integration test
     --all-targets             Test all targets
     --release                 Build artifacts in release mode
-    --target <TARGET>         Override target triple (default: riscv64im-succinct-zkvm-elf)
+    --target <TARGET>         Override target triple (default: {DEFAULT_SP1_TARGET})
 
 RUNNER OPTIONS:
     --nocapture, --no-capture Do not capture guest stdout/stderr; print immediately
@@ -49,6 +98,10 @@ RUNNER OPTIONS:
     --list                    List all matching tests without running them
     --ignored                 Run only ignored tests
     --include-ignored         Run both regular and ignored tests
+    --profile, --subcycles    Display hierarchical sub-routine cycle breakdown
+    --save-baseline [NAME]    Save execution metrics as a named baseline (default: "default")
+    --compare-baseline <NAME> Compare execution metrics against a named baseline
+    --fail-on-regression <N%> Fail if any test regresses by more than N percent
     --test-threads <N>        Number of test instances to execute concurrently
     --prover <PROVER>         Prover backend: mock (default), cpu, cuda
     -q, --quiet               Display one character per test instead of one line
@@ -61,8 +114,8 @@ RUNNER OPTIONS:
 async fn main() {
     let mut raw_args: Vec<String> = std::env::args().skip(1).collect();
 
-    // If invoked as `cargo zkvm-test`, the first argument is "zkvm-test".
-    if raw_args.first().map(|s| s == "zkvm-test").unwrap_or(false) {
+    // If invoked as `cargo zkvm-test`, cargo passes "zkvm-test" as the first argument.
+    if raw_args.first().is_some_and(|s| s == "zkvm-test") {
         raw_args.remove(0);
     }
 
@@ -83,36 +136,52 @@ async fn main() {
         let mut iter = raw_args.into_iter().peekable();
 
         while let Some(arg) = iter.next() {
-            match arg.as_str() {
-                // Runner flags
-                "--nocapture" | "--no-capture" | "--exact" | "--list" | "--ignored" | "--include-ignored"
-                | "-q" | "--quiet" => {
-                    runner_part.push(arg);
-                },
-                "--test-threads" | "--prover" => {
-                    runner_part.push(arg);
+            let (key, inline_val) = match arg.split_once('=') {
+                Some((k, v)) => (k, Some(v.to_string())),
+                None => (arg.as_str(), None),
+            };
+
+            if RUNNER_BOOLEAN_FLAGS.contains(&key) {
+                runner_part.push(arg);
+            } else if RUNNER_VAL_FLAGS.contains(&key) {
+                runner_part.push(arg);
+                if inline_val.is_none() {
                     if let Some(val) = iter.next() {
                         runner_part.push(val);
                     }
-                },
-                s if s.starts_with("--test-threads=") || s.starts_with("--prover=") => {
-                    runner_part.push(s.to_string());
-                },
-                // Cargo value flags
-                "-p" | "--package" | "--bin" | "--test" | "--example" | "--bench" | "--manifest-path"
-                | "--features" | "--target" | "--profile" => {
-                    cargo_part.push(arg);
+                }
+            } else if CARGO_VAL_FLAGS.contains(&key) {
+                cargo_part.push(arg);
+                if inline_val.is_none() {
                     if let Some(val) = iter.next() {
                         cargo_part.push(val);
                     }
-                },
-                // Positional filter or unknown flag
-                s if !s.starts_with('-') => {
-                    runner_part.push(s.to_string());
-                },
-                _ => {
+                }
+            } else if key == "--save-baseline" {
+                runner_part.push(arg);
+                if inline_val.is_none() {
+                    if let Some(next) = iter.peek() {
+                        if !next.starts_with('-') {
+                            runner_part.push(iter.next().unwrap());
+                        }
+                    }
+                }
+            } else if key == "--profile" {
+                // Disambiguate cargo `--profile <name>` vs runner `--profile` flag
+                let is_cargo_profile = iter.peek().is_some_and(|next| {
+                    !next.starts_with('-') && ["dev", "test", "release", "bench"].contains(&next.as_str())
+                });
+                if is_cargo_profile {
                     cargo_part.push(arg);
-                },
+                    cargo_part.push(iter.next().unwrap());
+                } else {
+                    runner_part.push(arg);
+                }
+            } else if !key.starts_with('-') {
+                // Positional filter
+                runner_part.push(arg);
+            } else {
+                cargo_part.push(arg);
             }
         }
         (cargo_part, runner_part)
@@ -129,16 +198,15 @@ async fn main() {
         .or_else(|| {
             cargo_filtered
                 .iter()
-                .find(|a| a.starts_with("--target="))
-                .map(|a| a["--target=".len()..].to_string())
+                .find_map(|a| a.strip_prefix("--target=").map(str::to_string))
         })
-        .unwrap_or_else(|| "riscv64im-succinct-zkvm-elf".to_string());
+        .unwrap_or_else(|| DEFAULT_SP1_TARGET.to_string());
 
     let mut cargo_cmd = Command::new("cargo");
     if let Some(tc) = toolchain {
         cargo_cmd.arg(tc);
-    } else if target.contains("succinct") {
-        cargo_cmd.arg("+succinct");
+    } else if let Some(default_tc) = default_toolchain_for_target(&target) {
+        cargo_cmd.arg(default_tc);
     }
 
     cargo_cmd.arg("test");
@@ -155,7 +223,7 @@ async fn main() {
     let mut child = match cargo_cmd.spawn() {
         Ok(child) => child,
         Err(err) => {
-            eprintln!("cargo-zkvm-test: failed to run cargo test: {err}");
+            eprintln!("{BIN_NAME}: failed to run cargo test: {err}");
             std::process::exit(1);
         },
     };
@@ -165,20 +233,26 @@ async fn main() {
 
     let mut test_executables = Vec::new();
     for line in reader.lines().map_while(Result::ok) {
-        if let Ok(artifact) = serde_json::from_str::<Artifact>(&line) {
-            if artifact.reason == "compiler-artifact" {
-                if let Some(path) = artifact.executable {
-                    let target_name = artifact.target.map(|t| t.name).unwrap_or_else(|| "test".to_string());
-                    test_executables.push((target_name, path));
-                }
-            }
+        let Ok(artifact) = serde_json::from_str::<Artifact>(&line) else {
+            continue;
+        };
+        if artifact.reason != REASON_COMPILER_ARTIFACT {
+            continue;
         }
+        let Some(path) = artifact.executable else {
+            continue;
+        };
+        let target_name = artifact
+            .target
+            .map(|t| t.name)
+            .unwrap_or_else(|| DEFAULT_TARGET_NAME.to_string());
+        test_executables.push((target_name, path));
     }
 
     let status = match child.wait() {
         Ok(s) => s,
         Err(err) => {
-            eprintln!("cargo-zkvm-test: error waiting for cargo: {err}");
+            eprintln!("{BIN_NAME}: error waiting for cargo: {err}");
             std::process::exit(1);
         },
     };
@@ -188,7 +262,7 @@ async fn main() {
     }
 
     if test_executables.is_empty() {
-        println!("cargo-zkvm-test: no test binaries compiled for zkVM target");
+        println!("{BIN_NAME}: no test binaries compiled for zkVM target");
         return;
     }
 

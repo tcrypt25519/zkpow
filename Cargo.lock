@@ -6329,6 +6329,7 @@ name = "zkpow-sha256"
 version = "0.1.0"
 dependencies = [
  "sha2",
+ "sp1-cycle",
  "sp1-zkvm",
  "zkvm-test",
 ]
@@ -6398,6 +6399,7 @@ dependencies = [
 name = "zkvm-test-runner"
 version = "0.1.0"
 dependencies = [
+ "memuse",
  "serde",
  "serde_json",
  "sp1-core-executor",
