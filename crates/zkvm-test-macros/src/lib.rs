@@ -9,6 +9,8 @@ struct TestConfig {
     expected_message:   Option<String>,
     expected_exit_code: Option<u32>,
     max_cycles:         Option<u64>,
+    fixture:            Option<String>,
+    snapshot:           Option<String>,
 }
 
 const TEST_CASE_STATIC_PREFIX: &str = "__ZKVM_TEST_CASE_";
@@ -16,6 +18,8 @@ const ATTR_IGNORE: &str = "ignore";
 const ATTR_SHOULD_PANIC: &str = "should_panic";
 const ATTR_EXIT_CODE: &str = "exit_code";
 const ATTR_MAX_CYCLES: &str = "max_cycles";
+const ATTR_FIXTURE: &str = "fixture";
+const ATTR_SNAPSHOT: &str = "snapshot";
 const ATTR_EXPECTED: &str = "expected";
 
 fn parse_int_from_meta<T: std::str::FromStr>(meta: &syn::Meta, name: &str) -> syn::Result<T>
@@ -68,9 +72,19 @@ impl TestConfig {
             self.max_cycles = Some(value.base10_parse()?);
             return Ok(());
         }
+        if meta.path.is_ident(ATTR_FIXTURE) {
+            let value: syn::LitStr = meta.value()?.parse()?;
+            self.fixture = Some(value.value());
+            return Ok(());
+        }
+        if meta.path.is_ident(ATTR_SNAPSHOT) {
+            let value: syn::LitStr = meta.value()?.parse()?;
+            self.snapshot = Some(value.value());
+            return Ok(());
+        }
 
         Err(meta.error(
-            "unsupported zkvm_test option (expected `ignore`, `should_panic`, `exit_code`, or `max_cycles`)",
+            "unsupported zkvm_test option (expected `ignore`, `should_panic`, `exit_code`, `max_cycles`, `fixture`, or `snapshot`)",
         ))
     }
 
@@ -119,6 +133,40 @@ impl TestConfig {
             return Ok(true);
         }
 
+        if attr.path().is_ident(ATTR_FIXTURE) {
+            if let syn::Meta::NameValue(nv) = &attr.meta {
+                if let syn::Expr::Lit(syn::ExprLit {
+                    lit: syn::Lit::Str(s),
+                    ..
+                }) = &nv.value
+                {
+                    self.fixture = Some(s.value());
+                    return Ok(true);
+                }
+            } else if let syn::Meta::List(list) = &attr.meta {
+                let s: syn::LitStr = list.parse_args()?;
+                self.fixture = Some(s.value());
+                return Ok(true);
+            }
+        }
+
+        if attr.path().is_ident(ATTR_SNAPSHOT) {
+            if let syn::Meta::NameValue(nv) = &attr.meta {
+                if let syn::Expr::Lit(syn::ExprLit {
+                    lit: syn::Lit::Str(s),
+                    ..
+                }) = &nv.value
+                {
+                    self.snapshot = Some(s.value());
+                    return Ok(true);
+                }
+            } else if let syn::Meta::List(list) = &attr.meta {
+                let s: syn::LitStr = list.parse_args()?;
+                self.snapshot = Some(s.value());
+                return Ok(true);
+            }
+        }
+
         Ok(false)
     }
 }
@@ -128,13 +176,15 @@ impl TestConfig {
 ///
 /// Can be invoked as:
 /// - `#[zkvm_test]` or `#[test]` (via `use zkvm_test::test;`)
-/// - With inline options: `#[zkvm_test(ignore)]`, `#[zkvm_test(should_panic)]`, `#[zkvm_test(max_cycles = 100_000)]`
+/// - With inline options: `#[zkvm_test(ignore)]`, `#[zkvm_test(should_panic)]`, `#[zkvm_test(max_cycles = 100_000)]`, `#[zkvm_test(fixture = "path.bin")]`, `#[zkvm_test(snapshot = "path.hex")]`
 /// - With standard Rust attributes:
 ///   ```rust,ignore
 ///   #[test]
 ///   #[ignore]
 ///   #[should_panic(expected = "...")]
 ///   #[max_cycles = 100_000]
+///   #[fixture = "path.bin"]
+///   #[snapshot = "path.hex"]
 ///   fn my_test() { ... }
 ///   ```
 #[proc_macro_attribute]
@@ -188,14 +238,93 @@ pub fn zkvm_test(attr: TokenStream, item: TokenStream) -> TokenStream {
         quote! { ::core::option::Option::None }
     };
 
+    let zkvm_fixture_expr = if let Some(ref fix) = config.fixture {
+        quote! { ::core::option::Option::Some(#fix) }
+    } else {
+        quote! { ::core::option::Option::None }
+    };
+
+    let zkvm_snapshot_expr = if let Some(ref snap) = config.snapshot {
+        quote! { ::core::option::Option::Some(#snap) }
+    } else {
+        quote! { ::core::option::Option::None }
+    };
+
     let ignore = config.ignore;
     let should_panic = config.should_panic;
 
+    let (host_fn_tokens, zkvm_fn_tokens) = match (&config.fixture, &config.snapshot) {
+        (Some(fix), Some(snap)) => {
+            let fn_vis = &input.vis;
+            let fn_sig = &input.sig;
+            let fn_block = &input.block;
+            let host = quote! {
+                #[cfg(not(target_os = "zkvm"))]
+                #[::core::prelude::v1::test]
+                #host_ignore_attr
+                #host_should_panic_attr
+                #fn_vis #fn_sig {
+                    ::zkvm_test::__internal::with_host_fixture_and_snapshot(#fix, #snap, || #fn_block)
+                }
+            };
+            let zkvm = quote! {
+                #[cfg(target_os = "zkvm")]
+                #input
+            };
+            (host, zkvm)
+        },
+        (Some(fix), None) => {
+            let fn_vis = &input.vis;
+            let fn_sig = &input.sig;
+            let fn_block = &input.block;
+            let host = quote! {
+                #[cfg(not(target_os = "zkvm"))]
+                #[::core::prelude::v1::test]
+                #host_ignore_attr
+                #host_should_panic_attr
+                #fn_vis #fn_sig {
+                    ::zkvm_test::__internal::with_host_fixture(#fix, || #fn_block)
+                }
+            };
+            let zkvm = quote! {
+                #[cfg(target_os = "zkvm")]
+                #input
+            };
+            (host, zkvm)
+        },
+        (None, Some(snap)) => {
+            let fn_vis = &input.vis;
+            let fn_sig = &input.sig;
+            let fn_block = &input.block;
+            let host = quote! {
+                #[cfg(not(target_os = "zkvm"))]
+                #[::core::prelude::v1::test]
+                #host_ignore_attr
+                #host_should_panic_attr
+                #fn_vis #fn_sig {
+                    ::zkvm_test::__internal::with_host_snapshot(#snap, || #fn_block)
+                }
+            };
+            let zkvm = quote! {
+                #[cfg(target_os = "zkvm")]
+                #input
+            };
+            (host, zkvm)
+        },
+        (None, None) => {
+            let all = quote! {
+                #[cfg_attr(not(target_os = "zkvm"), ::core::prelude::v1::test)]
+                #host_ignore_attr
+                #host_should_panic_attr
+                #input
+            };
+            (all, quote! {})
+        },
+    };
+
     let result = quote! {
-        #[cfg_attr(not(target_os = "zkvm"), ::core::prelude::v1::test)]
-        #host_ignore_attr
-        #host_should_panic_attr
-        #input
+        #host_fn_tokens
+        #zkvm_fn_tokens
 
         #[cfg(target_os = "zkvm")]
         #[test_case]
@@ -206,6 +335,8 @@ pub fn zkvm_test(attr: TokenStream, item: TokenStream) -> TokenStream {
             should_panic: #should_panic,
             expected_exit_code: #zkvm_exit_code_expr,
             max_cycles: #zkvm_max_cycles_expr,
+            fixture: #zkvm_fixture_expr,
+            snapshot: #zkvm_snapshot_expr,
         };
     };
 

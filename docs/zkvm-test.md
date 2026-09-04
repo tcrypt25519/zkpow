@@ -117,6 +117,35 @@ pub fn default_toolchain_for_target(target: &str) -> Option<&'static str> {
 }
 ```
 
+### Intelligent Workspace & Package Discovery
+
+In multi-crate workspaces, running `cargo test --target <zkvm-target>` across the entire workspace causes compiler errors because host-only crates (CLI tools, database drivers, async runtimes like `tokio` or `mio`) cannot compile for bare-metal zkVM targets.
+
+When invoked without explicit `-p` or `--package` flags, `cargo-zkvm-test` queries `cargo metadata` and determines target packages using a layered discovery algorithm:
+
+1. **Subdirectory Context**: If executed from inside a specific member crate's directory (e.g. `crates/sha256/`), it automatically defaults to testing only that crate (`-p zkpow-sha256`).
+2. **Workspace Configuration (`Cargo.toml`)**:
+   Explicit inclusion or exclusion at the root workspace level:
+   ```toml
+   [workspace.metadata.zkvm-test]
+   # Explicit list of default test packages:
+   packages = ["zkpow-core", "zkpow-sha256"]
+   # Or packages to exclude:
+   exclude = ["zkpow-cli", "zkpow-host", "zkvm-test-runner"]
+   ```
+3. **Package-Level Opt-In / Opt-Out (`Cargo.toml`)**:
+   Individual member crates can declare themselves enabled or disabled:
+   ```toml
+   [package.metadata.zkvm-test]
+   enable = false # Exclude this crate from workspace test runs
+   ```
+4. **Zero-Config Auto-Detection**:
+   If no metadata is provided, `cargo-zkvm-test` scans workspace members:
+   - Skips framework runner crates (`zkvm-test`, `zkvm-test-macros`, `zkvm-test-runner`).
+   - Checks dependencies: any crate depending on `zkvm-test` (in regular or dev dependencies) is automatically selected.
+   - Honors CLI `--exclude <package>` arguments.
+   - Automatically injects `-p <pkg1> -p <pkg2> ...` into `cargo test --no-run`, ensuring only valid zkVM crates compile.
+
 ---
 
 ## 4. The Two-Phase Binary IPC Protocol (`ZKVT`)
@@ -134,6 +163,8 @@ pub const FLAG_IGNORE: u8             = 1 << 0; // 0x01
 pub const FLAG_SHOULD_PANIC: u8       = 1 << 1; // 0x02
 pub const FLAG_EXPECTED_EXIT_CODE: u8 = 1 << 2; // 0x04
 pub const FLAG_MAX_CYCLES: u8         = 1 << 3; // 0x08
+pub const FLAG_FIXTURE: u8            = 1 << 4; // 0x10
+pub const FLAG_SNAPSHOT: u8           = 1 << 5; // 0x20
 ```
 
 ### Phase 1: Test Discovery (`CMD_LIST`)
@@ -161,9 +192,13 @@ The public values committed by the guest in Phase 1 follow this exact binary lay
 |---|---|---|
 | `count` | `u32` (LE) | Number of registered tests |
 | **For each test:** | | |
-| `flags` | `u8` | Bitmask of flags (`FLAG_IGNORE`, `FLAG_SHOULD_PANIC`, etc.) |
+| `flags` | `u8` | Bitmask of flags (`FLAG_IGNORE`, `FLAG_SHOULD_PANIC`, `FLAG_FIXTURE`, `FLAG_SNAPSHOT`, etc.) |
 | `expected_exit_code` | `u32` (LE) | *(Optional)* Present only if `flags & FLAG_EXPECTED_EXIT_CODE != 0` |
 | `max_cycles` | `u64` (LE) | *(Optional)* Present only if `flags & FLAG_MAX_CYCLES != 0` |
+| `fixture_len` | `u32` (LE) | *(Optional)* Length of fixture path string, present only if `flags & FLAG_FIXTURE != 0` |
+| `fixture_path` | `[u8; fixture_len]` | *(Optional)* UTF-8 fixture path string |
+| `snapshot_len` | `u32` (LE) | *(Optional)* Length of snapshot path string, present only if `flags & FLAG_SNAPSHOT != 0` |
+| `snapshot_path` | `[u8; snapshot_len]` | *(Optional)* UTF-8 snapshot path string |
 | `name_len` | `u32` (LE) | Length of the test name string in bytes |
 | `name_bytes` | `[u8; name_len]` | UTF-8 encoded full path test name |
 
@@ -177,15 +212,16 @@ sequenceDiagram
     participant Host as zkvm-test-runner (Worker)
     participant Guest as Isolated VM Instance
 
-    Host->>Guest: SP1Stdin: [MAGIC (4B)][CMD_RUN (1B)][test_name (UTF-8 bytes)]
+    Note over Host: If fixture declared, loads fixture from host disk
+    Host->>Guest: SP1Stdin: [MAGIC (4B)][CMD_RUN (1B)][test_name (UTF-8)][fixture_bytes (optional)]
     Guest->>Guest: test_runner reads stdin, matches target name
-    Guest->>Guest: Executes test_fn()
-    Note over Guest: May emit stdout/stderr or panic
-    Guest-->>Host: VM completes or exits with code
-    Host->>Host: Record cycles, trace memory, stdout/stderr
+    Guest->>Guest: Executes test_fn() (reads fixture via zkvm_test::fixture())
+    Guest->>Guest: Commits public values (zkvm_test::commit_slice)
+    Guest-->>Host: VM completes or exits with code + Public Values
+    Host->>Host: Record cycles, trace memory, verify/update snapshots, stdout/stderr
 ```
 
-If the guest panics or calls `exit(code)`, the VM process halts, but **only that single test instance terminates**. The host worker intercepts the exit code, correlates it against `expected_exit_code` or `should_panic`, and marks the test passed or failed.
+If the guest panics or calls `exit(code)`, the VM process halts, but **only that single test instance terminates**. The host worker intercepts the exit code, correlates it against `expected_exit_code` or `should_panic`, and marks the test passed or failed. If a snapshot path was declared, the runner compares committed public values against the golden snapshot or updates it when `--accept-snapshots` is passed.
 
 ### Tier 1 Fallback (Legacy Libtest Compatibility)
 
@@ -303,6 +339,29 @@ test zkpow_sha256::tests::subroutine_cycle_profiling_demonstration ... ok (460,2
     └── first_hash_pass: 186,264 cycles (40.5%) [1 call]
 ```
 
+### Granular Instruction & Syscall Breakdown (`--instructions`, `--opcodes`)
+
+When `--instructions` or `--profile` is passed, the runner queries the SP1 opcode execution counts (`report.opcode_counts`) and syscall counts (`report.syscall_counts`), categorizing all 53 RISC-V opcodes:
+
+- **ALU**: 18 standard arithmetic/bitwise opcodes (`ADD`, `SUB`, `XOR`, `AND`, etc. and immediate forms).
+- **Memory**: 11 load/store instructions (`LW`, `SW`, `LD`, `SD`, byte/halfword variants).
+- **Control**: 8 branching/jump instructions (`BEQ`, `BNE`, `JAL`, `JALR`, etc.).
+- **Math**: 13 multiplication/division/remainder instructions (`MUL`, `DIV`, `REM`, 32-bit `*W`).
+- **System**: 3 trap/fence opcodes (`ECALL`, `EBREAK`, `FENCE`).
+- **Syscalls**: Top precompiles surfaced from `report.syscall_counts` (e.g. `SHA_COMPRESS`, `SHA_EXTEND`, `KECCAK_PERMUTE`).
+
+```text
+    ├── Instructions:
+    │   ├── Memory:       48,154 (54.2%)
+    │   ├── ALU:          24,082 (27.1%)
+    │   ├── Control:      16,499 (18.6%)
+    │   ├── Math:            125 (0.1%)
+    │   └── System:            6 (0.0%)
+    └── Syscalls:
+        ├── SHA_EXTEND: 150 calls
+        └── SHA_COMPRESS: 150 calls
+```
+
 ### Baseline Comparison & CI Regression Gating
 
 Metrics can be snapshotted to disk and verified in CI:
@@ -329,7 +388,9 @@ Metrics can be snapshotted to disk and verified in CI:
 
 ---
 
-## 8. Multi-Backend Prover Support
+## 8. Multi-Backend Prover Support & Proof Mode Control
+
+### Prover Backends
 
 The runner abstracts prover execution behind `AnyProver`:
 
@@ -340,6 +401,24 @@ The runner abstracts prover execution behind `AnyProver`:
 | **CUDA** | `--prover cuda` | Leverages local NVIDIA GPU acceleration. | High-performance full proving and hardware stress tests. |
 
 Can also be set globally via environment variable `ZKVM_PROVER=cpu`.
+
+### Proof Mode Control (`--mode` / `--proof-mode`)
+
+By default (`--mode none`), tests simulate VM execution to maximize development velocity. When testing cryptographic proving pipelines, `zkvm-test` supports:
+
+- **`none`**: Simulation only (zero proving overhead).
+- **`core`**: SP1 Core STARK proof generation and cryptographic verification.
+- **`compressed`**: Two-layer recursive STARK compression proof.
+- **`plonk`**: PLONK SNARK generation (EVM verifier compatible).
+- **`groth16`**: Constant-size Groth16 SNARK generation (minimal on-chain gas).
+
+#### Architecture & Optimization
+1. **Single Proving Key (`pk`) Setup Per ELF**:
+   Generating proving keys via `prover.setup_pk(elf)` is compute-intensive (~0.5s). The runner executes PK setup **once per ELF** upfront and wraps the result in an `Arc<SP1ProvingKey>` shared across all worker threads.
+2. **Execute-First Soundness**:
+   The runner always executes tests through `prover.execute_test()` first. If assertions or panics fail, failure output is surfaced immediately without wasting minutes generating STARK proofs for broken code.
+3. **Cryptographic Verification**:
+   When `--mode <mode>` is specified, the runner generates the proof via `prover.prove_test()` and verifies it against the verifying key (`vk`) with `prover.verify(&proof, &vk)`. Successful verification and proof generation duration are displayed in the test summary.
 
 ---
 
@@ -355,49 +434,22 @@ Can also be set globally via environment variable `ZKVM_PROVER=cpu`.
 - [x] Cycle breakdown tree integration (`--profile` / `--subcycles`).
 - [x] Trace memory measurement (`report.total_record_size()`).
 - [x] Persistent metrics baselines (`--save-baseline`, `--compare-baseline`).
-- [x] CI performance regression gate with exit code 1 (`--fail-on-regression <N%>`).
+- [x] Intelligent multi-crate workspace auto-discovery and layered filtering.
 
-### Improvements Round 2 (Upcoming)
+### Improvements Round 2
+
+- [x] Automatic build cache isolation (`target/zkvm` default prevents host cache invalidation).
+- [x] Always-on metrics baseline auto-diffing when default baseline exists.
+- [x] `--color <WHEN>` (auto, always, never) flag normalization and pass-through.
+- [x] Host-injected test fixtures (`#[test(fixture = "...")]` with zero ELF bloat and dual host/zkVM parity).
+- [x] Public Values / Snapshot Testing (`#[test(snapshot = "...")]`, `--accept-snapshots`, hex diffs).
+- [x] Proof Mode Control (`--mode core|compressed|groth16|plonk|none` with upfront PK setup and verification).
+- [x] Granular Instruction Category Profiling Table (`--instructions`, `--opcodes`, `--profile`) with ALU, Memory, Control, Math, System, and Syscall breakdowns.
+- [x] CI & Machine-Readable Output: Nextest-style boolean filter expressions (`-E` / `--expr`) and multi-suite JUnit XML export (`--junit-path`).
 
 #### Cycle-Aware Flamegraphs
 
   Generate interactive SVG flamegraphs mapping cycles directly to source code lines.
-
-#### Proof Mode Control
-
-  Allow explicit proof modes: `core`, `compressed`, `groth16`, `plonk`, or `none` (default).
-
-#### Public Values / Snapshot Testing (Like `insta` for zkVM)
-
-- External verifiers care about what the guest commits (`commit_slice`).
-- Support snapshot testing:
-
-  ```rust
-  #[zkvm_test(snapshot = "snapshots/header_chain_epoch_1.bin")]
-  fn test_epoch_transition() {
-      // Commits public outputs via sp1_zkvm::io::commit
-  }
-  ```
-
-  The runner automatically diffs the committed public values against the golden snapshot on disk (with `--review` / `--accept` flags).
-
-#### Host-Injected Test Fixtures & Matrix Testing (Solving the "Data In/Out" Problem)
-
-**The Problem:** The plan notes that *"there's no good way to get data in and out so your test inputs generally need to be baked into the tests"*. Baking large test vectors (e.g., Bitcoin blocks, serialized transaction batches) directly into the test binary balloons the ELF size, slows compilation, and wastes zkVM memory.
-
-**The Solution:** Allow tests to declare host fixtures or parameter matrices:
-
-  ```rust
-  #[zkvm_test(fixture = "tests/fixtures/block_100k.bin")]
-  fn test_parse_block(data: &[u8]) {
-      let block = Block::parse(data).unwrap();
-      assert_eq!(block.header.height, 100_000);
-  }
-  ```
-
-**Mechanism:** In Phase 1 (`CMD_LIST`), the guest advertises required fixtures. In Phase 2 (`CMD_RUN`), the host runner reads the file from the host filesystem and streams it into the guest via `SP1Stdin` or RISC Zero's `ExecutorEnv`.
-
-**Result:** Clean, parameterized testing with zero ELF bloat.
 
 #### Dual Execution Parity Mode (`--parity`)
 
@@ -410,23 +462,6 @@ Can also be set globally via environment variable `ZKVM_PROVER=cpu`.
 
 - When a test panics or triggers an illegal instruction in the VM, standard output often yields only an unhelpful exit code or bare PC address.
 - Using `addr2line` and the compiled ELF's DWARF symbol table, the runner can translate the guest crash PC into source file and line numbers, printing a symbolized stack trace on failure.
-
-#### Granular Instruction Category Profiling Table
-
-- Both SP1 and RISC Zero track instruction categories (ALU, Memory Load/Store, Branch, Syscalls).
-- In verbose mode (`--profile` or `-v`), display a compact breakdown table:
-
-  ```text
-  test test_verify_header ... ok (42,150 cycles)
-  ┌───────────┬─────────┬────────┐
-  │ Category  │ Cycles  │ %      │
-  ├───────────┼─────────┼────────┤
-  │ ALU       │ 18,200  │ 43.2%  │
-  │ Memory    │ 14,100  │ 33.5%  │
-  │ Syscalls  │  8,400  │ 19.9%  │ (sha256_compress: 2 calls)
-  │ Branch    │  1,450  │  3.4%  │
-  └───────────┴─────────┴────────┘
-  ```
 
 #### CI & Machine-Readable Output (Nextest / JUnit / GitHub Actions)
 

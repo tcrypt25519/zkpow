@@ -22,9 +22,17 @@ A practical, step-by-step guide for bringing Nextest-grade testing, cycle benchm
    - [Comparing Against a Baseline](#comparing-against-a-baseline)
    - [Automated CI Failure on Regressions](#automated-ci-failure-on-regressions)
    - [GitHub Actions Workflow Example](#github-actions-workflow-example)
-7. [Prover Backends: Mock, CPU, and CUDA](#7-prover-backends-mock-cpu-and-cuda)
-8. [Dual Compilation (Host + zkVM)](#8-dual-compilation-host--zkvm)
-9. [Troubleshooting & FAQs](#9-troubleshooting--faqs)
+7. [CI Integrations: JUnit XML & Filter Expressions](#7-ci-integrations-junit-xml--filter-expressions)
+   - [JUnit XML Export (`--junit-path`)](#junit-xml-export---junit-path)
+   - [Nextest-Style Filter Expressions (`-E`, `--expr`)](#nextest-style-filter-expressions--e---expr)
+8. [Prover Backends & Proof Modes](#8-prover-backends--proof-modes)
+   - [Prover Backends: Mock, CPU, and CUDA](#prover-backends-mock-cpu-and-cuda)
+   - [Proof Mode Control (`--mode`)](#proof-mode-control---mode)
+9. [Instruction Breakdown & Profiling](#9-instruction-breakdown--profiling)
+   - [Instruction Categories Table](#instruction-categories-table)
+   - [Precompile & Syscall Tracking](#precompile--syscall-tracking)
+10. [Dual Compilation (Host + zkVM)](#10-dual-compilation-host--zkvm)
+11. [Troubleshooting & FAQs](#11-troubleshooting--faqs)
 
 ---
 
@@ -263,6 +271,75 @@ fn test_with_logging() {
 cargo zkvm-test -p my-zkvm-program -- --nocapture
 ```
 
+### Host-Injected Test Fixtures (`fixture = "..."`)
+
+Baking large test vectors (such as Bitcoin blocks, transaction batches, or state proofs) into test binaries using `include_bytes!` inflates the test ELF size, slows down link times, and increases zkVM emulator loading overhead.
+
+With `zkvm-test`, tests can declare external fixture files:
+
+```rust
+#[test(fixture = "tests/fixtures/blocks_100k.bin")]
+fn test_verify_block_headers() {
+    // Reads bytes streamed by the host runner (zkVM) or read from disk (host test)
+    let fixture_str = zkvm_test::fixture_str();
+    // Or for raw binary bytes:
+    // let fixture_bytes = zkvm_test::fixture();
+
+    for line in fixture_str.lines() {
+        // Parse and assert in the zkVM without baking bytes into the ELF!
+    }
+}
+```
+
+- **In the zkVM (`cargo zkvm-test`)**: In Phase 1, the test binary announces its fixture requirements to the runner. In Phase 2, the host runner loads the file from the host filesystem and streams it into `SP1Stdin` before executing the guest.
+- **On the Host (`cargo test`)**: The macro automatically binds the fixture path via thread-local context so `zkvm_test::fixture()` seamlessly loads the file from disk, giving you complete test execution parity between host and guest.
+
+### Public Values & Output Snapshot Testing (`snapshot = "..."`)
+
+zkVM applications frequently produce public values (such as root state commitments, header hashes, or cryptographic summaries) by calling `sp1_zkvm::io::commit_slice` or `zkvm_test::commit_slice`.
+
+Similar to `insta` for standard Rust code, `zkvm-test` provides automated snapshot testing for committed zkVM outputs:
+
+```rust
+#[test(snapshot = "snapshots/genesis_header_hash.hex")]
+fn test_genesis_header_hash_snapshot() {
+    let hash = compute_genesis_hash();
+    zkvm_test::commit_slice(&hash);
+}
+```
+
+#### Snapshot Formats
+- **Hexadecimal (`.hex`)**: Formats committed bytes as clean hexadecimal. Useful for cryptographic digests, block hashes, and serialized state keys.
+- **Binary (`.bin`)**: Saves and compares raw binary bytes directly.
+
+#### Generating & Updating Snapshots
+When adding a new snapshot test or updating expected values, pass `--accept-snapshots` (or `--update-snapshots`):
+
+```bash
+# Accept/record snapshot values
+cargo zkvm-test --accept-snapshots -p my-zkvm-program
+
+# Or on host:
+ZKVM_ACCEPT_SNAPSHOTS=1 cargo test -p my-zkvm-program
+```
+
+#### Snapshot Diff Formatting
+If a committed output does not match the recorded golden snapshot, the runner fails with a clear, color-coded hex diff:
+
+```text
+test tests::test_genesis_header_hash_snapshot ... FAILED
+
+failures:
+
+---- tests::test_genesis_header_hash_snapshot ----
+snapshot mismatch for '/path/to/snapshots/genesis_header_hash.hex':
+  - expected (32 bytes):
+    e2c63d39d066016fca487f769be448fe277c36f206e169462664f92a2f4f55f3
+  + actual (32 bytes):
+    f2c63d39d066016fca487f769be448fe277c36f206e169462664f92a2f4f55f3
+To accept these changes, run with '--accept-snapshots'.
+```
+
 ---
 
 ## 5. CLI Reference & Options
@@ -278,25 +355,64 @@ cargo zkvm-test [CARGO_OPTIONS] [--] [RUNNER_OPTIONS] [FILTER]
 | Option | Category | Description |
 |---|---|---|
 | `-p, --package <SPEC>` | Cargo | Package to compile and test |
+| `--workspace, --all` | Cargo | Test all zkVM packages in workspace (default when run from root) |
+| `--exclude <SPEC>` | Cargo | Exclude packages from the test run |
 | `--lib` | Cargo | Test only this package's library unit tests |
 | `--bin <NAME>` | Cargo | Test only the specified binary |
 | `--test <NAME>` | Cargo | Test only the specified integration test |
 | `--release` | Cargo | Build test ELFs in release mode |
 | `--target <TRIPLE>` | Cargo | Override target (default: `riscv64im-succinct-zkvm-elf`) |
+| `--target-dir <DIR>` | Cargo | Directory for all generated artifacts (default: `target/zkvm`) |
+| `--color <WHEN>` | Cargo | Coloring: `auto`, `always`, `never` |
 | `[FILTER]` | Runner | Filter tests by name substring (e.g. `cargo zkvm-test sha256`) |
 | `--exact` | Runner | Filter tests by exact name match |
 | `--list` | Runner | List all matching tests without running them |
 | `--ignored` | Runner | Run only tests marked with `#[ignore]` |
 | `--include-ignored` | Runner | Run both regular and ignored tests |
 | `--nocapture, --no-capture` | Runner | Stream stdout and stderr immediately without buffering |
-| `--profile, --subcycles` | Runner | Display hierarchical sub-routine cycle breakdown tree |
+| `--profile, --subcycles` | Runner | Display hierarchical sub-routine cycle breakdown tree and instruction breakdown |
+| `--instructions, --opcodes` | Runner | Display granular instruction breakdown by category (ALU, Memory, Control, Math, Syscalls) |
+| `--mode, --proof-mode <MODE>` | Runner | ZK proof mode to generate and verify: `none` (default), `core`, `compressed`, `plonk`, `groth16` |
+| `-E, --expr <EXPR>` | Runner | Nextest-style boolean filter expression (e.g. `'package(sha256) & test(header)'`) |
+| `--junit-path <PATH>` | Runner | Export test results to standard JUnit XML format |
+| `--accept-snapshots` | Runner | Record/update golden snapshot files for tests with `#[test(snapshot = "...")]` |
 | `--test-threads <N>` | Runner | Number of test instances to execute concurrently |
 | `--prover <PROVER>` | Runner | Prover backend: `mock` (default), `cpu`, `cuda` |
 | `--save-baseline [NAME]` | Metrics | Save run metrics as a named baseline (default: `default`) |
-| `--compare-baseline <NAME>`| Metrics | Compare current run against a saved baseline |
+| `--compare-baseline <NAME>`| Metrics | Compare current run against a saved baseline (auto-compares if `default.json` exists) |
 | `--fail-on-regression <N%>` | Metrics | Exit with code 1 if any test's cycles increase by > N% |
 | `-q, --quiet` | Runner | Minimal output format |
 | `-h, --help` | General | Print help information |
+
+### Automatic Build Cache Isolation (`target/zkvm`)
+
+Running standard `cargo test` (host toolchain) and `cargo zkvm-test` (custom zkVM toolchain, e.g. `+succinct`) back-to-back can cause severe incremental cache thrashing if both write to the root `target/` directory.
+
+To provide seamless, instant back-to-back testing out of the box:
+- `cargo-zkvm-test` **automatically defaults the build output directory to `<workspace_root>/target/zkvm`**.
+- The host toolchain's `target/` cache remains completely untouched.
+- Custom target directories can still be specified at any time via `--target-dir <DIR>` or the standard `CARGO_TARGET_DIR` environment variable.
+
+### Workspace Defaults & Package Auto-Detection
+
+In multi-crate workspaces, running `cargo test` on bare-metal zkVM targets fails because host crates (CLI binaries, network daemons, database drivers) cannot compile for RISC-V zkVM targets.
+
+`cargo-zkvm-test` automatically solves this:
+- **Running from Repository Root**: Running `cargo zkvm-test` scans the workspace and runs tests for **all zkVM crates** (crates that have `zkvm-test` in their dependencies), skipping host crates automatically.
+- **Running from a Crate Subdirectory**: `cd crates/sha256 && cargo zkvm-test` tests only `zkpow-sha256`.
+- **Excluding Packages**: `cargo zkvm-test --exclude zkpow-core` excludes specific crates.
+- **Explicit Workspace Config (`Cargo.toml`)**:
+  ```toml
+  [workspace.metadata.zkvm-test]
+  packages = ["zkpow-core", "zkpow-sha256"]
+  # or:
+  exclude = ["zkpow-cli", "zkpow-host"]
+  ```
+- **Explicit Package Config (`Cargo.toml`)**:
+  ```toml
+  [package.metadata.zkvm-test]
+  enable = false # Exclude from default runs
+  ```
 
 ---
 
@@ -397,29 +513,109 @@ jobs:
 
 ---
 
-## 7. Prover Backends: Mock, CPU, and CUDA
+## 7. CI Integrations: JUnit XML & Filter Expressions
+
+### JUnit XML Export (`--junit-path`)
+
+For seamless integration with CI/CD platforms (GitHub Actions, GitLab CI, CircleCI, Jenkins, Buildkite), `zkvm-test` exports standard JUnit XML test reports:
+
+```bash
+cargo zkvm-test --junit-path target/junit.xml
+```
+
+#### What's in the Report?
+- Root `<testsuites>` element aggregating global counts (`tests`, `failures`, `errors`, `skipped`, `time`).
+- One `<testsuite>` per compiled package / test target.
+- Individual `<testcase>` elements with actual execution wall-clock time.
+- Custom zkVM metrics attached to each testcase:
+  ```xml
+  <properties>
+    <property name="cycles" value="81144"/>
+    <property name="trace_bytes" value="24030768"/>
+  </properties>
+  ```
+- Full failure diagnostics, panic backtraces, and exit code explanations inside `<failure message="...">`.
+- Skipped / ignored tests denoted with `<skipped/>`.
+- Guest `stdout` and `stderr` logs inside `<system-out>` and `<system-err>`.
+
+#### Multi-Target Merging
+When running across multiple workspace packages, `cargo zkvm-test` automatically merges the results from all test ELFs into the designated `--junit-path` file, providing a single consolidated report for your CI runner.
+
+#### GitHub Actions Example:
+```yaml
+- name: Run zkVM Tests with JUnit Report
+  run: cargo zkvm-test --junit-path target/junit.xml
+
+- name: Publish Test Report
+  uses: dorny/test-reporter@v1
+  if: always()
+  with:
+    name: zkVM Test Results
+    path: target/junit.xml
+    reporter: java-junit
+```
+
+---
+
+### Nextest-Style Filter Expressions (`-E`, `--expr`)
+
+`zkvm-test` supports powerful boolean filter expressions inspired by `cargo-nextest`:
+
+```bash
+cargo zkvm-test -E 'package(sha256) & test(header) & !test(slow)'
+```
+
+#### Supported Predicates
+
+| Predicate | Syntax | Description | Example |
+|---|---|---|---|
+| **Test Name** | `test(pattern)` | Match test name path | `test(genesis)` |
+| **Package** | `package(pattern)` or `p(pattern)` | Match package or crate name | `package(sha256)` |
+| **Default** | `default()` | Match non-ignored tests | `default()` |
+| **All** | `all()` | Match all tests (including ignored) | `all()` |
+| **None** | `none()` | Match no tests | `none()` |
+
+#### Pattern Matching Styles
+
+- **Substring**: `test(header)` matches any test containing `"header"`.
+- **Exact**: `test(=exact_name)` matches only when the test name equals `"exact_name"` exactly.
+- **Regex**: `test(/.*_snapshot$/)` evaluates against a Rust regular expression.
+- **Glob / Wildcards**: `test(*fixture*)` or `test(test_?_hash)`.
+
+#### Operators & Grouping
+
+- **Logical NOT**: `!` or `not` (e.g. `!test(slow)`)
+- **Logical AND**: `&` or `and` (e.g. `package(core) & test(work)`)
+- **Logical OR**: `|` or `or` (e.g. `test(genesis) | test(fixture)`)
+- **Parentheses**: `( ... )` to group conditions (e.g. `package(sha256) & (test(hash) | test(snapshot))`)
+
+---
+
+## 8. Prover Backends & Proof Modes
+
+### Prover Backends: Mock, CPU, and CUDA
 
 By default, `zkvm-test` runs with the **`mock`** prover backend. The mock prover simulates instruction execution, counts cycles, and captures output without generating expensive STARK proofs—completing hundreds of tests in seconds.
 
 When you want to verify actual STARK proof generation:
 
-### CPU Prover
+#### CPU Prover
 
 Generates full STARK proofs using multi-core host CPU:
 
 ```bash
-cargo zkvm-test -p my-zkvm-program -- --prover cpu
+cargo zkvm-test -p my-zkvm-program --prover cpu
 ```
 
-### CUDA Prover (NVIDIA GPUs)
+#### CUDA Prover (NVIDIA GPUs)
 
 For systems with NVIDIA GPUs and CUDA installed:
 
 ```bash
-cargo zkvm-test -p my-zkvm-program -- --prover cuda
+cargo zkvm-test -p my-zkvm-program --prover cuda
 ```
 
-### Global Environment Variable
+#### Global Environment Variable
 
 You can set the prover globally without passing CLI flags:
 
@@ -428,9 +624,86 @@ export ZKVM_PROVER=cpu
 cargo zkvm-test
 ```
 
+### Proof Mode Control (`--mode`)
+
+By default (`--mode none`), `zkvm-test` simulates guest execution, validating correctness, tracking cycles, and asserting snapshots with zero proof generation overhead.
+
+When testing cryptographic proof generation and on-chain / recursive verifiability, pass `--mode <MODE>` (or `--proof-mode <MODE>`):
+
+| Mode | Flag | Description | Typical Use Case |
+|---|---|---|---|
+| **None** (Default) | `--mode none` | Fast simulation only (no STARK/SNARK generated). | Local unit testing, CI cycle tracking, and rapid iteration. |
+| **Core** | `--mode core` | Generates and cryptographically verifies an SP1 Core STARK proof. | Verifying trace polynomial constraints and proving soundness. |
+| **Compressed** | `--mode compressed` | Recursively compresses the proof into a single compact STARK proof. | Preparing proofs for recursive aggregation or light clients. |
+| **Plonk** | `--mode plonk` | Recursively wraps the proof into a PLONK SNARK with EVM verifier compatibility. | Testing end-to-end EVM on-chain verification. |
+| **Groth16** | `--mode groth16` | Generates a constant-size Groth16 SNARK (~260 bytes). | Production L1 on-chain verification with minimal gas costs. |
+
+#### Automatic Key Setup Optimization
+
+When running a test suite with `--mode <mode>`, the runner automatically compiles the program's proving key (`pk`) **once per ELF** upfront before scheduling tests:
+
+```text
+Setting up proving key for Core mode... Proving key ready in 0.57s
+running 3 tests (prover: mock, mode: Core, threads: 16)
+test zkpow_sha256::tests::test_single_header_hash ... ok (12,410 cycles, trace: 4.2 MB, Core proof: 0.01s)
+test zkpow_sha256::tests::test_batch_header_hashes ... ok (48,920 cycles, trace: 16.8 MB, Core proof: 0.02s)
+```
+
+The proving key is shared across all concurrent worker threads in an `Arc<SP1ProvingKey>`, avoiding redundant key generation overhead.
+
+Furthermore, execution correctness and test assertions run **first**. If a test fails or panics, the runner immediately halts that test and surfaces the exact error diagnostics, skipping expensive proof generation for failed runs.
+
 ---
 
-## 8. Dual Compilation (Host + zkVM)
+## 9. Instruction Breakdown & Profiling
+
+While total cycle counts indicate overall compute cost, optimizing zkVM performance requires understanding *where* those cycles are spent.
+
+Passing `--instructions` (or `--opcodes`, or `--profile`) prints a granular RISC-V opcode category breakdown and top system calls for each test:
+
+```bash
+cargo zkvm-test -p zkpow-sha256 test_block_headers_fixture_verification --instructions
+```
+
+Output:
+```text
+test tests::test_block_headers_fixture_verification ... ok (88,866 cycles, trace: 33.15 MB)
+    ├── Instructions:
+    │   ├── Memory:       48,154 (54.2%)
+    │   ├── ALU:          24,082 (27.1%)
+    │   ├── Control:      16,499 (18.6%)
+    │   ├── Math:            125 (0.1%)
+    │   └── System:            6 (0.0%)
+    └── Syscalls:
+        ├── SHA_EXTEND: 150 calls
+        └── SHA_COMPRESS: 150 calls
+```
+
+### Instruction Categories Table
+
+The runner categorizes all 53 SP1 RISC-V opcodes into 5 distinct execution categories:
+
+| Category | Typical Opcodes | Description | Optimization Advice |
+|---|---|---|---|
+| **Memory** | `LW`, `SW`, `LB`, `SB`, `LH`, `SH`, `LBU`, `LHU`, `LWU`, `LD`, `SD` | Stack and heap loads/stores. | High memory % usually points to unvectorized memory copies, deep stack frames, or missing register reuse. |
+| **ALU** | `ADD`, `SUB`, `XOR`, `OR`, `AND`, `SLL`, `SRL`, `SRA`, `SLT`, `SLTU` (and immediate `*I` variants) | Basic bitwise, shifting, and arithmetic operations. | Fast, native 1-cycle operations in zkVM. |
+| **Control** | `BEQ`, `BNE`, `BLT`, `BGE`, `BLTU`, `BGEU`, `JAL`, `JALR` | Conditional branching and function jumps. | Unroll tight loops to eliminate branch and counter overhead. |
+| **Math** | `MUL`, `MULH`, `MULHU`, `MULHSU`, `DIV`, `DIVU`, `REM`, `REMU` (and 32-bit `*W` variants) | Integer multiplication, division, and remainder. | Division and remainder are heavy in zkVM; prefer bit shifts when dividing by powers of 2. |
+| **System** | `ECALL`, `EBREAK`, `FENCE` | System trap and environment calls. | Enters runtime precompiles and I/O handlers. |
+
+### Precompile & Syscall Tracking
+
+The runner automatically inspects `report.syscall_counts` to report hardware-accelerated precompiles:
+- **`SHA_COMPRESS` & `SHA_EXTEND`**: SP1 cryptographic SHA-256 precompile invocations.
+- **`KECCAK_PERMUTE`**: Keccak-f1600 permutation precompile invocations.
+- **`ED_ADD` / `ED_DECOMPRESS` / `SECP256K1_ADD`**: Elliptic curve precompiles.
+- **`SYS_WRITE` & `SYS_HALT`**: Host I/O and program termination.
+
+This guarantees that developers can immediately spot whether their cryptographic operations are hitting hardware-accelerated precompiles or falling back to unaccelerated software implementations.
+
+---
+
+## 10. Dual Compilation (Host + zkVM)
 
 Tests written with `use zkvm_test::test;` compile cleanly on **both**:
 
@@ -441,7 +714,7 @@ This allows developers to run standard host unit tests during active feature dev
 
 ---
 
-## 9. Troubleshooting & FAQs
+## 11. Troubleshooting & FAQs
 
 ### Q: `cargo: error: no such subcommand: 'zkvm-test'`
 
