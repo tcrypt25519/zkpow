@@ -1,106 +1,440 @@
-# zkvm-test
+# zkvm-test: Architecture & Technical Specification
 
-A `cargo nextest`-like test runner for SP1 and risc0.
+`zkvm-test` is a Nextest-grade, cycle-aware, multi-backend testing framework and CLI runner for zero-knowledge virtual machines (SP1 and RISC Zero).
 
-## Problem
+It brings the ergonomics, speed, and safety of modern Rust test runners (`cargo test` and `cargo nextest`) into zkVM guest environments—providing **per-test isolation**, **concurrency**, **guest output capture**, **sub-routine cycle profiling**, **deterministic memory metrics**, and **CI performance regression gates**.
 
-Writing tests for the zkvms is shitty. Difficult to run, tests are design to
-panic which kills the entire vm process, (on SP1 at least) there's no way to
-filter tests, you can't run them in parallel, no support for #[ignore] or
-[should_panic], you can't harvest any useful addition info from them like
-memory or cycle usage, there's no good way to get data in and out so your test
-inputs generally need to be baked into the tests and the outputs gneerally need
-to be panic or don't panic.
+---
 
-## Solution
+## 1. Problem Statement
 
-`cargo zkvm-test` , like the title says. A toolkit for writing ZKT's. (Tests)
+Testing zkVM guest code has traditionally been difficult and painful:
 
-## Breakdown
+1. **Catastrophic Failure Cascades**: In standard zkVM harnesses, a `panic!` in a guest test triggers an emulator abort or unhandled trap that immediately terminates the entire VM process. One failing test halts the entire test suite.
+2. **Zero Concurrency**: Standard test runners execute sequentially in a single thread, causing test suites with dozens of crypto and state transitions to take minutes instead of seconds.
+3. **No Per-Test Filtering**: Developers cannot easily filter tests by substring, exact name, or run ignored tests (`cargo test <filter>` / `--exact` / `--ignored`).
+4. **Missing Test Semantics**: Attributes like `#[should_panic]`, expected exit codes, and cycle budgets are unsupported or require custom boilerplate per test.
+5. **No Output Capture**: Guest `stdout` / `stderr` (`println!`, `eprintln!`, panic backtraces) either gets silently dropped or dumps unconditionally into the terminal during multithreaded runs, interleaving text into an unreadable mess.
+6. **Blindness to Compute & Memory Cost**: Traditional runners report only wall-clock time. In zkVM development, wall-clock time is noisy and irrelevant; what matters is **instruction cycles**, **hierarchical sub-routine breakdown**, and **proving execution trace size**.
+7. **No Regression Gating**: Subtle algorithmic regressions that double cycle counts easily slip into production without an automated cycle budget or baseline comparison mechanism in CI.
 
-### 1. Orchestration: Target Runner
+---
 
-Relies on Cargo's built-in target runner configuration (e.g., setting
-`runner = "zkvm-test-runner"` for the `riscv64im` target). The
-`zkvm-test-runner` binary is invoked directly by Cargo with the path to the
-compiled ELF. This keeps the ELF out of the host's memory until execution and
-standardizes the build pipeline.
+## 2. Architecture Overview
 
-### 2. Test Discovery: Two-Phase Protocol
+`zkvm-test` is organized into three decoupled crates:
 
-**Uses a two-phase execution model over standard I/O:**
-
-- **Phase 1 (Discovery):** The host runner spins up a mocked `ProverClient`,
-  sending a `MAGIC` byte sequence (`b"ZKVT"`) and `CMD_LIST` (0) via `SP1Stdin`.
-  The guest interce e eeeepts this and response by serializing its test catalog
-  (including lengths, names, and flags like `ignore` or `should_panic`) into a
-  byte buffer and committing it back to the host.
-  - **Phase 2 (Execution):** The runner parses this binary catalog. It filters
-    the tests (handling `--exact`, `--ignored`, or substring matching) and then
-    spins up individual VM executions for each test using `CMD_RUN` (1) followed
-    by the specific test name.
-
-### 3. Guest Registry: Custom Test Frameworks
-
-The `#[zkvm_test]` macro maps standard attributes into a statically defined
-`TestCase` struct specific to the target OS. By applying the `#[test_case]`
-attribute, it hooks into Rust's `#![custom_test_frameworks]` feature, which
-aggregates these structs into a slice (`&[&TestCase]`) and passes them to the
-root `test_runner` function.
-
-### 4. Concurrency and Error Handling
-
-The runner fully manages concurrency using a Tokio semaphore and
-`std::thread::available_parallelism`. Because each test runs in a completely
-isolated VM instance, a panic in one guest test will never halt the execution of
-other tests. Furthermore, it intercepts expected exit codes natively and
-aggregates the exact cycle counts for both individual tests and the total suite
-run.
-
-## Improvements Round 1
-
-That is all what exists today. In no particular order, here what should be next(ish):
-
-- [x] (Considering) Optional `test` alias for `zkvm_test` macro so entire files can
-  switch without churning the attribute macro. (Unfortuatnely ignore and
-  should_panic change synax so anything using those has to suffer the new name
-  and syntaax.
-- [x] Adding things like test lists, bench, profiles, etc; everything useful for us
-  from `cargo test` / `cargo nextest`.
-- [x] Make it a packaged cargo plugin.
-- Add risc0 support
-- [x] Don't hardcode mock prover, enable choosing one via flag and/or env var.
-- [x] The runner only captures standard pass/fail metrics, exit codes, and panics. No output text. We should extract any output and weave it into the log.
-- [x] Use sp1-cycle crates for better cycle tracking.
-- [x] ~~Use memuse crate for mem usage tracking.~~ Ended up using a better method to get memory
-- [x] Store metrics somewhere accessible and enable regression detection
-
-## Improvements Round 2
-
-### nextest style filtering
-
-```sh
-cargo nextest run -E 'package(core) & test(parse)'
+```text
++-------------------------------------------------------------------------+
+|                               HOST OS                                   |
+|                                                                         |
+|  cargo zkvm-test [CARGO_OPTS] [--] [RUNNER_OPTS] [FILTERS]               |
+|         │                                                               |
+|         ▼                                                               |
+|  ┌───────────────────────────────────────────────────────────────────┐  |
+|  │ cargo-zkvm-test (crates/zkvm-test-runner/src/cargo_plugin.rs)     │  |
+|  │  - Invokes: cargo test --no-run --target riscv64im-... --json     │  |
+|  │  - Discovers compiler artifacts (.elf binaries)                   │  |
+|  │  - Dispatches execution to zkvm_test_runner::runner::run          │  |
+|  └─────────────────────────────────┬─────────────────────────────────┘  |
+|                                    │                                    |
+|                                    ▼                                    |
+|  ┌───────────────────────────────────────────────────────────────────┐  |
+|  │ zkvm-test-runner (crates/zkvm-test-runner/src/runner.rs)          │  |
+|  │  - AnyProver Engine: MockProver | CpuProver | CudaProver          │  |
+|  │  - Phase 1: Query catalog via IPC protocol (MAGIC + CMD_LIST)     │  |
+|  │  - Tokio Concurrency Pool (Semaphore, std::thread::parallelism)   │  |
+|  │  - Phase 2: Parallel isolated VM spawns (MAGIC + CMD_RUN + name)  │  |
+|  │  - Output Streams: tokio::sync::watch::channel (stdout / stderr)  │  |
+|  │  - Cycle Tracking, Trace Memory, Baseline Diff & Regression Gate  │  |
+|  └─────────────────────────────────┬─────────────────────────────────┘  |
++------------------------------------┼------------------------------------+
+                                     │ SP1Stdin / SP1PublicValues
+                                     ▼
++-------------------------------------------------------------------------+
+|                       zkVM GUEST ENVIRONMENT                            |
+|                     (riscv64im-succinct-zkvm-elf)                       |
+|                                                                         |
+|  ┌───────────────────────────────────────────────────────────────────┐  |
+|  │ zkvm-test (crates/zkvm-test/src/lib.rs)                           │  |
+|  │  - #![no_std] runtime harness                                     │  |
+|  │  - test_runner(&[&TestCase]) registered via #![test_runner]       │  |
+|  │  - Responds to CMD_LIST with serialized test catalog              │  |
+|  │  - Routes CMD_RUN directly to target test function                │  |
+|  └─────────────────────────────────▲─────────────────────────────────┘  |
+|                                    │                                    |
+|  ┌─────────────────────────────────┴─────────────────────────────────┐  |
+|  │ zkvm-test-macros (crates/zkvm-test-macros/src/lib.rs)             │  |
+|  │  - #[zkvm_test] and #[test] proc macros                          │  |
+|  │  - Dual compilation:                                              |  |
+|  │    • target_os = "zkvm": #[test_case] static TestCase registration│  |
+|  │    • host: standard #[::core::prelude::v1::test]                  │  |
+|  └───────────────────────────────────────────────────────────────────┘  |
++-------------------------------------------------------------------------+
 ```
 
-### JUnit XML Output
+---
 
-Shown by Github Actions and Gitlab fake version of Actions to show test results
-in the UI.
+## 3. Orchestration & Build Pipeline
 
-### Cycle-aware flamegraph
+### Cargo Plugin vs. Target Runner
 
-### Control proof mode
+`zkvm-test` operates through two complementary modalities:
 
-Allow: `core`, `compressed`, `groth16`, `plonk`, or `none` (default)
+1. **`cargo zkvm-test` (Recommended CLI Plugin)**:
+   A turnkey wrapper that:
+   - Dynamically selects the appropriate compiler toolchain (e.g. `+succinct` for `riscv64im-succinct-zkvm-elf`, `+risc0` for `riscv32im-risc0-zkvm-elf`).
+   - Executes `cargo test --no-run --message-format=json` with all forwarded cargo flags (`-p`, `--lib`, `--test`, `--release`, etc.).
+   - Streams JSON compiler artifacts and extracts executable ELFs.
+   - Executes each compiled ELF through `zkvm-test-runner` with full terminal formatting and status codes.
 
-The addition of "none" as the default simplies the arg into being always active, but by default it dosen't do anything. Which also means --prover can default to cpu and always be active; it just doens't need to do anything when the default proof mode is the one set. so "cargo zkvm-test --mode core" would make it execute the prover wihtout having to specify cpu (which will be the value 99% of the time.)
+2. **`zkvm-test-runner` (Target Runner)**:
+   Can be registered in `.cargo/config.toml` as a direct target runner:
 
-### Show cycle/memory deltas if previous run is stored, even if not asserting against regressions
+   ```toml
+   [target.riscv64im-succinct-zkvm-elf]
+   runner = "zkvm-test-runner"
+   ```
 
-We show this if we're using the flag to fail on regressions, but even if we don't have that flag let's show the deltas if we have them.
+   When configured this way, executing `cargo test --target riscv64im-succinct-zkvm-elf` automatically launches `zkvm-test-runner <elf-path>`.
 
-### Snapshot-like tests for public values
+### Toolchain & Target Auto-Detection
 
-We need a way to snapshot public values, store them, and assert against them in
-subsequent tests.
+The runner dynamically inspects the target triple to assign default toolchains without requiring manual environment variables:
+
+```rust
+pub const TARGET_VENDOR_SUCCINCT: &str = "succinct";
+pub const TARGET_VENDOR_RISC0: &str = "risc0";
+
+pub fn default_toolchain_for_target(target: &str) -> Option<&'static str> {
+    if target.contains(TARGET_VENDOR_SUCCINCT) {
+        Some("+succinct")
+    } else if target.contains(TARGET_VENDOR_RISC0) {
+        Some("+risc0")
+    } else {
+        None
+    }
+}
+```
+
+---
+
+## 4. The Two-Phase Binary IPC Protocol (`ZKVT`)
+
+To support test listing, filtering, and single-test execution without recompiling the ELF for every test, `zkvm-test` employs a lightweight binary protocol over standard zkVM input/output (`SP1Stdin` and `commit_slice`).
+
+### Protocol Constants & Header
+
+```rust
+pub const MAGIC: &[u8; 4] = b"ZKVT";
+pub const CMD_LIST: u8 = 0;
+pub const CMD_RUN: u8 = 1;
+
+pub const FLAG_IGNORE: u8             = 1 << 0; // 0x01
+pub const FLAG_SHOULD_PANIC: u8       = 1 << 1; // 0x02
+pub const FLAG_EXPECTED_EXIT_CODE: u8 = 1 << 2; // 0x04
+pub const FLAG_MAX_CYCLES: u8         = 1 << 3; // 0x08
+```
+
+### Phase 1: Test Discovery (`CMD_LIST`)
+
+Before running any test, the runner needs to know what tests exist, their names, and their attributes.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Host as zkvm-test-runner
+    participant Guest as zkVM Guest (ELF)
+
+    Host->>Guest: SP1Stdin: [MAGIC (4B)][CMD_LIST (1B)]
+    Guest->>Guest: test_runner reads stdin, matches MAGIC
+    Guest->>Guest: Serializes catalog into byte buffer
+    Guest->>Host: commit_slice(catalog_bytes)
+    Host->>Host: decode_test_list() -> Vec<TestDesc>
+```
+
+#### Catalog Binary Layout
+
+The public values committed by the guest in Phase 1 follow this exact binary layout:
+
+| Field | Type | Description |
+|---|---|---|
+| `count` | `u32` (LE) | Number of registered tests |
+| **For each test:** | | |
+| `flags` | `u8` | Bitmask of flags (`FLAG_IGNORE`, `FLAG_SHOULD_PANIC`, etc.) |
+| `expected_exit_code` | `u32` (LE) | *(Optional)* Present only if `flags & FLAG_EXPECTED_EXIT_CODE != 0` |
+| `max_cycles` | `u64` (LE) | *(Optional)* Present only if `flags & FLAG_MAX_CYCLES != 0` |
+| `name_len` | `u32` (LE) | Length of the test name string in bytes |
+| `name_bytes` | `[u8; name_len]` | UTF-8 encoded full path test name |
+
+### Phase 2: Isolated Execution (`CMD_RUN`)
+
+Once the host runner has filtered the tests (matching CLI filters, `--exact`, `--ignored`, etc.), it schedules parallel executions. For each test:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Host as zkvm-test-runner (Worker)
+    participant Guest as Isolated VM Instance
+
+    Host->>Guest: SP1Stdin: [MAGIC (4B)][CMD_RUN (1B)][test_name (UTF-8 bytes)]
+    Guest->>Guest: test_runner reads stdin, matches target name
+    Guest->>Guest: Executes test_fn()
+    Note over Guest: May emit stdout/stderr or panic
+    Guest-->>Host: VM completes or exits with code
+    Host->>Host: Record cycles, trace memory, stdout/stderr
+```
+
+If the guest panics or calls `exit(code)`, the VM process halts, but **only that single test instance terminates**. The host worker intercepts the exit code, correlates it against `expected_exit_code` or `should_panic`, and marks the test passed or failed.
+
+### Tier 1 Fallback (Legacy Libtest Compatibility)
+
+If an ELF was compiled without `zkvm-test` (a standard libtest runner binary), the input will not contain `b"ZKVT"`. The guest harness automatically falls back to sequential execution of all non-ignored tests, and the runner reports the global result.
+
+---
+
+## 5. Guest Registry & Macro System
+
+### Macro Expansion Architecture
+
+The `#[zkvm_test]` attribute macro (and its alias `#[test]` via `use zkvm_test::test;`) performs dual compilation depending on the target architecture:
+
+```rust
+#[zkvm_test(max_cycles = 1_000_000, should_panic)]
+fn test_critical_logic() { ... }
+```
+
+#### 1. Host Target (`not(target_os = "zkvm")`)
+
+Emits standard Rust `#[test]` attributes, preserving standard `cargo test` compatibility:
+
+```rust
+#[::core::prelude::v1::test]
+#[should_panic]
+fn test_critical_logic() { ... }
+```
+
+#### 2. zkVM Target (`target_os = "zkvm"`)
+
+Hooks into Rust's `#![custom_test_frameworks]` and emits a static `TestCase` struct:
+
+```rust
+fn test_critical_logic() { ... }
+
+#[test_case]
+static __ZKVM_TEST_CASE_test_critical_logic: ::zkvm_test::TestCase = ::zkvm_test::TestCase {
+    name: concat!(module_path!(), "::", "test_critical_logic"),
+    test_fn: test_critical_logic,
+    ignore: false,
+    should_panic: true,
+    expected_exit_code: ::core::option::Option::None,
+    max_cycles: ::core::option::Option::Some(1000000u64),
+};
+```
+
+Because `TestCase` uses `&'static str` and function pointers, the entire test catalog is constructed statically in ROM without any heap allocations (`no_std` friendly).
+
+---
+
+## 6. Execution Pipeline, Concurrency & Stream Capture
+
+### Concurrency Model
+
+Tests are scheduled across a Tokio async runtime bounded by a `tokio::sync::Semaphore`. Concurrency defaults to `std::thread::available_parallelism()` (or `--test-threads <N>`):
+
+```rust
+let semaphore = Arc::new(tokio::sync::Semaphore::new(args.test_threads));
+for test in tests_to_run {
+    let permit = semaphore.acquire().await.unwrap();
+    tokio::spawn(async move {
+        // Run isolated VM instance
+    });
+}
+```
+
+### Guest Output Interception
+
+Guest programs emit logs and panics via RISC-V `sys_write` (file descriptor `1` for stdout, `2` for stderr). The runner connects dedicated `tokio::sync::watch::channel` streams to each VM execution:
+
+```rust
+let (stdout_tx, stdout_rx) = tokio::sync::watch::channel(String::new());
+let (stderr_tx, stderr_rx) = tokio::sync::watch::channel(String::new());
+
+let res = prover.execute_test(Elf::from(elf_bytes), stdin, stdout_tx, stderr_tx).await;
+```
+
+- **Default Mode (Captured)**: Output is buffered in memory. If a test passes, output is suppressed to keep test logs readable.
+- **Failure Diagnostic Mode**: If a test fails, its captured stdout and stderr are woven directly into the failure diagnostic block.
+- **`--nocapture` Mode**: Sets concurrency to `1` (to prevent line interleaving) and immediately flushes stdout and stderr to the console.
+
+---
+
+## 7. Metrics, Profiling & Regression Gating
+
+### Cycles vs. Wall-Clock Time
+
+Wall-clock execution time varies widely based on CPU load, thermal throttling, and background tasks. `zkvm-test` treats **instruction cycles** (`report.total_instruction_count()`) as the primary unit of compute cost:
+
+- 100% deterministic across machines and CI runners.
+- Directly proportional to prover cost.
+
+### Deterministic Trace Memory Attribution
+
+Traditional host OS RSS (`getrusage`) is process-global. In concurrent multithreaded test runners, host RSS deltas between tests fluctuate wildly and can even be negative due to memory allocator page caching.
+
+`zkvm-test` solves memory attribution by extracting the zkVM's **exact execution trace record size**:
+
+```rust
+let record_bytes = report.total_record_size();
+```
+
+- Completely deterministic per test.
+- Reflects the exact memory footprint required by the zkVM STARK prover.
+- Peak host RSS is simultaneously tracked at the suite level via `memuse::rss_kb()`.
+
+### Hierarchical Sub-Routine Cycle Breakdown (`--profile`)
+
+When tests utilize `sp1_cycle::run_track("label", || ...)` inside guest code, SP1's cycle tracker records sub-routine costs. Passing `--profile` (or `--subcycles`) renders an ASCII tree breakdown:
+
+```text
+test zkpow_sha256::tests::subroutine_cycle_profiling_demonstration ... ok (460,283 cycles, trace: 129.96 MB)
+    ├── outer_pipeline: 386,802 cycles (84.0%) [1 call]
+    ├── second_hash_pass: 186,267 cycles (40.5%) [1 call]
+    └── first_hash_pass: 186,264 cycles (40.5%) [1 call]
+```
+
+### Baseline Comparison & CI Regression Gating
+
+Metrics can be snapshotted to disk and verified in CI:
+
+1. **Saving a Baseline**:
+   `cargo zkvm-test --save-baseline main`
+   Serializes all test metrics to `.zkvm-test-metrics/main.json`.
+2. **Comparing Against a Baseline**:
+   `cargo zkvm-test --compare-baseline main`
+   Renders a formatted variance table:
+
+   ```text
+   Baseline comparison against 'main':
+   Test Name                                                          Baseline        Current         Change
+   ----------------------------------------------------------------------------------------------------------
+   zkpow_core::tests::process_blocks_pipeline                       18,420,102     18,510,004          +0.5%
+   zkpow_sha256::tests::public_values_optimized_hash                   268,979        268,979           0.0%
+   ----------------------------------------------------------------------------------------------------------
+   ```
+
+3. **Automated CI Regression Gate**:
+   `cargo zkvm-test --compare-baseline main --fail-on-regression 5%`
+   If any test's cycle count increases by more than the specified percentage, the runner flags `[REGRESSION]` and exits with non-zero exit code `1`.
+
+---
+
+## 8. Multi-Backend Prover Support
+
+The runner abstracts prover execution behind `AnyProver`:
+
+| Prover Backend | Flag | Description | Typical Use Case |
+|---|---|---|---|
+| **Mock** | `--prover mock` (Default) | Emulates instruction execution without generating STARK proofs. | Fast local unit testing, cycle tracking, and CI checks. |
+| **CPU** | `--prover cpu` | Executes full local CPU STARK proving. | Local end-to-end proof verification. |
+| **CUDA** | `--prover cuda` | Leverages local NVIDIA GPU acceleration. | High-performance full proving and hardware stress tests. |
+
+Can also be set globally via environment variable `ZKVM_PROVER=cpu`.
+
+---
+
+## 9. Roadmap & Future Improvements
+
+### Improvements Round 1 (Completed)
+
+- [x] Optional `#[test]` alias for drop-in compatibility.
+- [x] Nextest-grade features: `--list`, `--exact`, `--ignored`, `--include-ignored`.
+- [x] First-class `cargo-zkvm-test` cargo plugin with automatic toolchain dispatch.
+- [x] Pluggable prover backend (`--prover mock|cpu|cuda` and `ZKVM_PROVER`).
+- [x] Guest stdout/stderr stream interception and failure log weaving.
+- [x] Cycle breakdown tree integration (`--profile` / `--subcycles`).
+- [x] Trace memory measurement (`report.total_record_size()`).
+- [x] Persistent metrics baselines (`--save-baseline`, `--compare-baseline`).
+- [x] CI performance regression gate with exit code 1 (`--fail-on-regression <N%>`).
+
+### Improvements Round 2 (Upcoming)
+
+#### Cycle-Aware Flamegraphs
+
+  Generate interactive SVG flamegraphs mapping cycles directly to source code lines.
+
+#### Proof Mode Control
+
+  Allow explicit proof modes: `core`, `compressed`, `groth16`, `plonk`, or `none` (default).
+
+#### Public Values / Snapshot Testing (Like `insta` for zkVM)
+
+- External verifiers care about what the guest commits (`commit_slice`).
+- Support snapshot testing:
+
+  ```rust
+  #[zkvm_test(snapshot = "snapshots/header_chain_epoch_1.bin")]
+  fn test_epoch_transition() {
+      // Commits public outputs via sp1_zkvm::io::commit
+  }
+  ```
+
+  The runner automatically diffs the committed public values against the golden snapshot on disk (with `--review` / `--accept` flags).
+
+#### Host-Injected Test Fixtures & Matrix Testing (Solving the "Data In/Out" Problem)
+
+**The Problem:** The plan notes that *"there's no good way to get data in and out so your test inputs generally need to be baked into the tests"*. Baking large test vectors (e.g., Bitcoin blocks, serialized transaction batches) directly into the test binary balloons the ELF size, slows compilation, and wastes zkVM memory.
+
+**The Solution:** Allow tests to declare host fixtures or parameter matrices:
+
+  ```rust
+  #[zkvm_test(fixture = "tests/fixtures/block_100k.bin")]
+  fn test_parse_block(data: &[u8]) {
+      let block = Block::parse(data).unwrap();
+      assert_eq!(block.header.height, 100_000);
+  }
+  ```
+
+**Mechanism:** In Phase 1 (`CMD_LIST`), the guest advertises required fixtures. In Phase 2 (`CMD_RUN`), the host runner reads the file from the host filesystem and streams it into the guest via `SP1Stdin` or RISC Zero's `ExecutorEnv`.
+
+**Result:** Clean, parameterized testing with zero ELF bloat.
+
+#### Dual Execution Parity Mode (`--parity`)
+
+- A major class of zkVM bugs stems from disparities between 64-bit host native targets and 32-bit/64-bit RISC-V targets (e.g., pointer sizing, unaligned memory access, precompile acceleration vs. software fallback).
+- A `--parity` flag would run the test **both** on the host native CPU and in the zkVM emulator, asserting that:
+  1. Both pass (or both fail with identical reasons).
+  2. Both produce byte-identical public committed outputs.
+
+#### Crash Forensics & DWARF Stack Trace Symbolization
+
+- When a test panics or triggers an illegal instruction in the VM, standard output often yields only an unhelpful exit code or bare PC address.
+- Using `addr2line` and the compiled ELF's DWARF symbol table, the runner can translate the guest crash PC into source file and line numbers, printing a symbolized stack trace on failure.
+
+#### Granular Instruction Category Profiling Table
+
+- Both SP1 and RISC Zero track instruction categories (ALU, Memory Load/Store, Branch, Syscalls).
+- In verbose mode (`--profile` or `-v`), display a compact breakdown table:
+
+  ```text
+  test test_verify_header ... ok (42,150 cycles)
+  ┌───────────┬─────────┬────────┐
+  │ Category  │ Cycles  │ %      │
+  ├───────────┼─────────┼────────┤
+  │ ALU       │ 18,200  │ 43.2%  │
+  │ Memory    │ 14,100  │ 33.5%  │
+  │ Syscalls  │  8,400  │ 19.9%  │ (sha256_compress: 2 calls)
+  │ Branch    │  1,450  │  3.4%  │
+  └───────────┴─────────┴────────┘
+  ```
+
+#### CI & Machine-Readable Output (Nextest / JUnit / GitHub Actions)
+
+- Implement `--format json` and `--junit-path <file>`.
+- In GitHub Actions, automatically output workflow commands (`::error file=... line=...::`) and generate a Markdown cycle comparison summary table in PR comments.
+
+#### RISC Zero Backend Support
+
+  Bring the two-phase `ZKVT` protocol and runner architecture to `riscv32im-risc0-zkvm-elf`.
+
+---
