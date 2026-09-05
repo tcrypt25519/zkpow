@@ -14,3 +14,7 @@ test-networks = []
 [dependencies]
 zkpow-types = { workspace = true }
 sha256_const = { workspace = true }
+
+[dev-dependencies]
+zkvm-test = { workspace = true }
+

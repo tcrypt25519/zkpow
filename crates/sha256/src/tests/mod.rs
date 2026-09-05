@@ -152,4 +152,114 @@ fn test_genesis_header_hash_snapshot() {
     zkvm_test::commit_slice(&hash);
 }
 
+fn reference_sha256d(bytes: &[u8]) -> [u8; 32] {
+    let first = Sha256::digest(bytes);
+    let second = Sha256::digest(first);
+    second.into()
+}
+
+fn build_wire_header(
+    version: u32,
+    prev_blockhash: [u8; 32],
+    merkle_root: [u8; 32],
+    timestamp: u32,
+    compact_target: u32,
+    nonce: u32,
+) -> [u8; 80] {
+    let mut out = [0u8; 80];
+    out[0..4].copy_from_slice(&version.to_le_bytes());
+    out[4..36].copy_from_slice(&prev_blockhash);
+    out[36..68].copy_from_slice(&merkle_root);
+    out[68..72].copy_from_slice(&timestamp.to_le_bytes());
+    out[72..76].copy_from_slice(&compact_target.to_le_bytes());
+    out[76..80].copy_from_slice(&nonce.to_le_bytes());
+    out
+}
+
+#[test]
+fn public_values_bit_flip_sensitivity_test() {
+    let base: [u8; 185] = core::array::from_fn(|i| (i.wrapping_mul(37) ^ 0x5a) as u8);
+    let base_hash = of_public_values(&base[..152], &base[152..184], base[184]);
+
+    // Test sensitivity across key boundary positions
+    let probe_indices = [0, 15, 63, 64, 127, 128, 151, 152, 170, 183, 184];
+
+    for &idx in &probe_indices {
+        for bit in 0..8 {
+            let mut mutated = base;
+            mutated[idx] ^= 1 << bit;
+
+            let mutated_hash = of_public_values(&mutated[..152], &mutated[152..184], mutated[184]);
+            assert_ne!(
+                mutated_hash, base_hash,
+                "bit flip at byte {idx}, bit {bit} did not change public values hash"
+            );
+
+            let expected_ref: [u8; 32] = Sha256::digest(mutated).into();
+            assert_eq!(
+                mutated_hash, expected_ref,
+                "mutated hash at byte {idx}, bit {bit} does not match reference Sha256"
+            );
+        }
+    }
+}
+
+#[test]
+fn of_header_differential_testing_against_reference_sha256d() {
+    let test_cases = [
+        // All zeros
+        (0u32, [0u8; 32], [0u8; 32], 0u32, 0u32, 0u32),
+        // All ones
+        (u32::MAX, [0xFFu8; 32], [0xFFu8; 32], u32::MAX, u32::MAX, u32::MAX),
+        // Alternating bit patterns
+        (0x5555_5555, [0xAAu8; 32], [0x55u8; 32], 0xAAAA_AAAA, 0x1d00_ffff, 0x1234_5678),
+        // High timestamp & low target
+        (2, [0x01u8; 32], [0x02u8; 32], 0x7FFF_FFFF, 0x1b04_04cb, 100_000),
+    ];
+
+    for (v, prev, mr, ts, target, nonce) in test_cases {
+        let wire = build_wire_header(v, prev, mr, ts, target, nonce);
+        let expected = reference_sha256d(&wire);
+        let actual = of_header(v, prev, mr, ts, target, nonce);
+        assert_eq!(actual, expected, "of_header mismatch for version {v}");
+    }
+
+    // Pseudo-random fuzz loop (deterministic PRNG)
+    let mut seed = 0x1234_5678_9abc_def0u64;
+    let mut next_u32 = || {
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+        (seed >> 32) as u32
+    };
+
+    for _ in 0..10 {
+        let v = next_u32();
+        let prev = core::array::from_fn(|_| next_u32() as u8);
+        let mr = core::array::from_fn(|_| next_u32() as u8);
+        let ts = next_u32();
+        let target = next_u32();
+        let nonce = next_u32();
+
+        let wire = build_wire_header(v, prev, mr, ts, target, nonce);
+        let expected = reference_sha256d(&wire);
+        let actual = of_header(v, prev, mr, ts, target, nonce);
+        assert_eq!(actual, expected, "of_header fuzz mismatch for seed {seed}");
+    }
+}
+
+#[test]
+fn word_extraction_helpers_match_le_be_definitions() {
+    use crate::{be_u64_from_slice, word_from_bytes, word_from_le_u32};
+
+    let slice = [0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0];
+    assert_eq!(be_u64_from_slice(&slice, 0), 0x12345678);
+    assert_eq!(be_u64_from_slice(&slice, 1), 0x9abcdef0);
+
+    let le_val = 0x12345678u32;
+    assert_eq!(word_from_le_u32(le_val), 0x78563412);
+
+    assert_eq!(word_from_bytes(&slice, 0), 0x12345678);
+    assert_eq!(word_from_bytes(&slice, 1), 0x9abcdef0);
+}
+
+
 

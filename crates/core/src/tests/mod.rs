@@ -1,4 +1,6 @@
-use alloc::vec::Vec;
+use alloc::{vec, vec::Vec};
+
+
 
 use zkvm_test::zkvm_test;
 
@@ -951,4 +953,324 @@ fn ordered_window_median_boundary_holds_deep_in_a_batch() {
 }
 
 #[zkvm_test]
-fn apply_headers_from_genesis_requires_at_least_ten_headers() {}
+fn apply_headers_from_genesis_requires_at_least_ten_headers() {
+    let mut state = test_state();
+    let headers = vec![
+        HeaderInput {
+            version:     1,
+            merkle_root: [0; 32],
+            timestamp:   ts(100),
+            nonce:       0,
+        };
+        9
+    ];
+    let err = state.apply_headers_from_genesis::<TestConsensus>(&headers, &[]).unwrap_err();
+    assert_eq!(
+        err,
+        ApplyError::InsufficientColdHeaders {
+            required: 10,
+            actual:   9,
+        }
+    );
+}
+
+#[zkvm_test]
+fn state_and_header_input_layout_and_offsets() {
+    assert_eq!(core::mem::size_of::<State>(), 152);
+    assert_eq!(core::mem::align_of::<State>(), 8);
+
+    assert_eq!(core::mem::size_of::<HeaderInput>(), 44);
+    assert_eq!(core::mem::align_of::<HeaderInput>(), 4);
+
+    let state = State {
+        chain_work: ChainWork::from_limbs([1, 2, 3, 4]),
+        genesis_hash: BlockHash::new([0x11; 32]),
+        block_hash: BlockHash::new([0x22; 32]),
+        height: 42,
+        current_nbits: CompactTarget::new(0x1d00ffff),
+        epoch_timestamp: BlockTimestamp::new(1000),
+        timestamps: [BlockTimestamp::new(2000); WINDOW_SIZE],
+    };
+    let bytes = state.to_bytes();
+    assert_eq!(bytes.len(), 152);
+    let parsed: &State = bytemuck::from_bytes(&bytes);
+    assert_eq!(*parsed, state);
+}
+
+#[zkvm_test]
+fn retargeting_clamping_upper_and_lower_bounds() {
+    let old_target = Target::from_limbs([0, 0, 0, 0x0000_0000_7FFF_0000]);
+
+    // 100 days vs 56 days (clamped upper bound: 4x expected timespan)
+    let (_, target_100_days, work_100_days) =
+        calculate_next_target_required::<TestConsensus>(old_target, ts(0), ts(100 * 86400));
+    let (_, target_56_days, work_56_days) =
+        calculate_next_target_required::<TestConsensus>(old_target, ts(0), ts(56 * 86400));
+    assert_eq!(
+        target_100_days, target_56_days,
+        "timespan > 4x must clamp to 4x"
+    );
+    assert_eq!(work_100_days, work_56_days);
+
+    // 1 day vs 3.5 days (clamped lower bound: 0.25x expected timespan)
+    let (_, target_1_day, work_1_day) =
+        calculate_next_target_required::<TestConsensus>(old_target, ts(0), ts(86400));
+    let (_, target_quarter, work_quarter) =
+        calculate_next_target_required::<TestConsensus>(old_target, ts(0), ts(302400));
+    assert_eq!(
+        target_1_day, target_quarter,
+        "timespan < 0.25x must clamp to 0.25x"
+    );
+    assert_eq!(work_1_day, work_quarter);
+
+    // Excessively slow retarget clamped to genesis pow_limit
+    let slow_target = Target::from_limbs([0, 0, 0, 0x0000_0000_FFFF_0000]);
+    let (nbits_clamped, target_clamped, _) =
+        calculate_next_target_required::<TestConsensus>(slow_target, ts(0), ts(56 * 86400));
+    assert_eq!(nbits_clamped, CompactTarget::new(GENESIS_NBITS));
+    assert_eq!(target_clamped, GENESIS_TARGET);
+}
+
+fn parse_hex_byte(s: &[u8]) -> u8 {
+    let hi = match s[0] {
+        b'0'..=b'9' => s[0] - b'0',
+        b'a'..=b'f' => s[0] - b'a' + 10,
+        b'A'..=b'F' => s[0] - b'A' + 10,
+        _ => panic!("invalid hex"),
+    };
+    let lo = match s[1] {
+        b'0'..=b'9' => s[1] - b'0',
+        b'a'..=b'f' => s[1] - b'a' + 10,
+        b'A'..=b'F' => s[1] - b'A' + 10,
+        _ => panic!("invalid hex"),
+    };
+    (hi << 4) | lo
+}
+
+fn parse_hex_32_str(s: &str) -> [u8; 32] {
+    let bytes = s.as_bytes();
+    let mut out = [0u8; 32];
+    for i in 0..32 {
+        out[i] = parse_hex_byte(&bytes[i * 2..i * 2 + 2]);
+    }
+    out
+}
+
+fn parse_u32_str(s: &str) -> u32 {
+    let mut val = 0u32;
+    for &b in s.as_bytes() {
+        val = val * 10 + (b - b'0') as u32;
+    }
+    val
+}
+
+#[allow(dead_code)]
+struct ParsedBlock {
+    expected_hash: BlockHash,
+    version:        u32,
+    prev_blockhash: BlockHash,
+    merkle_root:    [u8; 32],
+    timestamp:      u32,
+    compact_target: u32,
+    nonce:          u32,
+}
+
+fn parse_fixture_blocks(fixture_str: &str) -> Vec<ParsedBlock> {
+    let mut blocks = Vec::new();
+    for line in fixture_str.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let mut parts = trimmed.split_whitespace();
+        let expected_hash = BlockHash::new(parse_hex_32_str(parts.next().unwrap()));
+        let version = parse_u32_str(parts.next().unwrap());
+        let prev_blockhash = BlockHash::new(parse_hex_32_str(parts.next().unwrap()));
+        let merkle_root = parse_hex_32_str(parts.next().unwrap());
+        let timestamp = parse_u32_str(parts.next().unwrap());
+        let compact_target = parse_u32_str(parts.next().unwrap());
+        let nonce = parse_u32_str(parts.next().unwrap());
+        blocks.push(ParsedBlock {
+            expected_hash,
+            version,
+            prev_blockhash,
+            merkle_root,
+            timestamp,
+            compact_target,
+            nonce,
+        });
+    }
+    blocks
+}
+
+#[zkvm_test(fixture = "headers_fixture.bin")]
+fn test_real_bitcoin_header_chain_unmocked_verification() {
+    let fixture_str = zkvm_test::fixture_str();
+    let blocks = parse_fixture_blocks(&fixture_str);
+    assert_eq!(blocks.len(), 50, "fixture must contain genesis + 49 blocks");
+
+    // Genesis is block 0
+    let genesis = &blocks[0];
+    assert_eq!(genesis.expected_hash, TestConsensus::GENESIS_HASH);
+
+    let mut state = State {
+        chain_work:      ChainWork::from_limbs(*TestConsensus::PARAMS.genesis_work.as_limbs()),
+        genesis_hash:    TestConsensus::GENESIS_HASH,
+        block_hash:      TestConsensus::GENESIS_HASH,
+        height:          0,
+        current_nbits:   TestConsensus::PARAMS.genesis.compact_target,
+        epoch_timestamp: TestConsensus::PARAMS.genesis.timestamp,
+        timestamps:      {
+            let mut arr = [BlockTimestamp::new(0); WINDOW_SIZE];
+            arr[0] = TestConsensus::PARAMS.genesis.timestamp;
+            arr
+        },
+    };
+
+    // Blocks 1..50 (49 headers)
+    let header_inputs: Vec<HeaderInput> = blocks[1..50]
+        .iter()
+        .map(|b| HeaderInput {
+            version:     b.version,
+            merkle_root: b.merkle_root,
+            timestamp:   BlockTimestamp::new(b.timestamp),
+            nonce:       b.nonce,
+        })
+        .collect();
+
+    let hints = median_hints_for_headers(&state, &header_inputs);
+
+    // NOTICE: NO MOCK! This verifies real SHA-256 and real PoW across all 49 blocks!
+    state
+        .apply_headers_from_genesis::<TestConsensus>(&header_inputs, &hints)
+        .expect("all 49 real Bitcoin headers must validate without mocks");
+
+    assert_eq!(state.height, 49);
+    assert_eq!(state.block_hash, blocks[49].expected_hash);
+
+    // 50 blocks total (genesis + 49) at 0x1d00ffff
+    let expected_work = ChainWork::from_limbs([0x0000_0001_0001_0001 * 50, 0, 0, 0]);
+    assert_eq!(state.chain_work, expected_work);
+}
+
+
+#[zkvm_test(fixture = "headers_fixture.bin")]
+fn test_unmocked_pow_insufficient_rejection() {
+    let fixture_str = zkvm_test::fixture_str();
+    let blocks = parse_fixture_blocks(&fixture_str);
+
+    let mut state = State {
+        chain_work:      ChainWork::from_limbs(*TestConsensus::PARAMS.genesis_work.as_limbs()),
+        genesis_hash:    TestConsensus::GENESIS_HASH,
+        block_hash:      TestConsensus::GENESIS_HASH,
+        height:          0,
+        current_nbits:   TestConsensus::PARAMS.genesis.compact_target,
+        epoch_timestamp: TestConsensus::PARAMS.genesis.timestamp,
+        timestamps:      {
+            let mut arr = [BlockTimestamp::new(0); WINDOW_SIZE];
+            arr[0] = TestConsensus::PARAMS.genesis.timestamp;
+            arr
+        },
+    };
+
+    // Take 10 headers but corrupt the first header's nonce so PoW fails
+    let mut header_inputs: Vec<HeaderInput> = blocks[1..=10]
+        .iter()
+        .map(|b| HeaderInput {
+            version:     b.version,
+            merkle_root: b.merkle_root,
+            timestamp:   BlockTimestamp::new(b.timestamp),
+            nonce:       b.nonce,
+        })
+        .collect();
+    header_inputs[0].nonce ^= 0x1234_5678;
+
+    let hints = median_hints_for_headers(&state, &header_inputs);
+
+    let err = state
+        .apply_headers_from_genesis::<TestConsensus>(&header_inputs, &hints)
+        .unwrap_err();
+    assert!(matches!(err, ApplyError::PowInsufficient { height: 1, .. }));
+}
+
+#[zkvm_test(fixture = "headers_fixture.bin")]
+fn test_unmocked_prev_blockhash_mismatch_rejection() {
+    let fixture_str = zkvm_test::fixture_str();
+    let blocks = parse_fixture_blocks(&fixture_str);
+
+    // Set an invalid parent block hash in the state
+    let mut state = State {
+        chain_work:      ChainWork::from_limbs(*TestConsensus::PARAMS.genesis_work.as_limbs()),
+        genesis_hash:    TestConsensus::GENESIS_HASH,
+        block_hash:      BlockHash::new([0xAA; 32]), // Mismatched parent hash!
+        height:          0,
+        current_nbits:   TestConsensus::PARAMS.genesis.compact_target,
+        epoch_timestamp: TestConsensus::PARAMS.genesis.timestamp,
+        timestamps:      {
+            let mut arr = [BlockTimestamp::new(0); WINDOW_SIZE];
+            arr[0] = TestConsensus::PARAMS.genesis.timestamp;
+            arr
+        },
+    };
+
+    let header_inputs: Vec<HeaderInput> = blocks[1..=10]
+        .iter()
+        .map(|b| HeaderInput {
+            version:     b.version,
+            merkle_root: b.merkle_root,
+            timestamp:   BlockTimestamp::new(b.timestamp),
+            nonce:       b.nonce,
+        })
+        .collect();
+
+    let hints = median_hints_for_headers(&state, &header_inputs);
+
+    // Because block_hash != genesis_hash, the computed SHA256 of block 1 will not match block 1's valid hash
+    // and PoW will fail for target 0x1d00ffff
+    let err = state
+        .apply_headers_from_genesis::<TestConsensus>(&header_inputs, &hints)
+        .unwrap_err();
+    assert!(matches!(err, ApplyError::PowInsufficient { height: 1, .. }));
+}
+
+#[zkvm_test(fixture = "headers_fixture.bin")]
+fn test_timestamp_not_greater_than_median_rejection() {
+    let fixture_str = zkvm_test::fixture_str();
+    let blocks = parse_fixture_blocks(&fixture_str);
+
+    let mut state = State {
+        chain_work:      ChainWork::from_limbs(*TestConsensus::PARAMS.genesis_work.as_limbs()),
+        genesis_hash:    TestConsensus::GENESIS_HASH,
+        block_hash:      TestConsensus::GENESIS_HASH,
+        height:          0,
+        current_nbits:   TestConsensus::PARAMS.genesis.compact_target,
+        epoch_timestamp: TestConsensus::PARAMS.genesis.timestamp,
+        timestamps:      {
+            let mut arr = [BlockTimestamp::new(0); WINDOW_SIZE];
+            arr[0] = TestConsensus::PARAMS.genesis.timestamp;
+            arr
+        },
+    };
+
+    let mut header_inputs: Vec<HeaderInput> = blocks[1..=10]
+        .iter()
+        .map(|b| HeaderInput {
+            version:     b.version,
+            merkle_root: b.merkle_root,
+            timestamp:   BlockTimestamp::new(b.timestamp),
+            nonce:       b.nonce,
+        })
+        .collect();
+
+    // Set header 1's timestamp to genesis timestamp (1231006505), which is <= median
+    header_inputs[0].timestamp = TestConsensus::PARAMS.genesis.timestamp;
+
+    let _mock_guard = set_hash_success();
+    let hints = median_hints_for_headers(&state, &header_inputs);
+
+    let err = state
+        .apply_headers_from_genesis::<TestConsensus>(&header_inputs, &hints)
+        .unwrap_err();
+    assert!(matches!(err, ApplyError::TimestampTooOld { height: 1, .. }));
+}
+

@@ -1,7 +1,7 @@
 extern crate alloc;
 use alloc::string::ToString;
-
-use zkvm_test::zkvm_test;
+use bytemuck::PodCastError;
+use zkvm_test::test;
 
 use crate::{BlockHash, BlockTimestamp, CompactTarget, Header};
 
@@ -16,23 +16,62 @@ fn sample() -> Header {
     }
 }
 
-/// `to_bytes_const` respells the layout that `as_bytes` gets from `repr(C)`. If they ever drift,
-/// every network's genesis hash silently changes.
-#[zkvm_test]
+#[test]
 fn header_serializations_agree() {
     let header = sample();
     assert_eq!(header.to_bytes_const().as_slice(), header.as_bytes());
     assert_eq!(header.as_bytes().len(), Header::SIZE);
 }
 
-#[zkvm_test]
+#[test]
 fn header_round_trips_through_parse() {
     let header = sample();
     assert_eq!(Header::parse(header.as_bytes()).unwrap(), &header);
 }
 
+#[test]
+fn header_parse_rejects_invalid_slices() {
+    let header = sample();
+    let wire = header.as_bytes();
+
+    // Truncated by 1 byte
+    let short = &wire[..79];
+    assert!(matches!(
+        Header::parse(short),
+        Err(PodCastError::SizeMismatch)
+    ));
+
+    // Empty slice
+    assert!(matches!(
+        Header::parse(&[]),
+        Err(PodCastError::SizeMismatch)
+    ));
+
+    // Trailing slop (81 bytes)
+    let mut slop = alloc::vec::Vec::from(wire);
+    slop.push(0x00);
+    assert!(matches!(
+        Header::parse(&slop),
+        Err(PodCastError::SizeMismatch)
+    ));
+
+}
+
+#[test]
+fn header_wire_offsets_match_bitcoin_protocol() {
+    let header = sample();
+    let bytes = header.as_bytes();
+
+    assert_eq!(&bytes[0..4], &0x1122_3344u32.to_le_bytes());
+    assert_eq!(&bytes[4..36], &[0x55; 32]);
+    assert_eq!(&bytes[36..68], &[0x66; 32]);
+    assert_eq!(&bytes[68..72], &0x7788_99aau32.to_le_bytes());
+    assert_eq!(&bytes[72..76], &0x1d00_ffffu32.to_le_bytes());
+    assert_eq!(&bytes[76..80], &0xdead_beefu32.to_le_bytes());
+}
+
 /// Mainnet block 1, whose hash is `00000000839a8e...` in display order.
-#[zkvm_test]
+#[test]
 fn block_hash_is_sha256d_of_the_wire_bytes() {
     let header = Header {
         version:        1,

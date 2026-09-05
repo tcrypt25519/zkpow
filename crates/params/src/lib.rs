@@ -8,6 +8,8 @@
 //! (`Mainnet::PARAMS.genesis`, `Mainnet::GENESIS_HASH`) rather than re-declaring them.
 
 #![no_std]
+#![cfg_attr(all(test, target_os = "zkvm"), feature(custom_test_frameworks))]
+#![cfg_attr(all(test, target_os = "zkvm"), test_runner(zkvm_test::test_runner))]
 
 use zkpow_types::{BlockHash, BlockTimestamp, BlockWork, CompactTarget, Header, Target};
 
