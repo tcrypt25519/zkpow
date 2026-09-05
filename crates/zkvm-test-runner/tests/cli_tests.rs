@@ -7,6 +7,9 @@ fn cargo_zkvm_test_cmd() -> Command {
     if let Some(ws_root) = manifest_dir.parent().and_then(|p| p.parent()) {
         cmd.current_dir(ws_root);
     }
+    // Help output is asserted verbatim, so a developer shell forcing color must not
+    // inject ANSI escapes between the words.
+    cmd.env_remove("CLICOLOR_FORCE").env("NO_COLOR", "1");
     cmd
 }
 
@@ -111,4 +114,22 @@ fn test_cargo_zkvm_test_junit_export() {
     assert!(content.contains("tests=\"1\""), "One test expected in suite");
     assert!(content.contains("name=\"zkpow_sha256::tests::test_genesis_header_hash_snapshot\""), "Testcase expected");
     assert!(content.contains("<property name=\"cycles\""), "Cycle property expected");
+}
+
+#[test]
+fn test_zkvm_test_runner_rejects_bad_flag_value() {
+    let mut cmd = Command::cargo_bin("zkvm-test-runner").unwrap();
+    cmd.args(["/path/does/not/exist/test.elf", "--test-threads=zero"]);
+    cmd.assert()
+        .code(2)
+        .stderr(predicate::str::contains("--test-threads expects a positive integer"));
+}
+
+#[test]
+fn test_cargo_zkvm_test_subcycles_alias_reaches_runner() {
+    let mut cmd = cargo_zkvm_test_cmd();
+    cmd.args(["-p", "zkpow-sha256", "-E", "test(genesis)", "--subcycles"]);
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("Instruction Categories:"));
 }

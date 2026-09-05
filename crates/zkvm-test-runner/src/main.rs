@@ -14,7 +14,13 @@ use zkvm_test_runner::runner::{parse_args_from, run};
 
 #[tokio::main]
 async fn main() {
-    let args = parse_args_from(std::env::args().skip(1));
+    let args = match parse_args_from(std::env::args().skip(1)) {
+        Ok(args) => args,
+        Err(err) => {
+            eprintln!("{err}");
+            std::process::exit(2);
+        },
+    };
     let exit_code = run(args).await;
     if exit_code != 0 {
         std::process::exit(exit_code);

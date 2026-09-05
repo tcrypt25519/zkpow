@@ -1,23 +1,22 @@
-use std::{sync::Arc, time::Instant};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Instant,
+};
 
 use sp1_sdk::{prelude::*, Elf, ProverClient, SP1Stdin};
-
-pub const MAGIC: &[u8; 4] = b"ZKVT";
-pub const CMD_LIST: u8 = 0;
-pub const CMD_RUN: u8 = 1;
-
-pub const FLAG_IGNORE: u8 = 1 << 0;
-pub const FLAG_SHOULD_PANIC: u8 = 1 << 1;
-pub const FLAG_EXPECTED_EXIT_CODE: u8 = 1 << 2;
-pub const FLAG_MAX_CYCLES: u8 = 1 << 3;
-pub const FLAG_FIXTURE: u8 = 1 << 4;
-pub const FLAG_SNAPSHOT: u8 = 1 << 5;
+pub use zkvm_test::{
+    CMD_LIST, CMD_RUN, FLAG_EXPECTED_EXIT_CODE, FLAG_FIXTURE, FLAG_IGNORE, FLAG_MAX_CYCLES,
+    FLAG_SHOULD_PANIC, FLAG_SNAPSHOT, MAGIC,
+};
 
 pub const METRICS_DIR: &str = ".zkvm-test-metrics";
 pub const DEFAULT_BASELINE_NAME: &str = "default";
 pub const DEFAULT_PROVER: &str = "mock";
 pub const PROVER_ENV_VAR: &str = "ZKVM_PROVER";
 const DEFAULT_CONCURRENCY: usize = 4;
+/// Syscall rows printed per test under `--profile` / `--instructions`.
+const TOP_SYSCALL_COUNT: usize = 5;
 
 #[derive(Debug, Clone)]
 pub struct TestDesc {
@@ -83,7 +82,7 @@ pub struct RunnerArgs {
     pub package_graph:      Option<Arc<guppy::graph::PackageGraph>>,
 }
 
-pub fn parse_args_from<I, T>(iter: I) -> RunnerArgs
+pub fn parse_args_from<I, T>(iter: I) -> Result<RunnerArgs, String>
 where
     I: IntoIterator<Item = T>,
     T: Into<String>,
@@ -97,18 +96,29 @@ where
     };
 
     let Some(elf) = raw_args.next() else {
-        eprintln!("usage: zkvm-test-runner <elf-path> [filters/flags...]");
-        std::process::exit(2);
+        return Err("missing <elf-path>\nusage: zkvm-test-runner <elf-path> [filters/flags...]".to_string());
     };
     args.elf_path = elf;
 
     let mut iter = raw_args.peekable();
     while let Some(arg) = iter.next() {
+        if !arg.starts_with('-') {
+            args.filters.push(arg);
+            continue;
+        }
+
         let (key, mut inline_val) = match arg.split_once('=') {
             Some((k, v)) => (k, Some(v.to_string())),
             None => (arg.as_str(), None),
         };
-        let mut next_val = || inline_val.take().or_else(|| iter.next());
+        // A value flag takes `--flag=value` or the next argument; running out is an error
+        // rather than a silently defaulted flag.
+        let mut next_val = || {
+            inline_val
+                .take()
+                .or_else(|| iter.next())
+                .ok_or_else(|| format!("{key} expects a value"))
+        };
 
         match key {
             "--list" => args.list = true,
@@ -116,70 +126,47 @@ where
             "--ignored" => args.ignored = true,
             "--include-ignored" => args.include_ignored = true,
             "--nocapture" | "--no-capture" => args.nocapture = true,
-            "--profile" => args.profile = true,
+            "--profile" | "--subcycles" => args.profile = true,
             "--instructions" | "--opcodes" => args.instructions = true,
-            "--mode" | "--proof-mode" => {
-                args.mode = next_val();
-            },
-            "-E" | "--expr" | "--filter-expr" => {
-                args.filter_expr = next_val();
-            },
-            "--junit-path" => {
-                args.junit_path = next_val();
-            },
-            "--package-id" => {
-                args.package_id = next_val();
-            },
-            "--target-name" => {
-                args.target_name = next_val();
-            },
-            "--target-kind" => {
-                args.target_kind = next_val();
-            },
             "--accept-snapshots" | "--update-snapshots" => args.accept_snapshots = true,
             "-q" | "--quiet" => args.quiet = true,
+            "--mode" | "--proof-mode" => args.mode = Some(next_val()?),
+            "-E" | "--expr" | "--filter-expr" => args.filter_expr = Some(next_val()?),
+            "--junit-path" => args.junit_path = Some(next_val()?),
+            "--package-id" => args.package_id = Some(next_val()?),
+            "--target-name" => args.target_name = Some(next_val()?),
+            "--target-kind" => args.target_kind = Some(next_val()?),
+            "--prover" => args.prover = Some(next_val()?),
+            "--compare-baseline" => args.compare_baseline = Some(next_val()?),
             "--test-threads" => {
-                if let Some(val) = next_val() {
-                    if let Ok(n) = val.parse::<usize>() {
-                        args.test_threads = n.max(1);
-                    }
-                }
-            },
-            "--prover" => {
-                args.prover = next_val();
-            },
-            "--save-baseline" => {
-                args.save_baseline = inline_val.or_else(|| {
-                    if let Some(next) = iter.peek() {
-                        if !next.starts_with('-') {
-                            return iter.next();
-                        }
-                    }
-                    Some(DEFAULT_BASELINE_NAME.to_string())
-                });
-            },
-            "--compare-baseline" => {
-                args.compare_baseline = next_val();
+                let val = next_val()?;
+                args.test_threads = match val.parse::<usize>() {
+                    Ok(n) if n > 0 => n,
+                    _ => return Err(format!("--test-threads expects a positive integer, got '{val}'")),
+                };
             },
             "--fail-on-regression" => {
-                if let Some(val) = next_val() {
-                    let cleaned = val.trim_end_matches('%');
-                    if let Ok(pct) = cleaned.parse::<f64>() {
-                        args.fail_on_regression = Some(pct);
-                    }
-                }
+                let val = next_val()?;
+                args.fail_on_regression = match val.trim_end_matches('%').parse::<f64>() {
+                    Ok(pct) if pct.is_finite() => Some(pct),
+                    _ => return Err(format!("--fail-on-regression expects a percentage, got '{val}'")),
+                };
+            },
+            "--save-baseline" => {
+                // The name is optional: `--save-baseline` alone saves over the default.
+                args.save_baseline = inline_val.or_else(|| {
+                    iter.next_if(|next| !next.starts_with('-'))
+                        .or_else(|| Some(DEFAULT_BASELINE_NAME.to_string()))
+                });
             },
             "--color" => {
-                let _ = next_val();
+                let _ = next_val()?;
             },
             s if s.starts_with("--format") || s.starts_with("-Z") || s == "--show-output" => {
                 // Ignore standard libtest formatting flags
             },
-            s if s.starts_with('-') => {
-                // Ignore unknown flags for forward compatibility with cargo
-            },
             _ => {
-                args.filters.push(arg);
+                // Ignore unknown flags for forward compatibility with cargo
             },
         }
     }
@@ -188,7 +175,7 @@ where
         args.test_threads = 1;
     }
 
-    args
+    Ok(args)
 }
 
 pub struct ByteReader<'a> {
@@ -199,10 +186,6 @@ pub struct ByteReader<'a> {
 impl<'a> ByteReader<'a> {
     pub const fn new(data: &'a [u8]) -> Self {
         Self { data, offset: 0 }
-    }
-
-    pub const fn remaining(&self) -> usize {
-        self.data.len().saturating_sub(self.offset)
     }
 
     pub fn read_u8(&mut self) -> Option<u8> {
@@ -234,45 +217,36 @@ impl<'a> ByteReader<'a> {
         let bytes = self.read_bytes(len)?;
         std::str::from_utf8(bytes).ok().map(String::from)
     }
-
-    pub fn read_conditional_u32_le(&mut self, condition: bool) -> Option<Option<u32>> {
-        if condition {
-            self.read_u32_le().map(Some)
-        } else {
-            Some(None)
-        }
-    }
-
-    pub fn read_conditional_u64_le(&mut self, condition: bool) -> Option<Option<u64>> {
-        if condition {
-            self.read_u64_le().map(Some)
-        } else {
-            Some(None)
-        }
-    }
-
-    pub fn read_conditional_len_prefixed_str(&mut self, condition: bool) -> Option<Option<String>> {
-        if condition {
-            self.read_len_prefixed_str().map(Some)
-        } else {
-            Some(None)
-        }
-    }
 }
 
 impl TestDesc {
+    /// Mirror of `zkvm_test::TestCase::encode`; the field order is the wire contract.
     pub fn decode(reader: &mut ByteReader) -> Option<Self> {
         let flags = reader.read_u8()?;
-        let expected_exit_code = reader.read_conditional_u32_le((flags & FLAG_EXPECTED_EXIT_CODE) != 0)?;
-        let max_cycles = reader.read_conditional_u64_le((flags & FLAG_MAX_CYCLES) != 0)?;
-        let fixture = reader.read_conditional_len_prefixed_str((flags & FLAG_FIXTURE) != 0)?;
-        let snapshot = reader.read_conditional_len_prefixed_str((flags & FLAG_SNAPSHOT) != 0)?;
+        let present = |flag: u8| (flags & flag) != 0;
+
+        let expected_exit_code = match present(FLAG_EXPECTED_EXIT_CODE) {
+            true => Some(reader.read_u32_le()?),
+            false => None,
+        };
+        let max_cycles = match present(FLAG_MAX_CYCLES) {
+            true => Some(reader.read_u64_le()?),
+            false => None,
+        };
+        let fixture = match present(FLAG_FIXTURE) {
+            true => Some(reader.read_len_prefixed_str()?),
+            false => None,
+        };
+        let snapshot = match present(FLAG_SNAPSHOT) {
+            true => Some(reader.read_len_prefixed_str()?),
+            false => None,
+        };
         let name = reader.read_len_prefixed_str()?;
 
         Some(Self {
             name,
-            ignore: (flags & FLAG_IGNORE) != 0,
-            should_panic: (flags & FLAG_SHOULD_PANIC) != 0,
+            ignore: present(FLAG_IGNORE),
+            should_panic: present(FLAG_SHOULD_PANIC),
             expected_exit_code,
             max_cycles,
             fixture,
@@ -284,184 +258,94 @@ impl TestDesc {
 pub fn decode_test_list(bytes: &[u8]) -> Option<Vec<TestDesc>> {
     let mut reader = ByteReader::new(bytes);
     let count = reader.read_u32_le()? as usize;
-    let mut tests = Vec::with_capacity(count);
+    let mut tests = Vec::with_capacity(count.min(1024));
     for _ in 0..count {
         tests.push(TestDesc::decode(&mut reader)?);
     }
     Some(tests)
 }
 
-fn resolve_resource_path(path_str: &str, elf_path: Option<&std::path::Path>) -> Option<std::path::PathBuf> {
-    let p = std::path::Path::new(path_str);
+/// A crate named `a-b-c` conventionally lives in `crates/b-c` or `crates/c`, and the ELF
+/// is named after the crate, so `zkpow_sha256-1a2b3c` yields `zkpow_sha256`, `zkpow-sha256`
+/// and `sha256` as directories worth probing for a fixture.
+fn package_dir_candidates(elf_file_name: &str) -> Vec<String> {
+    let stem = elf_file_name.split('-').next().unwrap_or_default();
+    if stem.is_empty() {
+        return Vec::new();
+    }
+    let hyphenated = stem.replace('_', "-");
+    let mut names = vec![stem.to_string(), hyphenated.clone()];
+
+    let mut rest = hyphenated.as_str();
+    while let Some((_, tail)) = rest.split_once('-') {
+        names.push(tail.to_string());
+        rest = tail;
+    }
+    names.dedup();
+    names
+}
+
+/// Directories a fixture or snapshot path may be relative to, most specific first.
+/// `package_root` is known whenever the cargo plugin resolved the ELF's package; the
+/// working-directory walk is the fallback for a bare `zkvm-test-runner <elf>` invocation.
+fn resource_roots(elf_path: Option<&Path>, package_root: Option<&Path>) -> Vec<PathBuf> {
+    let mut roots: Vec<PathBuf> = package_root.into_iter().map(Path::to_path_buf).collect();
+
+    let Ok(cwd) = std::env::current_dir() else {
+        return roots;
+    };
+    let names = elf_path
+        .and_then(|e| e.file_name())
+        .and_then(|n| n.to_str())
+        .map(package_dir_candidates)
+        .unwrap_or_default();
+
+    for dir in std::iter::successors(Some(cwd.as_path()), |d| d.parent()) {
+        roots.push(dir.to_path_buf());
+        for base in [dir.join("crates"), dir.to_path_buf()] {
+            roots.extend(names.iter().map(|name| base.join(name)));
+        }
+    }
+    roots
+}
+
+fn resolve_resource_path(path_str: &str, roots: &[PathBuf]) -> Option<PathBuf> {
+    let p = Path::new(path_str);
     if p.exists() {
         return Some(p.to_path_buf());
     }
-    let cwd = std::env::current_dir().ok()?;
-    let candidate = cwd.join(path_str);
-    if candidate.exists() {
-        return Some(candidate);
-    }
-
-    let elf_names = elf_path.and_then(|e| e.file_name()).and_then(|n| n.to_str()).map(|file_name| {
-        let pkg_ident = file_name.split('-').next().unwrap_or("").to_string();
-        let pkg_name = pkg_ident.replace('_', "-");
-        let stripped = pkg_name.trim_start_matches("zkpow-").to_string();
-        (pkg_ident, pkg_name, stripped)
-    });
-
-    let mut curr = cwd.as_path();
-    loop {
-        let candidate = curr.join(path_str);
-        if candidate.exists() {
-            return Some(candidate);
-        }
-
-        if let Some((ref pkg_ident, ref pkg_name, ref stripped)) = elf_names {
-            for base in [curr.join("crates"), curr.to_path_buf()] {
-                for dir_name in [pkg_name, pkg_ident, stripped] {
-                    let candidate = base.join(dir_name).join(path_str);
-                    if candidate.exists() {
-                        return Some(candidate);
-                    }
-                }
-            }
-        }
-
-        match curr.parent() {
-            Some(parent) => curr = parent,
-            None => break,
-        }
-    }
-    None
+    roots.iter().map(|root| root.join(p)).find(|candidate| candidate.exists())
 }
 
-fn resolve_and_read_fixture(path_str: &str, elf_path: Option<&std::path::Path>) -> Result<Vec<u8>, String> {
-    let resolved = resolve_resource_path(path_str, elf_path)
+fn resolve_and_read_fixture(path_str: &str, roots: &[PathBuf]) -> Result<Vec<u8>, String> {
+    let resolved = resolve_resource_path(path_str, roots)
         .ok_or_else(|| format!("fixture file '{path_str}' not found on host filesystem"))?;
     std::fs::read(&resolved).map_err(|e| format!("cannot read {}: {e}", resolved.display()))
 }
 
-fn resolve_snapshot_path(path_str: &str, elf_path: Option<&std::path::Path>) -> std::path::PathBuf {
-    let p = std::path::Path::new(path_str);
+/// Unlike a fixture, a snapshot may legitimately not exist yet, so an unresolvable
+/// relative path falls back to the most specific root rather than failing.
+fn resolve_snapshot_path(path_str: &str, roots: &[PathBuf]) -> PathBuf {
+    let p = Path::new(path_str);
     if p.is_absolute() {
         return p.to_path_buf();
     }
-    resolve_resource_path(path_str, elf_path).unwrap_or_else(|| {
-        std::env::current_dir()
-            .map(|cwd| cwd.join(path_str))
-            .unwrap_or_else(|_| p.to_path_buf())
-    })
-}
-
-fn format_hex_dump(bytes: &[u8]) -> String {
-    let mut out = String::new();
-    for chunk in bytes.chunks(16) {
-        for b in chunk {
-            out.push_str(&format!("{b:02x} "));
-        }
-        out.push('\n');
-    }
-    out
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SnapshotFormat {
-    Hex,
-    Binary,
-}
-
-impl SnapshotFormat {
-    pub fn from_path(path: &std::path::Path) -> Self {
-        if path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("hex")) {
-            Self::Hex
-        } else {
-            Self::Binary
-        }
-    }
-
-    pub fn format_committed(&self, committed: &[u8]) -> Vec<u8> {
-        match self {
-            Self::Hex => {
-                let mut s = committed.iter().map(|b| format!("{b:02x}")).collect::<String>();
-                s.push('\n');
-                s.into_bytes()
-            },
-            Self::Binary => committed.to_vec(),
-        }
-    }
+    resolve_resource_path(path_str, roots)
+        .or_else(|| roots.first().map(|root| root.join(p)))
+        .unwrap_or_else(|| p.to_path_buf())
 }
 
 fn verify_or_update_snapshot(
     snapshot_path: &str,
     committed: &[u8],
     accept_snapshots: bool,
-    elf_path: Option<&std::path::Path>,
+    roots: &[PathBuf],
 ) -> Result<(), String> {
-    let resolved = resolve_snapshot_path(snapshot_path, elf_path);
-    let format = SnapshotFormat::from_path(&resolved);
-
-    let write_snapshot = |data: &[u8], action: &str| -> Result<(), String> {
-        if let Some(parent) = resolved.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        std::fs::write(&resolved, data)
-            .map_err(|e| format!("failed to {action} snapshot '{}': {e}", resolved.display()))?;
-        println!("  [SNAPSHOT {}: {}]", action.to_uppercase(), resolved.display());
-        Ok(())
-    };
-
-    if !resolved.exists() {
-        if accept_snapshots {
-            return write_snapshot(&format.format_committed(committed), "created");
-        } else {
-            return Err(format!(
-                "snapshot file '{}' does not exist. Run with '--accept-snapshots' to create it.",
-                resolved.display()
-            ));
-        }
+    let resolved = resolve_snapshot_path(snapshot_path, roots);
+    match zkvm_test::snapshot::verify(&resolved, committed, accept_snapshots)? {
+        zkvm_test::snapshot::Outcome::Matched => {},
+        written => println!("  [SNAPSHOT {}: {}]", written.as_str().to_uppercase(), resolved.display()),
     }
-
-    match format {
-        SnapshotFormat::Hex => {
-            let content = std::fs::read_to_string(&resolved)
-                .map_err(|e| format!("failed to read snapshot '{}': {e}", resolved.display()))?;
-            let expected_hex = content.trim().to_ascii_lowercase();
-            let actual_hex = committed.iter().map(|b| format!("{b:02x}")).collect::<String>();
-            if expected_hex != actual_hex {
-                if accept_snapshots {
-                    write_snapshot(&format.format_committed(committed), "updated")?;
-                } else {
-                    return Err(format!(
-                        "snapshot mismatch for '{}':\n  - expected ({} bytes):\n    {}\n  + actual ({} bytes):\n    {}\nTo accept these changes, run with '--accept-snapshots'.",
-                        resolved.display(),
-                        expected_hex.len() / 2,
-                        expected_hex,
-                        committed.len(),
-                        actual_hex
-                    ));
-                }
-            }
-        },
-        SnapshotFormat::Binary => {
-            let expected_bytes = std::fs::read(&resolved)
-                .map_err(|e| format!("failed to read snapshot '{}': {e}", resolved.display()))?;
-            if expected_bytes != committed {
-                if accept_snapshots {
-                    write_snapshot(committed, "updated")?;
-                } else {
-                    return Err(format!(
-                        "snapshot mismatch for '{}':\n  - expected ({} bytes):\n{}\n  + actual ({} bytes):\n{}\nTo accept these changes, run with '--accept-snapshots'.",
-                        resolved.display(),
-                        expected_bytes.len(),
-                        format_hex_dump(&expected_bytes),
-                        committed.len(),
-                        format_hex_dump(committed)
-                    ));
-                }
-            }
-        },
-    }
-
     Ok(())
 }
 
@@ -580,6 +464,68 @@ pub struct BaselineSuite {
     pub tests:        std::collections::BTreeMap<String, TestMetric>,
 }
 
+/// Whether the guest's exit code is the one the test declared.
+fn exit_code_verdict(test: &TestDesc, exit_code: u64) -> Option<String> {
+    match test.expected_exit_code {
+        Some(expected) if exit_code == u64::from(expected) => None,
+        Some(expected) => Some(format!("guest exited with code {exit_code}, expected {expected}")),
+        None if test.should_panic => (exit_code == 0)
+            .then(|| "test did not panic as expected (guest exited with code 0)".to_string()),
+        None if exit_code == 0 => None,
+        None => Some(format!("guest exited with code {exit_code}")),
+    }
+}
+
+/// What one execution of the guest produced. `failure` is `None` while the test is
+/// still passing; the declarative checks in `run` fill it in afterwards.
+#[derive(Default)]
+struct ExecOutput {
+    cycles:        u64,
+    record_bytes:  u64,
+    cycle_tracker: std::collections::BTreeMap<String, u64>,
+    invocations:   std::collections::BTreeMap<String, u64>,
+    public_values: Vec<u8>,
+    breakdown:     Option<InstructionBreakdown>,
+    top_syscalls:  Vec<(String, u64)>,
+    failure:       Option<String>,
+}
+
+impl ExecOutput {
+    fn from_result(
+        test: &TestDesc,
+        res: Result<(sp1_sdk::SP1PublicValues, sp1_sdk::ExecutionReport), sp1_core_executor::ExecutionError>,
+    ) -> Self {
+        let (pv, report) = match res {
+            Ok(ok) => ok,
+            Err(err) => {
+                return Self {
+                    failure: Some(format!("executor error: {err}")),
+                    ..Self::default()
+                };
+            },
+        };
+
+        let mut top_syscalls: Vec<(String, u64)> = report
+            .syscall_counts
+            .iter()
+            .filter(|(_, count)| **count > 0)
+            .map(|(code, count)| (format!("{code:?}"), *count))
+            .collect();
+        top_syscalls.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
+
+        Self {
+            cycles: report.total_instruction_count(),
+            record_bytes: report.total_record_size(),
+            breakdown: Some(InstructionBreakdown::from_report(&report)),
+            top_syscalls,
+            failure: exit_code_verdict(test, report.exit_code),
+            public_values: pv.to_vec(),
+            cycle_tracker: report.cycle_tracker.into_iter().collect(),
+            invocations: report.invocation_tracker.into_iter().collect(),
+        }
+    }
+}
+
 pub struct TestOutcome {
     pub desc:                  TestDesc,
     pub passed:                bool,
@@ -591,9 +537,25 @@ pub struct TestOutcome {
     pub cycle_tracker:         std::collections::BTreeMap<String, u64>,
     pub invocations:           std::collections::BTreeMap<String, u64>,
     pub instruction_breakdown: Option<InstructionBreakdown>,
-    pub top_syscalls:          Vec<(String, u64)>,
-    pub proof_duration:        Option<std::time::Duration>,
     pub duration:              std::time::Duration,
+}
+
+impl TestOutcome {
+    fn failed(desc: TestDesc, reason: String, duration: std::time::Duration) -> Self {
+        Self {
+            desc,
+            passed: false,
+            cycles: 0,
+            failure_reason: Some(reason),
+            stdout: String::new(),
+            stderr: String::new(),
+            record_bytes: 0,
+            cycle_tracker: std::collections::BTreeMap::new(),
+            invocations: std::collections::BTreeMap::new(),
+            instruction_breakdown: None,
+            duration,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -647,44 +609,32 @@ impl AnyProver {
         stdin: SP1Stdin,
         mode: ProofMode,
     ) -> Result<sp1_sdk::SP1ProofWithPublicValues, String> {
+        // The prover backends share no object-safe trait, so the body is monomorphised
+        // per variant rather than written out three times.
+        macro_rules! prove_with {
+            ($prover:expr) => {{
+                let prover = $prover;
+                let req = prover.prove(pk, stdin);
+                let proof = match mode {
+                    ProofMode::None => return Err("cannot prove in mode 'none'".to_string()),
+                    ProofMode::Core => req.core().await,
+                    ProofMode::Compressed => req.compressed().await,
+                    ProofMode::Plonk => req.plonk().await,
+                    ProofMode::Groth16 => req.groth16().await,
+                }
+                .map_err(|e| format!("prove {mode:?} error: {e}"))?;
+                prover
+                    .verify(&proof, pk.verifying_key(), None)
+                    .map_err(|e| format!("proof verification error: {e}"))?;
+                Ok(proof)
+            }};
+        }
+
         match self {
-            AnyProver::Mock(p) => {
-                let req = p.prove(pk, stdin);
-                let proof = match mode {
-                    ProofMode::None => return Err("cannot prove in mode 'none'".to_string()),
-                    ProofMode::Core => req.core().await.map_err(|e| format!("prove core error: {e}"))?,
-                    ProofMode::Compressed => req.compressed().await.map_err(|e| format!("prove compressed error: {e}"))?,
-                    ProofMode::Plonk => req.plonk().await.map_err(|e| format!("prove plonk error: {e}"))?,
-                    ProofMode::Groth16 => req.groth16().await.map_err(|e| format!("prove groth16 error: {e}"))?,
-                };
-                p.verify(&proof, pk.verifying_key(), None).map_err(|e| format!("proof verification error: {e}"))?;
-                Ok(proof)
-            }
-            AnyProver::Cpu(p) => {
-                let req = p.prove(pk, stdin);
-                let proof = match mode {
-                    ProofMode::None => return Err("cannot prove in mode 'none'".to_string()),
-                    ProofMode::Core => req.core().await.map_err(|e| format!("prove core error: {e}"))?,
-                    ProofMode::Compressed => req.compressed().await.map_err(|e| format!("prove compressed error: {e}"))?,
-                    ProofMode::Plonk => req.plonk().await.map_err(|e| format!("prove plonk error: {e}"))?,
-                    ProofMode::Groth16 => req.groth16().await.map_err(|e| format!("prove groth16 error: {e}"))?,
-                };
-                p.verify(&proof, pk.verifying_key(), None).map_err(|e| format!("proof verification error: {e}"))?;
-                Ok(proof)
-            }
+            AnyProver::Mock(p) => prove_with!(p),
+            AnyProver::Cpu(p) => prove_with!(p),
             #[cfg(feature = "cuda")]
-            AnyProver::Cuda(p) => {
-                let req = p.prove(pk, stdin);
-                let proof = match mode {
-                    ProofMode::None => return Err("cannot prove in mode 'none'".to_string()),
-                    ProofMode::Core => req.core().await.map_err(|e| format!("prove core error: {e}"))?,
-                    ProofMode::Compressed => req.compressed().await.map_err(|e| format!("prove compressed error: {e}"))?,
-                    ProofMode::Plonk => req.plonk().await.map_err(|e| format!("prove plonk error: {e}"))?,
-                    ProofMode::Groth16 => req.groth16().await.map_err(|e| format!("prove groth16 error: {e}"))?,
-                };
-                p.verify(&proof, pk.verifying_key(), None).map_err(|e| format!("proof verification error: {e}"))?;
-                Ok(proof)
-            }
+            AnyProver::Cuda(p) => prove_with!(p),
         }
     }
 }
@@ -694,7 +644,7 @@ pub fn format_commas(n: u64) -> String {
     let mut result = String::with_capacity(s.len() + s.len() / 3);
     let offset = s.len() % 3;
     for (i, c) in s.chars().enumerate() {
-        if i > 0 && (i % 3 == offset || (offset == 0 && i % 3 == 0)) {
+        if i > 0 && i % 3 == offset {
             result.push(',');
         }
         result.push(c);
@@ -714,6 +664,17 @@ pub fn format_bytes(bytes: u64) -> String {
     }
 }
 
+fn tree_branch(index: usize, len: usize) -> &'static str {
+    if index + 1 >= len { "└── " } else { "├── " }
+}
+
+fn percent_of(count: u64, total: u64) -> f64 {
+    if total == 0 {
+        return 0.0;
+    }
+    (count as f64 / total as f64) * 100.0
+}
+
 fn print_profile_breakdown(
     cycle_tracker: &std::collections::BTreeMap<String, u64>,
     invocations: &std::collections::BTreeMap<String, u64>,
@@ -726,23 +687,16 @@ fn print_profile_breakdown(
     let mut entries: Vec<_> = cycle_tracker.iter().collect();
     entries.sort_by(|a, b| b.1.cmp(a.1));
     for (i, (label, count)) in entries.iter().enumerate() {
-        let is_last = i == entries.len() - 1;
-        let branch = if is_last { "└── " } else { "├── " };
-        let pct = if total_cycles > 0 {
-            (**count as f64 / total_cycles as f64) * 100.0
-        } else {
-            0.0
-        };
-        let inv_str = if let Some(inv) = invocations.get(*label) {
-            format!(" [{} call{}]", inv, if *inv == 1 { "" } else { "s" })
-        } else {
-            String::new()
+        let calls = match invocations.get(*label) {
+            Some(1) => " [1 call]".to_string(),
+            Some(n) => format!(" [{n} calls]"),
+            None => String::new(),
         };
         println!(
-            "        {branch}{}: {} cycles ({:.1}%){inv_str}",
-            label,
+            "        {}{label}: {} cycles ({:.1}%){calls}",
+            tree_branch(i, entries.len()),
             format_commas(**count),
-            pct
+            percent_of(**count, total_cycles)
         );
     }
 }
@@ -756,29 +710,29 @@ fn print_instruction_breakdown(b: &InstructionBreakdown, total_cycles: u64) {
         ("Math (mul/div/rem)", b.mul_div),
         ("System (ecall/trap)", b.system),
     ];
-    let non_zero: Vec<_> = categories.into_iter().filter(|(_, c)| *c > 0).collect();
+    let non_zero: Vec<_> = categories.into_iter().filter(|(_, count)| *count > 0).collect();
     for (i, (name, count)) in non_zero.iter().enumerate() {
-        let is_last = i == non_zero.len() - 1;
-        let branch = if is_last { "└── " } else { "├── " };
-        let pct = if total_cycles > 0 {
-            (*count as f64 / total_cycles as f64) * 100.0
-        } else {
-            0.0
-        };
         println!(
-            "        {branch}{name:24} : {:>10} instructions ({:>5.1}%)",
+            "        {}{name:24} : {:>10} instructions ({:>5.1}%)",
+            tree_branch(i, non_zero.len()),
             format_commas(*count),
-            pct
+            percent_of(*count, total_cycles)
         );
     }
 }
 
 fn print_top_syscalls(syscalls: &[(String, u64)]) {
+    let top = &syscalls[..syscalls.len().min(TOP_SYSCALL_COUNT)];
+    if top.is_empty() {
+        return;
+    }
     println!("    Syscalls & Precompiles:");
-    for (i, (name, count)) in syscalls.iter().take(5).enumerate() {
-        let is_last = i == syscalls.len().min(5) - 1;
-        let branch = if is_last { "└── " } else { "├── " };
-        println!("        {branch}{name:24} : {:>10} invocations", format_commas(*count));
+    for (i, (name, count)) in top.iter().enumerate() {
+        println!(
+            "        {}{name:24} : {:>10} invocations",
+            tree_branch(i, top.len()),
+            format_commas(*count)
+        );
     }
 }
 
@@ -996,7 +950,7 @@ pub async fn run(args: RunnerArgs) -> i32 {
         },
     };
 
-    let raw_elf_name = std::path::Path::new(&args.elf_path)
+    let raw_elf_name = Path::new(&args.elf_path)
         .file_name()
         .and_then(|n| n.to_str())
         .and_then(|name| name.split('-').next())
@@ -1004,72 +958,58 @@ pub async fn run(args: RunnerArgs) -> i32 {
 
     let pkg_name = args.target_name.clone().unwrap_or_else(|| raw_elf_name.to_string());
 
-    let filter_context = if let Some(ref expr_str) = args.filter_expr {
-        let graph = if let Some(ref g) = args.package_graph {
-            g.clone()
-        } else {
-            let mut cmd = guppy::MetadataCommand::new();
-            match guppy::graph::PackageGraph::from_command(&mut cmd) {
-                Ok(g) => Arc::new(g),
+    let package_root = args.package_graph.as_ref().zip(args.package_id.as_ref()).and_then(|(graph, id)| {
+        let pkg = graph.metadata(&guppy::PackageId::new(id.clone())).ok()?;
+        Path::new(pkg.manifest_path().as_str()).parent().map(Path::to_path_buf)
+    });
+
+    // A filter expression is evaluated against the binary the ELF was built from, so it
+    // needs the package graph; the plugin passes one down, a bare invocation queries it.
+    let test_filter = match args.filter_expr {
+        Some(ref expr_str) => {
+            let graph = match args.package_graph.clone() {
+                Some(graph) => graph,
+                None => match guppy::graph::PackageGraph::from_command(&mut guppy::MetadataCommand::new()) {
+                    Ok(graph) => Arc::new(graph),
+                    Err(err) => {
+                        eprintln!("zkvm-test-runner: failed to load package graph: {err}");
+                        return 2;
+                    },
+                },
+            };
+
+            let filterset = match crate::filter::parse(expr_str, &graph) {
+                Ok(filterset) => filterset,
                 Err(err) => {
-                    eprintln!("zkvm-test-runner: failed to load package graph: {err}");
+                    eprintln!("zkvm-test-runner: {err}");
                     return 2;
-                }
-            }
-        };
+                },
+            };
 
-        let parse_ctx = nextest_filtering::ParseContext::new(&graph);
-        let known_groups = nextest_filtering::KnownGroups::Known {
-            custom_groups: std::collections::HashSet::new(),
-        };
-        let filterset = match nextest_filtering::Filterset::parse(
-            expr_str.clone(),
-            &parse_ctx,
-            nextest_filtering::FiltersetKind::Test,
-            &known_groups,
-        ) {
-            Ok(f) => f,
-            Err(err) => {
-                let err_msgs = err
-                    .errors
+            let pkg = match args.package_id {
+                Some(ref pid) => graph.metadata(&guppy::PackageId::new(pid.clone())).ok(),
+                None => graph
+                    .workspace()
                     .iter()
-                    .map(|e| e.to_string())
-                    .collect::<Vec<_>>()
-                    .join("; ");
-                eprintln!("zkvm-test-runner: invalid filter expression '{}': {err_msgs}", err.input);
+                    .find(|p| p.name() == raw_elf_name || p.name().replace('-', "_") == raw_elf_name),
+            };
+            let Some(pkg) = pkg else {
+                eprintln!("zkvm-test-runner: failed to resolve package for ELF '{}'", args.elf_path);
                 return 2;
-            }
-        };
+            };
 
-        let pkg = if let Some(ref pid) = args.package_id {
-            graph.metadata(&guppy::PackageId::new(pid.clone())).ok()
-        } else {
-            graph.workspace().iter().find(|p| {
-                p.name() == raw_elf_name || p.name().replace('-', "_") == raw_elf_name
-            })
-        };
-
-        let Some(pkg) = pkg else {
-            eprintln!("zkvm-test-runner: failed to resolve package for ELF '{}'", args.elf_path);
-            return 2;
-        };
-
-        let target_name = args.target_name.clone().unwrap_or_else(|| {
-            raw_elf_name.to_string()
-        });
-        let kind = nextest_metadata::RustTestBinaryKind::new(
-            args.target_kind.clone().unwrap_or_else(|| "test".to_string()),
-        );
-        let binary_id = nextest_metadata::RustBinaryId::from_parts(pkg.name(), &kind, &target_name);
-
-        Some((filterset, pkg.id().clone(), binary_id, target_name, kind))
-    } else {
-        None
+            let kind = nextest_metadata::RustTestBinaryKind::new(
+                args.target_kind.clone().unwrap_or_else(|| crate::filter::DEFAULT_TARGET_KIND.to_string()),
+            );
+            let binary = crate::filter::Binary::new(pkg.name(), pkg.id().clone(), pkg_name.clone(), kind);
+            Some((filterset, binary))
+        },
+        None => None,
     };
 
     // 2. Filter tests
     let matches_filter = |name: &str| -> bool {
-        let pos_match = if args.filters.is_empty() {
+        let name_match = if args.filters.is_empty() {
             true
         } else if args.exact {
             args.filters.iter().any(|f| f == name)
@@ -1077,30 +1017,10 @@ pub async fn run(args: RunnerArgs) -> i32 {
             args.filters.iter().any(|f| name.contains(f))
         };
 
-        if !pos_match {
-            return false;
-        }
-
-        if let Some((ref filterset, ref pkg_id, ref binary_id, ref target_name, ref kind)) = filter_context {
-            let binary_query = nextest_filtering::BinaryQuery {
-                package_id: pkg_id,
-                binary_id,
-                binary_name: target_name,
-                kind,
-                platform: guppy::graph::cargo::BuildPlatform::Target,
-            };
-            let eval_cx = nextest_filtering::EvalContext {
-                default_filter: &nextest_filtering::CompiledExpr::ALL,
-            };
-            let test_name_smol = nextest_metadata::TestCaseName::new(name);
-            let test_query = nextest_filtering::TestQuery {
-                binary_query,
-                test_name: &test_name_smol,
-            };
-            filterset.matches_test(&test_query, &eval_cx)
-        } else {
-            true
-        }
+        name_match
+            && test_filter
+                .as_ref()
+                .is_none_or(|(filterset, binary)| binary.matches_test(filterset, name))
     };
 
     if args.list {
@@ -1189,14 +1109,14 @@ pub async fn run(args: RunnerArgs) -> i32 {
     let peak_rss_kb = Arc::new(std::sync::atomic::AtomicU64::new(
         memuse::rss_kb().unwrap_or(0),
     ));
-    let elf_path_buf = Arc::new(std::path::PathBuf::from(&args.elf_path));
+    let resource_roots = Arc::new(resource_roots(Some(Path::new(&args.elf_path)), package_root.as_deref()));
 
     for test in tests_to_run {
         let sem = semaphore.clone();
         let prover = prover.clone();
         let pk = pk.clone();
         let elf_bytes = elf_bytes.clone();
-        let elf_path = elf_path_buf.clone();
+        let roots = resource_roots.clone();
         let quiet = args.quiet;
         let profile = args.profile;
         let instructions = args.instructions;
@@ -1215,29 +1135,19 @@ pub async fn run(args: RunnerArgs) -> i32 {
             payload.extend_from_slice(test.name.as_bytes());
             run_stdin.write_slice(&payload);
 
-            let mut fixture_bytes_opt = None;
+            let mut fixture_bytes = None;
             if let Some(ref fix_path) = test.fixture {
-                match resolve_and_read_fixture(fix_path, Some(&elf_path)) {
-                    Ok(fix_bytes) => {
-                        run_stdin.write_slice(&fix_bytes);
-                        fixture_bytes_opt = Some(fix_bytes);
+                match resolve_and_read_fixture(fix_path, &roots) {
+                    Ok(bytes) => {
+                        run_stdin.write_slice(&bytes);
+                        fixture_bytes = Some(bytes);
                     },
                     Err(err) => {
-                        return TestOutcome {
-                            desc: test,
-                            passed: false,
-                            cycles: 0,
-                            record_bytes: 0,
-                            failure_reason: Some(format!("failed to load fixture: {err}")),
-                            stdout: String::new(),
-                            stderr: String::new(),
-                            cycle_tracker: std::collections::BTreeMap::new(),
-                            invocations: std::collections::BTreeMap::new(),
-                            instruction_breakdown: None,
-                            top_syscalls: Vec::new(),
-                            proof_duration: None,
-                            duration: test_start.elapsed(),
-                        };
+                        return TestOutcome::failed(
+                            test,
+                            format!("failed to load fixture: {err}"),
+                            test_start.elapsed(),
+                        );
                     },
                 }
             }
@@ -1255,130 +1165,81 @@ pub async fn run(args: RunnerArgs) -> i32 {
 
             let stdout = stdout_rx.borrow().clone();
             let stderr = stderr_rx.borrow().clone();
+            let out = ExecOutput::from_result(&test, res);
 
-            let (mut passed, cycles, mut failure_reason, record_bytes, cycle_tracker, invocations, pv_bytes, breakdown, top_syscalls) = match res {
-                Ok((pv, report)) => {
-                    let exit_code = report.exit_code;
-                    let cycles = report.total_instruction_count();
-                    let record_bytes = report.total_record_size();
-                    let breakdown = InstructionBreakdown::from_report(&report);
-                    let mut top_syscalls: Vec<(String, u64)> = report
-                        .syscall_counts
-                        .iter()
-                        .filter(|(_, count)| **count > 0)
-                        .map(|(code, count)| (format!("{code:?}"), *count))
-                        .collect();
-                    top_syscalls.sort_by(|a, b| b.1.cmp(&a.1));
-                    let cycle_tracker: std::collections::BTreeMap<String, u64> =
-                        report.cycle_tracker.into_iter().collect();
-                    let invocations: std::collections::BTreeMap<String, u64> =
-                        report.invocation_tracker.into_iter().collect();
+            // Declarative checks, in declaration order; the first failure stops the rest.
+            let mut failure = out.failure;
 
-                    let (passed, failure_reason) = if let Some(expected) = test.expected_exit_code {
-                        if exit_code == u64::from(expected) {
-                            (true, None)
-                        } else {
-                            (false, Some(format!("guest exited with code {exit_code}, expected {expected}")))
-                        }
-                    } else if test.should_panic {
-                        if exit_code != 0 {
-                            (true, None)
-                        } else {
-                            (
-                                false,
-                                Some("test did not panic as expected (guest exited with code 0)".to_string()),
-                            )
-                        }
-                    } else if exit_code == 0 {
-                        (true, None)
-                    } else {
-                        (false, Some(format!("guest exited with code {exit_code}")))
-                    };
-
-                    (passed, cycles, failure_reason, record_bytes, cycle_tracker, invocations, Some(pv.to_vec()), Some(breakdown), top_syscalls)
-                },
-                Err(err) => (false, 0, Some(format!("executor error: {err}")), 0, Default::default(), Default::default(), None, None, Vec::new()),
-            };
-
-            // Check declarative cycle budget
-            if passed {
-                if let Some(max) = test.max_cycles && cycles > max {
-                    passed = false;
-                    failure_reason = Some(format!(
-                        "cycle budget exceeded: {} cycles > budget of {}",
-                        format_commas(cycles),
-                        format_commas(max)
-                    ));
-                }
+            if failure.is_none()
+                && let Some(max) = test.max_cycles
+                && out.cycles > max
+            {
+                failure = Some(format!(
+                    "cycle budget exceeded: {} cycles > budget of {}",
+                    format_commas(out.cycles),
+                    format_commas(max)
+                ));
             }
 
-            // Check public values snapshot
-            if passed {
-                if let Some(ref snap_path) = test.snapshot {
-                    let bytes = pv_bytes.as_deref().unwrap_or(&[]);
-                    if let Err(snap_err) = verify_or_update_snapshot(snap_path, bytes, accept_snapshots, Some(&elf_path)) {
-                        passed = false;
-                        failure_reason = Some(snap_err);
-                    }
-                }
+            if failure.is_none()
+                && let Some(ref snap_path) = test.snapshot
+            {
+                failure =
+                    verify_or_update_snapshot(snap_path, &out.public_values, accept_snapshots, &roots).err();
             }
 
-            // If proof mode requested, generate and verify ZK proof
             let mut proof_duration = None;
-            if passed {
-                if let Some(ref pk_arc) = pk {
-                    let mut prove_stdin = SP1Stdin::new();
-                    prove_stdin.write_slice(&payload);
-                    if let Some(ref fix_bytes) = fixture_bytes_opt {
-                        prove_stdin.write_slice(fix_bytes);
-                    }
-                    let p_start = Instant::now();
-                    match prover.prove_test(pk_arc, prove_stdin, proof_mode).await {
-                        Ok(_) => {
-                            proof_duration = Some(p_start.elapsed());
-                        },
-                        Err(err) => {
-                            passed = false;
-                            failure_reason = Some(format!("proof generation/verification failed in mode {proof_mode:?}: {err}"));
-                        },
-                    }
+            if failure.is_none()
+                && let Some(ref proving_key) = pk
+            {
+                let mut prove_stdin = SP1Stdin::new();
+                prove_stdin.write_slice(&payload);
+                if let Some(ref bytes) = fixture_bytes {
+                    prove_stdin.write_slice(bytes);
+                }
+                let started = Instant::now();
+                match prover.prove_test(proving_key, prove_stdin, proof_mode).await {
+                    Ok(_) => proof_duration = Some(started.elapsed()),
+                    Err(err) => {
+                        failure = Some(format!(
+                            "proof generation/verification failed in mode {proof_mode:?}: {err}"
+                        ));
+                    },
                 }
             }
 
             if !quiet {
-                if passed {
-                    let mut meta_items = Vec::new();
-                    if let Some(expected) = test.expected_exit_code {
-                        meta_items.push(format!("exit code: {expected}"));
-                    } else if test.should_panic {
-                        meta_items.push("should panic".to_string());
-                    }
-                    if let Some(max) = test.max_cycles {
-                        meta_items.push(format!("budget: {}", format_commas(max)));
-                    }
-                    meta_items.push(format!("{} cycles", format_commas(cycles)));
-                    if record_bytes > 0 {
-                        meta_items.push(format!("trace: {}", format_bytes(record_bytes)));
-                    }
-                    if let Some(dur) = proof_duration {
-                        meta_items.push(format!("{proof_mode:?} proof: {:.2}s", dur.as_secs_f64()));
-                    }
-
-                    println!("test {} ... ok ({})", test.name, meta_items.join(", "));
-
-                    if profile {
-                        print_profile_breakdown(&cycle_tracker, &invocations, cycles);
-                    }
-                    if profile || instructions {
-                        if let Some(ref b) = breakdown {
-                            print_instruction_breakdown(b, cycles);
+                match failure {
+                    None => {
+                        let mut meta_items = Vec::new();
+                        if let Some(expected) = test.expected_exit_code {
+                            meta_items.push(format!("exit code: {expected}"));
+                        } else if test.should_panic {
+                            meta_items.push("should panic".to_string());
                         }
-                        if !top_syscalls.is_empty() {
-                            print_top_syscalls(&top_syscalls);
+                        if let Some(max) = test.max_cycles {
+                            meta_items.push(format!("budget: {}", format_commas(max)));
                         }
-                    }
-                } else {
-                    println!("test {} ... FAILED", test.name);
+                        meta_items.push(format!("{} cycles", format_commas(out.cycles)));
+                        if out.record_bytes > 0 {
+                            meta_items.push(format!("trace: {}", format_bytes(out.record_bytes)));
+                        }
+                        if let Some(dur) = proof_duration {
+                            meta_items.push(format!("{proof_mode:?} proof: {:.2}s", dur.as_secs_f64()));
+                        }
+                        println!("test {} ... ok ({})", test.name, meta_items.join(", "));
+
+                        if profile {
+                            print_profile_breakdown(&out.cycle_tracker, &out.invocations, out.cycles);
+                        }
+                        if profile || instructions {
+                            if let Some(ref breakdown) = out.breakdown {
+                                print_instruction_breakdown(breakdown, out.cycles);
+                            }
+                            print_top_syscalls(&out.top_syscalls);
+                        }
+                    },
+                    Some(_) => println!("test {} ... FAILED", test.name),
                 }
 
                 if nocapture {
@@ -1393,17 +1254,15 @@ pub async fn run(args: RunnerArgs) -> i32 {
 
             TestOutcome {
                 desc: test,
-                passed,
-                cycles,
-                failure_reason,
+                passed: failure.is_none(),
+                cycles: out.cycles,
+                failure_reason: failure,
                 stdout,
                 stderr,
-                record_bytes,
-                cycle_tracker,
-                invocations,
-                instruction_breakdown: breakdown,
-                top_syscalls,
-                proof_duration,
+                record_bytes: out.record_bytes,
+                cycle_tracker: out.cycle_tracker,
+                invocations: out.invocations,
+                instruction_breakdown: out.breakdown,
                 duration: test_start.elapsed(),
             }
         });
@@ -1440,7 +1299,7 @@ pub async fn run(args: RunnerArgs) -> i32 {
     let default_baseline_path = format!("{METRICS_DIR}/{DEFAULT_BASELINE_NAME}.json");
     let (baseline_name, is_explicit) = if let Some(explicit) = &args.compare_baseline {
         (Some(explicit.as_str()), true)
-    } else if std::path::Path::new(&default_baseline_path).exists() {
+    } else if Path::new(&default_baseline_path).exists() {
         (Some(DEFAULT_BASELINE_NAME), false)
     } else {
         (None, false)
@@ -1547,7 +1406,7 @@ pub async fn run(args: RunnerArgs) -> i32 {
             }
         }
 
-        let p = std::path::Path::new(junit_path);
+        let p = Path::new(junit_path);
         if let Err(e) = crate::junit::write_or_merge_junit_xml(p, suite) {
             eprintln!("zkvm-test-runner: error writing JUnit XML: {e}");
         }
@@ -1612,7 +1471,7 @@ mod tests {
             "test_filter_1".to_string(),
         ];
 
-        let parsed = parse_args_from(args);
+        let parsed = parse_args_from(args).expect("valid arguments");
         assert_eq!(parsed.elf_path, "target/zkvm/test-elf");
         assert!(!parsed.nocapture);
         assert!(parsed.exact);
@@ -1638,7 +1497,7 @@ mod tests {
             "--nocapture".to_string(),
             "--test-threads=8".to_string(),
         ];
-        let nocap_parsed = parse_args_from(nocap_args);
+        let nocap_parsed = parse_args_from(nocap_args).expect("valid arguments");
         assert!(nocap_parsed.nocapture);
         assert_eq!(nocap_parsed.test_threads, 1);
     }
@@ -1701,18 +1560,169 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_args_rejects_bad_values() {
+        let err = |args: &[&str]| {
+            parse_args_from(args.iter().map(|s| s.to_string())).expect_err("should be rejected")
+        };
+
+        assert!(err(&[]).contains("usage: zkvm-test-runner <elf-path>"));
+        assert!(err(&["elf", "--test-threads=abc"]).contains("--test-threads"));
+        assert!(err(&["elf", "--test-threads=0"]).contains("positive integer"));
+        assert!(err(&["elf", "--fail-on-regression=ten"]).contains("--fail-on-regression"));
+        assert!(err(&["elf", "--prover"]).contains("--prover expects a value"));
+        assert!(err(&["elf", "--mode"]).contains("--mode expects a value"));
+    }
+
+    #[test]
+    fn test_parse_args_accepts_flag_aliases() {
+        let parse = |args: &[&str]| {
+            parse_args_from(args.iter().map(|s| s.to_string())).expect("valid arguments")
+        };
+
+        // `--subcycles` is the alias the cargo plugin advertises for `--profile`
+        assert!(parse(&["elf", "--subcycles"]).profile);
+        assert!(parse(&["elf", "--opcodes"]).instructions);
+        assert!(parse(&["elf", "--no-capture"]).nocapture);
+        assert!(parse(&["elf", "--update-snapshots"]).accept_snapshots);
+        assert_eq!(parse(&["elf", "--fail-on-regression", "10%"]).fail_on_regression, Some(10.0));
+
+        // An unknown flag is ignored, but a positional is a test-name filter
+        let parsed = parse(&["elf", "--brand-new-cargo-flag", "some_test"]);
+        assert_eq!(parsed.filters, vec!["some_test"]);
+
+        // `--save-baseline` takes an optional name
+        assert_eq!(parse(&["elf", "--save-baseline"]).save_baseline.as_deref(), Some("default"));
+        assert_eq!(parse(&["elf", "--save-baseline", "run1"]).save_baseline.as_deref(), Some("run1"));
+        let standalone = parse(&["elf", "--save-baseline", "--quiet"]);
+        assert_eq!(standalone.save_baseline.as_deref(), Some("default"));
+        assert!(standalone.quiet);
+    }
+
+    fn desc(should_panic: bool, expected_exit_code: Option<u32>) -> TestDesc {
+        TestDesc {
+            name: "t".to_string(),
+            ignore: false,
+            should_panic,
+            expected_exit_code,
+            max_cycles: None,
+            fixture: None,
+            snapshot: None,
+        }
+    }
+
+    #[test]
+    fn test_exit_code_verdict() {
+        assert_eq!(exit_code_verdict(&desc(false, None), 0), None);
+        assert!(exit_code_verdict(&desc(false, None), 1).unwrap().contains("exited with code 1"));
+
+        // should_panic accepts any non-zero exit, and requires one
+        assert_eq!(exit_code_verdict(&desc(true, None), 3), None);
+        assert!(exit_code_verdict(&desc(true, None), 0).unwrap().contains("did not panic"));
+
+        // A declared exit code must match exactly, even a non-zero one
+        assert_eq!(exit_code_verdict(&desc(true, Some(3)), 3), None);
+        let mismatch = exit_code_verdict(&desc(true, Some(3)), 1).unwrap();
+        assert!(mismatch.contains("code 1"), "{mismatch}");
+        assert!(mismatch.contains("expected 3"), "{mismatch}");
+        assert!(exit_code_verdict(&desc(true, Some(3)), 0).is_some());
+    }
+
+    #[test]
+    fn test_package_dir_candidates() {
+        assert_eq!(
+            package_dir_candidates("zkpow_sha256-1a2b3c4d"),
+            vec!["zkpow_sha256", "zkpow-sha256", "sha256"]
+        );
+        assert_eq!(package_dir_candidates("core-9f"), vec!["core"]);
+        assert!(package_dir_candidates("").is_empty());
+    }
+
+    #[test]
+    fn test_resolve_resource_path_prefers_specific_root() {
+        let temp = tempfile::tempdir().unwrap();
+        let specific = temp.path().join("crates/sha256");
+        let general = temp.path();
+        std::fs::create_dir_all(&specific).unwrap();
+        std::fs::write(general.join("fixture.bin"), b"general").unwrap();
+        std::fs::write(specific.join("fixture.bin"), b"specific").unwrap();
+
+        let roots = vec![specific.clone(), general.to_path_buf()];
+        let found = resolve_resource_path("fixture.bin", &roots).unwrap();
+        assert_eq!(std::fs::read(found).unwrap(), b"specific");
+
+        assert!(resolve_resource_path("missing.bin", &roots).is_none());
+    }
+
+    #[test]
+    fn test_resolve_snapshot_path_falls_back_to_first_root() {
+        let temp = tempfile::tempdir().unwrap();
+        let roots = vec![temp.path().to_path_buf()];
+        assert_eq!(
+            resolve_snapshot_path("snapshots/new.hex", &roots),
+            temp.path().join("snapshots/new.hex")
+        );
+    }
+
+    #[test]
+    fn test_verify_or_update_snapshot_creates_missing_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let snap = temp.path().join("nested/golden.hex");
+
+        let err = verify_or_update_snapshot(snap.to_str().unwrap(), &[0xab], false, &[]).unwrap_err();
+        assert!(err.contains("does not exist"), "{err}");
+        assert!(!snap.exists());
+
+        verify_or_update_snapshot(snap.to_str().unwrap(), &[0xab], true, &[]).unwrap();
+        assert_eq!(std::fs::read_to_string(&snap).unwrap(), "ab\n");
+    }
+
+    #[test]
+    fn test_verify_or_update_snapshot_binary_mismatch() {
+        let temp = tempfile::tempdir().unwrap();
+        let snap = temp.path().join("golden.bin");
+        std::fs::write(&snap, [1u8, 2, 3]).unwrap();
+
+        let err = verify_or_update_snapshot(snap.to_str().unwrap(), &[1, 2, 4], false, &[]).unwrap_err();
+        assert!(err.contains("snapshot mismatch"), "{err}");
+        assert!(err.contains("--accept-snapshots"), "{err}");
+
+        verify_or_update_snapshot(snap.to_str().unwrap(), &[1, 2, 4], true, &[]).unwrap();
+        assert_eq!(std::fs::read(&snap).unwrap(), vec![1, 2, 4]);
+    }
+
+    #[test]
+    fn test_decode_test_list_rejects_absurd_count() {
+        // A corrupt catalog must not be trusted into a huge allocation
+        let mut bytes = u32::MAX.to_le_bytes().to_vec();
+        bytes.push(0);
+        assert!(decode_test_list(&bytes).is_none());
+    }
+
+    #[test]
+    fn test_tree_branch_and_percent() {
+        assert_eq!(tree_branch(0, 2), "\u{251c}\u{2500}\u{2500} ");
+        assert_eq!(tree_branch(1, 2), "\u{2514}\u{2500}\u{2500} ");
+        // An out-of-range index must not underflow
+        assert_eq!(tree_branch(0, 0), "\u{2514}\u{2500}\u{2500} ");
+
+        assert_eq!(percent_of(0, 0), 0.0);
+        assert_eq!(percent_of(50, 200), 25.0);
+    }
+
+    #[test]
+    fn test_print_top_syscalls_handles_empty() {
+        print_top_syscalls(&[]);
+        print_top_syscalls(&[("HALT".to_string(), 1)]);
+    }
+
+    #[test]
     fn test_verify_or_update_snapshot_matching() {
         let temp_dir = tempfile::tempdir().unwrap();
         let snap_file = temp_dir.path().join("golden.hex");
         std::fs::write(&snap_file, "deadbeef\n").unwrap();
 
         let committed = vec![0xde, 0xad, 0xbe, 0xef];
-        let res = verify_or_update_snapshot(
-            snap_file.to_str().unwrap(),
-            &committed,
-            false,
-            None,
-        );
+        let res = verify_or_update_snapshot(snap_file.to_str().unwrap(), &committed, false, &[]);
         assert!(res.is_ok());
     }
 
@@ -1723,12 +1733,7 @@ mod tests {
         std::fs::write(&snap_file, "deadbeef\n").unwrap();
 
         let committed = vec![0xca, 0xfe, 0xba, 0xbe];
-        let res = verify_or_update_snapshot(
-            snap_file.to_str().unwrap(),
-            &committed,
-            false,
-            None,
-        );
+        let res = verify_or_update_snapshot(snap_file.to_str().unwrap(), &committed, false, &[]);
         assert!(res.is_err());
         let err = res.unwrap_err();
         assert!(err.contains("snapshot mismatch"));
@@ -1742,12 +1747,7 @@ mod tests {
         std::fs::write(&snap_file, "deadbeef\n").unwrap();
 
         let committed = vec![0xca, 0xfe, 0xba, 0xbe];
-        let res = verify_or_update_snapshot(
-            snap_file.to_str().unwrap(),
-            &committed,
-            true, // accept
-            None,
-        );
+        let res = verify_or_update_snapshot(snap_file.to_str().unwrap(), &committed, true, &[]);
         assert!(res.is_ok());
 
         // Verify updated file on disk

@@ -44,26 +44,15 @@ impl JUnitTestSuite {
     }
 
     pub fn to_xml(&self) -> String {
-        let mut tests = 0;
-        let mut failures = 0;
-        let mut skipped = 0;
-
-        for c in &self.cases {
-            tests += 1;
-            match c.status {
-                TestCaseStatus::Passed => {},
-                TestCaseStatus::Failed { .. } => failures += 1,
-                TestCaseStatus::Skipped => skipped += 1,
-            }
-        }
+        let count = |matching: fn(&TestCaseStatus) -> bool| self.cases.iter().filter(|c| matching(&c.status)).count();
 
         let mut out = String::new();
         out.push_str(&format!(
             "  <testsuite name=\"{}\" tests=\"{}\" failures=\"{}\" errors=\"0\" skipped=\"{}\" time=\"{:.3}\">\n",
             escape_xml(&self.name),
-            tests,
-            failures,
-            skipped,
+            self.cases.len(),
+            count(|s| matches!(s, TestCaseStatus::Failed { .. })),
+            count(|s| matches!(s, TestCaseStatus::Skipped)),
             self.time
         ));
 
@@ -144,63 +133,40 @@ pub fn escape_xml(s: &str) -> String {
 }
 
 pub fn write_or_merge_junit_xml(path: &Path, new_suite: JUnitTestSuite) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            let _ = std::fs::create_dir_all(parent);
-        }
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent).map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
     }
 
-    let mut existing_suites: Vec<(String, String)> = Vec::new();
+    // Suites written by earlier runs are carried over verbatim and only the roll-up is
+    // recomputed, so their counts are read back out of the serialized form.
+    let mut suites = match std::fs::read_to_string(path) {
+        Ok(content) => parse_existing_suites(&content),
+        Err(_) => Vec::new(),
+    };
 
-    if path.exists() {
-        if let Ok(content) = std::fs::read_to_string(path) {
-            existing_suites = parse_existing_suites(&content);
-        }
+    let new_xml = new_suite.to_xml();
+    match suites.iter_mut().find(|(name, _)| *name == new_suite.name) {
+        Some((_, xml)) => *xml = new_xml,
+        None => suites.push((new_suite.name, new_xml)),
     }
 
-    let new_suite_xml = new_suite.to_xml();
-    let new_suite_name = new_suite.name.clone();
+    let total = |attr: &str| -> usize {
+        suites.iter().filter_map(|(_, xml)| extract_attr_usize(xml, attr)).sum()
+    };
+    let total_time: f64 = suites.iter().filter_map(|(_, xml)| extract_attr_f64(xml, "time")).sum();
 
-    // Replace or append
-    let mut replaced = false;
-    for (name, xml) in &mut existing_suites {
-        if name == &new_suite_name {
-            *xml = new_suite_xml.clone();
-            replaced = true;
-            break;
-        }
-    }
-    if !replaced {
-        existing_suites.push((new_suite_name, new_suite_xml));
-    }
-
-    // Aggregate statistics
-    let mut total_tests = 0;
-    let mut total_failures = 0;
-    let mut total_errors = 0;
-    let mut total_skipped = 0;
-    let mut total_time = 0.0;
-
-    for (_, xml) in &existing_suites {
-        total_tests += extract_attr_usize(xml, "tests").unwrap_or(0);
-        total_failures += extract_attr_usize(xml, "failures").unwrap_or(0);
-        total_errors += extract_attr_usize(xml, "errors").unwrap_or(0);
-        total_skipped += extract_attr_usize(xml, "skipped").unwrap_or(0);
-        total_time += extract_attr_f64(xml, "time").unwrap_or(0.0);
-    }
-
-    let mut out = String::new();
-    out.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+    let mut out = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
     out.push_str(&format!(
-        "<testsuites name=\"zkvm-test\" tests=\"{}\" failures=\"{}\" errors=\"{}\" skipped=\"{}\" time=\"{:.3}\">\n",
-        total_tests, total_failures, total_errors, total_skipped, total_time
+        "<testsuites name=\"zkvm-test\" tests=\"{}\" failures=\"{}\" errors=\"{}\" skipped=\"{}\" time=\"{total_time:.3}\">\n",
+        total("tests"),
+        total("failures"),
+        total("errors"),
+        total("skipped"),
     ));
-
-    for (_, xml) in existing_suites {
-        out.push_str(&xml);
+    for (_, xml) in &suites {
+        out.push_str(xml);
         out.push('\n');
     }
-
     out.push_str("</testsuites>\n");
 
     std::fs::write(path, out).map_err(|e| format!("failed to write JUnit XML to {}: {e}", path.display()))
