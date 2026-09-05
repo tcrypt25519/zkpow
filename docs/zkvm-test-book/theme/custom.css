@@ -1,0 +1,63 @@
+:root {
+    --content-max-width: 880px;
+}
+
+.content main {
+    padding-bottom: 4rem;
+}
+
+.content h1,
+.content h2 {
+    margin-block-start: 1.8em;
+}
+
+.content h1 {
+    padding-block-end: 0.3em;
+    border-block-end: 1px solid var(--table-border-color);
+}
+
+.content h2 {
+    font-size: 1.4em;
+}
+
+.content h3 {
+    font-size: 1.15em;
+}
+
+.content table {
+    width: 100%;
+    margin: 1.2em 0;
+}
+
+.content table th {
+    font-weight: 600;
+    text-align: start;
+}
+
+.content table td,
+.content table th {
+    padding: 0.4em 0.7em;
+}
+
+.table-wrapper {
+    overflow-x: auto;
+}
+
+.content pre {
+    padding: 0.9em 1em;
+    border-radius: 5px;
+}
+
+.content pre > code {
+    font-size: 0.88em;
+    line-height: 1.5;
+}
+
+.content blockquote {
+    border-inline-start-width: 4px;
+}
+
+.content ul li,
+.content ol li {
+    margin-block: 0.3em;
+}

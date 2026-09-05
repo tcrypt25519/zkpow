@@ -1,0 +1,39 @@
+[book]
+title = "The zkvm-test Book"
+description = "Run Rust tests inside a zkVM and measure what they cost."
+authors = ["Tyler Smith"]
+language = "en"
+src = "src"
+
+[build]
+build-dir = "book"
+create-missing = false
+
+[output.html]
+default-theme = "rust"
+preferred-dark-theme = "ayu"
+smart-punctuation = true
+no-section-label = false
+additional-css = ["theme/custom.css"]
+hash-files = true
+
+# Set once zkvm-test has a public repository:
+# git-repository-url = "https://github.com/OWNER/zkvm-test"
+# git-repository-icon = "fab-github"
+# edit-url-template = "https://github.com/OWNER/zkvm-test/edit/main/docs/book/{path}"
+
+[output.html.fold]
+enable = true
+level = 1
+
+[output.html.playground]
+editable = false
+runnable = false
+
+[output.html.search]
+enable = true
+limit-results = 20
+use-boolean-and = true
+
+[output.html.print]
+enable = true
