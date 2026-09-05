@@ -6,8 +6,8 @@ use std::{
 
 use sp1_sdk::{prelude::*, Elf, ProverClient, SP1Stdin};
 pub use zkvm_test::{
-    CMD_LIST, CMD_RUN, FLAG_EXPECTED_EXIT_CODE, FLAG_FIXTURE, FLAG_IGNORE, FLAG_MAX_CYCLES,
-    FLAG_SHOULD_PANIC, FLAG_SNAPSHOT, MAGIC,
+    CMD_LIST, CMD_RUN, FLAG_EXPECTED_EXIT_CODE, FLAG_EXPECTED_MESSAGE, FLAG_FIXTURE, FLAG_IGNORE,
+    FLAG_MAX_CYCLES, FLAG_SHOULD_PANIC, FLAG_SNAPSHOT, MAGIC,
 };
 
 pub const METRICS_DIR: &str = ".zkvm-test-metrics";
@@ -23,6 +23,7 @@ pub struct TestDesc {
     pub name:               String,
     pub ignore:             bool,
     pub should_panic:       bool,
+    pub expected_message:   Option<String>,
     pub expected_exit_code: Option<u32>,
     pub max_cycles:         Option<u64>,
     pub fixture:            Option<String>,
@@ -233,6 +234,10 @@ impl TestDesc {
             true => Some(reader.read_u64_le()?),
             false => None,
         };
+        let expected_message = match present(FLAG_EXPECTED_MESSAGE) {
+            true => Some(reader.read_len_prefixed_str()?),
+            false => None,
+        };
         let fixture = match present(FLAG_FIXTURE) {
             true => Some(reader.read_len_prefixed_str()?),
             false => None,
@@ -247,6 +252,7 @@ impl TestDesc {
             name,
             ignore: present(FLAG_IGNORE),
             should_panic: present(FLAG_SHOULD_PANIC),
+            expected_message,
             expected_exit_code,
             max_cycles,
             fixture,
@@ -255,14 +261,35 @@ impl TestDesc {
     }
 }
 
-pub fn decode_test_list(bytes: &[u8]) -> Option<Vec<TestDesc>> {
-    let mut reader = ByteReader::new(bytes);
-    let count = reader.read_u32_le()? as usize;
-    let mut tests = Vec::with_capacity(count.min(1024));
+/// What an ELF answered the `CMD_LIST` command with.
+#[derive(Debug)]
+pub enum Catalog {
+    /// A decodable list of the tests the binary holds.
+    Tests(Vec<TestDesc>),
+    /// A zkvm-test reply that could not be decoded, which means this runner and the
+    /// `zkvm-test` the ELF was built against disagree about the wire format.
+    Corrupt,
+    /// No zkvm-test reply at all: a stock libtest binary that ignored the command.
+    Absent,
+}
+
+pub fn decode_test_list(bytes: &[u8]) -> Catalog {
+    let Some(body) = bytes.strip_prefix(MAGIC.as_slice()) else {
+        return Catalog::Absent;
+    };
+
+    let mut reader = ByteReader::new(body);
+    let Some(count) = reader.read_u32_le() else {
+        return Catalog::Corrupt;
+    };
+    let mut tests = Vec::with_capacity((count as usize).min(1024));
     for _ in 0..count {
-        tests.push(TestDesc::decode(&mut reader)?);
+        match TestDesc::decode(&mut reader) {
+            Some(test) => tests.push(test),
+            None => return Catalog::Corrupt,
+        }
     }
-    Some(tests)
+    Catalog::Tests(tests)
 }
 
 /// A crate named `a-b-c` conventionally lives in `crates/b-c` or `crates/c`, and the ELF
@@ -462,6 +489,23 @@ pub struct BaselineSuite {
     pub created_at:   String,
     pub total_cycles: u64,
     pub tests:        std::collections::BTreeMap<String, TestMetric>,
+}
+
+/// A `should_panic(expected = "...")` test asserts the text of a guest panic, which the
+/// panic handler writes to stderr. A test that also declares an exit code is asserting a
+/// `halt` syscall instead, which by construction carries no message, so there the exit
+/// code is the assertion and the text stays a host-side one.
+fn panic_message_verdict(test: &TestDesc, stderr: &str) -> Option<String> {
+    let expected = test.expected_message.as_deref()?;
+    if test.expected_exit_code.is_some() || stderr.contains(expected) {
+        return None;
+    }
+    // The failure report prints the captured stderr right below this, so quoting it
+    // here as well would only print the panic twice.
+    Some(match stderr.trim() {
+        "" => format!("test failed with no guest stderr, so the expected panic text {expected:?} could not be matched"),
+        _ => format!("guest stderr did not contain the expected panic text {expected:?}"),
+    })
 }
 
 /// Whether the guest's exit code is the one the test declared.
@@ -915,12 +959,21 @@ pub async fn run(args: RunnerArgs) -> i32 {
 
     let test_catalog = match list_res {
         Ok((public_values, report)) if report.exit_code == 0 => decode_test_list(public_values.as_slice()),
-        _ => None,
+        _ => Catalog::Absent,
     };
 
     let all_tests = match test_catalog {
-        Some(tests) => tests,
-        None => {
+        Catalog::Tests(tests) => tests,
+        Catalog::Corrupt => {
+            eprintln!(
+                "zkvm-test-runner: {} answered the test-list command with a catalog this runner \
+                 cannot decode. The zkvm-test version it was built against and this runner \
+                 disagree about the wire format; rebuild both from the same workspace.",
+                args.elf_path
+            );
+            return 2;
+        },
+        Catalog::Absent => {
             // Tier 1 Fallback: run the ELF once directly with empty stdin and forward output.
             let (stdout_tx, stdout_rx) = tokio::sync::watch::channel(String::new());
             let (stderr_tx, stderr_rx) = tokio::sync::watch::channel(String::new());
@@ -1169,6 +1222,12 @@ pub async fn run(args: RunnerArgs) -> i32 {
 
             // Declarative checks, in declaration order; the first failure stops the rest.
             let mut failure = out.failure;
+
+            if failure.is_none()
+                && let Some(reason) = panic_message_verdict(&test, &stderr)
+            {
+                failure = Some(reason);
+            }
 
             if failure.is_none()
                 && let Some(max) = test.max_cycles
@@ -1504,9 +1563,9 @@ mod tests {
 
     #[test]
     fn test_decode_test_list_valid() {
-        let mut bytes = Vec::new();
-        // Count: 2 tests
-        bytes.extend_from_slice(&2u32.to_le_bytes());
+        let mut bytes = MAGIC.to_vec();
+        // Count: 3 tests
+        bytes.extend_from_slice(&3u32.to_le_bytes());
 
         // Test 1: should panic with expected exit code 42
         let flags1 = FLAG_SHOULD_PANIC | FLAG_EXPECTED_EXIT_CODE;
@@ -1530,8 +1589,23 @@ mod tests {
         bytes.extend_from_slice(&(name2.len() as u32).to_le_bytes());
         bytes.extend_from_slice(name2.as_bytes());
 
-        let decoded = decode_test_list(&bytes).expect("should decode valid list");
-        assert_eq!(decoded.len(), 2);
+        // Test 3: expects a panic carrying a specific message
+        bytes.push(FLAG_SHOULD_PANIC | FLAG_EXPECTED_MESSAGE);
+        let message = "median hint missing";
+        bytes.extend_from_slice(&(message.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(message.as_bytes());
+        let name3 = "tests::message_test";
+        bytes.extend_from_slice(&(name3.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(name3.as_bytes());
+
+        let Catalog::Tests(decoded) = decode_test_list(&bytes) else {
+            panic!("should decode valid list");
+        };
+        assert_eq!(decoded.len(), 3);
+        assert_eq!(decoded[2].name, "tests::message_test");
+        assert!(decoded[2].should_panic);
+        assert_eq!(decoded[2].expected_message.as_deref(), Some("median hint missing"));
+        assert_eq!(decoded[2].expected_exit_code, None);
 
         assert_eq!(decoded[0].name, "tests::panic_test");
         assert!(decoded[0].should_panic);
@@ -1547,16 +1621,28 @@ mod tests {
         assert_eq!(decoded[1].max_cycles, Some(1_000_000));
         assert_eq!(decoded[1].fixture.as_deref(), Some("fixtures/data.bin"));
         assert_eq!(decoded[1].snapshot.as_deref(), Some("snapshots/golden.hex"));
+        assert_eq!(decoded[0].expected_message, None);
+        assert_eq!(decoded[1].expected_message, None);
     }
 
     #[test]
-    fn test_decode_test_list_invalid() {
-        // Empty bytes
-        assert!(decode_test_list(&[]).is_none());
+    fn test_decode_test_list_distinguishes_absent_from_corrupt() {
+        // A stock libtest ELF ignores the command and commits nothing recognizable,
+        // which must stay distinguishable from a reply this runner cannot read.
+        assert!(matches!(decode_test_list(&[]), Catalog::Absent));
+        assert!(matches!(decode_test_list(b"not a zkvm-test binary"), Catalog::Absent));
 
-        // Truncated bytes: says 5 tests but ends
-        let bytes = 5u32.to_le_bytes();
-        assert!(decode_test_list(&bytes).is_none());
+        // Tagged, but truncated: says 5 tests and ends
+        let mut truncated = MAGIC.to_vec();
+        truncated.extend_from_slice(&5u32.to_le_bytes());
+        assert!(matches!(decode_test_list(&truncated), Catalog::Corrupt));
+
+        // Tagged, but not even a count
+        assert!(matches!(decode_test_list(MAGIC.as_slice()), Catalog::Corrupt));
+
+        let mut empty_suite = MAGIC.to_vec();
+        empty_suite.extend_from_slice(&0u32.to_le_bytes());
+        assert!(matches!(decode_test_list(&empty_suite), Catalog::Tests(tests) if tests.is_empty()));
     }
 
     #[test]
@@ -1603,6 +1689,7 @@ mod tests {
             name: "t".to_string(),
             ignore: false,
             should_panic,
+            expected_message: None,
             expected_exit_code,
             max_cycles: None,
             fixture: None,
@@ -1693,9 +1780,36 @@ mod tests {
     #[test]
     fn test_decode_test_list_rejects_absurd_count() {
         // A corrupt catalog must not be trusted into a huge allocation
-        let mut bytes = u32::MAX.to_le_bytes().to_vec();
+        let mut bytes = MAGIC.to_vec();
+        bytes.extend_from_slice(&u32::MAX.to_le_bytes());
         bytes.push(0);
-        assert!(decode_test_list(&bytes).is_none());
+        assert!(matches!(decode_test_list(&bytes), Catalog::Corrupt));
+    }
+
+    #[test]
+    fn test_panic_message_verdict() {
+        let with_message = |expected_exit_code| TestDesc {
+            expected_message: Some("median hint missing".to_string()),
+            ..desc(true, expected_exit_code)
+        };
+
+        // A panicking test asserts the text the guest panic handler wrote to stderr
+        assert_eq!(
+            panic_message_verdict(&with_message(None), "panicked at: median hint missing\n"),
+            None
+        );
+        let failed = panic_message_verdict(&with_message(None), "panicked at: something else").unwrap();
+        assert!(failed.contains("median hint missing"), "{failed}");
+
+        // Nothing on stderr is called out, since there is no stderr section to read
+        let silent = panic_message_verdict(&with_message(None), "  \n ").unwrap();
+        assert!(silent.contains("no guest stderr"), "{silent}");
+
+        // A declared exit code means a halt syscall, which carries no message
+        assert_eq!(panic_message_verdict(&with_message(Some(3)), ""), None);
+
+        // No declared message, nothing to check
+        assert_eq!(panic_message_verdict(&desc(true, None), ""), None);
     }
 
     #[test]

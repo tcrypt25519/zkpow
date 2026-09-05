@@ -240,6 +240,7 @@ pub fn zkvm_test(attr: TokenStream, item: TokenStream) -> TokenStream {
         (None, false) => quote! {},
     };
 
+    let expected_message_expr = option_expr!(config.expected_message.as_ref());
     let exit_code_expr = option_expr!(config.expected_exit_code);
     let max_cycles_expr = option_expr!(config.max_cycles);
     let fixture_expr = option_expr!(config.fixture.as_ref());
@@ -283,6 +284,7 @@ pub fn zkvm_test(attr: TokenStream, item: TokenStream) -> TokenStream {
             test_fn: #fn_name,
             ignore: #ignore,
             should_panic: #should_panic,
+            expected_message: #expected_message_expr,
             expected_exit_code: #exit_code_expr,
             max_cycles: #max_cycles_expr,
             fixture: #fixture_expr,

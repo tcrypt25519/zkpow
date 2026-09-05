@@ -19,6 +19,7 @@ pub const FLAG_EXPECTED_EXIT_CODE: u8 = 1 << 2;
 pub const FLAG_MAX_CYCLES: u8 = 1 << 3;
 pub const FLAG_FIXTURE: u8 = 1 << 4;
 pub const FLAG_SNAPSHOT: u8 = 1 << 5;
+pub const FLAG_EXPECTED_MESSAGE: u8 = 1 << 6;
 
 #[derive(Clone, Copy)]
 pub struct TestCase {
@@ -26,6 +27,7 @@ pub struct TestCase {
     pub test_fn:            fn(),
     pub ignore:             bool,
     pub should_panic:       bool,
+    pub expected_message:   Option<&'static str>,
     pub expected_exit_code: Option<u32>,
     pub max_cycles:         Option<u64>,
     pub fixture:            Option<&'static str>,
@@ -40,6 +42,9 @@ impl TestCase {
         }
         if self.should_panic {
             flags |= FLAG_SHOULD_PANIC;
+        }
+        if self.expected_message.is_some() {
+            flags |= FLAG_EXPECTED_MESSAGE;
         }
         if self.expected_exit_code.is_some() {
             flags |= FLAG_EXPECTED_EXIT_CODE;
@@ -66,6 +71,9 @@ impl TestCase {
         }
         if let Some(max) = self.max_cycles {
             buf.extend_from_slice(&max.to_le_bytes());
+        }
+        if let Some(msg) = self.expected_message {
+            write_len_prefixed_str(buf, msg);
         }
         if let Some(fix) = self.fixture {
             write_len_prefixed_str(buf, fix);
@@ -98,7 +106,10 @@ pub fn test_runner(tests: &[&TestCase]) {
 
     match input[4] {
         CMD_LIST => {
+            // The reply is tagged so the runner can tell a catalog it cannot decode
+            // from an ELF that ignored the command entirely.
             let mut buf = Vec::new();
+            buf.extend_from_slice(MAGIC);
             buf.extend_from_slice(&(tests.len() as u32).to_le_bytes());
             for t in tests {
                 t.encode(&mut buf);
