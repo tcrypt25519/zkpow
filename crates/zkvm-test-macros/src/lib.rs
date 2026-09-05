@@ -1,6 +1,63 @@
 use proc_macro::TokenStream;
-use quote::quote;
-use syn::{ItemFn, parse_macro_input};
+use quote::{ToTokens, quote};
+use syn::{ItemFn, parse::Parse, parse_macro_input};
+
+const TEST_CASE_STATIC_PREFIX: &str = "__ZKVM_TEST_CASE_";
+const ATTR_EXPECTED: &str = "expected";
+const ATTR_EXIT_CODE: &str = "exit_code";
+
+/// An option accepted both inside `#[zkvm_test(...)]` and as a sibling attribute
+/// on the test function. One table so the two parse paths cannot drift.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Opt {
+    Ignore,
+    ShouldPanic,
+    ExitCode,
+    MaxCycles,
+    Fixture,
+    Snapshot,
+}
+
+impl Opt {
+    const ALL: [(&'static str, Opt); 6] = [
+        ("ignore", Opt::Ignore),
+        ("should_panic", Opt::ShouldPanic),
+        (ATTR_EXIT_CODE, Opt::ExitCode),
+        ("max_cycles", Opt::MaxCycles),
+        ("fixture", Opt::Fixture),
+        ("snapshot", Opt::Snapshot),
+    ];
+
+    fn from_path(path: &syn::Path) -> Option<Self> {
+        Self::ALL.iter().find(|(name, _)| path.is_ident(name)).map(|(_, opt)| *opt)
+    }
+
+    fn name(self) -> &'static str {
+        Self::ALL
+            .iter()
+            .find(|(_, opt)| *opt == self)
+            .map(|(name, _)| *name)
+            .expect("Opt::ALL covers every variant")
+    }
+
+    fn unsupported() -> String {
+        let names = Self::ALL.iter().map(|(n, _)| format!("`{n}`")).collect::<Vec<_>>().join(", ");
+        format!("unsupported zkvm_test option (expected one of: {names})")
+    }
+}
+
+/// Read `name = <lit>` or `#[name(<lit>)]` as the literal type `L`.
+fn lit_from_meta<L: Parse>(meta: &syn::Meta, name: &str, expected: &str) -> syn::Result<L> {
+    match meta {
+        syn::Meta::NameValue(nv) => syn::parse2::<L>(nv.value.to_token_stream())
+            .map_err(|_| syn::Error::new_spanned(&nv.value, format!("expected {expected} for {name}"))),
+        syn::Meta::List(list) => list.parse_args::<L>(),
+        _ => Err(syn::Error::new_spanned(
+            meta,
+            format!("expected `{name} = {expected}` or `#[{name}({expected})]`"),
+        )),
+    }
+}
 
 #[derive(Default)]
 struct TestConfig {
@@ -13,161 +70,116 @@ struct TestConfig {
     snapshot:           Option<String>,
 }
 
-const TEST_CASE_STATIC_PREFIX: &str = "__ZKVM_TEST_CASE_";
-const ATTR_IGNORE: &str = "ignore";
-const ATTR_SHOULD_PANIC: &str = "should_panic";
-const ATTR_EXIT_CODE: &str = "exit_code";
-const ATTR_MAX_CYCLES: &str = "max_cycles";
-const ATTR_FIXTURE: &str = "fixture";
-const ATTR_SNAPSHOT: &str = "snapshot";
-const ATTR_EXPECTED: &str = "expected";
-
-fn parse_int_from_meta<T: std::str::FromStr>(meta: &syn::Meta, name: &str) -> syn::Result<T>
-where
-    T::Err: std::fmt::Display,
-{
-    match meta {
-        syn::Meta::NameValue(nv) => {
-            let syn::Expr::Lit(syn::ExprLit {
-                lit: syn::Lit::Int(lit_int),
-                ..
-            }) = &nv.value
-            else {
-                return Err(syn::Error::new_spanned(&nv.value, format!("expected integer for {name}")));
-            };
-            lit_int.base10_parse()
-        },
-        syn::Meta::List(list) => {
-            let lit_int: syn::LitInt = list.parse_args()?;
-            lit_int.base10_parse()
-        },
-        _ => Err(syn::Error::new_spanned(
-            meta,
-            format!("expected `{name} = <int>` or `#[{name}(<int>)]`"),
-        )),
-    }
-}
-
-fn parse_str_from_meta(meta: &syn::Meta, name: &str) -> syn::Result<String> {
-    match meta {
-        syn::Meta::NameValue(nv) => {
-            let syn::Expr::Lit(syn::ExprLit {
-                lit: syn::Lit::Str(lit_str),
-                ..
-            }) = &nv.value
-            else {
-                return Err(syn::Error::new_spanned(&nv.value, format!("expected string literal for {name}")));
-            };
-            Ok(lit_str.value())
-        },
-        syn::Meta::List(list) => {
-            let lit_str: syn::LitStr = list.parse_args()?;
-            Ok(lit_str.value())
-        },
-        _ => Err(syn::Error::new_spanned(
-            meta,
-            format!("expected `{name} = \"...\"` or `#[{name}(\"...\")]`"),
-        )),
-    }
-}
-
 impl TestConfig {
+    /// An option written inside `#[zkvm_test(...)]`.
     fn parse_nested(&mut self, meta: &syn::meta::ParseNestedMeta) -> syn::Result<()> {
-        if meta.path.is_ident(ATTR_IGNORE) {
-            self.ignore = true;
-            return Ok(());
+        let Some(opt) = Opt::from_path(&meta.path) else {
+            return Err(meta.error(Opt::unsupported()));
+        };
+        match opt {
+            Opt::Ignore => self.ignore = true,
+            Opt::ShouldPanic => {
+                self.should_panic = true;
+                if meta.input.peek(syn::token::Paren) {
+                    meta.parse_nested_meta(|nested| self.parse_should_panic_nested(&nested))?;
+                }
+            },
+            Opt::ExitCode => {
+                self.should_panic = true;
+                self.expected_exit_code = Some(meta.value()?.parse::<syn::LitInt>()?.base10_parse()?);
+            },
+            Opt::MaxCycles => self.max_cycles = Some(meta.value()?.parse::<syn::LitInt>()?.base10_parse()?),
+            Opt::Fixture => self.fixture = Some(meta.value()?.parse::<syn::LitStr>()?.value()),
+            Opt::Snapshot => self.snapshot = Some(meta.value()?.parse::<syn::LitStr>()?.value()),
         }
-        if meta.path.is_ident(ATTR_SHOULD_PANIC) {
-            self.should_panic = true;
-            if meta.input.peek(syn::token::Paren) {
-                meta.parse_nested_meta(|nested| self.parse_should_panic_nested(&nested))?;
-            }
-            return Ok(());
-        }
-        if meta.path.is_ident(ATTR_EXIT_CODE) {
-            self.should_panic = true;
-            let value: syn::LitInt = meta.value()?.parse()?;
-            self.expected_exit_code = Some(value.base10_parse()?);
-            return Ok(());
-        }
-        if meta.path.is_ident(ATTR_MAX_CYCLES) {
-            let value: syn::LitInt = meta.value()?.parse()?;
-            self.max_cycles = Some(value.base10_parse()?);
-            return Ok(());
-        }
-        if meta.path.is_ident(ATTR_FIXTURE) {
-            let value: syn::LitStr = meta.value()?.parse()?;
-            self.fixture = Some(value.value());
-            return Ok(());
-        }
-        if meta.path.is_ident(ATTR_SNAPSHOT) {
-            let value: syn::LitStr = meta.value()?.parse()?;
-            self.snapshot = Some(value.value());
-            return Ok(());
-        }
-
-        Err(meta.error(
-            "unsupported zkvm_test option (expected `ignore`, `should_panic`, `exit_code`, `max_cycles`, `fixture`, or `snapshot`)",
-        ))
+        Ok(())
     }
 
     fn parse_should_panic_nested(&mut self, nested: &syn::meta::ParseNestedMeta) -> syn::Result<()> {
         if nested.path.is_ident(ATTR_EXPECTED) {
-            let value: syn::LitStr = nested.value()?.parse()?;
-            self.expected_message = Some(value.value());
+            self.expected_message = Some(nested.value()?.parse::<syn::LitStr>()?.value());
             return Ok(());
         }
         if nested.path.is_ident(ATTR_EXIT_CODE) {
-            let value: syn::LitInt = nested.value()?.parse()?;
-            self.expected_exit_code = Some(value.base10_parse()?);
+            self.expected_exit_code = Some(nested.value()?.parse::<syn::LitInt>()?.base10_parse()?);
             return Ok(());
         }
-
-        Err(nested.error(
-            "unsupported option inside should_panic (expected `expected = \"...\"` or `exit_code = ...`)",
-        ))
+        Err(nested.error("unsupported option inside should_panic (expected `expected = \"...\"` or `exit_code = ...`)"))
     }
 
     /// Tries to consume a sibling attribute attached to the function.
     /// Returns `Ok(true)` if recognized and consumed, `Ok(false)` if unrelated,
     /// or `Err` if the syntax is invalid.
     fn consume_fn_attr(&mut self, attr: &syn::Attribute) -> syn::Result<bool> {
-        if attr.path().is_ident(ATTR_IGNORE) {
-            self.ignore = true;
-            return Ok(true);
+        let Some(opt) = Opt::from_path(attr.path()) else {
+            return Ok(false);
+        };
+        let name = opt.name();
+        match opt {
+            Opt::Ignore => self.ignore = true,
+            Opt::ShouldPanic => {
+                self.should_panic = true;
+                if let syn::Meta::List(list) = &attr.meta {
+                    list.parse_nested_meta(|nested| self.parse_should_panic_nested(&nested))?;
+                }
+            },
+            Opt::ExitCode => {
+                self.should_panic = true;
+                self.expected_exit_code =
+                    Some(lit_from_meta::<syn::LitInt>(&attr.meta, name, "<int>")?.base10_parse()?);
+            },
+            Opt::MaxCycles => {
+                self.max_cycles = Some(lit_from_meta::<syn::LitInt>(&attr.meta, name, "<int>")?.base10_parse()?);
+            },
+            Opt::Fixture => {
+                self.fixture = Some(lit_from_meta::<syn::LitStr>(&attr.meta, name, "\"...\"")?.value());
+            },
+            Opt::Snapshot => {
+                self.snapshot = Some(lit_from_meta::<syn::LitStr>(&attr.meta, name, "\"...\"")?.value());
+            },
         }
-
-        if attr.path().is_ident(ATTR_SHOULD_PANIC) {
-            self.should_panic = true;
-            if let syn::Meta::List(list) = &attr.meta {
-                list.parse_nested_meta(|nested| self.parse_should_panic_nested(&nested))?;
-            }
-            return Ok(true);
-        }
-
-        if attr.path().is_ident(ATTR_EXIT_CODE) {
-            self.should_panic = true;
-            self.expected_exit_code = Some(parse_int_from_meta(&attr.meta, ATTR_EXIT_CODE)?);
-            return Ok(true);
-        }
-
-        if attr.path().is_ident(ATTR_MAX_CYCLES) {
-            self.max_cycles = Some(parse_int_from_meta(&attr.meta, ATTR_MAX_CYCLES)?);
-            return Ok(true);
-        }
-
-        if attr.path().is_ident(ATTR_FIXTURE) {
-            self.fixture = Some(parse_str_from_meta(&attr.meta, ATTR_FIXTURE)?);
-            return Ok(true);
-        }
-
-        if attr.path().is_ident(ATTR_SNAPSHOT) {
-            self.snapshot = Some(parse_str_from_meta(&attr.meta, ATTR_SNAPSHOT)?);
-            return Ok(true);
-        }
-
-        Ok(false)
+        Ok(true)
     }
+}
+
+/// A test is registered as a `fn()` pointer, so anything that cannot coerce to one
+/// has to be rejected here rather than as a type error inside the expansion.
+fn validate_signature(sig: &syn::Signature) -> syn::Result<()> {
+    let reject = |msg: &str| Err(syn::Error::new_spanned(sig, format!("zkvm_test: test functions {msg}")));
+
+    if sig.asyncness.is_some() {
+        return reject("cannot be `async`");
+    }
+    if sig.unsafety.is_some() {
+        return reject("cannot be `unsafe`");
+    }
+    if !sig.generics.params.is_empty() {
+        return reject("cannot be generic");
+    }
+    if !sig.inputs.is_empty() {
+        return reject("cannot take arguments; read inputs with `zkvm_test::fixture()`");
+    }
+    if let syn::ReturnType::Type(_, ty) = &sig.output {
+        let returns_unit = match ty.as_ref() {
+            syn::Type::Tuple(t) => t.elems.is_empty(),
+            syn::Type::Never(_) => true,
+            _ => false,
+        };
+        if !returns_unit {
+            return reject("must return `()`; assert inside the test instead of returning a value");
+        }
+    }
+    Ok(())
+}
+
+/// `Option<T>` as the token stream for a `::core::option::Option` expression.
+macro_rules! option_expr {
+    ($value:expr) => {
+        match $value {
+            Some(v) => quote! { ::core::option::Option::Some(#v) },
+            None => quote! { ::core::option::Option::None },
+        }
+    };
 }
 
 /// Attribute macro that registers a test function for both host (`cargo test`)
@@ -197,11 +209,16 @@ pub fn zkvm_test(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let mut input = parse_macro_input!(item as ItemFn);
 
-    // Filter and consume sibling attributes on the function (e.g. #[ignore], #[should_panic])
+    if let Err(err) = validate_signature(&input.sig) {
+        return err.to_compile_error().into();
+    }
+
+    // Sibling attributes on the function (e.g. #[ignore], #[should_panic]) fold into
+    // the same config; everything else stays on the emitted function.
     let mut remaining_attrs = Vec::new();
     for attr_item in input.attrs {
         match config.consume_fn_attr(&attr_item) {
-            Ok(true) => {}, // consumed and recorded in config
+            Ok(true) => {},
             Ok(false) => remaining_attrs.push(attr_item),
             Err(err) => return err.to_compile_error().into(),
         }
@@ -217,113 +234,47 @@ pub fn zkvm_test(attr: TokenStream, item: TokenStream) -> TokenStream {
         quote! {}
     };
 
-    let host_should_panic_attr = if let Some(ref msg) = config.expected_message {
-        quote! { #[cfg_attr(not(target_os = "zkvm"), should_panic(expected = #msg))] }
-    } else if config.should_panic {
-        quote! { #[cfg_attr(not(target_os = "zkvm"), should_panic)] }
-    } else {
-        quote! {}
+    let host_should_panic_attr = match (&config.expected_message, config.should_panic) {
+        (Some(msg), _) => quote! { #[cfg_attr(not(target_os = "zkvm"), should_panic(expected = #msg))] },
+        (None, true) => quote! { #[cfg_attr(not(target_os = "zkvm"), should_panic)] },
+        (None, false) => quote! {},
     };
 
-    let zkvm_exit_code_expr = if let Some(code) = config.expected_exit_code {
-        quote! { ::core::option::Option::Some(#code) }
-    } else {
-        quote! { ::core::option::Option::None }
-    };
+    let exit_code_expr = option_expr!(config.expected_exit_code);
+    let max_cycles_expr = option_expr!(config.max_cycles);
+    let fixture_expr = option_expr!(config.fixture.as_ref());
+    let snapshot_expr = option_expr!(config.snapshot.as_ref());
 
-    let zkvm_max_cycles_expr = if let Some(max) = config.max_cycles {
-        quote! { ::core::option::Option::Some(#max) }
-    } else {
-        quote! { ::core::option::Option::None }
-    };
+    // A fixture or a snapshot needs the host body wrapped, which forces the host and
+    // zkVM copies apart. Without either, one function serves both.
+    let fn_tokens = if config.fixture.is_some() || config.snapshot.is_some() {
+        let (fn_vis, fn_sig, fn_block) = (&input.vis, &input.sig, &input.block);
+        quote! {
+            #[cfg(not(target_os = "zkvm"))]
+            #[::core::prelude::v1::test]
+            #host_ignore_attr
+            #host_should_panic_attr
+            #fn_vis #fn_sig {
+                ::zkvm_test::__internal::with_host_context(#fixture_expr, #snapshot_expr, || #fn_block)
+            }
 
-    let zkvm_fixture_expr = if let Some(ref fix) = config.fixture {
-        quote! { ::core::option::Option::Some(#fix) }
+            #[cfg(target_os = "zkvm")]
+            #input
+        }
     } else {
-        quote! { ::core::option::Option::None }
-    };
-
-    let zkvm_snapshot_expr = if let Some(ref snap) = config.snapshot {
-        quote! { ::core::option::Option::Some(#snap) }
-    } else {
-        quote! { ::core::option::Option::None }
+        quote! {
+            #[cfg_attr(not(target_os = "zkvm"), ::core::prelude::v1::test)]
+            #host_ignore_attr
+            #host_should_panic_attr
+            #input
+        }
     };
 
     let ignore = config.ignore;
     let should_panic = config.should_panic;
 
-    let (host_fn_tokens, zkvm_fn_tokens) = match (&config.fixture, &config.snapshot) {
-        (Some(fix), Some(snap)) => {
-            let fn_vis = &input.vis;
-            let fn_sig = &input.sig;
-            let fn_block = &input.block;
-            let host = quote! {
-                #[cfg(not(target_os = "zkvm"))]
-                #[::core::prelude::v1::test]
-                #host_ignore_attr
-                #host_should_panic_attr
-                #fn_vis #fn_sig {
-                    ::zkvm_test::__internal::with_host_fixture_and_snapshot(#fix, #snap, || #fn_block)
-                }
-            };
-            let zkvm = quote! {
-                #[cfg(target_os = "zkvm")]
-                #input
-            };
-            (host, zkvm)
-        },
-        (Some(fix), None) => {
-            let fn_vis = &input.vis;
-            let fn_sig = &input.sig;
-            let fn_block = &input.block;
-            let host = quote! {
-                #[cfg(not(target_os = "zkvm"))]
-                #[::core::prelude::v1::test]
-                #host_ignore_attr
-                #host_should_panic_attr
-                #fn_vis #fn_sig {
-                    ::zkvm_test::__internal::with_host_fixture(#fix, || #fn_block)
-                }
-            };
-            let zkvm = quote! {
-                #[cfg(target_os = "zkvm")]
-                #input
-            };
-            (host, zkvm)
-        },
-        (None, Some(snap)) => {
-            let fn_vis = &input.vis;
-            let fn_sig = &input.sig;
-            let fn_block = &input.block;
-            let host = quote! {
-                #[cfg(not(target_os = "zkvm"))]
-                #[::core::prelude::v1::test]
-                #host_ignore_attr
-                #host_should_panic_attr
-                #fn_vis #fn_sig {
-                    ::zkvm_test::__internal::with_host_snapshot(#snap, || #fn_block)
-                }
-            };
-            let zkvm = quote! {
-                #[cfg(target_os = "zkvm")]
-                #input
-            };
-            (host, zkvm)
-        },
-        (None, None) => {
-            let all = quote! {
-                #[cfg_attr(not(target_os = "zkvm"), ::core::prelude::v1::test)]
-                #host_ignore_attr
-                #host_should_panic_attr
-                #input
-            };
-            (all, quote! {})
-        },
-    };
-
-    let result = quote! {
-        #host_fn_tokens
-        #zkvm_fn_tokens
+    quote! {
+        #fn_tokens
 
         #[cfg(target_os = "zkvm")]
         #[test_case]
@@ -332,14 +283,13 @@ pub fn zkvm_test(attr: TokenStream, item: TokenStream) -> TokenStream {
             test_fn: #fn_name,
             ignore: #ignore,
             should_panic: #should_panic,
-            expected_exit_code: #zkvm_exit_code_expr,
-            max_cycles: #zkvm_max_cycles_expr,
-            fixture: #zkvm_fixture_expr,
-            snapshot: #zkvm_snapshot_expr,
+            expected_exit_code: #exit_code_expr,
+            max_cycles: #max_cycles_expr,
+            fixture: #fixture_expr,
+            snapshot: #snapshot_expr,
         };
-    };
-
-    result.into()
+    }
+    .into()
 }
 
 /// Convenience alias for `#[zkvm_test]`, allowing `use zkvm_test::test;`
