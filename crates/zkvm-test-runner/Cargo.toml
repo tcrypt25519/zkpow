@@ -28,3 +28,12 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 memuse = { workspace = true }
 regex = "1.10"
+nextest-filtering = "0.22"
+guppy = "0.17"
+nextest-metadata = "0.15"
+clap = { workspace = true }
+
+[dev-dependencies]
+assert_cmd = "2.2.2"
+predicates = "3.1.4"
+tempfile = "3.27.0"

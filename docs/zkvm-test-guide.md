@@ -557,28 +557,37 @@ When running across multiple workspace packages, `cargo zkvm-test` automatically
 
 ---
 
-### Nextest-Style Filter Expressions (`-E`, `--expr`)
+### Nextest Filter Expressions (`-E`, `--expr`)
 
-`zkvm-test` supports powerful boolean filter expressions inspired by `cargo-nextest`:
+`zkvm-test` embeds the official `nextest-filtering` engine directly, giving you complete, 100% semantic compatibility with `cargo-nextest`'s filterset domain language:
 
 ```bash
-cargo zkvm-test -E 'package(sha256) & test(header) & !test(slow)'
+cargo zkvm-test -E 'package(zkpow-sha256) & test(genesis)'
 ```
+
+#### Upfront Package & Binary Pre-Pass Pruning
+Unlike naive test runners that compile every crate and spin up every ELF before filtering:
+- **Package-Level Pruning**: `cargo-zkvm-test` evaluates the filter expression against the workspace dependency graph (`guppy`) before building. Packages that cannot possibly match the expression are pruned from `-p` arguments upfront, saving substantial compilation time.
+- **Binary-Level Pruning**: When compiler artifacts are emitted, `matches_binary` checks whether any test in the ELF could match. If `Some(false)`, the ELF is completely skipped—avoiding VM initialization, decoding, and enumeration overhead.
 
 #### Supported Predicates
 
 | Predicate | Syntax | Description | Example |
 |---|---|---|---|
 | **Test Name** | `test(pattern)` | Match test name path | `test(genesis)` |
-| **Package** | `package(pattern)` or `p(pattern)` | Match package or crate name | `package(sha256)` |
-| **Default** | `default()` | Match non-ignored tests | `default()` |
-| **All** | `all()` | Match all tests (including ignored) | `all()` |
+| **Package** | `package(pattern)` or `p(pattern)` | Match package or crate name | `package(zkpow-sha256)` |
+| **Dependencies** | `deps(pattern)` | Match packages and their direct/transitive dependencies | `deps(zkpow-types)` |
+| **Reverse Deps** | `rdeps(pattern)` | Match packages and everything depending on them | `rdeps(zkpow-types)` |
+| **Target Kind** | `kind(pattern)` | Match build target kind (`lib`, `test`, `bin`, etc.) | `kind(test)` |
+| **Binary ID** | `binary(pattern)` or `b(pattern)` | Match binary ID | `binary(zkpow_sha256)` |
+| **Default** | `default()` | Match default test set | `default()` |
+| **All** | `all()` | Match all tests | `all()` |
 | **None** | `none()` | Match no tests | `none()` |
 
 #### Pattern Matching Styles
 
 - **Substring**: `test(header)` matches any test containing `"header"`.
-- **Exact**: `test(=exact_name)` matches only when the test name equals `"exact_name"` exactly.
+- **Exact**: `test(=zkpow_sha256::tests::test_genesis_header_hash_snapshot)` matches only exact identifier matches.
 - **Regex**: `test(/.*_snapshot$/)` evaluates against a Rust regular expression.
 - **Glob / Wildcards**: `test(*fixture*)` or `test(test_?_hash)`.
 
@@ -587,6 +596,7 @@ cargo zkvm-test -E 'package(sha256) & test(header) & !test(slow)'
 - **Logical NOT**: `!` or `not` (e.g. `!test(slow)`)
 - **Logical AND**: `&` or `and` (e.g. `package(core) & test(work)`)
 - **Logical OR**: `|` or `or` (e.g. `test(genesis) | test(fixture)`)
+- **Set Difference**: `-` (e.g. `deps(zkpow-types) - package(zkpow-types)`)
 - **Parentheses**: `( ... )` to group conditions (e.g. `package(sha256) & (test(hash) | test(snapshot))`)
 
 ---

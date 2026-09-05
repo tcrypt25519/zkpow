@@ -19,14 +19,14 @@ use crate::{
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Pod, Zeroable, Size)]
 pub struct State {
-    pub chain_work:   ChainWork,
+    pub chain_work: ChainWork,
     pub genesis_hash: BlockHash,
-    pub block_hash:   BlockHash,
-    pub height:       u32,
+    pub block_hash: BlockHash,
+    pub height: u32,
 
-    pub current_nbits:   CompactTarget,
+    pub current_nbits: CompactTarget,
     pub epoch_timestamp: BlockTimestamp,
-    pub timestamps:      [BlockTimestamp; WINDOW_SIZE],
+    pub timestamps: [BlockTimestamp; WINDOW_SIZE],
 }
 
 impl State {
@@ -88,7 +88,7 @@ impl State {
         if headers.len() < cold_count {
             return Err(ApplyError::InsufficientColdHeaders {
                 required: cold_count,
-                actual:   headers.len(),
+                actual: headers.len(),
             });
         }
 
@@ -205,9 +205,9 @@ impl State {
         // Check that the incoming timestamp is > `known_median`
         if new_header.timestamp <= known_median {
             return Err(ApplyError::TimestampTooOld {
-                height:    self.height + 1,
+                height: self.height + 1,
                 timestamp: new_header.timestamp,
-                median:    known_median,
+                median: known_median,
             });
         }
 
@@ -241,13 +241,13 @@ impl State {
 impl Default for State {
     fn default() -> Self {
         Self {
-            block_hash:      BlockHash::default(),
-            genesis_hash:    BlockHash::default(),
-            current_nbits:   CompactTarget::default(),
-            height:          0,
-            chain_work:      ChainWork::default(),
+            block_hash: BlockHash::default(),
+            genesis_hash: BlockHash::default(),
+            current_nbits: CompactTarget::default(),
+            height: 0,
+            chain_work: ChainWork::default(),
             epoch_timestamp: BlockTimestamp::default(),
-            timestamps:      [BlockTimestamp::default(); WINDOW_SIZE],
+            timestamps: [BlockTimestamp::default(); WINDOW_SIZE],
         }
     }
 }

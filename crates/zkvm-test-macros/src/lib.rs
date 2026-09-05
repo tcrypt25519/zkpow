@@ -48,6 +48,29 @@ where
     }
 }
 
+fn parse_str_from_meta(meta: &syn::Meta, name: &str) -> syn::Result<String> {
+    match meta {
+        syn::Meta::NameValue(nv) => {
+            let syn::Expr::Lit(syn::ExprLit {
+                lit: syn::Lit::Str(lit_str),
+                ..
+            }) = &nv.value
+            else {
+                return Err(syn::Error::new_spanned(&nv.value, format!("expected string literal for {name}")));
+            };
+            Ok(lit_str.value())
+        },
+        syn::Meta::List(list) => {
+            let lit_str: syn::LitStr = list.parse_args()?;
+            Ok(lit_str.value())
+        },
+        _ => Err(syn::Error::new_spanned(
+            meta,
+            format!("expected `{name} = \"...\"` or `#[{name}(\"...\")]`"),
+        )),
+    }
+}
+
 impl TestConfig {
     fn parse_nested(&mut self, meta: &syn::meta::ParseNestedMeta) -> syn::Result<()> {
         if meta.path.is_ident(ATTR_IGNORE) {
@@ -134,37 +157,13 @@ impl TestConfig {
         }
 
         if attr.path().is_ident(ATTR_FIXTURE) {
-            if let syn::Meta::NameValue(nv) = &attr.meta {
-                if let syn::Expr::Lit(syn::ExprLit {
-                    lit: syn::Lit::Str(s),
-                    ..
-                }) = &nv.value
-                {
-                    self.fixture = Some(s.value());
-                    return Ok(true);
-                }
-            } else if let syn::Meta::List(list) = &attr.meta {
-                let s: syn::LitStr = list.parse_args()?;
-                self.fixture = Some(s.value());
-                return Ok(true);
-            }
+            self.fixture = Some(parse_str_from_meta(&attr.meta, ATTR_FIXTURE)?);
+            return Ok(true);
         }
 
         if attr.path().is_ident(ATTR_SNAPSHOT) {
-            if let syn::Meta::NameValue(nv) = &attr.meta {
-                if let syn::Expr::Lit(syn::ExprLit {
-                    lit: syn::Lit::Str(s),
-                    ..
-                }) = &nv.value
-                {
-                    self.snapshot = Some(s.value());
-                    return Ok(true);
-                }
-            } else if let syn::Meta::List(list) = &attr.meta {
-                let s: syn::LitStr = list.parse_args()?;
-                self.snapshot = Some(s.value());
-                return Ok(true);
-            }
+            self.snapshot = Some(parse_str_from_meta(&attr.meta, ATTR_SNAPSHOT)?);
+            return Ok(true);
         }
 
         Ok(false)

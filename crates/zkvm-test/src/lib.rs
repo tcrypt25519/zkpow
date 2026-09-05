@@ -28,6 +28,83 @@ pub struct TestCase {
     pub snapshot:           Option<&'static str>,
 }
 
+pub trait ByteBuf {
+    fn write_u8(&mut self, val: u8);
+    fn write_u32_le(&mut self, val: u32);
+    fn write_u64_le(&mut self, val: u64);
+    fn write_len_prefixed_slice(&mut self, slice: &[u8]);
+    fn write_len_prefixed_str(&mut self, s: &str) {
+        self.write_len_prefixed_slice(s.as_bytes());
+    }
+}
+
+#[cfg(target_os = "zkvm")]
+impl ByteBuf for alloc::vec::Vec<u8> {
+    #[inline]
+    fn write_u8(&mut self, val: u8) {
+        self.push(val);
+    }
+
+    #[inline]
+    fn write_u32_le(&mut self, val: u32) {
+        self.extend_from_slice(&val.to_le_bytes());
+    }
+
+    #[inline]
+    fn write_u64_le(&mut self, val: u64) {
+        self.extend_from_slice(&val.to_le_bytes());
+    }
+
+    #[inline]
+    fn write_len_prefixed_slice(&mut self, slice: &[u8]) {
+        self.write_u32_le(slice.len() as u32);
+        self.extend_from_slice(slice);
+    }
+}
+
+impl TestCase {
+    pub const fn flags(&self) -> u8 {
+        let mut flags = 0u8;
+        if self.ignore {
+            flags |= FLAG_IGNORE;
+        }
+        if self.should_panic {
+            flags |= FLAG_SHOULD_PANIC;
+        }
+        if self.expected_exit_code.is_some() {
+            flags |= FLAG_EXPECTED_EXIT_CODE;
+        }
+        if self.max_cycles.is_some() {
+            flags |= FLAG_MAX_CYCLES;
+        }
+        if self.fixture.is_some() {
+            flags |= FLAG_FIXTURE;
+        }
+        if self.snapshot.is_some() {
+            flags |= FLAG_SNAPSHOT;
+        }
+        flags
+    }
+
+    #[cfg(target_os = "zkvm")]
+    pub fn encode<B: ByteBuf>(&self, buf: &mut B) {
+        buf.write_u8(self.flags());
+        if let Some(code) = self.expected_exit_code {
+            buf.write_u32_le(code);
+        }
+        if let Some(max) = self.max_cycles {
+            buf.write_u64_le(max);
+        }
+        if let Some(fix) = self.fixture {
+            buf.write_len_prefixed_str(fix);
+        }
+        if let Some(snap) = self.snapshot {
+            buf.write_len_prefixed_str(snap);
+        }
+        buf.write_len_prefixed_str(self.name);
+    }
+}
+
 #[cfg(target_os = "zkvm")]
 pub fn test_runner(tests: &[&TestCase]) {
     use alloc::vec::Vec;
@@ -46,58 +123,18 @@ pub fn test_runner(tests: &[&TestCase]) {
     match input[4] {
         CMD_LIST => {
             let mut buf = Vec::new();
-            buf.extend_from_slice(&(tests.len() as u32).to_le_bytes());
+            buf.write_u32_le(tests.len() as u32);
             for t in tests {
-                let mut flags = 0u8;
-                if t.ignore {
-                    flags |= FLAG_IGNORE;
-                }
-                if t.should_panic {
-                    flags |= FLAG_SHOULD_PANIC;
-                }
-                if t.expected_exit_code.is_some() {
-                    flags |= FLAG_EXPECTED_EXIT_CODE;
-                }
-                if t.max_cycles.is_some() {
-                    flags |= FLAG_MAX_CYCLES;
-                }
-                if t.fixture.is_some() {
-                    flags |= FLAG_FIXTURE;
-                }
-                if t.snapshot.is_some() {
-                    flags |= FLAG_SNAPSHOT;
-                }
-                buf.push(flags);
-                if let Some(code) = t.expected_exit_code {
-                    buf.extend_from_slice(&code.to_le_bytes());
-                }
-                if let Some(max) = t.max_cycles {
-                    buf.extend_from_slice(&max.to_le_bytes());
-                }
-                if let Some(fix) = t.fixture {
-                    let fix_bytes = fix.as_bytes();
-                    buf.extend_from_slice(&(fix_bytes.len() as u32).to_le_bytes());
-                    buf.extend_from_slice(fix_bytes);
-                }
-                if let Some(snap) = t.snapshot {
-                    let snap_bytes = snap.as_bytes();
-                    buf.extend_from_slice(&(snap_bytes.len() as u32).to_le_bytes());
-                    buf.extend_from_slice(snap_bytes);
-                }
-                let name_bytes = t.name.as_bytes();
-                buf.extend_from_slice(&(name_bytes.len() as u32).to_le_bytes());
-                buf.extend_from_slice(name_bytes);
+                t.encode(&mut buf);
             }
             sp1_zkvm::io::commit_slice(&buf);
         },
         CMD_RUN => {
             let name_bytes = &input[5..];
             let target_name = core::str::from_utf8(name_bytes).unwrap_or("");
-            for t in tests {
-                if t.name == target_name {
-                    (t.test_fn)();
-                    return;
-                }
+            if let Some(t) = tests.iter().find(|t| t.name == target_name) {
+                (t.test_fn)();
+                return;
             }
             panic!("zkvm-test: test '{}' not found in test suite", target_name);
         },
@@ -203,26 +240,59 @@ pub mod __internal {
             .unwrap_or_else(|e| panic!("zkvm-test: failed to read fixture '{}': {}", resolved.display(), e))
     }
 
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum SnapshotFormat {
+        Hex,
+        Binary,
+    }
+
+    impl SnapshotFormat {
+        pub fn from_path(path: &Path) -> Self {
+            if path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("hex")) {
+                Self::Hex
+            } else {
+                Self::Binary
+            }
+        }
+
+        pub fn format_committed(&self, committed: &[u8]) -> std::vec::Vec<u8> {
+            match self {
+                Self::Hex => {
+                    let mut s = committed
+                        .iter()
+                        .map(|b| std::format!("{b:02x}"))
+                        .collect::<std::string::String>();
+                    s.push('\n');
+                    s.into_bytes()
+                },
+                Self::Binary => committed.to_vec(),
+            }
+        }
+    }
+
+    fn find_in_manifest_ancestors(path: &Path, manifest_dir: &Path) -> Option<PathBuf> {
+        let candidate = manifest_dir.join(path);
+        if candidate.exists() {
+            return Some(candidate);
+        }
+        let mut curr = manifest_dir;
+        while let Some(parent) = curr.parent() {
+            let candidate = parent.join(path);
+            if candidate.exists() {
+                return Some(candidate);
+            }
+            curr = parent;
+        }
+        None
+    }
+
     pub fn resolve_host_path(path: &str) -> Option<PathBuf> {
         let p = Path::new(path);
         if p.exists() {
             return Some(p.to_path_buf());
         }
-        if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
-            let candidate = Path::new(&manifest_dir).join(path);
-            if candidate.exists() {
-                return Some(candidate);
-            }
-            let mut curr = Path::new(&manifest_dir);
-            while let Some(parent) = curr.parent() {
-                let candidate = parent.join(path);
-                if candidate.exists() {
-                    return Some(candidate);
-                }
-                curr = parent;
-            }
-        }
-        None
+        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").ok()?;
+        find_in_manifest_ancestors(p, Path::new(&manifest_dir))
     }
 
     fn resolve_host_write_path(path: &str) -> PathBuf {
@@ -231,19 +301,9 @@ pub mod __internal {
             return p.to_path_buf();
         }
         if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
-            let candidate = Path::new(&manifest_dir).join(path);
-            if candidate.exists() {
-                return candidate;
-            }
-            let mut curr = Path::new(&manifest_dir);
-            while let Some(parent) = curr.parent() {
-                let candidate = parent.join(path);
-                if candidate.exists() {
-                    return candidate;
-                }
-                curr = parent;
-            }
-            Path::new(&manifest_dir).join(path)
+            let manifest_path = Path::new(&manifest_dir);
+            find_in_manifest_ancestors(p, manifest_path)
+                .unwrap_or_else(|| manifest_path.join(path))
         } else {
             p.to_path_buf()
         }
@@ -253,29 +313,14 @@ pub mod __internal {
         let resolved = resolve_host_write_path(snapshot_path);
         let accept_snapshots = std::env::var("ZKVM_ACCEPT_SNAPSHOTS").is_ok()
             || std::env::var("ACCEPT_SNAPSHOTS").is_ok();
-
-        let is_hex = snapshot_path.ends_with(".hex");
-        let actual_str = if is_hex {
-            committed
-                .iter()
-                .map(|b| std::format!("{b:02x}"))
-                .collect::<std::string::String>()
-        } else {
-            std::string::String::new()
-        };
+        let format = SnapshotFormat::from_path(&resolved);
 
         if !resolved.exists() {
             if accept_snapshots {
                 if let Some(parent) = resolved.parent() {
                     let _ = std::fs::create_dir_all(parent);
                 }
-                if is_hex {
-                    let mut content = actual_str.clone();
-                    content.push('\n');
-                    let _ = std::fs::write(&resolved, content);
-                } else {
-                    let _ = std::fs::write(&resolved, committed);
-                }
+                let _ = std::fs::write(&resolved, format.format_committed(committed));
                 return;
             } else {
                 panic!(
@@ -285,35 +330,37 @@ pub mod __internal {
             }
         }
 
-        if is_hex {
-            let content = std::fs::read_to_string(&resolved)
-                .unwrap_or_else(|e| panic!("failed to read snapshot '{}': {e}", resolved.display()));
-            let expected_str = content.trim().to_ascii_lowercase();
-            if expected_str != actual_str {
-                if accept_snapshots {
-                    let mut new_content = actual_str;
-                    new_content.push('\n');
-                    let _ = std::fs::write(&resolved, new_content);
-                } else {
-                    panic!(
-                        "zkvm-test: snapshot mismatch for '{}':\n  expected: {}\n    actual: {}\nRun with `cargo zkvm-test --accept-snapshots` to update.",
-                        resolved.display(), expected_str, actual_str
-                    );
+        match format {
+            SnapshotFormat::Hex => {
+                let content = std::fs::read_to_string(&resolved)
+                    .unwrap_or_else(|e| panic!("failed to read snapshot '{}': {e}", resolved.display()));
+                let expected = content.trim().to_ascii_lowercase();
+                let actual = committed.iter().map(|b| std::format!("{b:02x}")).collect::<std::string::String>();
+                if expected != actual {
+                    if accept_snapshots {
+                        let _ = std::fs::write(&resolved, format.format_committed(committed));
+                    } else {
+                        panic!(
+                            "zkvm-test: snapshot mismatch for '{}':\n  expected: {}\n    actual: {}\nRun with `cargo zkvm-test --accept-snapshots` to update.",
+                            resolved.display(), expected, actual
+                        );
+                    }
                 }
-            }
-        } else {
-            let expected_bytes = std::fs::read(&resolved)
-                .unwrap_or_else(|e| panic!("failed to read snapshot '{}': {e}", resolved.display()));
-            if expected_bytes != committed {
-                if accept_snapshots {
-                    let _ = std::fs::write(&resolved, committed);
-                } else {
-                    panic!(
-                        "zkvm-test: snapshot mismatch for '{}': expected {} bytes, committed {} bytes. Run with `cargo zkvm-test --accept-snapshots` to update.",
-                        resolved.display(), expected_bytes.len(), committed.len()
-                    );
+            },
+            SnapshotFormat::Binary => {
+                let expected = std::fs::read(&resolved)
+                    .unwrap_or_else(|e| panic!("failed to read snapshot '{}': {e}", resolved.display()));
+                if expected != committed {
+                    if accept_snapshots {
+                        let _ = std::fs::write(&resolved, committed);
+                    } else {
+                        panic!(
+                            "zkvm-test: snapshot mismatch for '{}': expected {} bytes, committed {} bytes. Run with `cargo zkvm-test --accept-snapshots` to update.",
+                            resolved.display(), expected.len(), committed.len()
+                        );
+                    }
                 }
-            }
+            },
         }
     }
 }

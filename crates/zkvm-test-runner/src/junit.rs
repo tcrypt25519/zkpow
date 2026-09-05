@@ -182,21 +182,11 @@ pub fn write_or_merge_junit_xml(path: &Path, new_suite: JUnitTestSuite) -> Resul
     let mut total_time = 0.0;
 
     for (_, xml) in &existing_suites {
-        if let Some(tests) = extract_attr_usize(xml, "tests") {
-            total_tests += tests;
-        }
-        if let Some(fails) = extract_attr_usize(xml, "failures") {
-            total_failures += fails;
-        }
-        if let Some(errs) = extract_attr_usize(xml, "errors") {
-            total_errors += errs;
-        }
-        if let Some(skip) = extract_attr_usize(xml, "skipped") {
-            total_skipped += skip;
-        }
-        if let Some(t) = extract_attr_f64(xml, "time") {
-            total_time += t;
-        }
+        total_tests += extract_attr_usize(xml, "tests").unwrap_or(0);
+        total_failures += extract_attr_usize(xml, "failures").unwrap_or(0);
+        total_errors += extract_attr_usize(xml, "errors").unwrap_or(0);
+        total_skipped += extract_attr_usize(xml, "skipped").unwrap_or(0);
+        total_time += extract_attr_f64(xml, "time").unwrap_or(0.0);
     }
 
     let mut out = String::new();
@@ -336,5 +326,75 @@ mod tests {
         assert!(merged.contains("name=\"suite_two\""));
 
         let _ = std::fs::remove_dir_all(&tmp_dir);
+    }
+
+    #[test]
+    fn test_junit_skipped_case_and_escaping() {
+        let mut suite = JUnitTestSuite::new("suite_escaping");
+        suite.cases.push(JUnitTestCase {
+            name: "test::special_<>&\"'".to_string(),
+            classname: "suite_escaping".to_string(),
+            time: 0.0,
+            cycles: 0,
+            record_bytes: 0,
+            status: TestCaseStatus::Skipped,
+            stdout: "out with <tag> & entity".to_string(),
+            stderr: "err with 'quotes' and \"double\"".to_string(),
+        });
+
+        let xml = suite.to_xml();
+        assert!(xml.contains("skipped=\"1\""));
+        assert!(xml.contains("<skipped/>"));
+        assert!(xml.contains("name=\"test::special_&lt;&gt;&amp;&quot;&apos;\""));
+        assert!(xml.contains("<system-out>out with &lt;tag&gt; &amp; entity</system-out>"));
+        assert!(xml.contains("<system-err>err with &apos;quotes&apos; and &quot;double&quot;</system-err>"));
+    }
+
+    #[test]
+    fn test_junit_replace_existing_suite() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let path = tmp.path();
+
+        let mut suite1 = JUnitTestSuite::new("suite_a");
+        suite1.cases.push(JUnitTestCase {
+            name: "test1".to_string(),
+            classname: "suite_a".to_string(),
+            time: 0.1,
+            cycles: 100,
+            record_bytes: 50,
+            status: TestCaseStatus::Passed,
+            stdout: String::new(),
+            stderr: String::new(),
+        });
+        write_or_merge_junit_xml(path, suite1).unwrap();
+
+        // Write an updated suite_a with 2 tests
+        let mut suite1_updated = JUnitTestSuite::new("suite_a");
+        suite1_updated.cases.push(JUnitTestCase {
+            name: "test1".to_string(),
+            classname: "suite_a".to_string(),
+            time: 0.1,
+            cycles: 100,
+            record_bytes: 50,
+            status: TestCaseStatus::Passed,
+            stdout: String::new(),
+            stderr: String::new(),
+        });
+        suite1_updated.cases.push(JUnitTestCase {
+            name: "test2".to_string(),
+            classname: "suite_a".to_string(),
+            time: 0.2,
+            cycles: 200,
+            record_bytes: 60,
+            status: TestCaseStatus::Passed,
+            stdout: String::new(),
+            stderr: String::new(),
+        });
+        write_or_merge_junit_xml(path, suite1_updated).unwrap();
+
+        let content = std::fs::read_to_string(path).unwrap();
+        // Should have 2 tests total, not 3 (no duplication of suite_a)
+        assert!(content.contains("tests=\"2\""));
+        assert_eq!(content.matches("<testsuite ").count(), 1);
     }
 }

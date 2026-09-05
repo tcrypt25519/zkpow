@@ -445,7 +445,7 @@ By default (`--mode none`), tests simulate VM execution to maximize development 
 - [x] Public Values / Snapshot Testing (`#[test(snapshot = "...")]`, `--accept-snapshots`, hex diffs).
 - [x] Proof Mode Control (`--mode core|compressed|groth16|plonk|none` with upfront PK setup and verification).
 - [x] Granular Instruction Category Profiling Table (`--instructions`, `--opcodes`, `--profile`) with ALU, Memory, Control, Math, System, and Syscall breakdowns.
-- [x] CI & Machine-Readable Output: Nextest-style boolean filter expressions (`-E` / `--expr`) and multi-suite JUnit XML export (`--junit-path`).
+- [x] CI & Machine-Readable Output: Official `nextest-filtering` engine integration (`-E`), package/binary pre-pass pruning, and multi-suite JUnit XML export (`--junit-path`).
 
 #### Cycle-Aware Flamegraphs
 

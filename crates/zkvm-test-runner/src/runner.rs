@@ -77,6 +77,10 @@ pub struct RunnerArgs {
     pub accept_snapshots:   bool,
     pub filter_expr:        Option<String>,
     pub junit_path:         Option<String>,
+    pub package_id:         Option<String>,
+    pub target_name:        Option<String>,
+    pub target_kind:        Option<String>,
+    pub package_graph:      Option<Arc<guppy::graph::PackageGraph>>,
 }
 
 pub fn parse_args_from<I, T>(iter: I) -> RunnerArgs
@@ -122,6 +126,15 @@ where
             },
             "--junit-path" => {
                 args.junit_path = next_val();
+            },
+            "--package-id" => {
+                args.package_id = next_val();
+            },
+            "--target-name" => {
+                args.target_name = next_val();
+            },
+            "--target-kind" => {
+                args.target_kind = next_val();
             },
             "--accept-snapshots" | "--update-snapshots" => args.accept_snapshots = true,
             "-q" | "--quiet" => args.quiet = true,
@@ -178,65 +191,154 @@ where
     args
 }
 
-fn read_u8(bytes: &[u8], offset: &mut usize) -> Option<u8> {
-    let val = *bytes.get(*offset)?;
-    *offset += 1;
-    Some(val)
+pub struct ByteReader<'a> {
+    data:   &'a [u8],
+    offset: usize,
 }
 
-fn read_u32(bytes: &[u8], offset: &mut usize) -> Option<u32> {
-    let slice = bytes.get(*offset..*offset + 4)?;
-    *offset += 4;
-    Some(u32::from_le_bytes(slice.try_into().ok()?))
+impl<'a> ByteReader<'a> {
+    pub const fn new(data: &'a [u8]) -> Self {
+        Self { data, offset: 0 }
+    }
+
+    pub const fn remaining(&self) -> usize {
+        self.data.len().saturating_sub(self.offset)
+    }
+
+    pub fn read_u8(&mut self) -> Option<u8> {
+        let val = *self.data.get(self.offset)?;
+        self.offset += 1;
+        Some(val)
+    }
+
+    pub fn read_u32_le(&mut self) -> Option<u32> {
+        let slice = self.data.get(self.offset..self.offset + 4)?;
+        self.offset += 4;
+        Some(u32::from_le_bytes(slice.try_into().ok()?))
+    }
+
+    pub fn read_u64_le(&mut self) -> Option<u64> {
+        let slice = self.data.get(self.offset..self.offset + 8)?;
+        self.offset += 8;
+        Some(u64::from_le_bytes(slice.try_into().ok()?))
+    }
+
+    pub fn read_bytes(&mut self, len: usize) -> Option<&'a [u8]> {
+        let slice = self.data.get(self.offset..self.offset + len)?;
+        self.offset += len;
+        Some(slice)
+    }
+
+    pub fn read_len_prefixed_str(&mut self) -> Option<String> {
+        let len = self.read_u32_le()? as usize;
+        let bytes = self.read_bytes(len)?;
+        std::str::from_utf8(bytes).ok().map(String::from)
+    }
+
+    pub fn read_conditional_u32_le(&mut self, condition: bool) -> Option<Option<u32>> {
+        if condition {
+            self.read_u32_le().map(Some)
+        } else {
+            Some(None)
+        }
+    }
+
+    pub fn read_conditional_u64_le(&mut self, condition: bool) -> Option<Option<u64>> {
+        if condition {
+            self.read_u64_le().map(Some)
+        } else {
+            Some(None)
+        }
+    }
+
+    pub fn read_conditional_len_prefixed_str(&mut self, condition: bool) -> Option<Option<String>> {
+        if condition {
+            self.read_len_prefixed_str().map(Some)
+        } else {
+            Some(None)
+        }
+    }
 }
 
-fn read_u64(bytes: &[u8], offset: &mut usize) -> Option<u64> {
-    let slice = bytes.get(*offset..*offset + 8)?;
-    *offset += 8;
-    Some(u64::from_le_bytes(slice.try_into().ok()?))
+impl TestDesc {
+    pub fn decode(reader: &mut ByteReader) -> Option<Self> {
+        let flags = reader.read_u8()?;
+        let expected_exit_code = reader.read_conditional_u32_le((flags & FLAG_EXPECTED_EXIT_CODE) != 0)?;
+        let max_cycles = reader.read_conditional_u64_le((flags & FLAG_MAX_CYCLES) != 0)?;
+        let fixture = reader.read_conditional_len_prefixed_str((flags & FLAG_FIXTURE) != 0)?;
+        let snapshot = reader.read_conditional_len_prefixed_str((flags & FLAG_SNAPSHOT) != 0)?;
+        let name = reader.read_len_prefixed_str()?;
+
+        Some(Self {
+            name,
+            ignore: (flags & FLAG_IGNORE) != 0,
+            should_panic: (flags & FLAG_SHOULD_PANIC) != 0,
+            expected_exit_code,
+            max_cycles,
+            fixture,
+            snapshot,
+        })
+    }
 }
 
-fn read_str(bytes: &[u8], offset: &mut usize, len: usize) -> Option<String> {
-    let slice = bytes.get(*offset..*offset + len)?;
-    *offset += len;
-    std::str::from_utf8(slice).ok().map(String::from)
+pub fn decode_test_list(bytes: &[u8]) -> Option<Vec<TestDesc>> {
+    let mut reader = ByteReader::new(bytes);
+    let count = reader.read_u32_le()? as usize;
+    let mut tests = Vec::with_capacity(count);
+    for _ in 0..count {
+        tests.push(TestDesc::decode(&mut reader)?);
+    }
+    Some(tests)
 }
 
-fn resolve_and_read_fixture(path_str: &str, elf_path: Option<&std::path::Path>) -> Result<Vec<u8>, String> {
+fn resolve_resource_path(path_str: &str, elf_path: Option<&std::path::Path>) -> Option<std::path::PathBuf> {
     let p = std::path::Path::new(path_str);
     if p.exists() {
-        return std::fs::read(p).map_err(|e| format!("cannot read {}: {e}", p.display()));
+        return Some(p.to_path_buf());
     }
-    if let Ok(cwd) = std::env::current_dir() {
-        let candidate = cwd.join(path_str);
+    let cwd = std::env::current_dir().ok()?;
+    let candidate = cwd.join(path_str);
+    if candidate.exists() {
+        return Some(candidate);
+    }
+
+    let elf_names = elf_path.and_then(|e| e.file_name()).and_then(|n| n.to_str()).map(|file_name| {
+        let pkg_ident = file_name.split('-').next().unwrap_or("").to_string();
+        let pkg_name = pkg_ident.replace('_', "-");
+        let stripped = pkg_name.trim_start_matches("zkpow-").to_string();
+        (pkg_ident, pkg_name, stripped)
+    });
+
+    let mut curr = cwd.as_path();
+    loop {
+        let candidate = curr.join(path_str);
         if candidate.exists() {
-            return std::fs::read(&candidate).map_err(|e| format!("cannot read {}: {e}", candidate.display()));
+            return Some(candidate);
         }
-        let mut curr = cwd.as_path();
-        while let Some(parent) = curr.parent() {
-            let candidate = parent.join(path_str);
-            if candidate.exists() {
-                return std::fs::read(&candidate).map_err(|e| format!("cannot read {}: {e}", candidate.display()));
-            }
-            curr = parent;
-        }
-        if let Some(elf) = elf_path {
-            if let Some(file_name) = elf.file_name().and_then(|n| n.to_str()) {
-                let pkg_ident = file_name.split('-').next().unwrap_or("");
-                let pkg_name = pkg_ident.replace('_', "-");
-                let stripped = pkg_name.trim_start_matches("zkpow-").to_string();
-                for base in [cwd.join("crates"), cwd.clone()] {
-                    for dir_name in [&pkg_name, pkg_ident, &stripped] {
-                        let candidate = base.join(dir_name).join(path_str);
-                        if candidate.exists() {
-                            return std::fs::read(&candidate).map_err(|e| format!("cannot read {}: {e}", candidate.display()));
-                        }
+
+        if let Some((ref pkg_ident, ref pkg_name, ref stripped)) = elf_names {
+            for base in [curr.join("crates"), curr.to_path_buf()] {
+                for dir_name in [pkg_name, pkg_ident, stripped] {
+                    let candidate = base.join(dir_name).join(path_str);
+                    if candidate.exists() {
+                        return Some(candidate);
                     }
                 }
             }
         }
+
+        match curr.parent() {
+            Some(parent) => curr = parent,
+            None => break,
+        }
     }
-    Err(format!("fixture file '{path_str}' not found on host filesystem"))
+    None
+}
+
+fn resolve_and_read_fixture(path_str: &str, elf_path: Option<&std::path::Path>) -> Result<Vec<u8>, String> {
+    let resolved = resolve_resource_path(path_str, elf_path)
+        .ok_or_else(|| format!("fixture file '{path_str}' not found on host filesystem"))?;
+    std::fs::read(&resolved).map_err(|e| format!("cannot read {}: {e}", resolved.display()))
 }
 
 fn resolve_snapshot_path(path_str: &str, elf_path: Option<&std::path::Path>) -> std::path::PathBuf {
@@ -244,49 +346,11 @@ fn resolve_snapshot_path(path_str: &str, elf_path: Option<&std::path::Path>) -> 
     if p.is_absolute() {
         return p.to_path_buf();
     }
-    if let Ok(cwd) = std::env::current_dir() {
-        let candidate = cwd.join(path_str);
-        if candidate.exists() {
-            return candidate;
-        }
-        let mut curr = cwd.as_path();
-        while let Some(parent) = curr.parent() {
-            let candidate = parent.join(path_str);
-            if candidate.exists() {
-                return candidate;
-            }
-            curr = parent;
-        }
-        if let Some(elf) = elf_path {
-            if let Some(file_name) = elf.file_name().and_then(|n| n.to_str()) {
-                let pkg_ident = file_name.split('-').next().unwrap_or("");
-                let pkg_name = pkg_ident.replace('_', "-");
-                let stripped = pkg_name.trim_start_matches("zkpow-").to_string();
-                for base in [cwd.join("crates"), cwd.clone()] {
-                    for dir_name in [&pkg_name, pkg_ident, &stripped] {
-                        let crate_dir = base.join(dir_name);
-                        if crate_dir.is_dir() {
-                            let candidate = crate_dir.join(path_str);
-                            if candidate.exists() {
-                                return candidate;
-                            }
-                        }
-                    }
-                }
-                for base in [cwd.join("crates"), cwd.clone()] {
-                    for dir_name in [&pkg_name, pkg_ident, &stripped] {
-                        let crate_dir = base.join(dir_name);
-                        if crate_dir.is_dir() {
-                            return crate_dir.join(path_str);
-                        }
-                    }
-                }
-            }
-        }
-        cwd.join(path_str)
-    } else {
-        p.to_path_buf()
-    }
+    resolve_resource_path(path_str, elf_path).unwrap_or_else(|| {
+        std::env::current_dir()
+            .map(|cwd| cwd.join(path_str))
+            .unwrap_or_else(|_| p.to_path_buf())
+    })
 }
 
 fn format_hex_dump(bytes: &[u8]) -> String {
@@ -300,6 +364,33 @@ fn format_hex_dump(bytes: &[u8]) -> String {
     out
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SnapshotFormat {
+    Hex,
+    Binary,
+}
+
+impl SnapshotFormat {
+    pub fn from_path(path: &std::path::Path) -> Self {
+        if path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("hex")) {
+            Self::Hex
+        } else {
+            Self::Binary
+        }
+    }
+
+    pub fn format_committed(&self, committed: &[u8]) -> Vec<u8> {
+        match self {
+            Self::Hex => {
+                let mut s = committed.iter().map(|b| format!("{b:02x}")).collect::<String>();
+                s.push('\n');
+                s.into_bytes()
+            },
+            Self::Binary => committed.to_vec(),
+        }
+    }
+}
+
 fn verify_or_update_snapshot(
     snapshot_path: &str,
     committed: &[u8],
@@ -307,25 +398,21 @@ fn verify_or_update_snapshot(
     elf_path: Option<&std::path::Path>,
 ) -> Result<(), String> {
     let resolved = resolve_snapshot_path(snapshot_path, elf_path);
-    let is_hex = snapshot_path.ends_with(".hex");
-    let actual_hex = committed.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    let format = SnapshotFormat::from_path(&resolved);
+
+    let write_snapshot = |data: &[u8], action: &str| -> Result<(), String> {
+        if let Some(parent) = resolved.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        std::fs::write(&resolved, data)
+            .map_err(|e| format!("failed to {action} snapshot '{}': {e}", resolved.display()))?;
+        println!("  [SNAPSHOT {}: {}]", action.to_uppercase(), resolved.display());
+        Ok(())
+    };
 
     if !resolved.exists() {
         if accept_snapshots {
-            if let Some(parent) = resolved.parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-            if is_hex {
-                let mut content = actual_hex;
-                content.push('\n');
-                std::fs::write(&resolved, content)
-                    .map_err(|e| format!("failed to write snapshot '{}': {e}", resolved.display()))?;
-            } else {
-                std::fs::write(&resolved, committed)
-                    .map_err(|e| format!("failed to write snapshot '{}': {e}", resolved.display()))?;
-            }
-            println!("  [SNAPSHOT CREATED: {}]", resolved.display());
-            return Ok(());
+            return write_snapshot(&format.format_committed(committed), "created");
         } else {
             return Err(format!(
                 "snapshot file '{}' does not exist. Run with '--accept-snapshots' to create it.",
@@ -334,184 +421,141 @@ fn verify_or_update_snapshot(
         }
     }
 
-    if is_hex {
-        let content = std::fs::read_to_string(&resolved)
-            .map_err(|e| format!("failed to read snapshot '{}': {e}", resolved.display()))?;
-        let expected_hex = content.trim().to_ascii_lowercase();
-        if expected_hex != actual_hex {
-            if accept_snapshots {
-                let mut content = actual_hex;
-                content.push('\n');
-                std::fs::write(&resolved, content)
-                    .map_err(|e| format!("failed to update snapshot '{}': {e}", resolved.display()))?;
-                println!("  [SNAPSHOT UPDATED: {}]", resolved.display());
-                return Ok(());
-            } else {
-                return Err(format!(
-                    "snapshot mismatch for '{}':\n  - expected ({} bytes):\n    {}\n  + actual ({} bytes):\n    {}\nTo accept these changes, run with '--accept-snapshots'.",
-                    resolved.display(),
-                    expected_hex.len() / 2,
-                    expected_hex,
-                    committed.len(),
-                    actual_hex
-                ));
+    match format {
+        SnapshotFormat::Hex => {
+            let content = std::fs::read_to_string(&resolved)
+                .map_err(|e| format!("failed to read snapshot '{}': {e}", resolved.display()))?;
+            let expected_hex = content.trim().to_ascii_lowercase();
+            let actual_hex = committed.iter().map(|b| format!("{b:02x}")).collect::<String>();
+            if expected_hex != actual_hex {
+                if accept_snapshots {
+                    write_snapshot(&format.format_committed(committed), "updated")?;
+                } else {
+                    return Err(format!(
+                        "snapshot mismatch for '{}':\n  - expected ({} bytes):\n    {}\n  + actual ({} bytes):\n    {}\nTo accept these changes, run with '--accept-snapshots'.",
+                        resolved.display(),
+                        expected_hex.len() / 2,
+                        expected_hex,
+                        committed.len(),
+                        actual_hex
+                    ));
+                }
             }
-        }
-    } else {
-        let expected_bytes = std::fs::read(&resolved)
-            .map_err(|e| format!("failed to read snapshot '{}': {e}", resolved.display()))?;
-        if expected_bytes != committed {
-            if accept_snapshots {
-                std::fs::write(&resolved, committed)
-                    .map_err(|e| format!("failed to update snapshot '{}': {e}", resolved.display()))?;
-                println!("  [SNAPSHOT UPDATED: {}]", resolved.display());
-                return Ok(());
-            } else {
-                return Err(format!(
-                    "snapshot mismatch for '{}':\n  - expected ({} bytes):\n{}\n  + actual ({} bytes):\n{}\nTo accept these changes, run with '--accept-snapshots'.",
-                    resolved.display(),
-                    expected_bytes.len(),
-                    format_hex_dump(&expected_bytes),
-                    committed.len(),
-                    format_hex_dump(committed)
-                ));
+        },
+        SnapshotFormat::Binary => {
+            let expected_bytes = std::fs::read(&resolved)
+                .map_err(|e| format!("failed to read snapshot '{}': {e}", resolved.display()))?;
+            if expected_bytes != committed {
+                if accept_snapshots {
+                    write_snapshot(committed, "updated")?;
+                } else {
+                    return Err(format!(
+                        "snapshot mismatch for '{}':\n  - expected ({} bytes):\n{}\n  + actual ({} bytes):\n{}\nTo accept these changes, run with '--accept-snapshots'.",
+                        resolved.display(),
+                        expected_bytes.len(),
+                        format_hex_dump(&expected_bytes),
+                        committed.len(),
+                        format_hex_dump(committed)
+                    ));
+                }
             }
-        }
+        },
     }
 
     Ok(())
 }
 
-pub fn decode_test_list(bytes: &[u8]) -> Option<Vec<TestDesc>> {
-    let mut offset = 0;
-    let count = read_u32(bytes, &mut offset)? as usize;
-    let mut tests = Vec::with_capacity(count);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstructionCategory {
+    Alu,
+    MulDiv,
+    Memory,
+    ControlFlow,
+    System,
+}
 
-    for _ in 0..count {
-        let flags = read_u8(bytes, &mut offset)?;
-        let expected_exit_code = if (flags & FLAG_EXPECTED_EXIT_CODE) != 0 {
-            Some(read_u32(bytes, &mut offset)?)
-        } else {
-            None
-        };
-
-        let max_cycles = if (flags & FLAG_MAX_CYCLES) != 0 {
-            Some(read_u64(bytes, &mut offset)?)
-        } else {
-            None
-        };
-
-        let fixture = if (flags & FLAG_FIXTURE) != 0 {
-            let fix_len = read_u32(bytes, &mut offset)? as usize;
-            Some(read_str(bytes, &mut offset, fix_len)?)
-        } else {
-            None
-        };
-
-        let snapshot = if (flags & FLAG_SNAPSHOT) != 0 {
-            let snap_len = read_u32(bytes, &mut offset)? as usize;
-            Some(read_str(bytes, &mut offset, snap_len)?)
-        } else {
-            None
-        };
-
-        let name_len = read_u32(bytes, &mut offset)? as usize;
-        let name = read_str(bytes, &mut offset, name_len)?;
-
-        tests.push(TestDesc {
-            name,
-            ignore: (flags & FLAG_IGNORE) != 0,
-            should_panic: (flags & FLAG_SHOULD_PANIC) != 0,
-            expected_exit_code,
-            max_cycles,
-            fixture,
-            snapshot,
-        });
+impl InstructionCategory {
+    pub const fn from_opcode(opcode: sp1_core_executor::Opcode) -> Self {
+        use sp1_core_executor::Opcode;
+        match opcode {
+            Opcode::ADD
+            | Opcode::ADDI
+            | Opcode::SUB
+            | Opcode::XOR
+            | Opcode::OR
+            | Opcode::AND
+            | Opcode::SLL
+            | Opcode::SRL
+            | Opcode::SRA
+            | Opcode::SLT
+            | Opcode::SLTU
+            | Opcode::ADDW
+            | Opcode::SUBW
+            | Opcode::SLLW
+            | Opcode::SRLW
+            | Opcode::SRAW
+            | Opcode::AUIPC
+            | Opcode::LUI => Self::Alu,
+            Opcode::MUL
+            | Opcode::MULH
+            | Opcode::MULHU
+            | Opcode::MULHSU
+            | Opcode::DIV
+            | Opcode::DIVU
+            | Opcode::REM
+            | Opcode::REMU
+            | Opcode::MULW
+            | Opcode::DIVW
+            | Opcode::DIVUW
+            | Opcode::REMW
+            | Opcode::REMUW => Self::MulDiv,
+            Opcode::LB
+            | Opcode::LH
+            | Opcode::LW
+            | Opcode::LBU
+            | Opcode::LHU
+            | Opcode::LWU
+            | Opcode::LD
+            | Opcode::SB
+            | Opcode::SH
+            | Opcode::SW
+            | Opcode::SD => Self::Memory,
+            Opcode::BEQ
+            | Opcode::BNE
+            | Opcode::BLT
+            | Opcode::BGE
+            | Opcode::BLTU
+            | Opcode::BGEU
+            | Opcode::JAL
+            | Opcode::JALR => Self::ControlFlow,
+            Opcode::ECALL | Opcode::EBREAK | Opcode::UNIMP => Self::System,
+        }
     }
-
-    Some(tests)
 }
 
 #[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]
 pub struct InstructionBreakdown {
-    pub alu: u64,
-    pub mul_div: u64,
-    pub memory: u64,
+    pub alu:          u64,
+    pub mul_div:      u64,
+    pub memory:       u64,
     pub control_flow: u64,
-    pub system: u64,
-    pub syscalls: u64,
+    pub system:       u64,
+    pub syscalls:     u64,
 }
 
 impl InstructionBreakdown {
     pub fn from_report(report: &sp1_sdk::ExecutionReport) -> Self {
-        use sp1_core_executor::Opcode;
         let mut b = Self::default();
         for (opcode, count) in report.opcode_counts.iter() {
             if *count == 0 {
                 continue;
             }
-            match opcode {
-                Opcode::ADD
-                | Opcode::ADDI
-                | Opcode::SUB
-                | Opcode::XOR
-                | Opcode::OR
-                | Opcode::AND
-                | Opcode::SLL
-                | Opcode::SRL
-                | Opcode::SRA
-                | Opcode::SLT
-                | Opcode::SLTU
-                | Opcode::ADDW
-                | Opcode::SUBW
-                | Opcode::SLLW
-                | Opcode::SRLW
-                | Opcode::SRAW
-                | Opcode::AUIPC
-                | Opcode::LUI => {
-                    b.alu += *count;
-                }
-                Opcode::MUL
-                | Opcode::MULH
-                | Opcode::MULHU
-                | Opcode::MULHSU
-                | Opcode::DIV
-                | Opcode::DIVU
-                | Opcode::REM
-                | Opcode::REMU
-                | Opcode::MULW
-                | Opcode::DIVW
-                | Opcode::DIVUW
-                | Opcode::REMW
-                | Opcode::REMUW => {
-                    b.mul_div += *count;
-                }
-                Opcode::LB
-                | Opcode::LH
-                | Opcode::LW
-                | Opcode::LBU
-                | Opcode::LHU
-                | Opcode::LWU
-                | Opcode::LD
-                | Opcode::SB
-                | Opcode::SH
-                | Opcode::SW
-                | Opcode::SD => {
-                    b.memory += *count;
-                }
-                Opcode::BEQ
-                | Opcode::BNE
-                | Opcode::BLT
-                | Opcode::BGE
-                | Opcode::BLTU
-                | Opcode::BGEU
-                | Opcode::JAL
-                | Opcode::JALR => {
-                    b.control_flow += *count;
-                }
-                Opcode::ECALL | Opcode::EBREAK | Opcode::UNIMP => {
-                    b.system += *count;
-                }
+            match InstructionCategory::from_opcode(opcode) {
+                InstructionCategory::Alu => b.alu += *count,
+                InstructionCategory::MulDiv => b.mul_div += *count,
+                InstructionCategory::Memory => b.memory += *count,
+                InstructionCategory::ControlFlow => b.control_flow += *count,
+                InstructionCategory::System => b.system += *count,
             }
         }
         b.syscalls = report.total_syscall_count();
@@ -952,15 +996,110 @@ pub async fn run(args: RunnerArgs) -> i32 {
         },
     };
 
+    let raw_elf_name = std::path::Path::new(&args.elf_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .and_then(|name| name.split('-').next())
+        .unwrap_or("");
+
+    let pkg_name = args.target_name.clone().unwrap_or_else(|| raw_elf_name.to_string());
+
+    let filter_context = if let Some(ref expr_str) = args.filter_expr {
+        let graph = if let Some(ref g) = args.package_graph {
+            g.clone()
+        } else {
+            let mut cmd = guppy::MetadataCommand::new();
+            match guppy::graph::PackageGraph::from_command(&mut cmd) {
+                Ok(g) => Arc::new(g),
+                Err(err) => {
+                    eprintln!("zkvm-test-runner: failed to load package graph: {err}");
+                    return 2;
+                }
+            }
+        };
+
+        let parse_ctx = nextest_filtering::ParseContext::new(&graph);
+        let known_groups = nextest_filtering::KnownGroups::Known {
+            custom_groups: std::collections::HashSet::new(),
+        };
+        let filterset = match nextest_filtering::Filterset::parse(
+            expr_str.clone(),
+            &parse_ctx,
+            nextest_filtering::FiltersetKind::Test,
+            &known_groups,
+        ) {
+            Ok(f) => f,
+            Err(err) => {
+                let err_msgs = err
+                    .errors
+                    .iter()
+                    .map(|e| e.to_string())
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                eprintln!("zkvm-test-runner: invalid filter expression '{}': {err_msgs}", err.input);
+                return 2;
+            }
+        };
+
+        let pkg = if let Some(ref pid) = args.package_id {
+            graph.metadata(&guppy::PackageId::new(pid.clone())).ok()
+        } else {
+            graph.workspace().iter().find(|p| {
+                p.name() == raw_elf_name || p.name().replace('-', "_") == raw_elf_name
+            })
+        };
+
+        let Some(pkg) = pkg else {
+            eprintln!("zkvm-test-runner: failed to resolve package for ELF '{}'", args.elf_path);
+            return 2;
+        };
+
+        let target_name = args.target_name.clone().unwrap_or_else(|| {
+            raw_elf_name.to_string()
+        });
+        let kind = nextest_metadata::RustTestBinaryKind::new(
+            args.target_kind.clone().unwrap_or_else(|| "test".to_string()),
+        );
+        let binary_id = nextest_metadata::RustBinaryId::from_parts(pkg.name(), &kind, &target_name);
+
+        Some((filterset, pkg.id().clone(), binary_id, target_name, kind))
+    } else {
+        None
+    };
+
     // 2. Filter tests
     let matches_filter = |name: &str| -> bool {
-        if args.filters.is_empty() {
-            return true;
-        }
-        if args.exact {
+        let pos_match = if args.filters.is_empty() {
+            true
+        } else if args.exact {
             args.filters.iter().any(|f| f == name)
         } else {
             args.filters.iter().any(|f| name.contains(f))
+        };
+
+        if !pos_match {
+            return false;
+        }
+
+        if let Some((ref filterset, ref pkg_id, ref binary_id, ref target_name, ref kind)) = filter_context {
+            let binary_query = nextest_filtering::BinaryQuery {
+                package_id: pkg_id,
+                binary_id,
+                binary_name: target_name,
+                kind,
+                platform: guppy::graph::cargo::BuildPlatform::Target,
+            };
+            let eval_cx = nextest_filtering::EvalContext {
+                default_filter: &nextest_filtering::CompiledExpr::ALL,
+            };
+            let test_name_smol = nextest_metadata::TestCaseName::new(name);
+            let test_query = nextest_filtering::TestQuery {
+                binary_query,
+                test_name: &test_name_smol,
+            };
+            filterset.matches_test(&test_query, &eval_cx)
+        } else {
+            true
         }
     };
 
@@ -980,7 +1119,7 @@ pub async fn run(args: RunnerArgs) -> i32 {
     let mut ignored_count = 0;
     let mut filtered_out = 0;
 
-    for t in all_tests {
+    for t in &all_tests {
         if !matches_filter(&t.name) {
             filtered_out += 1;
             continue;
@@ -999,7 +1138,7 @@ pub async fn run(args: RunnerArgs) -> i32 {
             continue;
         }
 
-        tests_to_run.push(t);
+        tests_to_run.push(t.clone());
     }
 
     let total_count = tests_to_run.len();
@@ -1388,7 +1527,7 @@ pub async fn run(args: RunnerArgs) -> i32 {
 
         let executed_names: std::collections::HashSet<_> = outcomes.iter().map(|o| &o.desc.name).collect();
         for t in &all_tests {
-            if !executed_names.contains(&t.name) && matches_filter(&t.name, t.ignore) && t.ignore {
+            if !executed_names.contains(&t.name) && matches_filter(&t.name) && t.ignore {
                 let classname = t
                     .name
                     .rsplit_once("::")
@@ -1415,5 +1554,205 @@ pub async fn run(args: RunnerArgs) -> i32 {
     }
 
     if failed_count > 0 || regression_failed { 1 } else { 0 }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_commas() {
+        assert_eq!(format_commas(0), "0");
+        assert_eq!(format_commas(999), "999");
+        assert_eq!(format_commas(1000), "1,000");
+        assert_eq!(format_commas(1234567), "1,234,567");
+        assert_eq!(format_commas(1000000000), "1,000,000,000");
+    }
+
+    #[test]
+    fn test_format_bytes() {
+        assert_eq!(format_bytes(512), "512 B");
+        assert_eq!(format_bytes(1024), "1.0 KB");
+        assert_eq!(format_bytes(1536), "1.5 KB");
+        assert_eq!(format_bytes(1048576), "1.00 MB");
+        assert_eq!(format_bytes(1073741824), "1.00 GB");
+    }
+
+    #[test]
+    fn test_proof_mode_from_str() {
+        assert_eq!("none".parse::<ProofMode>().unwrap(), ProofMode::None);
+        assert_eq!("mock".parse::<ProofMode>().unwrap(), ProofMode::None);
+        assert_eq!("core".parse::<ProofMode>().unwrap(), ProofMode::Core);
+        assert_eq!("compressed".parse::<ProofMode>().unwrap(), ProofMode::Compressed);
+        assert_eq!("plonk".parse::<ProofMode>().unwrap(), ProofMode::Plonk);
+        assert_eq!("groth16".parse::<ProofMode>().unwrap(), ProofMode::Groth16);
+        assert!("invalid_mode".parse::<ProofMode>().is_err());
+    }
+
+    #[test]
+    fn test_parse_args_from() {
+        let args = vec![
+            "target/zkvm/test-elf".to_string(),
+            "--exact".to_string(),
+            "--list".to_string(),
+            "--ignored".to_string(),
+            "--profile".to_string(),
+            "--instructions".to_string(),
+            "-q".to_string(),
+            "--accept-snapshots".to_string(),
+            "--mode=core".to_string(),
+            "--test-threads=8".to_string(),
+            "--prover=cpu".to_string(),
+            "-E".to_string(),
+            "package(foo)".to_string(),
+            "--junit-path=/tmp/junit.xml".to_string(),
+            "--package-id=pkg-123".to_string(),
+            "--target-name=sha256".to_string(),
+            "--target-kind=test".to_string(),
+            "test_filter_1".to_string(),
+        ];
+
+        let parsed = parse_args_from(args);
+        assert_eq!(parsed.elf_path, "target/zkvm/test-elf");
+        assert!(!parsed.nocapture);
+        assert!(parsed.exact);
+        assert!(parsed.list);
+        assert!(parsed.ignored);
+        assert!(parsed.profile);
+        assert!(parsed.instructions);
+        assert!(parsed.quiet);
+        assert!(parsed.accept_snapshots);
+        assert_eq!(parsed.mode.as_deref(), Some("core"));
+        assert_eq!(parsed.test_threads, 8);
+        assert_eq!(parsed.prover.as_deref(), Some("cpu"));
+        assert_eq!(parsed.filter_expr.as_deref(), Some("package(foo)"));
+        assert_eq!(parsed.junit_path.as_deref(), Some("/tmp/junit.xml"));
+        assert_eq!(parsed.package_id.as_deref(), Some("pkg-123"));
+        assert_eq!(parsed.target_name.as_deref(), Some("sha256"));
+        assert_eq!(parsed.target_kind.as_deref(), Some("test"));
+        assert_eq!(parsed.filters, vec!["test_filter_1"]);
+
+        // When --nocapture is set, test_threads must be forced to 1 to prevent interleaved stdout
+        let nocap_args = vec![
+            "target/zkvm/test-elf".to_string(),
+            "--nocapture".to_string(),
+            "--test-threads=8".to_string(),
+        ];
+        let nocap_parsed = parse_args_from(nocap_args);
+        assert!(nocap_parsed.nocapture);
+        assert_eq!(nocap_parsed.test_threads, 1);
+    }
+
+    #[test]
+    fn test_decode_test_list_valid() {
+        let mut bytes = Vec::new();
+        // Count: 2 tests
+        bytes.extend_from_slice(&2u32.to_le_bytes());
+
+        // Test 1: should panic with expected exit code 42
+        let flags1 = FLAG_SHOULD_PANIC | FLAG_EXPECTED_EXIT_CODE;
+        bytes.push(flags1);
+        bytes.extend_from_slice(&42u32.to_le_bytes()); // exit code
+        let name1 = "tests::panic_test";
+        bytes.extend_from_slice(&(name1.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(name1.as_bytes());
+
+        // Test 2: max cycles, fixture, snapshot, ignored
+        let flags2 = FLAG_IGNORE | FLAG_MAX_CYCLES | FLAG_FIXTURE | FLAG_SNAPSHOT;
+        bytes.push(flags2);
+        bytes.extend_from_slice(&1_000_000u64.to_le_bytes()); // max cycles
+        let fix = "fixtures/data.bin";
+        bytes.extend_from_slice(&(fix.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(fix.as_bytes());
+        let snap = "snapshots/golden.hex";
+        bytes.extend_from_slice(&(snap.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(snap.as_bytes());
+        let name2 = "tests::snapshot_test";
+        bytes.extend_from_slice(&(name2.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(name2.as_bytes());
+
+        let decoded = decode_test_list(&bytes).expect("should decode valid list");
+        assert_eq!(decoded.len(), 2);
+
+        assert_eq!(decoded[0].name, "tests::panic_test");
+        assert!(decoded[0].should_panic);
+        assert_eq!(decoded[0].expected_exit_code, Some(42));
+        assert!(!decoded[0].ignore);
+        assert_eq!(decoded[0].max_cycles, None);
+        assert_eq!(decoded[0].fixture, None);
+        assert_eq!(decoded[0].snapshot, None);
+
+        assert_eq!(decoded[1].name, "tests::snapshot_test");
+        assert!(decoded[1].ignore);
+        assert!(!decoded[1].should_panic);
+        assert_eq!(decoded[1].max_cycles, Some(1_000_000));
+        assert_eq!(decoded[1].fixture.as_deref(), Some("fixtures/data.bin"));
+        assert_eq!(decoded[1].snapshot.as_deref(), Some("snapshots/golden.hex"));
+    }
+
+    #[test]
+    fn test_decode_test_list_invalid() {
+        // Empty bytes
+        assert!(decode_test_list(&[]).is_none());
+
+        // Truncated bytes: says 5 tests but ends
+        let bytes = 5u32.to_le_bytes();
+        assert!(decode_test_list(&bytes).is_none());
+    }
+
+    #[test]
+    fn test_verify_or_update_snapshot_matching() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let snap_file = temp_dir.path().join("golden.hex");
+        std::fs::write(&snap_file, "deadbeef\n").unwrap();
+
+        let committed = vec![0xde, 0xad, 0xbe, 0xef];
+        let res = verify_or_update_snapshot(
+            snap_file.to_str().unwrap(),
+            &committed,
+            false,
+            None,
+        );
+        assert!(res.is_ok());
+    }
+
+    #[test]
+    fn test_verify_or_update_snapshot_mismatch() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let snap_file = temp_dir.path().join("golden.hex");
+        std::fs::write(&snap_file, "deadbeef\n").unwrap();
+
+        let committed = vec![0xca, 0xfe, 0xba, 0xbe];
+        let res = verify_or_update_snapshot(
+            snap_file.to_str().unwrap(),
+            &committed,
+            false,
+            None,
+        );
+        assert!(res.is_err());
+        let err = res.unwrap_err();
+        assert!(err.contains("snapshot mismatch"));
+        assert!(err.contains("--accept-snapshots"));
+    }
+
+    #[test]
+    fn test_verify_or_update_snapshot_accept_update() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let snap_file = temp_dir.path().join("golden.hex");
+        std::fs::write(&snap_file, "deadbeef\n").unwrap();
+
+        let committed = vec![0xca, 0xfe, 0xba, 0xbe];
+        let res = verify_or_update_snapshot(
+            snap_file.to_str().unwrap(),
+            &committed,
+            true, // accept
+            None,
+        );
+        assert!(res.is_ok());
+
+        // Verify updated file on disk
+        let updated = std::fs::read_to_string(&snap_file).unwrap();
+        assert_eq!(updated.trim(), "cafebabe");
+    }
 }
 
