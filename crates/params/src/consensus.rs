@@ -22,18 +22,18 @@ pub const WINDOW_MAX_INDEX: usize = WINDOW_SIZE - 1;
 /// definition of each and a `C: Consensus` bound still folds down to literals at the call site.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ConsensusParams {
-    pub genesis: Header,
+    pub genesis:        Header,
     /// The PoW limit, which is also the target the genesis header commits to.
     pub genesis_target: Target,
     /// Work proven by one block at [`ConsensusParams::genesis_target`].
     pub genesis_work:   BlockWork,
 
     /// Expected seconds between blocks.
-    pub block_time: u32,
+    pub block_time:          u32,
     /// Blocks per difficulty epoch.
-    pub epoch_length: u32,
+    pub epoch_length:        u32,
     /// A measured epoch may run this many times longer than expected before it is clamped.
-    pub max_epoch_over_mul: u8,
+    pub max_epoch_over_mul:  u8,
     /// ...and this many times shorter.
     pub min_epoch_under_div: u8,
 }

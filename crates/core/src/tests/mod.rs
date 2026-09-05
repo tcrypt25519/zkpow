@@ -80,7 +80,6 @@ pub(crate) fn median_time_past(state: &State) -> BlockTimestamp {
     }
 }
 
-
 fn dense_median_hints_for_headers(initial_state: &State, headers: &[HeaderInput]) -> Vec<BlockTimestamp> {
     let mut state = *initial_state;
     let mut medians = Vec::with_capacity(headers.len());
