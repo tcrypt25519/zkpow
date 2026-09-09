@@ -1,0 +1,5 @@
+---
+# target_user, target_home and rust_version are a deliberate contract between
+# the two roles, so they stay unprefixed. Register variables are prefixed.
+skip_list:
+  - var-naming[no-role-prefix]

@@ -1,0 +1,130 @@
+---
+- name: Update apt cache
+  become: true
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Install base build toolchain and CLI tools
+  become: true
+  ansible.builtin.apt:
+    name: "{{ rust_dev_packages }}"
+    state: present
+
+- name: Ensure ~/.local/bin exists
+  become: true
+  become_user: "{{ target_user }}"
+  ansible.builtin.file:
+    path: "{{ target_home }}/.local/bin"
+    state: directory
+    mode: '0755'
+
+- name: Link Ubuntu-renamed binaries to their usual names
+  become: true
+  become_user: "{{ target_user }}"
+  ansible.builtin.file:
+    src: "{{ item.target }}"
+    dest: "{{ target_home }}/.local/bin/{{ item.link }}"
+    state: link
+    force: true
+  loop: "{{ rust_dev_bin_aliases }}"
+
+- name: Check for an existing rustup
+  ansible.builtin.stat:
+    path: "{{ target_home }}/.cargo/bin/rustup"
+  register: rust_dev_rustup_bin
+
+- name: Install rustup
+  when: not rust_dev_rustup_bin.stat.exists
+  become: true
+  become_user: "{{ target_user }}"
+  ansible.builtin.shell: |
+    set -o pipefail
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs |
+      sh -s -- -y --default-toolchain none --profile minimal --no-modify-path
+  args:
+    executable: /bin/bash
+    creates: "{{ target_home }}/.cargo/bin/rustup"
+
+- name: Install Rust toolchains
+  become: true
+  become_user: "{{ target_user }}"
+  ansible.builtin.command:
+    argv:
+      - "{{ target_home }}/.cargo/bin/rustup"
+      - toolchain
+      - install
+      - "{{ item }}"
+      - --profile
+      - minimal
+      - --component
+      - "{{ rust_components | join(',') }}"
+  loop: "{{ [rust_version] + rust_extra_toolchains }}"
+  register: rust_dev_toolchain_install
+  # rustup reports "<toolchain> unchanged" on stdout when it had nothing to do.
+  changed_when: "'unchanged' not in rust_dev_toolchain_install.stdout"
+
+- name: Set the default toolchain to {{ rust_version }}
+  become: true
+  become_user: "{{ target_user }}"
+  ansible.builtin.command: "{{ target_home }}/.cargo/bin/rustup default {{ rust_version }}"
+  register: rust_dev_rustup_default
+  changed_when: "'unchanged' not in rust_dev_rustup_default.stdout"
+
+- name: Resolve the zellij release URL
+  ansible.builtin.set_fact:
+    rust_dev_zellij_url: >-
+      {{ 'https://github.com/zellij-org/zellij/releases/latest/download/zellij-x86_64-unknown-linux-musl.tar.gz'
+         if zellij_version == 'latest'
+         else 'https://github.com/zellij-org/zellij/releases/download/v' ~ zellij_version
+              ~ '/zellij-x86_64-unknown-linux-musl.tar.gz' }}
+
+- name: Install zellij
+  become: true
+  ansible.builtin.unarchive:
+    src: "{{ rust_dev_zellij_url }}"
+    dest: "{{ zellij_bin | dirname }}"
+    remote_src: true
+    creates: "{{ zellij_bin }}"
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Install cargo-installed tools
+  ansible.builtin.shell: cargo install "{{ item }}"
+  loop: "{{ cargo_intalled_packages }}"
+
+- name: Install the managed zsh configuration
+  become: true
+  become_user: "{{ target_user }}"
+  ansible.builtin.template:
+    src: zshrc.j2
+    dest: "{{ target_home }}/.zshrc"
+    mode: '0644'
+    force: false
+
+- name: Export the toolchain environment for every login shell
+  become: true
+  ansible.builtin.template:
+    src: rust-env.sh.j2
+    dest: /etc/profile.d/rust-env.sh
+    mode: '0644'
+
+# Debian ships /etc/zsh/zprofile with nothing but comments, so a zsh login
+# shell would never read /etc/profile.d and would come up without cargo on
+# PATH. bash login shells get it through /etc/profile already.
+- name: Source /etc/profile from zsh login shells
+  become: true
+  ansible.builtin.blockinfile:
+    path: /etc/zsh/zprofile
+    marker: "# {mark} ANSIBLE MANAGED (rust_dev)"
+    block: |
+      emulate sh -c 'source /etc/profile'
+    create: true
+    mode: '0644'
+
+- name: Make zsh the login shell
+  become: true
+  ansible.builtin.user:
+    name: "{{ target_user }}"
+    shell: /bin/zsh

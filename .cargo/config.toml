@@ -4,6 +4,9 @@ rustflags = ["--cfg", "tokio_unstable"]
 # --lib because the succinct toolchain ships no rustdoc, so doctest runs fail
 # after the unit tests pass. Invoke as: cargo +succinct zkvm-test -p <crate>
 [alias]
+# Cross-compile for Ubuntu x86_64 (glibc 2.35 / Ubuntu 22.04 LTS)
+build-linux = "zigbuild --target x86_64-unknown-linux-gnu.2.35"
+build-linux-release = "zigbuild --release --target x86_64-unknown-linux-gnu.2.35"
 # zkvm-test = "test --lib --target riscv64im-succinct-zkvm-elf"
 
 # The rustflags mirror sp1-build's get_rust_compiler_flags (sp1-build/src/command/utils.rs)

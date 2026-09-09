@@ -1,0 +1,8 @@
+# Managed by Ansible (sp1_builder role)
+case ":${PATH}:" in
+    *":${HOME}/.sp1/bin:"*) ;;
+    *) PATH="${HOME}/.sp1/bin:${PATH}" ;;
+esac
+export PATH
+export RUSTUP_TOOLCHAIN="{{ rust_version }}"
+export RUST_LOG=info

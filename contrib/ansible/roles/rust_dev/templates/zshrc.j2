@@ -1,0 +1,28 @@
+# Installed by Ansible (rust_dev role). Edit freely; it is never overwritten.
+
+[ -r /etc/profile ] && emulate sh -c 'source /etc/profile'
+
+path=("$HOME/.cargo/bin" "$HOME/.local/bin" $path)
+typeset -U path
+export PATH
+
+export EDITOR=nvim
+export RUST_BACKTRACE=1
+
+HISTFILE="$HOME/.zsh_history"
+HISTSIZE=50000
+SAVEHIST=50000
+setopt append_history share_history hist_ignore_all_dups hist_reduce_blanks
+setopt auto_cd extended_glob interactive_comments
+
+autoload -Uz compinit && compinit
+zstyle ':completion:*' menu select
+zstyle ':completion:*' matcher-list 'm:{a-zA-Z}={A-Za-z}'
+
+autoload -Uz vcs_info
+precmd() { vcs_info }
+zstyle ':vcs_info:git:*' formats ' %F{242}(%b)%f'
+setopt prompt_subst
+PROMPT='%F{cyan}%n@%m%f %F{yellow}%~%f${vcs_info_msg_0_} %# '
+
+bindkey -e

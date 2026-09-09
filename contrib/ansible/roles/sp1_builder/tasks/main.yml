@@ -1,0 +1,158 @@
+---
+- name: Wait for cloud-init to finish
+  become: true
+  ansible.builtin.command: cloud-init status --wait
+  changed_when: false
+  failed_when: false
+
+- name: Look for a rustup installation
+  ansible.builtin.stat:
+    path: "{{ target_home }}/.cargo/bin/rustup"
+  register: sp1_builder_rustup_bin
+
+- name: Require rustup
+  ansible.builtin.assert:
+    that: sp1_builder_rustup_bin.stat.exists
+    fail_msg: >-
+      No rustup under {{ target_home }}/.cargo. Run the rust_dev role first;
+      sp1_builder layers the SP1 toolchain on top of it.
+
+- name: Check existing swap
+  ansible.builtin.command: swapon --show --noheadings
+  register: sp1_builder_swap
+  changed_when: false
+
+- name: Configure swap
+  when: sp1_builder_swap.stdout == "" and swap_size_gb > 0
+  become: true
+  block:
+    - name: Allocate swapfile
+      ansible.builtin.command: "fallocate -l {{ swap_size_gb }}G /swapfile"
+      args:
+        creates: /swapfile
+
+    - name: Restrict swapfile permissions
+      ansible.builtin.file:
+        path: /swapfile
+        mode: '0600'
+        owner: root
+        group: root
+
+    - name: Format swapfile
+      ansible.builtin.command: mkswap /swapfile
+      changed_when: false
+
+    - name: Enable swapfile
+      ansible.builtin.command: swapon /swapfile
+      changed_when: false
+
+    - name: Record swapfile in /etc/fstab
+      ansible.posix.mount:
+        name: none
+        src: /swapfile
+        fstype: swap
+        opts: sw
+        state: present
+
+- name: Tune the kernel for high-memory zkVM trace workloads
+  become: true
+  ansible.posix.sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    state: present
+    reload: true
+  loop: "{{ sp1_sysctl }}"
+
+- name: Size /dev/shm for SP1 trace rings
+  become: true
+  ansible.posix.mount:
+    path: /dev/shm
+    src: tmpfs
+    fstype: tmpfs
+    opts: "defaults,size={{ shm_size }}"
+    state: present
+  notify: Remount /dev/shm
+
+# The verification tasks below measure /dev/shm, so the resize cannot wait for
+# the end of the play.
+- name: Apply the /dev/shm resize now
+  ansible.builtin.meta: flush_handlers
+
+- name: Install SP1 build dependencies
+  become: true
+  ansible.builtin.apt:
+    name: "{{ sp1_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Check for an existing sp1up
+  ansible.builtin.stat:
+    path: "{{ target_home }}/.sp1/bin/sp1up"
+  register: sp1_builder_sp1up_bin
+
+- name: Install sp1up
+  when: not sp1_builder_sp1up_bin.stat.exists
+  become: true
+  become_user: "{{ target_user }}"
+  ansible.builtin.shell: |
+    set -o pipefail
+    curl -L https://sp1.succinct.xyz | bash
+  args:
+    executable: /bin/bash
+    creates: "{{ target_home }}/.sp1/bin/sp1up"
+
+- name: Install cargo-prove and the succinct RISC-V toolchain
+  become: true
+  become_user: "{{ target_user }}"
+  environment:
+    PATH: "{{ target_home }}/.cargo/bin:{{ target_home }}/.sp1/bin:{{ ansible_env.PATH }}"
+  ansible.builtin.command: "{{ target_home }}/.sp1/bin/sp1up"
+  register: sp1_builder_sp1up_run
+  changed_when: "'sp1up: done!' in sp1_builder_sp1up_run.stdout"
+
+- name: Export the SP1 environment for every login shell
+  become: true
+  ansible.builtin.template:
+    src: sp1.sh.j2
+    dest: /etc/profile.d/sp1.sh
+    mode: '0644'
+
+- name: Stage the memfd_create probe
+  ansible.builtin.copy:
+    src: memfd_probe.c
+    dest: /tmp/sp1_memfd_probe.c
+    mode: '0644'
+  changed_when: false
+
+- name: Verify the JIT can allocate anonymous executable memory
+  ansible.builtin.shell: |
+    set -e
+    cc -O2 /tmp/sp1_memfd_probe.c -o /tmp/sp1_memfd_probe
+    /tmp/sp1_memfd_probe
+    rm -f /tmp/sp1_memfd_probe /tmp/sp1_memfd_probe.c
+  args:
+    executable: /bin/bash
+  register: sp1_builder_memfd_test
+  changed_when: false
+
+- name: Gather toolchain versions
+  become: true
+  become_user: "{{ target_user }}"
+  environment:
+    PATH: "{{ target_home }}/.cargo/bin:{{ target_home }}/.sp1/bin:{{ ansible_env.PATH }}"
+  ansible.builtin.shell: |
+    set -o pipefail
+    echo "Rust:        $(rustc --version)"
+    echo "Cargo Prove: $(cargo prove --version 2>&1 || echo 'not installed')"
+    echo "Arch:        $(uname -m) Linux"
+    echo "SHM:         $(df -h /dev/shm | awk 'NR==2 {print $2}')"
+    echo "Swap:        $(free -h | awk '/Swap/ {print $2}')"
+  args:
+    executable: /bin/bash
+  register: sp1_builder_version_info
+  changed_when: false
+
+- name: Report the finished environment
+  ansible.builtin.debug:
+    msg: "{{ sp1_builder_version_info.stdout_lines + sp1_builder_memfd_test.stdout_lines }}"

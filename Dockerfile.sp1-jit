@@ -1,0 +1,138 @@
+# syntax=docker/dockerfile:1
+# =============================================================================
+# SP1 Linux x86_64 JIT Development & Execution Environment
+#
+# Enables compiling and executing SP1 programs with the native x86_64 JIT engine,
+# which is disabled on macOS (Apple Silicon / ARM64).
+#
+# Build:
+#   docker build --platform linux/amd64 -t sp1-jit:latest -f docker/Dockerfile.sp1-jit .
+#
+# Run interactive shell:
+#   docker run --platform linux/amd64 --rm -it --shm-size=8g \
+#     -v "$(pwd)":/workspace -w /workspace \
+#     sp1-jit:latest
+# =============================================================================
+
+FROM --platform=linux/amd64 ubuntu:22.04
+
+LABEL maintainer="tcrypt25519"
+LABEL description="Linux x86_64 build and execution environment for SP1 zkVM programs with native JIT"
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo \
+    SP1_HOME=/root/.sp1 \
+    PATH=/usr/local/cargo/bin:/root/.sp1/bin:$PATH \
+    # Point cargo target inside container to avoid clashing with host macOS targets
+    CARGO_TARGET_DIR=/workspace/target/docker-linux-x86_64
+
+# Install build essentials, compilers, protobuf, Go, and system libraries
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    clang \
+    lld \
+    cmake \
+    curl \
+    git \
+    pkg-config \
+    libssl-dev \
+    ca-certificates \
+    protobuf-compiler \
+    libprotobuf-dev \
+    golang-go \
+    procps \
+    libseccomp-dev \
+    zlib1g-dev \
+    file \
+    m4 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Rust toolchain: 1.97.1 (matches workspace rust-toolchain.toml), stable, and nightly
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none --profile minimal && \
+    chmod -R a+w /usr/local/rustup /usr/local/cargo && \
+    rustup toolchain install 1.97.1 --profile minimal --component cargo,clippy,rustfmt && \
+    rustup toolchain install stable --profile minimal --component cargo,clippy,rustfmt && \
+    rustup toolchain install nightly --profile minimal --component cargo,clippy,rustfmt && \
+    rustup default 1.97.1
+
+# Install SP1 toolchain (sp1up, cargo-prove, and succinct RISC-V targets)
+RUN curl -L https://sp1.succinct.xyz | bash && \
+    /root/.sp1/bin/sp1up && \
+    cargo prove --version
+
+# Compile standalone C probe for memfd_create syscall
+RUN cat <<'EOF' > /tmp/sp1_test_memfd.c
+#define _GNU_SOURCE
+#include <sys/mman.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+#include <stdio.h>
+int main(void) {
+    int fd = syscall(SYS_memfd_create, "sp1_jit_test", 0);
+    if (fd < 0) {
+        perror("[-] FAILED: memfd_create syscall");
+        return 1;
+    }
+    close(fd);
+    printf("[+] memfd_create syscall: available & functional.\n");
+    return 0;
+}
+EOF
+RUN gcc -O2 /tmp/sp1_test_memfd.c -o /usr/local/bin/sp1-test-memfd && \
+    rm /tmp/sp1_test_memfd.c && \
+    chmod +x /usr/local/bin/sp1-test-memfd
+
+# Add JIT verification utility
+RUN cat <<'EOF' > /usr/local/bin/sp1-jit-check
+#!/usr/bin/env bash
+set -eo pipefail
+
+echo "============================================================"
+echo " SP1 JIT Environment Diagnostics"
+echo "============================================================"
+ARCH=$(uname -m)
+OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+SHM_SIZE=$(df -h /dev/shm | awk 'NR==2 {print $2}')
+
+echo "Architecture : $ARCH"
+echo "OS           : $OS"
+echo "Shared Memory: /dev/shm = $SHM_SIZE"
+echo "Rust Version : $(rustc --version)"
+echo "Cargo Prove  : $(cargo prove --version 2>/dev/null || echo 'cargo-prove not found')"
+
+# Check architecture requirements
+if [ "$ARCH" != "x86_64" ] || [ "$OS" != "linux" ]; then
+    echo "[-] FAILED: SP1 JIT requires x86_64 linux (got $ARCH $OS)."
+    exit 1
+fi
+echo "[+] Target architecture & OS check passed (x86_64 linux)."
+
+# Check shared memory sizing (warning if <= 64M default)
+SHM_KB=$(df -k /dev/shm | awk 'NR==2 {print $2}')
+if [ "$SHM_KB" -lt 1048576 ]; then
+    echo "[!] WARNING: /dev/shm is under 1 GiB ($SHM_SIZE). Run docker with --shm-size=8g to avoid bus errors during concurrent gas estimation."
+else
+    echo "[+] Shared memory size adequate: $SHM_SIZE."
+fi
+
+# Verify memfd_create syscall (used by sp1-jit)
+/usr/local/bin/sp1-test-memfd
+
+echo "------------------------------------------------------------"
+echo "[+] SP1 native JIT is READY for building and execution!"
+echo "    Note: Avoid building sp1-core-executor or sp1-sdk with"
+echo "    features = ['profiling'] or ['mprotect'], which forces"
+echo "    SP1 back into portable interpreter mode."
+echo "============================================================"
+EOF
+RUN chmod +x /usr/local/bin/sp1-jit-check
+
+WORKDIR /workspace
+
+# Verify check script runs during build
+RUN /usr/local/bin/sp1-jit-check
+
+CMD ["/bin/bash"]

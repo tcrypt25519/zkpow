@@ -1,0 +1,13 @@
+---
+# Provisions a DigitalOcean Ubuntu droplet for SP1 development.
+#
+#   ansible-playbook -i inventory.ini setup-sp1-droplet.yml
+#
+# Connects as the unprivileged admin user created by cloud-init/user-data.sh.
+
+- name: Provision an SP1 build droplet
+  hosts: all
+  gather_facts: true
+  roles:
+    - rust_dev
+    - sp1_builder
