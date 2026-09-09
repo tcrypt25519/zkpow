@@ -4,11 +4,8 @@ use std::{
     time::Instant,
 };
 
-use sp1_sdk::{prelude::*, Elf, ProverClient, SP1Stdin};
-pub use zkvm_test::{
-    CMD_LIST, CMD_RUN, FLAG_EXPECTED_EXIT_CODE, FLAG_EXPECTED_MESSAGE, FLAG_FIXTURE, FLAG_IGNORE,
-    FLAG_MAX_CYCLES, FLAG_SHOULD_PANIC, FLAG_SNAPSHOT, MAGIC,
-};
+use sp1_sdk::{Elf, ProverClient, SP1Stdin, prelude::*};
+pub use zkvm_test::{CMD_LIST, CMD_RUN, MAGIC, TestFlag};
 
 pub const METRICS_DIR: &str = ".zkvm-test-metrics";
 pub const DEFAULT_BASELINE_NAME: &str = "default";
@@ -89,94 +86,56 @@ where
     T: Into<String>,
 {
     let mut raw_args = iter.into_iter().map(Into::into);
-    let mut args = RunnerArgs {
-        test_threads: std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(DEFAULT_CONCURRENCY),
-        ..Default::default()
-    };
-
-    let Some(elf) = raw_args.next() else {
+    let Some(elf_path) = raw_args.next() else {
         return Err("missing <elf-path>\nusage: zkvm-test-runner <elf-path> [filters/flags...]".to_string());
     };
-    args.elf_path = elf;
-
-    let mut iter = raw_args.peekable();
-    while let Some(arg) = iter.next() {
-        if !arg.starts_with('-') {
-            args.filters.push(arg);
-            continue;
-        }
-
-        let (key, mut inline_val) = match arg.split_once('=') {
-            Some((k, v)) => (k, Some(v.to_string())),
-            None => (arg.as_str(), None),
-        };
-        // A value flag takes `--flag=value` or the next argument; running out is an error
-        // rather than a silently defaulted flag.
-        let mut next_val = || {
-            inline_val
-                .take()
-                .or_else(|| iter.next())
-                .ok_or_else(|| format!("{key} expects a value"))
-        };
-
-        match key {
-            "--list" => args.list = true,
-            "--exact" => args.exact = true,
-            "--ignored" => args.ignored = true,
-            "--include-ignored" => args.include_ignored = true,
-            "--nocapture" | "--no-capture" => args.nocapture = true,
-            "--profile" | "--subcycles" => args.profile = true,
-            "--instructions" | "--opcodes" => args.instructions = true,
-            "--accept-snapshots" | "--update-snapshots" => args.accept_snapshots = true,
-            "-q" | "--quiet" => args.quiet = true,
-            "--mode" | "--proof-mode" => args.mode = Some(next_val()?),
-            "-E" | "--expr" | "--filter-expr" => args.filter_expr = Some(next_val()?),
-            "--junit-path" => args.junit_path = Some(next_val()?),
-            "--package-id" => args.package_id = Some(next_val()?),
-            "--target-name" => args.target_name = Some(next_val()?),
-            "--target-kind" => args.target_kind = Some(next_val()?),
-            "--prover" => args.prover = Some(next_val()?),
-            "--compare-baseline" => args.compare_baseline = Some(next_val()?),
-            "--test-threads" => {
-                let val = next_val()?;
-                args.test_threads = match val.parse::<usize>() {
-                    Ok(n) if n > 0 => n,
-                    _ => return Err(format!("--test-threads expects a positive integer, got '{val}'")),
-                };
-            },
-            "--fail-on-regression" => {
-                let val = next_val()?;
-                args.fail_on_regression = match val.trim_end_matches('%').parse::<f64>() {
-                    Ok(pct) if pct.is_finite() => Some(pct),
-                    _ => return Err(format!("--fail-on-regression expects a percentage, got '{val}'")),
-                };
-            },
-            "--save-baseline" => {
-                // The name is optional: `--save-baseline` alone saves over the default.
-                args.save_baseline = inline_val.or_else(|| {
-                    iter.next_if(|next| !next.starts_with('-'))
-                        .or_else(|| Some(DEFAULT_BASELINE_NAME.to_string()))
-                });
-            },
-            "--color" => {
-                let _ = next_val()?;
-            },
-            s if s.starts_with("--format") || s.starts_with("-Z") || s == "--show-output" => {
-                // Ignore standard libtest formatting flags
-            },
-            _ => {
-                // Ignore unknown flags for forward compatibility with cargo
-            },
-        }
-    }
-
-    if args.nocapture {
-        args.test_threads = 1;
-    }
-
+    let mut args = parse_options_from(raw_args)?;
+    args.elf_path = elf_path;
     Ok(args)
+}
+
+pub fn parse_options_from<I, T>(iter: I) -> Result<RunnerArgs, String>
+where
+    I: IntoIterator<Item = T>,
+    T: Into<String>,
+{
+    let raw_args = iter.into_iter().map(Into::into).collect();
+    let (_, runner_args) = crate::plugin::partition_args(raw_args);
+    let options = crate::plugin::parse_runner_options(&runner_args)?;
+    let test_threads = if options.nocapture {
+        1
+    } else {
+        options.test_threads.unwrap_or_else(|| {
+            std::thread::available_parallelism()
+                .map(|parallelism| parallelism.get())
+                .unwrap_or(DEFAULT_CONCURRENCY)
+        })
+    };
+
+    Ok(RunnerArgs {
+        filters: options.filters,
+        list: options.list,
+        exact: options.exact,
+        ignored: options.ignored,
+        include_ignored: options.include_ignored,
+        nocapture: options.nocapture,
+        quiet: options.quiet,
+        profile: options.profile,
+        instructions: options.instructions,
+        mode: options.mode,
+        test_threads,
+        prover: options.prover,
+        save_baseline: options.save_baseline,
+        compare_baseline: options.compare_baseline,
+        fail_on_regression: options.fail_on_regression,
+        accept_snapshots: options.accept_snapshots,
+        filter_expr: options.filter_expr,
+        junit_path: options.junit_path.map(|path| path.display().to_string()),
+        package_id: options.package_id,
+        target_name: options.target_name,
+        target_kind: options.target_kind,
+        ..RunnerArgs::default()
+    })
 }
 
 pub struct ByteReader<'a> {
@@ -221,28 +180,48 @@ impl<'a> ByteReader<'a> {
 }
 
 impl TestDesc {
+    fn classname(&self) -> String {
+        self.name
+            .rsplit_once("::")
+            .map_or(self.name.as_str(), |(classname, _)| classname)
+            .to_string()
+    }
+
+    fn into_skipped_junit_case(self) -> crate::junit::JUnitTestCase {
+        crate::junit::JUnitTestCase {
+            classname:    self.classname(),
+            name:         self.name,
+            time:         0.0,
+            cycles:       0,
+            record_bytes: 0,
+            status:       crate::junit::TestCaseStatus::Skipped,
+            stdout:       String::new(),
+            stderr:       String::new(),
+        }
+    }
+
     /// Mirror of `zkvm_test::TestCase::encode`; the field order is the wire contract.
     pub fn decode(reader: &mut ByteReader) -> Option<Self> {
         let flags = reader.read_u8()?;
-        let present = |flag: u8| (flags & flag) != 0;
+        let present = |flag: TestFlag| (flags & flag.mask()) != 0;
 
-        let expected_exit_code = match present(FLAG_EXPECTED_EXIT_CODE) {
+        let expected_exit_code = match present(TestFlag::ExpectedExitCode) {
             true => Some(reader.read_u32_le()?),
             false => None,
         };
-        let max_cycles = match present(FLAG_MAX_CYCLES) {
+        let max_cycles = match present(TestFlag::MaxCycles) {
             true => Some(reader.read_u64_le()?),
             false => None,
         };
-        let expected_message = match present(FLAG_EXPECTED_MESSAGE) {
+        let expected_message = match present(TestFlag::ExpectedMessage) {
             true => Some(reader.read_len_prefixed_str()?),
             false => None,
         };
-        let fixture = match present(FLAG_FIXTURE) {
+        let fixture = match present(TestFlag::Fixture) {
             true => Some(reader.read_len_prefixed_str()?),
             false => None,
         };
-        let snapshot = match present(FLAG_SNAPSHOT) {
+        let snapshot = match present(TestFlag::Snapshot) {
             true => Some(reader.read_len_prefixed_str()?),
             false => None,
         };
@@ -250,8 +229,8 @@ impl TestDesc {
 
         Some(Self {
             name,
-            ignore: present(FLAG_IGNORE),
-            should_panic: present(FLAG_SHOULD_PANIC),
+            ignore: present(TestFlag::Ignore),
+            should_panic: present(TestFlag::ShouldPanic),
             expected_message,
             expected_exit_code,
             max_cycles,
@@ -477,6 +456,8 @@ impl InstructionBreakdown {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TestMetric {
     pub cycles:                u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gas:                   Option<u64>,
     pub record_bytes:          u64,
     pub cycle_tracker:         std::collections::BTreeMap<String, u64>,
     pub invocations:           std::collections::BTreeMap<String, u64>,
@@ -488,6 +469,8 @@ pub struct TestMetric {
 pub struct BaselineSuite {
     pub created_at:   String,
     pub total_cycles: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_gas:    Option<u64>,
     pub tests:        std::collections::BTreeMap<String, TestMetric>,
 }
 
@@ -513,11 +496,23 @@ fn exit_code_verdict(test: &TestDesc, exit_code: u64) -> Option<String> {
     match test.expected_exit_code {
         Some(expected) if exit_code == u64::from(expected) => None,
         Some(expected) => Some(format!("guest exited with code {exit_code}, expected {expected}")),
-        None if test.should_panic => (exit_code == 0)
-            .then(|| "test did not panic as expected (guest exited with code 0)".to_string()),
+        None if test.should_panic => {
+            (exit_code == 0).then(|| "test did not panic as expected (guest exited with code 0)".to_string())
+        },
         None if exit_code == 0 => None,
         None => Some(format!("guest exited with code {exit_code}")),
     }
+}
+
+fn cycle_budget_verdict(test: &TestDesc, cycles: u64) -> Option<String> {
+    let max_cycles = test.max_cycles?;
+    (cycles > max_cycles).then(|| {
+        format!(
+            "cycle budget exceeded: {} cycles > budget of {}",
+            format_commas(cycles),
+            format_commas(max_cycles)
+        )
+    })
 }
 
 /// What one execution of the guest produced. `failure` is `None` while the test is
@@ -525,6 +520,7 @@ fn exit_code_verdict(test: &TestDesc, exit_code: u64) -> Option<String> {
 #[derive(Default)]
 struct ExecOutput {
     cycles:        u64,
+    gas:           Option<u64>,
     record_bytes:  u64,
     cycle_tracker: std::collections::BTreeMap<String, u64>,
     invocations:   std::collections::BTreeMap<String, u64>,
@@ -538,43 +534,41 @@ fn format_execution_error(err: &sp1_core_executor::ExecutionError) -> String {
     match err {
         sp1_core_executor::ExecutionError::InvalidMemoryAccess(op, addr) => {
             format!("memory fault: invalid memory access for opcode {op:?} at address 0x{addr:08x}")
-        }
+        },
         sp1_core_executor::ExecutionError::InvalidMemoryAccessUntrustedProgram(addr) => {
             format!("alignment fault: unaligned instruction fetch at address 0x{addr:08x} (must be 4-byte aligned)")
-        }
+        },
         sp1_core_executor::ExecutionError::UnsupportedSyscall(num) => {
             format!("syscall fault: unimplemented syscall 0x{num:08x} ({num})")
-        }
-        sp1_core_executor::ExecutionError::Breakpoint() => {
-            "breakpoint encountered (ebreak)".to_string()
-        }
+        },
+        sp1_core_executor::ExecutionError::Breakpoint() => "breakpoint encountered (ebreak)".to_string(),
         sp1_core_executor::ExecutionError::ExceededCycleLimit(limit) => {
             format!("cycle limit exceeded: program exceeded configured limit of {limit} cycles")
-        }
+        },
         sp1_core_executor::ExecutionError::InvalidSyscallUsage(addr) => {
             format!("syscall error: syscall invoked in unconstrained mode at address 0x{addr:08x}")
-        }
+        },
         sp1_core_executor::ExecutionError::Unimplemented() => {
             "illegal instruction: encountered unimplemented opcode (unimp)".to_string()
-        }
+        },
         sp1_core_executor::ExecutionError::EndInUnconstrained() => {
             "unconstrained mode error: program halted while still in unconstrained execution block".to_string()
-        }
+        },
         sp1_core_executor::ExecutionError::UnconstrainedCycleLimitExceeded(limit) => {
             format!("unconstrained cycle limit exceeded: exceeded limit of {limit} cycles")
-        }
+        },
         sp1_core_executor::ExecutionError::TooMuchMemory() => {
             "memory budget exceeded: guest program exceeded configured in-VM memory allocation".to_string()
-        }
+        },
         sp1_core_executor::ExecutionError::KilledByMemoryMonitor(mb) => {
             format!("memory limit exceeded: child executor killed by watchdog monitor (measured {mb} MB)")
-        }
+        },
         sp1_core_executor::ExecutionError::ChildKilled() => {
             "child executor killed externally (possible OS / cgroup OOM-killer)".to_string()
-        }
+        },
         sp1_core_executor::ExecutionError::UnexpectedExitCode(code) => {
             format!("unexpected exit code: {code}")
-        }
+        },
         _ => format!("executor error: {err}"),
     }
 }
@@ -604,6 +598,7 @@ impl ExecOutput {
 
         Self {
             cycles: report.total_instruction_count(),
+            gas: report.gas(),
             record_bytes: report.total_record_size(),
             breakdown: Some(InstructionBreakdown::from_report(&report)),
             top_syscalls,
@@ -619,6 +614,7 @@ pub struct TestOutcome {
     pub desc:                  TestDesc,
     pub passed:                bool,
     pub cycles:                u64,
+    pub gas:                   Option<u64>,
     pub failure_reason:        Option<String>,
     pub stdout:                String,
     pub stderr:                String,
@@ -635,6 +631,7 @@ impl TestOutcome {
             desc,
             passed: false,
             cycles: 0,
+            gas: None,
             failure_reason: Some(reason),
             stdout: String::new(),
             stderr: String::new(),
@@ -643,6 +640,32 @@ impl TestOutcome {
             invocations: std::collections::BTreeMap::new(),
             instruction_breakdown: None,
             duration,
+        }
+    }
+
+    fn to_junit_case(&self) -> crate::junit::JUnitTestCase {
+        let status = match (&self.failure_reason, self.passed) {
+            (_, true) => crate::junit::TestCaseStatus::Passed,
+            (reason, false) => {
+                let message = reason.clone().unwrap_or_else(|| "test failed".to_string());
+                let details = if self.stderr.is_empty() {
+                    message.clone()
+                } else {
+                    format!("{message}\n\nstderr:\n{}", self.stderr)
+                };
+                crate::junit::TestCaseStatus::Failed { message, details }
+            },
+        };
+
+        crate::junit::JUnitTestCase {
+            name: self.desc.name.clone(),
+            classname: self.desc.classname(),
+            time: self.duration.as_secs_f64(),
+            cycles: self.cycles,
+            record_bytes: self.record_bytes,
+            status,
+            stdout: self.stdout.clone(),
+            stderr: self.stderr.clone(),
         }
     }
 }
@@ -663,7 +686,9 @@ impl AnyProver {
             #[cfg(feature = "cuda")]
             "cuda" => Ok(AnyProver::Cuda(ProverClient::builder().cuda().build().await)),
             #[cfg(not(feature = "cuda"))]
-            "cuda" => Err("CUDA prover requested, but zkvm-test-runner was compiled without the 'cuda' feature".to_string()),
+            "cuda" => {
+                Err("CUDA prover requested, but zkvm-test-runner was compiled without the 'cuda' feature".to_string())
+            },
             other => Err(format!("unknown prover '{other}'. Expected 'mock', 'cpu', or 'cuda'.")),
         }
     }
@@ -676,10 +701,28 @@ impl AnyProver {
         stderr_tx: tokio::sync::watch::Sender<String>,
     ) -> Result<(sp1_sdk::SP1PublicValues, sp1_sdk::ExecutionReport), sp1_core_executor::ExecutionError> {
         match self {
-            AnyProver::Mock(p) => p.execute(elf, stdin).stdout(stdout_tx).stderr(stderr_tx).await,
-            AnyProver::Cpu(p) => p.execute(elf, stdin).stdout(stdout_tx).stderr(stderr_tx).await,
+            AnyProver::Mock(p) => {
+                p.execute(elf, stdin)
+                    .calculate_gas(true)
+                    .stdout(stdout_tx)
+                    .stderr(stderr_tx)
+                    .await
+            },
+            AnyProver::Cpu(p) => {
+                p.execute(elf, stdin)
+                    .calculate_gas(true)
+                    .stdout(stdout_tx)
+                    .stderr(stderr_tx)
+                    .await
+            },
             #[cfg(feature = "cuda")]
-            AnyProver::Cuda(p) => p.execute(elf, stdin).stdout(stdout_tx).stderr(stderr_tx).await,
+            AnyProver::Cuda(p) => {
+                p.execute(elf, stdin)
+                    .calculate_gas(true)
+                    .stdout(stdout_tx)
+                    .stderr(stderr_tx)
+                    .await
+            },
         }
     }
 
@@ -825,6 +868,51 @@ fn print_top_syscalls(syscalls: &[(String, u64)]) {
     }
 }
 
+fn print_test_status(
+    test: &TestDesc,
+    output: &ExecOutput,
+    failure: Option<&str>,
+    proof: Option<(ProofMode, std::time::Duration)>,
+    profile: bool,
+    instructions: bool,
+) {
+    if failure.is_some() {
+        println!("test {} ... FAILED", test.name);
+        return;
+    }
+
+    let mut metadata = Vec::new();
+    match (test.expected_exit_code, test.should_panic) {
+        (Some(code), _) => metadata.push(format!("exit code: {code}")),
+        (None, true) => metadata.push("should panic".to_string()),
+        (None, false) => {},
+    }
+    if let Some(max_cycles) = test.max_cycles {
+        metadata.push(format!("budget: {}", format_commas(max_cycles)));
+    }
+    metadata.push(format!("{} cycles", format_commas(output.cycles)));
+    if let Some(gas) = output.gas {
+        metadata.push(format!("{} gas", format_commas(gas)));
+    }
+    if output.record_bytes > 0 {
+        metadata.push(format!("trace: {}", format_bytes(output.record_bytes)));
+    }
+    if let Some((mode, duration)) = proof {
+        metadata.push(format!("{mode:?} proof: {:.2}s", duration.as_secs_f64()));
+    }
+    println!("test {} ... ok ({})", test.name, metadata.join(", "));
+
+    if profile {
+        print_profile_breakdown(&output.cycle_tracker, &output.invocations, output.cycles);
+    }
+    if profile || instructions {
+        if let Some(breakdown) = &output.breakdown {
+            print_instruction_breakdown(breakdown, output.cycles);
+        }
+        print_top_syscalls(&output.top_syscalls);
+    }
+}
+
 fn print_failures(failures: &[&TestOutcome]) {
     if failures.is_empty() {
         return;
@@ -876,10 +964,7 @@ fn compare_against_baseline(
         return false;
     };
 
-    let matching_count = outcomes
-        .iter()
-        .filter(|o| baseline.tests.contains_key(&o.desc.name))
-        .count();
+    let matching_count = outcomes.iter().filter(|o| baseline.tests.contains_key(&o.desc.name)).count();
     if matching_count == 0 {
         if is_explicit {
             println!("\nBaseline comparison against '{baseline_name}': no matching tests found.");
@@ -924,22 +1009,20 @@ fn compare_against_baseline(
     regression_detected
 }
 
-fn save_metrics_baseline(save_name: &str, outcomes: &[TestOutcome], total_cycles: u64) {
+fn save_metrics_baseline(save_name: &str, outcomes: &[TestOutcome], total_cycles: u64, total_gas: Option<u64>) {
     let _ = std::fs::create_dir_all(METRICS_DIR);
     let path = format!("{METRICS_DIR}/{save_name}.json");
 
     let mut tests_map = std::collections::BTreeMap::new();
     for o in outcomes {
-        tests_map.insert(
-            o.desc.name.clone(),
-            TestMetric {
-                cycles:                o.cycles,
-                record_bytes:          o.record_bytes,
-                cycle_tracker:         o.cycle_tracker.clone(),
-                invocations:           o.invocations.clone(),
-                instruction_breakdown: o.instruction_breakdown.clone(),
-            },
-        );
+        tests_map.insert(o.desc.name.clone(), TestMetric {
+            cycles:                o.cycles,
+            gas:                   o.gas,
+            record_bytes:          o.record_bytes,
+            cycle_tracker:         o.cycle_tracker.clone(),
+            invocations:           o.invocations.clone(),
+            instruction_breakdown: o.instruction_breakdown.clone(),
+        });
     }
 
     let now = std::time::SystemTime::now()
@@ -950,6 +1033,7 @@ fn save_metrics_baseline(save_name: &str, outcomes: &[TestOutcome], total_cycles
     let suite = BaselineSuite {
         created_at: format!("{now}"),
         total_cycles,
+        total_gas,
         tests: tests_map,
     };
 
@@ -969,8 +1053,8 @@ fn save_metrics_baseline(save_name: &str, outcomes: &[TestOutcome], total_cycles
 }
 
 pub async fn run(args: RunnerArgs) -> i32 {
-    let elf_bytes = match std::fs::read(&args.elf_path) {
-        Ok(bytes) => bytes,
+    let elf = match std::fs::read(&args.elf_path) {
+        Ok(bytes) => Elf::from(bytes),
         Err(err) => {
             eprintln!("zkvm-test-runner: failed to read {}: {err}", args.elf_path);
             return 2;
@@ -1000,7 +1084,7 @@ pub async fn run(args: RunnerArgs) -> i32 {
 
     let (list_tx, _list_rx) = tokio::sync::watch::channel(String::new());
     let (list_err_tx, _list_err_rx) = tokio::sync::watch::channel(String::new());
-    let list_res = prover.execute_test(Elf::from(elf_bytes.clone()), list_stdin, list_tx, list_err_tx).await;
+    let list_res = prover.execute_test(elf.clone(), list_stdin, list_tx, list_err_tx).await;
 
     let test_catalog = match list_res {
         Ok((public_values, report)) if report.exit_code == 0 => decode_test_list(public_values.as_slice()),
@@ -1023,9 +1107,7 @@ pub async fn run(args: RunnerArgs) -> i32 {
             let (stdout_tx, stdout_rx) = tokio::sync::watch::channel(String::new());
             let (stderr_tx, stderr_rx) = tokio::sync::watch::channel(String::new());
 
-            let execute_res = prover
-                .execute_test(Elf::from(elf_bytes), SP1Stdin::new(), stdout_tx, stderr_tx)
-                .await;
+            let execute_res = prover.execute_test(elf, SP1Stdin::new(), stdout_tx, stderr_tx).await;
 
             let stdout = stdout_rx.borrow().clone();
             let stderr = stderr_rx.borrow().clone();
@@ -1056,10 +1138,14 @@ pub async fn run(args: RunnerArgs) -> i32 {
 
     let pkg_name = args.target_name.clone().unwrap_or_else(|| raw_elf_name.to_string());
 
-    let package_root = args.package_graph.as_ref().zip(args.package_id.as_ref()).and_then(|(graph, id)| {
-        let pkg = graph.metadata(&guppy::PackageId::new(id.clone())).ok()?;
-        Path::new(pkg.manifest_path().as_str()).parent().map(Path::to_path_buf)
-    });
+    let package_root = args
+        .package_graph
+        .as_ref()
+        .zip(args.package_id.as_ref())
+        .and_then(|(graph, id)| {
+            let pkg = graph.metadata(&guppy::PackageId::new(id.clone())).ok()?;
+            Path::new(pkg.manifest_path().as_str()).parent().map(Path::to_path_buf)
+        });
 
     // A filter expression is evaluated against the binary the ELF was built from, so it
     // needs the package graph; the plugin passes one down, a bare invocation queries it.
@@ -1097,7 +1183,9 @@ pub async fn run(args: RunnerArgs) -> i32 {
             };
 
             let kind = nextest_metadata::RustTestBinaryKind::new(
-                args.target_kind.clone().unwrap_or_else(|| crate::filter::DEFAULT_TARGET_KIND.to_string()),
+                args.target_kind
+                    .clone()
+                    .unwrap_or_else(|| crate::filter::DEFAULT_TARGET_KIND.to_string()),
             );
             let binary = crate::filter::Binary::new(pkg.name(), pkg.id().clone(), pkg_name.clone(), kind);
             Some((filterset, binary))
@@ -1134,39 +1222,33 @@ pub async fn run(args: RunnerArgs) -> i32 {
     }
 
     let mut tests_to_run = Vec::new();
-    let mut ignored_count = 0;
+    let mut ignored_tests = Vec::new();
     let mut filtered_out = 0;
 
-    for t in &all_tests {
-        if !matches_filter(&t.name) {
+    for test in all_tests {
+        if !matches_filter(&test.name) {
             filtered_out += 1;
             continue;
         }
 
-        if t.ignore && !args.ignored && !args.include_ignored {
-            ignored_count += 1;
+        if test.ignore && !args.ignored && !args.include_ignored {
             if !args.quiet {
-                println!("test {} ... ignored", t.name);
+                println!("test {} ... ignored", test.name);
             }
+            ignored_tests.push(test);
             continue;
         }
 
-        if !t.ignore && args.ignored {
+        if !test.ignore && args.ignored {
             filtered_out += 1;
             continue;
         }
 
-        tests_to_run.push(t.clone());
+        tests_to_run.push(test);
     }
 
+    let ignored_count = ignored_tests.len();
     let total_count = tests_to_run.len();
-    if !args.quiet {
-        println!(
-            "\nrunning {total_count} test{} (prover: {prover_choice}, threads: {})",
-            if total_count == 1 { "" } else { "s" },
-            args.test_threads
-        );
-    }
 
     let proof_mode: ProofMode = match args.mode.as_deref() {
         Some(s) => match s.parse::<ProofMode>() {
@@ -1179,12 +1261,26 @@ pub async fn run(args: RunnerArgs) -> i32 {
         None => ProofMode::None,
     };
 
+    if !args.quiet {
+        let banner_details = if prover_choice == "mock" {
+            format!("mode: mock, threads: {}", args.test_threads)
+        } else if proof_mode != ProofMode::None {
+            format!("prover: {prover_choice}, mode: {proof_mode:?}, threads: {}", args.test_threads)
+        } else {
+            format!("prover: {prover_choice}, threads: {}", args.test_threads)
+        };
+        println!(
+            "\nrunning {total_count} test{} ({banner_details})",
+            if total_count == 1 { "" } else { "s" },
+        );
+    }
+
     let pk = if proof_mode != ProofMode::None && !tests_to_run.is_empty() {
         if !args.quiet {
             println!("Setting up proving key for {proof_mode:?} mode...");
         }
         let setup_start = Instant::now();
-        match prover.setup_pk(Elf::from(elf_bytes.clone())).await {
+        match prover.setup_pk(elf.clone()).await {
             Ok(pk) => {
                 if !args.quiet {
                     println!("Proving key ready in {:.2}s", setup_start.elapsed().as_secs_f64());
@@ -1204,16 +1300,14 @@ pub async fn run(args: RunnerArgs) -> i32 {
     let semaphore = Arc::new(tokio::sync::Semaphore::new(args.test_threads));
     let mut handles = Vec::new();
 
-    let peak_rss_kb = Arc::new(std::sync::atomic::AtomicU64::new(
-        memuse::rss_kb().unwrap_or(0),
-    ));
+    let peak_rss_kb = Arc::new(std::sync::atomic::AtomicU64::new(memuse::rss_kb().unwrap_or(0)));
     let resource_roots = Arc::new(resource_roots(Some(Path::new(&args.elf_path)), package_root.as_deref()));
 
     for test in tests_to_run {
         let sem = semaphore.clone();
         let prover = prover.clone();
         let pk = pk.clone();
-        let elf_bytes = elf_bytes.clone();
+        let elf = elf.clone();
         let roots = resource_roots.clone();
         let quiet = args.quiet;
         let profile = args.profile;
@@ -1253,9 +1347,7 @@ pub async fn run(args: RunnerArgs) -> i32 {
             let (stdout_tx, stdout_rx) = tokio::sync::watch::channel(String::new());
             let (stderr_tx, stderr_rx) = tokio::sync::watch::channel(String::new());
 
-            let res = prover
-                .execute_test(Elf::from(elf_bytes), run_stdin, stdout_tx, stderr_tx)
-                .await;
+            let res = prover.execute_test(elf, run_stdin, stdout_tx, stderr_tx).await;
 
             if let Some(rss) = memuse::rss_kb() {
                 peak_rss.fetch_max(rss, std::sync::atomic::Ordering::Relaxed);
@@ -1263,34 +1355,18 @@ pub async fn run(args: RunnerArgs) -> i32 {
 
             let stdout = stdout_rx.borrow().clone();
             let stderr = stderr_rx.borrow().clone();
-            let out = ExecOutput::from_result(&test, res);
+            let mut out = ExecOutput::from_result(&test, res);
 
-            // Declarative checks, in declaration order; the first failure stops the rest.
-            let mut failure = out.failure;
-
-            if failure.is_none()
-                && let Some(reason) = panic_message_verdict(&test, &stderr)
-            {
-                failure = Some(reason);
-            }
-
-            if failure.is_none()
-                && let Some(max) = test.max_cycles
-                && out.cycles > max
-            {
-                failure = Some(format!(
-                    "cycle budget exceeded: {} cycles > budget of {}",
-                    format_commas(out.cycles),
-                    format_commas(max)
-                ));
-            }
-
-            if failure.is_none()
-                && let Some(ref snap_path) = test.snapshot
-            {
-                failure =
-                    verify_or_update_snapshot(snap_path, &out.public_values, accept_snapshots, &roots).err();
-            }
+            let mut failure = out
+                .failure
+                .take()
+                .or_else(|| panic_message_verdict(&test, &stderr))
+                .or_else(|| cycle_budget_verdict(&test, out.cycles))
+                .or_else(|| {
+                    test.snapshot.as_deref().and_then(|snapshot| {
+                        verify_or_update_snapshot(snapshot, &out.public_values, accept_snapshots, &roots).err()
+                    })
+                });
 
             let mut proof_duration = None;
             if failure.is_none()
@@ -1305,47 +1381,20 @@ pub async fn run(args: RunnerArgs) -> i32 {
                 match prover.prove_test(proving_key, prove_stdin, proof_mode).await {
                     Ok(_) => proof_duration = Some(started.elapsed()),
                     Err(err) => {
-                        failure = Some(format!(
-                            "proof generation/verification failed in mode {proof_mode:?}: {err}"
-                        ));
+                        failure = Some(format!("proof generation/verification failed in mode {proof_mode:?}: {err}"));
                     },
                 }
             }
 
             if !quiet {
-                match failure {
-                    None => {
-                        let mut meta_items = Vec::new();
-                        if let Some(expected) = test.expected_exit_code {
-                            meta_items.push(format!("exit code: {expected}"));
-                        } else if test.should_panic {
-                            meta_items.push("should panic".to_string());
-                        }
-                        if let Some(max) = test.max_cycles {
-                            meta_items.push(format!("budget: {}", format_commas(max)));
-                        }
-                        meta_items.push(format!("{} cycles", format_commas(out.cycles)));
-                        if out.record_bytes > 0 {
-                            meta_items.push(format!("trace: {}", format_bytes(out.record_bytes)));
-                        }
-                        if let Some(dur) = proof_duration {
-                            meta_items.push(format!("{proof_mode:?} proof: {:.2}s", dur.as_secs_f64()));
-                        }
-                        println!("test {} ... ok ({})", test.name, meta_items.join(", "));
-
-                        if profile {
-                            print_profile_breakdown(&out.cycle_tracker, &out.invocations, out.cycles);
-                        }
-                        if profile || instructions {
-                            if let Some(ref breakdown) = out.breakdown {
-                                print_instruction_breakdown(breakdown, out.cycles);
-                            }
-                            print_top_syscalls(&out.top_syscalls);
-                        }
-                    },
-                    Some(_) => println!("test {} ... FAILED", test.name),
-                }
-
+                print_test_status(
+                    &test,
+                    &out,
+                    failure.as_deref(),
+                    proof_duration.map(|duration| (proof_mode, duration)),
+                    profile,
+                    instructions,
+                );
                 if nocapture {
                     if !stdout.is_empty() {
                         print!("{stdout}");
@@ -1360,6 +1409,7 @@ pub async fn run(args: RunnerArgs) -> i32 {
                 desc: test,
                 passed: failure.is_none(),
                 cycles: out.cycles,
+                gas: out.gas,
                 failure_reason: failure,
                 stdout,
                 stderr,
@@ -1385,10 +1435,16 @@ pub async fn run(args: RunnerArgs) -> i32 {
     let mut passed_count = 0;
     let mut failed_count = 0;
     let mut total_cycles = 0;
+    let mut total_gas: u64 = 0;
+    let mut has_gas = false;
     let mut failures = Vec::new();
 
     for o in &outcomes {
         total_cycles += o.cycles;
+        if let Some(g) = o.gas {
+            total_gas = total_gas.saturating_add(g);
+            has_gas = true;
+        }
         if o.passed {
             passed_count += 1;
         } else {
@@ -1414,7 +1470,7 @@ pub async fn run(args: RunnerArgs) -> i32 {
     }
 
     if let Some(save_name) = &args.save_baseline {
-        save_metrics_baseline(save_name, &outcomes, total_cycles);
+        save_metrics_baseline(save_name, &outcomes, total_cycles, if has_gas { Some(total_gas) } else { None });
     }
 
     if regression_failed {
@@ -1430,12 +1486,23 @@ pub async fn run(args: RunnerArgs) -> i32 {
         String::new()
     };
 
-    let status_str = if failed_count == 0 && !regression_failed { "ok" } else { "FAILED" };
+    let gas_str = if has_gas {
+        format!(", total gas: {}", format_commas(total_gas))
+    } else {
+        String::new()
+    };
+
+    let status_str = if failed_count == 0 && !regression_failed {
+        "ok"
+    } else {
+        "FAILED"
+    };
     println!(
         "\ntest result: {status_str}. {passed_count} passed; {failed_count} failed; {ignored_count} ignored; \
-         0 measured; {filtered_out} filtered out; finished in {:.2}s (total cycles: {}{})\n",
+         0 measured; {filtered_out} filtered out; finished in {:.2}s (total cycles: {}{}{})\n",
         elapsed.as_secs_f64(),
         format_commas(total_cycles),
+        gas_str,
         peak_str
     );
 
@@ -1449,66 +1516,10 @@ pub async fn run(args: RunnerArgs) -> i32 {
         let mut suite = crate::junit::JUnitTestSuite::new(suite_name);
         suite.time = elapsed.as_secs_f64();
 
-        for o in &outcomes {
-            let classname = o
-                .desc
-                .name
-                .rsplit_once("::")
-                .map(|(c, _)| c)
-                .unwrap_or(&o.desc.name)
-                .to_string();
-
-            let status = if o.passed {
-                crate::junit::TestCaseStatus::Passed
-            } else {
-                let msg = o
-                    .failure_reason
-                    .clone()
-                    .unwrap_or_else(|| "test failed".to_string());
-                let det = if !o.stderr.is_empty() {
-                    format!("{msg}\n\nstderr:\n{}", o.stderr)
-                } else {
-                    msg.clone()
-                };
-                crate::junit::TestCaseStatus::Failed {
-                    message: msg,
-                    details: det,
-                }
-            };
-
-            suite.cases.push(crate::junit::JUnitTestCase {
-                name: o.desc.name.clone(),
-                classname,
-                time: o.duration.as_secs_f64(),
-                cycles: o.cycles,
-                record_bytes: o.record_bytes,
-                status,
-                stdout: o.stdout.clone(),
-                stderr: o.stderr.clone(),
-            });
-        }
-
-        let executed_names: std::collections::HashSet<_> = outcomes.iter().map(|o| &o.desc.name).collect();
-        for t in &all_tests {
-            if !executed_names.contains(&t.name) && matches_filter(&t.name) && t.ignore {
-                let classname = t
-                    .name
-                    .rsplit_once("::")
-                    .map(|(c, _)| c)
-                    .unwrap_or(&t.name)
-                    .to_string();
-                suite.cases.push(crate::junit::JUnitTestCase {
-                    name: t.name.clone(),
-                    classname,
-                    time: 0.0,
-                    cycles: 0,
-                    record_bytes: 0,
-                    status: crate::junit::TestCaseStatus::Skipped,
-                    stdout: String::new(),
-                    stderr: String::new(),
-                });
-            }
-        }
+        suite.cases.extend(outcomes.iter().map(TestOutcome::to_junit_case));
+        suite
+            .cases
+            .extend(ignored_tests.into_iter().map(TestDesc::into_skipped_junit_case));
 
         let p = Path::new(junit_path);
         if let Err(e) = crate::junit::write_or_merge_junit_xml(p, suite) {
@@ -1613,7 +1624,7 @@ mod tests {
         bytes.extend_from_slice(&3u32.to_le_bytes());
 
         // Test 1: should panic with expected exit code 42
-        let flags1 = FLAG_SHOULD_PANIC | FLAG_EXPECTED_EXIT_CODE;
+        let flags1 = TestFlag::ShouldPanic.mask() | TestFlag::ExpectedExitCode.mask();
         bytes.push(flags1);
         bytes.extend_from_slice(&42u32.to_le_bytes()); // exit code
         let name1 = "tests::panic_test";
@@ -1621,7 +1632,8 @@ mod tests {
         bytes.extend_from_slice(name1.as_bytes());
 
         // Test 2: max cycles, fixture, snapshot, ignored
-        let flags2 = FLAG_IGNORE | FLAG_MAX_CYCLES | FLAG_FIXTURE | FLAG_SNAPSHOT;
+        let flags2 =
+            TestFlag::Ignore.mask() | TestFlag::MaxCycles.mask() | TestFlag::Fixture.mask() | TestFlag::Snapshot.mask();
         bytes.push(flags2);
         bytes.extend_from_slice(&1_000_000u64.to_le_bytes()); // max cycles
         let fix = "fixtures/data.bin";
@@ -1635,7 +1647,7 @@ mod tests {
         bytes.extend_from_slice(name2.as_bytes());
 
         // Test 3: expects a panic carrying a specific message
-        bytes.push(FLAG_SHOULD_PANIC | FLAG_EXPECTED_MESSAGE);
+        bytes.push(TestFlag::ShouldPanic.mask() | TestFlag::ExpectedMessage.mask());
         let message = "median hint missing";
         bytes.extend_from_slice(&(message.len() as u32).to_le_bytes());
         bytes.extend_from_slice(message.as_bytes());
@@ -1692,9 +1704,7 @@ mod tests {
 
     #[test]
     fn test_parse_args_rejects_bad_values() {
-        let err = |args: &[&str]| {
-            parse_args_from(args.iter().map(|s| s.to_string())).expect_err("should be rejected")
-        };
+        let err = |args: &[&str]| parse_args_from(args.iter().map(|s| s.to_string())).expect_err("should be rejected");
 
         assert!(err(&[]).contains("usage: zkvm-test-runner <elf-path>"));
         assert!(err(&["elf", "--test-threads=abc"]).contains("--test-threads"));
@@ -1706,9 +1716,7 @@ mod tests {
 
     #[test]
     fn test_parse_args_accepts_flag_aliases() {
-        let parse = |args: &[&str]| {
-            parse_args_from(args.iter().map(|s| s.to_string())).expect("valid arguments")
-        };
+        let parse = |args: &[&str]| parse_args_from(args.iter().map(|s| s.to_string())).expect("valid arguments");
 
         // `--subcycles` is the alias the cargo plugin advertises for `--profile`
         assert!(parse(&["elf", "--subcycles"]).profile);
@@ -1723,7 +1731,10 @@ mod tests {
 
         // `--save-baseline` takes an optional name
         assert_eq!(parse(&["elf", "--save-baseline"]).save_baseline.as_deref(), Some("default"));
-        assert_eq!(parse(&["elf", "--save-baseline", "run1"]).save_baseline.as_deref(), Some("run1"));
+        assert_eq!(
+            parse(&["elf", "--save-baseline", "run1"]).save_baseline.as_deref(),
+            Some("run1")
+        );
         let standalone = parse(&["elf", "--save-baseline", "--quiet"]);
         assert_eq!(standalone.save_baseline.as_deref(), Some("default"));
         assert!(standalone.quiet);
@@ -1761,10 +1772,11 @@ mod tests {
 
     #[test]
     fn test_package_dir_candidates() {
-        assert_eq!(
-            package_dir_candidates("zkpow_sha256-1a2b3c4d"),
-            vec!["zkpow_sha256", "zkpow-sha256", "sha256"]
-        );
+        assert_eq!(package_dir_candidates("zkpow_sha256-1a2b3c4d"), vec![
+            "zkpow_sha256",
+            "zkpow-sha256",
+            "sha256"
+        ]);
         assert_eq!(package_dir_candidates("core-9f"), vec!["core"]);
         assert!(package_dir_candidates("").is_empty());
     }
@@ -1943,4 +1955,3 @@ mod tests {
         );
     }
 }
-

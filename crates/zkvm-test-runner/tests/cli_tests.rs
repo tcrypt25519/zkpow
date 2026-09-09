@@ -12,14 +12,15 @@ fn cargo_zkvm_test_cmd() -> Command {
     cmd.env_remove("CLICOLOR_FORCE").env("NO_COLOR", "1");
     cmd
 }
-
 #[test]
 fn test_cargo_zkvm_test_help() {
     let mut cmd = cargo_zkvm_test_cmd();
     cmd.arg("--help");
     cmd.assert()
         .success()
-        .stdout(predicate::str::contains("cargo-zkvm-test: Nextest-grade test runner for zkVM binaries"))
+        .stdout(predicate::str::contains(
+            "cargo-zkvm-test: Nextest-grade test runner for zkVM binaries",
+        ))
         .stdout(predicate::str::contains("-p, --package"))
         .stdout(predicate::str::contains("-E, --expr"))
         .stdout(predicate::str::contains("--junit-path"))
@@ -77,15 +78,12 @@ fn test_cargo_zkvm_test_list_tests() {
 #[test]
 fn test_cargo_zkvm_test_nextest_filter_execution() {
     let mut cmd = cargo_zkvm_test_cmd();
-    cmd.args([
-        "-p",
-        "zkpow-sha256",
-        "-E",
-        "test(genesis)",
-    ]);
+    cmd.args(["-p", "zkpow-sha256", "-E", "test(genesis)"]);
     cmd.assert()
         .success()
-        .stdout(predicate::str::contains("test zkpow_sha256::tests::test_genesis_header_hash_snapshot ... ok"))
+        .stdout(predicate::str::contains(
+            "test zkpow_sha256::tests::test_genesis_header_hash_snapshot ... ok",
+        ))
         .stdout(predicate::str::contains("test result: ok. 1 passed; 0 failed"));
 }
 
@@ -104,15 +102,21 @@ fn test_cargo_zkvm_test_junit_export() {
         junit_file.to_str().unwrap(),
     ]);
 
-    cmd.assert()
-        .success()
-        .stdout(predicate::str::contains("test zkpow_sha256::tests::test_genesis_header_hash_snapshot ... ok"));
+    cmd.assert().success().stdout(predicate::str::contains(
+        "test zkpow_sha256::tests::test_genesis_header_hash_snapshot ... ok",
+    ));
 
     assert!(junit_file.exists(), "JUnit XML file should be created");
     let content = std::fs::read_to_string(&junit_file).unwrap();
-    assert!(content.contains("<testsuites name=\"zkvm-test\""), "Root testsuites tag expected");
+    assert!(
+        content.contains("<testsuites name=\"zkvm-test\""),
+        "Root testsuites tag expected"
+    );
     assert!(content.contains("tests=\"1\""), "One test expected in suite");
-    assert!(content.contains("name=\"zkpow_sha256::tests::test_genesis_header_hash_snapshot\""), "Testcase expected");
+    assert!(
+        content.contains("name=\"zkpow_sha256::tests::test_genesis_header_hash_snapshot\""),
+        "Testcase expected"
+    );
     assert!(content.contains("<property name=\"cycles\""), "Cycle property expected");
 }
 
@@ -137,12 +141,7 @@ fn test_cargo_zkvm_test_subcycles_alias_reaches_runner() {
 #[test]
 fn test_cargo_zkvm_test_host_only_package() {
     let mut cmd = cargo_zkvm_test_cmd();
-    cmd.args([
-        "-p",
-        "zkvm-test-runner",
-        "--",
-        "test_parse_libtest_line",
-    ]);
+    cmd.args(["-p", "zkvm-test-runner", "--", "test_parse_libtest_line"]);
     cmd.assert()
         .success()
         .stdout(predicate::str::contains("does not target zkVM; running host tests"))
@@ -152,17 +151,10 @@ fn test_cargo_zkvm_test_host_only_package() {
 #[test]
 fn test_cargo_zkvm_test_host_flag_on_zkvm_package() {
     let mut cmd = cargo_zkvm_test_cmd();
-    cmd.args([
-        "-p",
-        "zkpow-sha256",
-        "--host",
-        "--",
-        "test_genesis_header_hash_snapshot",
-    ]);
+    cmd.args(["-p", "zkpow-sha256", "--host", "--", "test_genesis_header_hash_snapshot"]);
     cmd.assert()
         .success()
         .stdout(predicate::str::contains("testing 1 host package: zkpow-sha256"))
         .stdout(predicate::str::contains("Running host tests for `zkpow_sha256`"))
         .stdout(predicate::str::contains("test tests::test_genesis_header_hash_snapshot ... ok"));
 }
-

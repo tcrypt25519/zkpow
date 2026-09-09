@@ -13,13 +13,23 @@ pub const MAGIC: &[u8; 4] = b"ZKVT";
 pub const CMD_LIST: u8 = 0;
 pub const CMD_RUN: u8 = 1;
 
-pub const FLAG_IGNORE: u8 = 1 << 0;
-pub const FLAG_SHOULD_PANIC: u8 = 1 << 1;
-pub const FLAG_EXPECTED_EXIT_CODE: u8 = 1 << 2;
-pub const FLAG_MAX_CYCLES: u8 = 1 << 3;
-pub const FLAG_FIXTURE: u8 = 1 << 4;
-pub const FLAG_SNAPSHOT: u8 = 1 << 5;
-pub const FLAG_EXPECTED_MESSAGE: u8 = 1 << 6;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum TestFlag {
+    Ignore           = 1 << 0,
+    ShouldPanic      = 1 << 1,
+    ExpectedExitCode = 1 << 2,
+    MaxCycles        = 1 << 3,
+    Fixture          = 1 << 4,
+    Snapshot         = 1 << 5,
+    ExpectedMessage  = 1 << 6,
+}
+
+impl TestFlag {
+    pub const fn mask(self) -> u8 {
+        self as u8
+    }
+}
 
 #[derive(Clone, Copy)]
 pub struct TestCase {
@@ -38,25 +48,25 @@ impl TestCase {
     pub const fn flags(&self) -> u8 {
         let mut flags = 0u8;
         if self.ignore {
-            flags |= FLAG_IGNORE;
+            flags |= TestFlag::Ignore.mask();
         }
         if self.should_panic {
-            flags |= FLAG_SHOULD_PANIC;
+            flags |= TestFlag::ShouldPanic.mask();
         }
         if self.expected_message.is_some() {
-            flags |= FLAG_EXPECTED_MESSAGE;
+            flags |= TestFlag::ExpectedMessage.mask();
         }
         if self.expected_exit_code.is_some() {
-            flags |= FLAG_EXPECTED_EXIT_CODE;
+            flags |= TestFlag::ExpectedExitCode.mask();
         }
         if self.max_cycles.is_some() {
-            flags |= FLAG_MAX_CYCLES;
+            flags |= TestFlag::MaxCycles.mask();
         }
         if self.fixture.is_some() {
-            flags |= FLAG_FIXTURE;
+            flags |= TestFlag::Fixture.mask();
         }
         if self.snapshot.is_some() {
-            flags |= FLAG_SNAPSHOT;
+            flags |= TestFlag::Snapshot.mask();
         }
         flags
     }
@@ -236,8 +246,7 @@ pub mod snapshot {
             std::fs::create_dir_all(parent)
                 .map_err(|e| std::format!("failed to create '{}': {e}", parent.display()))?;
         }
-        std::fs::write(path, data)
-            .map_err(|e| std::format!("failed to write snapshot '{}': {e}", path.display()))?;
+        std::fs::write(path, data).map_err(|e| std::format!("failed to write snapshot '{}': {e}", path.display()))?;
         Ok(outcome)
     }
 
@@ -256,8 +265,8 @@ pub mod snapshot {
             return write(path, &format.encode(committed), Outcome::Created);
         }
 
-        let stored = std::fs::read(path)
-            .map_err(|e| std::format!("failed to read snapshot '{}': {e}", path.display()))?;
+        let stored =
+            std::fs::read(path).map_err(|e| std::format!("failed to read snapshot '{}': {e}", path.display()))?;
 
         let matches = match format {
             Format::Hex => {

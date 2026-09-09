@@ -17,42 +17,46 @@ pub enum TestCaseStatus {
 
 #[derive(Debug, Clone)]
 pub struct JUnitTestCase {
-    pub name: String,
-    pub classname: String,
-    pub time: f64,
-    pub cycles: u64,
+    pub name:         String,
+    pub classname:    String,
+    pub time:         f64,
+    pub cycles:       u64,
     pub record_bytes: u64,
-    pub status: TestCaseStatus,
-    pub stdout: String,
-    pub stderr: String,
+    pub status:       TestCaseStatus,
+    pub stdout:       String,
+    pub stderr:       String,
 }
 
 #[derive(Debug, Clone)]
 pub struct JUnitTestSuite {
-    pub name: String,
-    pub time: f64,
+    pub name:  String,
+    pub time:  f64,
     pub cases: Vec<JUnitTestCase>,
 }
 
 impl JUnitTestSuite {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
-            name: name.into(),
-            time: 0.0,
+            name:  name.into(),
+            time:  0.0,
             cases: Vec::new(),
         }
     }
 
     pub fn to_xml(&self) -> String {
-        let count = |matching: fn(&TestCaseStatus) -> bool| self.cases.iter().filter(|c| matching(&c.status)).count();
+        let (failures, skipped) = self.cases.iter().fold((0, 0), |(failures, skipped), case| match &case.status {
+            TestCaseStatus::Failed { .. } => (failures + 1, skipped),
+            TestCaseStatus::Skipped => (failures, skipped + 1),
+            TestCaseStatus::Passed => (failures, skipped),
+        });
 
         let mut out = String::new();
         out.push_str(&format!(
             "  <testsuite name=\"{}\" tests=\"{}\" failures=\"{}\" errors=\"0\" skipped=\"{}\" time=\"{:.3}\">\n",
             escape_xml(&self.name),
             self.cases.len(),
-            count(|s| matches!(s, TestCaseStatus::Failed { .. })),
-            count(|s| matches!(s, TestCaseStatus::Skipped)),
+            failures,
+            skipped,
             self.time
         ));
 
@@ -65,10 +69,7 @@ impl JUnitTestSuite {
             ));
 
             out.push_str("      <properties>\n");
-            out.push_str(&format!(
-                "        <property name=\"cycles\" value=\"{}\"/>\n",
-                c.cycles
-            ));
+            out.push_str(&format!("        <property name=\"cycles\" value=\"{}\"/>\n", c.cycles));
             if c.record_bytes > 0 {
                 out.push_str(&format!(
                     "        <property name=\"trace_bytes\" value=\"{}\"/>\n",
@@ -92,16 +93,10 @@ impl JUnitTestSuite {
             }
 
             if !c.stdout.is_empty() {
-                out.push_str(&format!(
-                    "      <system-out>{}</system-out>\n",
-                    escape_xml(&c.stdout)
-                ));
+                out.push_str(&format!("      <system-out>{}</system-out>\n", escape_xml(&c.stdout)));
             }
             if !c.stderr.is_empty() {
-                out.push_str(&format!(
-                    "      <system-err>{}</system-err>\n",
-                    escape_xml(&c.stderr)
-                ));
+                out.push_str(&format!("      <system-err>{}</system-err>\n", escape_xml(&c.stderr)));
             }
 
             out.push_str("    </testcase>\n");
@@ -150,18 +145,20 @@ pub fn write_or_merge_junit_xml(path: &Path, new_suite: JUnitTestSuite) -> Resul
         None => suites.push((new_suite.name, new_xml)),
     }
 
-    let total = |attr: &str| -> usize {
-        suites.iter().filter_map(|(_, xml)| extract_attr_usize(xml, attr)).sum()
-    };
-    let total_time: f64 = suites.iter().filter_map(|(_, xml)| extract_attr_f64(xml, "time")).sum();
+    let (tests, failures, errors, skipped, total_time) = suites.iter().fold((0, 0, 0, 0, 0.0), |totals, (_, xml)| {
+        (
+            totals.0 + extract_attr_usize(xml, "tests").unwrap_or_default(),
+            totals.1 + extract_attr_usize(xml, "failures").unwrap_or_default(),
+            totals.2 + extract_attr_usize(xml, "errors").unwrap_or_default(),
+            totals.3 + extract_attr_usize(xml, "skipped").unwrap_or_default(),
+            totals.4 + extract_attr_f64(xml, "time").unwrap_or_default(),
+        )
+    });
 
     let mut out = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
     out.push_str(&format!(
-        "<testsuites name=\"zkvm-test\" tests=\"{}\" failures=\"{}\" errors=\"{}\" skipped=\"{}\" time=\"{total_time:.3}\">\n",
-        total("tests"),
-        total("failures"),
-        total("errors"),
-        total("skipped"),
+        "<testsuites name=\"zkvm-test\" tests=\"{}\" failures=\"{}\" errors=\"{}\" skipped=\"{}\" time=\"{:.3}\">\n",
+        tests, failures, errors, skipped, total_time,
     ));
     for (_, xml) in &suites {
         out.push_str(xml);
@@ -217,27 +214,27 @@ mod tests {
         let mut suite = JUnitTestSuite::new("zkpow_core");
         suite.time = 1.25;
         suite.cases.push(JUnitTestCase {
-            name: "tests::test_pow".to_string(),
-            classname: "zkpow_core::tests".to_string(),
-            time: 0.25,
-            cycles: 50_000,
+            name:         "tests::test_pow".to_string(),
+            classname:    "zkpow_core::tests".to_string(),
+            time:         0.25,
+            cycles:       50_000,
             record_bytes: 1024,
-            status: TestCaseStatus::Passed,
-            stdout: "hello stdout".to_string(),
-            stderr: String::new(),
+            status:       TestCaseStatus::Passed,
+            stdout:       "hello stdout".to_string(),
+            stderr:       String::new(),
         });
         suite.cases.push(JUnitTestCase {
-            name: "tests::test_failed".to_string(),
-            classname: "zkpow_core::tests".to_string(),
-            time: 0.10,
-            cycles: 10_000,
+            name:         "tests::test_failed".to_string(),
+            classname:    "zkpow_core::tests".to_string(),
+            time:         0.10,
+            cycles:       10_000,
             record_bytes: 512,
-            status: TestCaseStatus::Failed {
+            status:       TestCaseStatus::Failed {
                 message: "budget exceeded".to_string(),
                 details: "cycle budget exceeded: 10,000 > 5,000".to_string(),
             },
-            stdout: String::new(),
-            stderr: "stack trace...".to_string(),
+            stdout:       String::new(),
+            stderr:       "stack trace...".to_string(),
         });
 
         let xml = suite.to_xml();
@@ -245,7 +242,9 @@ mod tests {
         assert!(xml.contains("tests=\"2\""));
         assert!(xml.contains("failures=\"1\""));
         assert!(xml.contains("<property name=\"cycles\" value=\"50000\"/>"));
-        assert!(xml.contains("<failure message=\"budget exceeded\">cycle budget exceeded: 10,000 &gt; 5,000</failure>"));
+        assert!(
+            xml.contains("<failure message=\"budget exceeded\">cycle budget exceeded: 10,000 &gt; 5,000</failure>")
+        );
         assert!(xml.contains("<system-out>hello stdout</system-out>"));
         assert!(xml.contains("<system-err>stack trace...</system-err>"));
     }
@@ -259,14 +258,14 @@ mod tests {
         let mut suite1 = JUnitTestSuite::new("suite_one");
         suite1.time = 0.5;
         suite1.cases.push(JUnitTestCase {
-            name: "test1".to_string(),
-            classname: "suite_one".to_string(),
-            time: 0.5,
-            cycles: 1000,
+            name:         "test1".to_string(),
+            classname:    "suite_one".to_string(),
+            time:         0.5,
+            cycles:       1000,
             record_bytes: 100,
-            status: TestCaseStatus::Passed,
-            stdout: String::new(),
-            stderr: String::new(),
+            status:       TestCaseStatus::Passed,
+            stdout:       String::new(),
+            stderr:       String::new(),
         });
 
         write_or_merge_junit_xml(&xml_path, suite1).unwrap();
@@ -274,14 +273,14 @@ mod tests {
         let mut suite2 = JUnitTestSuite::new("suite_two");
         suite2.time = 1.0;
         suite2.cases.push(JUnitTestCase {
-            name: "test2".to_string(),
-            classname: "suite_two".to_string(),
-            time: 1.0,
-            cycles: 2000,
+            name:         "test2".to_string(),
+            classname:    "suite_two".to_string(),
+            time:         1.0,
+            cycles:       2000,
             record_bytes: 200,
-            status: TestCaseStatus::Passed,
-            stdout: String::new(),
-            stderr: String::new(),
+            status:       TestCaseStatus::Passed,
+            stdout:       String::new(),
+            stderr:       String::new(),
         });
 
         write_or_merge_junit_xml(&xml_path, suite2).unwrap();
@@ -298,14 +297,14 @@ mod tests {
     fn test_junit_skipped_case_and_escaping() {
         let mut suite = JUnitTestSuite::new("suite_escaping");
         suite.cases.push(JUnitTestCase {
-            name: "test::special_<>&\"'".to_string(),
-            classname: "suite_escaping".to_string(),
-            time: 0.0,
-            cycles: 0,
+            name:         "test::special_<>&\"'".to_string(),
+            classname:    "suite_escaping".to_string(),
+            time:         0.0,
+            cycles:       0,
             record_bytes: 0,
-            status: TestCaseStatus::Skipped,
-            stdout: "out with <tag> & entity".to_string(),
-            stderr: "err with 'quotes' and \"double\"".to_string(),
+            status:       TestCaseStatus::Skipped,
+            stdout:       "out with <tag> & entity".to_string(),
+            stderr:       "err with 'quotes' and \"double\"".to_string(),
         });
 
         let xml = suite.to_xml();
@@ -323,38 +322,38 @@ mod tests {
 
         let mut suite1 = JUnitTestSuite::new("suite_a");
         suite1.cases.push(JUnitTestCase {
-            name: "test1".to_string(),
-            classname: "suite_a".to_string(),
-            time: 0.1,
-            cycles: 100,
+            name:         "test1".to_string(),
+            classname:    "suite_a".to_string(),
+            time:         0.1,
+            cycles:       100,
             record_bytes: 50,
-            status: TestCaseStatus::Passed,
-            stdout: String::new(),
-            stderr: String::new(),
+            status:       TestCaseStatus::Passed,
+            stdout:       String::new(),
+            stderr:       String::new(),
         });
         write_or_merge_junit_xml(path, suite1).unwrap();
 
         // Write an updated suite_a with 2 tests
         let mut suite1_updated = JUnitTestSuite::new("suite_a");
         suite1_updated.cases.push(JUnitTestCase {
-            name: "test1".to_string(),
-            classname: "suite_a".to_string(),
-            time: 0.1,
-            cycles: 100,
+            name:         "test1".to_string(),
+            classname:    "suite_a".to_string(),
+            time:         0.1,
+            cycles:       100,
             record_bytes: 50,
-            status: TestCaseStatus::Passed,
-            stdout: String::new(),
-            stderr: String::new(),
+            status:       TestCaseStatus::Passed,
+            stdout:       String::new(),
+            stderr:       String::new(),
         });
         suite1_updated.cases.push(JUnitTestCase {
-            name: "test2".to_string(),
-            classname: "suite_a".to_string(),
-            time: 0.2,
-            cycles: 200,
+            name:         "test2".to_string(),
+            classname:    "suite_a".to_string(),
+            time:         0.2,
+            cycles:       200,
             record_bytes: 60,
-            status: TestCaseStatus::Passed,
-            stdout: String::new(),
-            stderr: String::new(),
+            status:       TestCaseStatus::Passed,
+            stdout:       String::new(),
+            stderr:       String::new(),
         });
         write_or_merge_junit_xml(path, suite1_updated).unwrap();
 

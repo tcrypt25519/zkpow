@@ -4,19 +4,20 @@
 //! inspection, Nextest filter pruning, and test execution orchestration.
 
 use std::{
+    collections::HashMap,
     io::BufRead,
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    sync::Arc,
+    sync::{Arc, OnceLock},
 };
 
-use clap::{Args, CommandFactory, Parser};
+use clap::{Args, CommandFactory, FromArgMatches, Parser};
 use guppy::{MetadataCommand, graph::PackageGraph};
 use nextest_filtering::Filterset;
 use nextest_metadata::RustTestBinaryKind;
 use serde::Deserialize;
 
-use crate::runner::run;
+use crate::runner::{RunnerArgs, parse_options_from, run};
 
 #[derive(Debug, Deserialize)]
 pub struct Artifact {
@@ -38,6 +39,40 @@ pub struct ArtifactProfile {
 pub struct ArtifactTarget {
     pub name: String,
     pub kind: Vec<String>,
+}
+
+impl Artifact {
+    fn into_test_executable(self) -> Option<TestExecutable> {
+        if self.reason != REASON_COMPILER_ARTIFACT {
+            return None;
+        }
+        let is_test = self.profile.is_some_and(|profile| profile.test)
+            || self
+                .target
+                .as_ref()
+                .is_some_and(|target| target.kind.iter().any(|kind| kind == "test"));
+        if !is_test {
+            return None;
+        }
+
+        let elf_path = PathBuf::from(self.executable?);
+        let target_name = self
+            .target
+            .as_ref()
+            .map(|target| target.name.clone())
+            .unwrap_or_else(|| DEFAULT_TARGET_NAME.to_string());
+        let target_kind = self
+            .target
+            .and_then(|target| target.kind.into_iter().next())
+            .unwrap_or_else(|| crate::filter::DEFAULT_TARGET_KIND.to_string());
+
+        Some(TestExecutable {
+            target_name,
+            target_kind: RustTestBinaryKind::new(target_kind),
+            package_id: guppy::PackageId::new(self.package_id),
+            elf_path,
+        })
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -98,20 +133,34 @@ impl Vendor {
     }
 }
 
-/// Cargo flags that take a value but are not modelled in `CargoOpts`, either because
-/// this plugin sets them itself or because they only ever get passed straight through.
-pub const EXTRA_CARGO_VAL_FLAGS: &[&str] = &["--message-format", "--jobs", "-j"];
+/// Cargo flags that take a value but are not modelled in `CargoOpts`.
+const EXTRA_CARGO_VALUE_FLAGS: &[&str] = &["--message-format", "--jobs", "-j"];
+
+const ARG_PACKAGE: &str = "package";
+const ARG_WORKSPACE: &str = "workspace";
+const ARG_EXCLUDE: &str = "exclude";
+const ARG_ALL_TARGETS: &str = "all_targets";
+const ARG_HOST: &str = "host";
+const ARG_TARGET: &str = "target";
+const ARG_TARGET_DIR: &str = "target_dir";
 
 /// How an argument consumes the words that follow it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Follow {
+    None,
+    Required,
+    Optional,
+}
+
+#[derive(Debug)]
+struct FlagInfo {
+    id:     String,
+    follow: Follow,
+}
+
 #[derive(Debug, Default)]
 pub struct FlagSpec {
-    /// Flags that stand alone.
-    pub booleans: Vec<String>,
-    /// Flags that always consume the next word.
-    pub valued:   Vec<String>,
-    /// Flags whose value may be omitted, so the next word is only theirs if it is not
-    /// itself a flag.
-    pub optional: Vec<String>,
+    flags: HashMap<String, FlagInfo>,
 }
 
 impl FlagSpec {
@@ -119,38 +168,49 @@ impl FlagSpec {
     /// `--help` and then mis-routed here.
     pub fn of<A: Args>() -> Self {
         let command = A::augment_args(clap::Command::new("spec"));
-        let mut spec = Self::default();
+        let mut flags = HashMap::new();
 
         for arg in command.get_arguments().filter(|arg| !arg.is_positional()) {
-            let names: Vec<String> = arg
-                .get_short_and_visible_aliases()
-                .unwrap_or_default()
-                .iter()
-                .map(|short| format!("-{short}"))
-                .chain(
-                    arg.get_long_and_visible_aliases()
-                        .unwrap_or_default()
-                        .iter()
-                        .map(|long| format!("--{long}")),
-                )
-                .collect();
-
             let num_args = arg.get_num_args();
             let takes_value = num_args.map_or(arg.get_action().takes_values(), |range| range.takes_values());
             let optional = num_args.is_some_and(|range| range.takes_values() && range.min_values() == 0);
 
-            match (takes_value, optional) {
-                (false, _) => spec.booleans.extend(names),
-                (true, false) => spec.valued.extend(names),
-                (true, true) => spec.optional.extend(names),
+            let follow = match (takes_value, optional) {
+                (false, _) => Follow::None,
+                (true, false) => Follow::Required,
+                (true, true) => Follow::Optional,
+            };
+            let id = arg.get_id().as_str().to_string();
+            let short_names = arg.get_short_and_visible_aliases().unwrap_or_default();
+            let long_names = arg.get_long_and_visible_aliases().unwrap_or_default();
+            let names = short_names
+                .iter()
+                .map(|short| format!("-{short}"))
+                .chain(long_names.iter().map(|long| format!("--{long}")));
+            for name in names {
+                flags.insert(name, FlagInfo { id: id.clone(), follow });
             }
         }
-        spec
+        Self { flags }
     }
 
-    fn contains(list: &[String], key: &str) -> bool {
-        list.iter().any(|name| name == key)
+    fn get(&self, key: &str) -> Option<&FlagInfo> {
+        self.flags.get(key)
     }
+
+    fn follow(&self, key: &str) -> Option<Follow> {
+        self.get(key).map(|info| info.follow)
+    }
+}
+
+fn cargo_flags() -> &'static FlagSpec {
+    static FLAGS: OnceLock<FlagSpec> = OnceLock::new();
+    FLAGS.get_or_init(FlagSpec::of::<CargoOpts>)
+}
+
+fn runner_flags() -> &'static FlagSpec {
+    static FLAGS: OnceLock<FlagSpec> = OnceLock::new();
+    FLAGS.get_or_init(FlagSpec::of::<RunnerOpts>)
 }
 
 #[derive(Parser, Debug, Clone)]
@@ -303,7 +363,8 @@ pub struct RunnerOpts {
 
     /// Fail if any test regresses by more than N percent
     #[arg(long, value_name = "PCT")]
-    pub fail_on_regression: Option<String>,
+    #[arg(value_parser = parse_percentage)]
+    pub fail_on_regression: Option<f64>,
 
     /// Accept/update golden snapshot files for tests with #[test(snapshot = "...")]
     #[arg(long, visible_alias = "update-snapshots")]
@@ -311,6 +372,7 @@ pub struct RunnerOpts {
 
     /// Number of test instances to execute concurrently
     #[arg(long, value_name = "N")]
+    #[arg(value_parser = parse_positive_usize)]
     pub test_threads: Option<usize>,
 
     /// Prover backend: mock (default), cpu, cuda
@@ -324,6 +386,29 @@ pub struct RunnerOpts {
     /// Positional test name filter patterns
     #[arg(value_name = "FILTER")]
     pub filters: Vec<String>,
+
+    #[arg(long, hide = true)]
+    pub package_id: Option<String>,
+
+    #[arg(long, hide = true)]
+    pub target_name: Option<String>,
+
+    #[arg(long, hide = true)]
+    pub target_kind: Option<String>,
+}
+
+fn parse_positive_usize(value: &str) -> Result<usize, String> {
+    match value.parse() {
+        Ok(value) if value > 0 => Ok(value),
+        _ => Err(format!("--test-threads expects a positive integer, got '{value}'")),
+    }
+}
+
+fn parse_percentage(value: &str) -> Result<f64, String> {
+    match value.trim_end_matches('%').parse() {
+        Ok(value) if f64::is_finite(value) => Ok(value),
+        _ => Err(format!("--fail-on-regression expects a percentage, got '{value}'")),
+    }
 }
 
 pub fn query_package_graph() -> Option<PackageGraph> {
@@ -351,9 +436,12 @@ fn is_zkvm_pkg(pkg: &guppy::graph::PackageMetadata) -> bool {
         return explicit;
     }
 
-    pkg.direct_links().any(|link| {
-        link.to().name() == ZKVM_TEST_CRATE || link.to().name() == ZKVM_TEST_CRATE_ALT
-    })
+    pkg.direct_links()
+        .any(|link| link.to().name() == ZKVM_TEST_CRATE || link.to().name() == ZKVM_TEST_CRATE_ALT)
+}
+
+fn contains_name(names: &[String], candidate: &str) -> bool {
+    names.iter().any(|name| name == candidate)
 }
 
 pub fn resolve_default_packages(graph: &PackageGraph, cli_excludes: &[String]) -> Vec<String> {
@@ -374,7 +462,7 @@ pub fn resolve_default_packages_from_dir(
                 .parent()
                 .is_some_and(|parent| current_dir.starts_with(parent))
         })
-        && !cli_excludes.contains(&pkg.name().to_string())
+        && !contains_name(cli_excludes, pkg.name())
         && is_zkvm_pkg(&pkg)
     {
         return vec![pkg.name().to_string()];
@@ -386,9 +474,9 @@ pub fn resolve_default_packages_from_dir(
         .or_else(|| ws_metadata.get(METADATA_KEY_ZKVM));
 
     let ws_explicit_packages: Option<Vec<String>> = ws_zkvm_meta.and_then(|m| {
-        m.get("packages").and_then(|p| p.as_array()).map(|arr| {
-            arr.iter().filter_map(|v| v.as_str().map(String::from)).collect()
-        })
+        m.get("packages")
+            .and_then(|p| p.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
     });
 
     let ws_excludes: Vec<String> = ws_zkvm_meta
@@ -405,7 +493,7 @@ pub fn resolve_default_packages_from_dir(
 
     let mut selected = Vec::new();
     for pkg in graph.workspace().iter() {
-        if ws_excludes.contains(&pkg.name().to_string()) || cli_excludes.contains(&pkg.name().to_string()) {
+        if contains_name(&ws_excludes, pkg.name()) || contains_name(cli_excludes, pkg.name()) {
             continue;
         }
         if is_zkvm_pkg(&pkg) {
@@ -416,6 +504,43 @@ pub fn resolve_default_packages_from_dir(
     selected.sort();
     selected.dedup();
     selected
+}
+
+fn workspace_packages(graph: &PackageGraph, excludes: &[String]) -> Vec<String> {
+    graph
+        .workspace()
+        .iter()
+        .filter(|package| !excludes.iter().any(|exclude| exclude == package.name()))
+        .map(|package| package.name().to_string())
+        .collect()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PackageMode {
+    Zkvm,
+    Host,
+    Both,
+}
+
+fn package_mode(host: bool, all_targets: bool, is_zkvm: bool) -> PackageMode {
+    match (host, all_targets, is_zkvm) {
+        (_, true, true) => PackageMode::Both,
+        (true, ..) | (false, true, false) => PackageMode::Host,
+        (false, false, true) => PackageMode::Zkvm,
+        (false, false, false) => PackageMode::Host,
+    }
+}
+
+fn print_packages(kind: &str, packages: &[String]) {
+    if packages.is_empty() {
+        return;
+    }
+    let plural = if packages.len() == 1 { "" } else { "s" };
+    println!(
+        "{BIN_NAME}: testing {} {kind} package{plural}: {}",
+        packages.len(),
+        packages.join(", ")
+    );
 }
 
 pub fn print_help() {
@@ -447,8 +572,8 @@ pub fn remove_file_if_exists(path: impl AsRef<Path>) -> std::io::Result<()> {
 /// Split a command line into the part cargo builds with and the part the runner filters
 /// with. Both halves are driven by the CLI definition rather than a hand-kept table.
 pub fn partition_args(args: Vec<String>) -> (Vec<String>, Vec<String>) {
-    let runner = FlagSpec::of::<RunnerOpts>();
-    let cargo = FlagSpec::of::<CargoOpts>();
+    let runner = runner_flags();
+    let cargo = cargo_flags();
 
     let mut cargo_part = Vec::new();
     let mut runner_part = Vec::new();
@@ -468,16 +593,12 @@ pub fn partition_args(args: Vec<String>) -> (Vec<String>, Vec<String>) {
 
         let (part, follow) = if is_cargo_profile {
             (&mut cargo_part, Follow::Required)
-        } else if FlagSpec::contains(&runner.booleans, &key) {
-            (&mut runner_part, Follow::None)
-        } else if FlagSpec::contains(&runner.valued, &key) {
-            (&mut runner_part, Follow::Required)
-        } else if FlagSpec::contains(&runner.optional, &key) {
-            (&mut runner_part, Follow::Optional)
-        } else if FlagSpec::contains(&cargo.valued, &key) || EXTRA_CARGO_VAL_FLAGS.contains(&key.as_str()) {
+        } else if let Some(follow) = runner.follow(&key) {
+            (&mut runner_part, follow)
+        } else if let Some(follow) = cargo.follow(&key) {
+            (&mut cargo_part, follow)
+        } else if EXTRA_CARGO_VALUE_FLAGS.contains(&key.as_str()) {
             (&mut cargo_part, Follow::Required)
-        } else if FlagSpec::contains(&cargo.optional, &key) {
-            (&mut cargo_part, Follow::Optional)
         } else if !key.starts_with('-') {
             // Positional test-name filter
             (&mut runner_part, Follow::None)
@@ -501,10 +622,76 @@ pub fn partition_args(args: Vec<String>) -> (Vec<String>, Vec<String>) {
 /// Cargo profile names that disambiguate `--profile <name>` from the runner's `--profile`.
 const CARGO_PROFILE_NAMES: &[&str] = &["dev", "test", "release", "bench"];
 
-enum Follow {
-    None,
-    Required,
-    Optional,
+fn recognized_args(args: &[String], spec: &FlagSpec, include_positionals: bool) -> Result<Vec<String>, String> {
+    let mut recognized = vec![BIN_NAME.to_string()];
+    let mut iter = args.iter().peekable();
+
+    while let Some(arg) = iter.next() {
+        let key = arg.split_once('=').map_or(arg.as_str(), |(key, _)| key);
+        let Some(follow) = spec.follow(key) else {
+            if include_positionals && !key.starts_with('-') {
+                recognized.push(arg.clone());
+            }
+            continue;
+        };
+
+        recognized.push(arg.clone());
+        if arg.contains('=') {
+            continue;
+        }
+        match follow {
+            Follow::None => {},
+            Follow::Required => {
+                let value = iter.next().ok_or_else(|| format!("{key} expects a value"))?;
+                recognized.push(value.clone());
+            },
+            Follow::Optional => {
+                recognized.extend(iter.next_if(|next| !next.starts_with('-')).cloned());
+            },
+        }
+    }
+    Ok(recognized)
+}
+
+fn parse_options<A>(args: &[String], spec: &FlagSpec, include_positionals: bool) -> Result<A, String>
+where
+    A: Args + FromArgMatches,
+{
+    let recognized = recognized_args(args, spec, include_positionals)?;
+    let command = A::augment_args(clap::Command::new(BIN_NAME));
+    let matches = command.try_get_matches_from(recognized).map_err(|err| err.to_string())?;
+    A::from_arg_matches(&matches).map_err(|err| err.to_string())
+}
+
+fn parse_cargo_options(args: &[String]) -> Result<CargoOpts, String> {
+    parse_options(args, cargo_flags(), false)
+}
+
+pub(crate) fn parse_runner_options(args: &[String]) -> Result<RunnerOpts, String> {
+    parse_options(args, runner_flags(), true)
+}
+
+fn append_cargo_args(command: &mut Command, args: &[String], omitted_ids: &[&str]) {
+    let spec = cargo_flags();
+    let mut iter = args.iter();
+
+    while let Some(arg) = iter.next() {
+        let key = arg.split_once('=').map_or(arg.as_str(), |(key, _)| key);
+        let info = spec.get(key);
+        let omit = info.is_some_and(|info| omitted_ids.contains(&info.id.as_str()));
+
+        if !omit {
+            command.arg(arg);
+        }
+        if arg.contains('=') || !info.is_some_and(|info| info.follow == Follow::Required) {
+            continue;
+        }
+        if let Some(value) = iter.next()
+            && !omit
+        {
+            command.arg(value);
+        }
+    }
 }
 
 /// Drop packages whose every build target the filterset rules out, so they are never
@@ -543,38 +730,8 @@ pub fn should_prune_binary(
     let Ok(pkg) = graph.metadata(pkg_id) else {
         return false;
     };
-    let binary = crate::filter::Binary::new(
-        pkg.name(),
-        pkg_id.clone(),
-        target_name.to_string(),
-        target_kind.clone(),
-    );
+    let binary = crate::filter::Binary::new(pkg.name(), pkg_id.clone(), target_name.to_string(), target_kind.clone());
     !binary.can_match(filterset)
-}
-
-/// Every value given for `names`, accepting both `--flag value` and `--flag=value`.
-fn flag_values<'a>(args: &'a [String], names: &[&str]) -> Vec<&'a str> {
-    let mut values = Vec::new();
-    for (idx, arg) in args.iter().enumerate() {
-        match arg.split_once('=') {
-            Some((key, value)) if names.contains(&key) => values.push(value),
-            None if names.contains(&arg.as_str()) => values.extend(args.get(idx + 1).map(String::as_str)),
-            _ => {},
-        }
-    }
-    values
-}
-
-fn flag_value<'a>(args: &'a [String], names: &[&str]) -> Option<&'a str> {
-    flag_values(args, names).into_iter().next()
-}
-
-/// Whether any of `names` appears in `args`, with or without an inline value.
-fn flag_present(args: &[String], names: &[&str]) -> bool {
-    args.iter().any(|arg| {
-        let key = arg.split_once('=').map_or(arg.as_str(), |(k, _)| k);
-        names.contains(&key)
-    })
 }
 
 pub async fn run_cargo_plugin(mut raw_args: Vec<String>) -> i32 {
@@ -588,33 +745,44 @@ pub async fn run_cargo_plugin(mut raw_args: Vec<String>) -> i32 {
         return 0;
     }
 
-    // Split args around `--` if present
-    let (cargo_raw, runner_raw) = if let Some(sep_idx) = raw_args.iter().position(|a| a == "--") {
-        let pre_sep = raw_args[..sep_idx].to_vec();
-        let post_sep = raw_args[sep_idx + 1..].to_vec();
-        let (cargo_part, mut runner_part) = partition_args(pre_sep);
-        runner_part.extend(post_sep);
+    let (cargo_raw, runner_raw) = if let Some(separator) = raw_args.iter().position(|arg| arg == "--") {
+        let trailing = raw_args.split_off(separator + 1);
+        raw_args.pop();
+        let (cargo_part, mut runner_part) = partition_args(raw_args);
+        runner_part.extend(trailing);
         (cargo_part, runner_part)
     } else {
         partition_args(raw_args)
     };
 
+    let cargo_options = match parse_cargo_options(&cargo_raw) {
+        Ok(options) => options,
+        Err(err) => {
+            eprintln!("{err}");
+            return 2;
+        },
+    };
+    let runner_options = match parse_options_from(runner_raw) {
+        Ok(options) => options,
+        Err(err) => {
+            eprintln!("{BIN_NAME}: {err}");
+            return 2;
+        },
+    };
+
     // Determine toolchain and target
     let toolchain = cargo_raw.iter().find(|a| a.starts_with('+')).cloned();
-    let mut cargo_filtered: Vec<String> = cargo_raw.iter().filter(|a| !a.starts_with('+')).cloned().collect();
+    let cargo_filtered: Vec<String> = cargo_raw.iter().filter(|a| !a.starts_with('+')).cloned().collect();
 
-    let has_explicit_packages = flag_present(&cargo_filtered, &["-p", "--package"]);
-    let has_explicit_targets = flag_present(&cargo_filtered, &["--bin", "--test", "--example"]);
-    let cli_excludes: Vec<String> = flag_values(&cargo_filtered, &["--exclude"])
-        .into_iter()
-        .map(str::to_string)
-        .collect();
+    let has_explicit_packages = !cargo_options.package.is_empty();
+    let has_explicit_targets =
+        !cargo_options.bin.is_empty() || !cargo_options.test.is_empty() || !cargo_options.example.is_empty();
+    let cli_excludes = &cargo_options.exclude;
 
     let package_graph = query_package_graph();
-    let filter_expr_str = flag_value(&runner_raw, &["-E", "--expr", "--filter-expr"]).map(str::to_string);
-    let junit_path_opt = flag_value(&runner_raw, &["--junit-path"]).map(PathBuf::from);
+    let junit_path = runner_options.junit_path.as_deref().map(Path::new);
 
-    let filterset = match (&filter_expr_str, &package_graph) {
+    let filterset = match (&runner_options.filter_expr, &package_graph) {
         (Some(expr), Some(graph)) => match crate::filter::parse(expr, graph) {
             Ok(filterset) => Some(filterset),
             Err(err) => {
@@ -625,55 +793,36 @@ pub async fn run_cargo_plugin(mut raw_args: Vec<String>) -> i32 {
         _ => None,
     };
 
-    let run_host = flag_present(&cargo_filtered, &["--host"]);
-    let all_targets = flag_present(&cargo_filtered, &["--all-targets"]);
-
     let mut zkvm_packages = Vec::new();
     let mut host_packages = Vec::new();
 
     if has_explicit_packages {
-        let explicit_pkgs = flag_values(&cargo_filtered, &["-p", "--package"]);
-        for pkg_name in explicit_pkgs {
+        for pkg_name in &cargo_options.package {
             let is_zkvm = package_graph
                 .as_ref()
-                .and_then(|g| g.workspace().iter().find(|p| p.name() == pkg_name))
+                .and_then(|graph| graph.workspace().iter().find(|package| package.name() == pkg_name))
                 .is_some_and(|p| is_zkvm_pkg(&p));
 
-            if run_host {
-                host_packages.push(pkg_name.to_string());
-                if all_targets && is_zkvm {
-                    zkvm_packages.push(pkg_name.to_string());
-                }
-            } else if all_targets {
-                if is_zkvm {
-                    zkvm_packages.push(pkg_name.to_string());
-                }
-                host_packages.push(pkg_name.to_string());
-            } else if is_zkvm {
-                zkvm_packages.push(pkg_name.to_string());
-            } else {
+            if !is_zkvm && !cargo_options.host && !cargo_options.all_targets {
                 println!("{BIN_NAME}: `{pkg_name}` does not target zkVM; running host tests");
-                host_packages.push(pkg_name.to_string());
+            }
+            match package_mode(cargo_options.host, cargo_options.all_targets, is_zkvm) {
+                PackageMode::Zkvm => zkvm_packages.push(pkg_name.clone()),
+                PackageMode::Host => host_packages.push(pkg_name.clone()),
+                PackageMode::Both => {
+                    zkvm_packages.push(pkg_name.clone());
+                    host_packages.push(pkg_name.clone());
+                },
             }
         }
     } else if !has_explicit_targets && let Some(ref graph) = package_graph {
-        if run_host && !all_targets {
-            host_packages = graph
-                .workspace()
-                .iter()
-                .filter(|p| !cli_excludes.contains(&p.name().to_string()))
-                .map(|p| p.name().to_string())
-                .collect();
-        } else if all_targets {
-            zkvm_packages = resolve_default_packages(graph, &cli_excludes);
-            host_packages = graph
-                .workspace()
-                .iter()
-                .filter(|p| !cli_excludes.contains(&p.name().to_string()))
-                .map(|p| p.name().to_string())
-                .collect();
-        } else {
-            zkvm_packages = resolve_default_packages(graph, &cli_excludes);
+        match (cargo_options.host, cargo_options.all_targets) {
+            (true, false) => host_packages = workspace_packages(graph, cli_excludes),
+            (_, true) => {
+                zkvm_packages = resolve_default_packages(graph, cli_excludes);
+                host_packages = workspace_packages(graph, cli_excludes);
+            },
+            (false, false) => zkvm_packages = resolve_default_packages(graph, cli_excludes),
         }
     }
 
@@ -691,46 +840,8 @@ pub async fn run_cargo_plugin(mut raw_args: Vec<String>) -> i32 {
         return 1;
     }
 
-    if !zkvm_packages.is_empty() {
-        println!(
-            "{BIN_NAME}: testing {} zkVM package{}: {}",
-            zkvm_packages.len(),
-            if zkvm_packages.len() == 1 { "" } else { "s" },
-            zkvm_packages.join(", ")
-        );
-    }
-    if !host_packages.is_empty() {
-        println!(
-            "{BIN_NAME}: testing {} host package{}: {}",
-            host_packages.len(),
-            if host_packages.len() == 1 { "" } else { "s" },
-            host_packages.join(", ")
-        );
-    }
-
-    // Clean selection flags from cargo_filtered
-    if !zkvm_packages.is_empty() || !host_packages.is_empty() {
-        let mut cleaned = Vec::new();
-        let mut iter = cargo_filtered.into_iter();
-        while let Some(arg) = iter.next() {
-            let drops_value = {
-                let key = arg.split_once('=').map_or(arg.as_str(), |(key, _)| key);
-                match key {
-                    "--workspace" | "--all" => Some(false),
-                    "--exclude" => Some(!arg.contains('=')),
-                    _ => None,
-                }
-            };
-            match drops_value {
-                Some(true) => {
-                    let _ = iter.next();
-                },
-                Some(false) => {},
-                None => cleaned.push(arg),
-            }
-        }
-        cargo_filtered = cleaned;
-    }
+    print_packages("zkVM", &zkvm_packages);
+    print_packages("host", &host_packages);
 
     // Disambiguate `--cargo-profile` to `--profile`
     let cargo_filtered: Vec<String> = cargo_filtered
@@ -746,10 +857,13 @@ pub async fn run_cargo_plugin(mut raw_args: Vec<String>) -> i32 {
         .collect();
 
     // Start fresh JUnit report if requested
-    if let Some(ref junit_path) = junit_path_opt
+    if let Some(junit_path) = junit_path
         && let Err(err) = remove_file_if_exists(junit_path)
     {
-        eprintln!("{BIN_NAME}: warning: failed to remove existing JUnit file '{}': {err}", junit_path.display());
+        eprintln!(
+            "{BIN_NAME}: warning: failed to remove existing JUnit file '{}': {err}",
+            junit_path.display()
+        );
     }
 
     let mut overall_exit_code = 0;
@@ -761,9 +875,9 @@ pub async fn run_cargo_plugin(mut raw_args: Vec<String>) -> i32 {
                 for exe in host_executables {
                     let code = run_host_test(
                         &exe,
-                        &runner_raw,
-                        &cargo_raw,
-                        junit_path_opt.as_deref(),
+                        &runner_options,
+                        cargo_options.color.as_deref(),
+                        junit_path,
                         package_graph.as_ref(),
                     );
                     if code != 0 {
@@ -779,33 +893,31 @@ pub async fn run_cargo_plugin(mut raw_args: Vec<String>) -> i32 {
 
     // 2. zkVM Test Phase
     if !zkvm_packages.is_empty() {
-        let target = flag_value(&cargo_filtered, &["--target"])
-            .map(str::to_string)
-            .unwrap_or_else(|| DEFAULT_SP1_TARGET.to_string());
+        let target = cargo_options.target.clone().unwrap_or_else(|| DEFAULT_SP1_TARGET.to_string());
 
         match compile_zkvm_tests(
             &zkvm_packages,
             &cargo_filtered,
-            toolchain.as_deref(),
-            &target,
+            ZkvmBuild {
+                toolchain:          toolchain.as_deref(),
+                target:             &target,
+                target_is_explicit: cargo_options.target.is_some(),
+                target_dir:         cargo_options.target_dir.as_deref(),
+            },
             package_graph.as_ref(),
             filterset.as_ref(),
         ) {
             Ok(zkvm_executables) => {
                 let shared_graph = package_graph.map(Arc::new);
                 for exe in zkvm_executables {
-                    println!("\n     Running zkVM tests for `{}` ({})", exe.target_name, exe.elf_path.display());
+                    println!(
+                        "\n     Running zkVM tests for `{}` ({})",
+                        exe.target_name,
+                        exe.elf_path.display()
+                    );
 
-                    let mut args_list = vec![exe.elf_path.display().to_string()];
-                    args_list.extend(runner_raw.clone());
-
-                    let mut runner_args = match crate::runner::parse_args_from(args_list) {
-                        Ok(args) => args,
-                        Err(err) => {
-                            eprintln!("{BIN_NAME}: {err}");
-                            return 2;
-                        },
-                    };
+                    let mut runner_args = runner_options.clone();
+                    runner_args.elf_path = exe.elf_path.display().to_string();
                     runner_args.package_id = Some(exe.package_id.repr().to_string());
                     runner_args.target_name = Some(exe.target_name);
                     runner_args.target_kind = Some(exe.target_kind.as_str().to_string());
@@ -850,60 +962,50 @@ fn parse_libtest_line(line: &str) -> Option<(String, crate::junit::TestCaseStatu
 
 fn run_host_test(
     exe: &TestExecutable,
-    runner_raw: &[String],
-    cargo_raw: &[String],
+    runner: &RunnerArgs,
+    color: Option<&str>,
     junit_path: Option<&Path>,
     package_graph: Option<&PackageGraph>,
 ) -> i32 {
-    println!("\n     Running host tests for `{}` ({})", exe.target_name, exe.elf_path.display());
+    println!(
+        "\n     Running host tests for `{}` ({})",
+        exe.target_name,
+        exe.elf_path.display()
+    );
 
     let mut cmd = Command::new(&exe.elf_path);
 
-    if let Some(graph) = package_graph {
-        if let Ok(meta) = graph.metadata(&exe.package_id) {
-            if let Some(manifest_dir) = meta.manifest_path().parent() {
-                cmd.current_dir(manifest_dir.as_std_path());
-                cmd.env("CARGO_MANIFEST_DIR", manifest_dir.as_std_path());
-            }
-        }
+    if let Some(graph) = package_graph
+        && let Ok(meta) = graph.metadata(&exe.package_id)
+        && let Some(manifest_dir) = meta.manifest_path().parent()
+    {
+        cmd.current_dir(manifest_dir.as_std_path());
+        cmd.env("CARGO_MANIFEST_DIR", manifest_dir.as_std_path());
     }
 
-    if flag_present(runner_raw, &["--nocapture", "--no-capture"]) {
+    if runner.nocapture {
         cmd.arg("--nocapture");
     }
-    if flag_present(runner_raw, &["--exact"]) {
+    if runner.exact {
         cmd.arg("--exact");
     }
-    if flag_present(runner_raw, &["--ignored"]) {
+    if runner.ignored {
         cmd.arg("--ignored");
     }
-    if flag_present(runner_raw, &["--include-ignored"]) {
+    if runner.include_ignored {
         cmd.arg("--include-ignored");
     }
-    if flag_present(runner_raw, &["-q", "--quiet"]) {
+    if runner.quiet {
         cmd.arg("-q");
     }
-    if flag_present(runner_raw, &["--list"]) {
+    if runner.list {
         cmd.arg("--list");
     }
-    if let Some(threads) = flag_value(runner_raw, &["--test-threads"]) {
-        cmd.arg("--test-threads").arg(threads);
-    }
-    if let Some(color) = flag_value(cargo_raw, &["--color"]) {
+    cmd.arg("--test-threads").arg(runner.test_threads.to_string());
+    if let Some(color) = color {
         cmd.arg("--color").arg(color);
     }
-
-    let spec = FlagSpec::of::<RunnerOpts>();
-    let mut iter = runner_raw.iter();
-    while let Some(arg) = iter.next() {
-        if arg.starts_with('-') {
-            if spec.valued.contains(arg) {
-                let _ = iter.next();
-            }
-            continue;
-        }
-        cmd.arg(arg);
-    }
+    cmd.args(&runner.filters);
 
     if let Some(junit_path) = junit_path {
         cmd.stdout(Stdio::piped());
@@ -988,234 +1090,105 @@ fn compile_host_tests(
     package_graph: Option<&PackageGraph>,
 ) -> Result<Vec<TestExecutable>, i32> {
     let mut cargo_cmd = Command::new("cargo");
-    cargo_cmd.arg("test");
-    cargo_cmd.arg("--no-run");
-    cargo_cmd.arg("--message-format=json");
-
-    for pkg in packages {
-        cargo_cmd.arg("-p").arg(pkg);
-    }
-
-    let mut iter = cargo_filtered.iter().peekable();
-    while let Some(arg) = iter.next() {
-        let key = arg.split_once('=').map_or(arg.as_str(), |(k, _)| k);
-        match key {
-            "--host" | "--all-targets" => {},
-            "--target" => {
-                if !arg.contains('=') {
-                    let _ = iter.next();
-                }
-            },
-            "-p" | "--package" => {
-                if !arg.contains('=') {
-                    let _ = iter.next();
-                }
-            },
-            "--target-dir" => {
-                if !arg.contains('=') {
-                    let _ = iter.next();
-                }
-            },
-            _ => {
-                cargo_cmd.arg(arg);
-            },
-        }
-    }
-
-    cargo_cmd.stdout(Stdio::piped());
-    cargo_cmd.stderr(Stdio::inherit());
-
-    let mut child = match cargo_cmd.spawn() {
-        Ok(child) => child,
-        Err(err) => {
-            eprintln!("{BIN_NAME}: failed to run cargo test for host: {err}");
-            return Err(1);
-        },
-    };
-
-    let stdout = child.stdout.take().expect("failed to open stdout");
-    let reader = std::io::BufReader::new(stdout);
-
-    let mut test_executables = Vec::new();
-    for line in reader.lines().map_while(Result::ok) {
-        let Ok(artifact) = serde_json::from_str::<Artifact>(&line) else {
-            continue;
-        };
-        if artifact.reason != REASON_COMPILER_ARTIFACT {
-            continue;
-        }
-        let is_test = artifact.profile.as_ref().is_some_and(|p| p.test)
-            || artifact.target.as_ref().is_some_and(|t| t.kind.iter().any(|k| k == "test"));
-        if !is_test {
-            continue;
-        }
-        let Some(path) = artifact.executable else {
-            continue;
-        };
-        let target_name = artifact
-            .target
-            .as_ref()
-            .map(|t| t.name.clone())
-            .unwrap_or_else(|| DEFAULT_TARGET_NAME.to_string());
-        let target_kind_str = artifact
-            .target
-            .as_ref()
-            .and_then(|t| t.kind.first().cloned())
-            .unwrap_or_else(|| crate::filter::DEFAULT_TARGET_KIND.to_string());
-        let target_kind = RustTestBinaryKind::new(target_kind_str);
-        let package_id = guppy::PackageId::new(artifact.package_id);
-        let elf_path = PathBuf::from(path);
-
-        if let (Some(filterset), Some(graph)) = (filterset, package_graph)
-            && should_prune_binary(filterset, graph, &package_id, &target_name, &target_kind)
-        {
-            continue;
-        }
-
-        test_executables.push(TestExecutable {
-            target_name,
-            target_kind,
-            package_id,
-            elf_path,
-        });
-    }
-
-    let status = match child.wait() {
-        Ok(s) => s,
-        Err(err) => {
-            eprintln!("{BIN_NAME}: error waiting for host cargo: {err}");
-            return Err(1);
-        },
-    };
-
-    if !status.success() {
-        return Err(status.code().unwrap_or(1));
-    }
-
-    Ok(test_executables)
+    configure_cargo_test(&mut cargo_cmd, packages);
+    append_cargo_args(&mut cargo_cmd, cargo_filtered, &[
+        ARG_HOST,
+        ARG_ALL_TARGETS,
+        ARG_TARGET,
+        ARG_TARGET_DIR,
+        ARG_PACKAGE,
+        ARG_WORKSPACE,
+        ARG_EXCLUDE,
+    ]);
+    collect_test_executables(cargo_cmd, "host", filterset, package_graph)
 }
 
 fn compile_zkvm_tests(
     packages: &[String],
     cargo_filtered: &[String],
-    toolchain: Option<&str>,
-    target: &str,
+    build: ZkvmBuild<'_>,
     package_graph: Option<&PackageGraph>,
     filterset: Option<&Filterset>,
 ) -> Result<Vec<TestExecutable>, i32> {
     let mut cargo_cmd = Command::new("cargo");
-    if let Some(tc) = toolchain {
+    if let Some(tc) = build.toolchain {
         cargo_cmd.arg(tc);
-    } else if let Some(vendor) = Vendor::from_target(target) {
+    } else if let Some(vendor) = Vendor::from_target(build.target) {
         cargo_cmd.arg(vendor.toolchain());
     }
 
-    cargo_cmd.arg("test");
-    cargo_cmd.arg("--no-run");
-    if !flag_present(cargo_filtered, &["--target"]) {
-        cargo_cmd.arg("--target").arg(target);
+    configure_cargo_test(&mut cargo_cmd, packages);
+    if !build.target_is_explicit {
+        cargo_cmd.arg("--target").arg(build.target);
     }
 
-    let explicit_target_dir = flag_value(cargo_filtered, &["--target-dir"]);
     let ws_root = package_graph.map(|g| g.workspace().root().as_str());
-    let target_dir = resolve_target_dir(explicit_target_dir, ws_root);
-    if explicit_target_dir.is_none() {
+    let target_dir = resolve_target_dir(build.target_dir.and_then(Path::to_str), ws_root);
+    if build.target_dir.is_none() {
         cargo_cmd.arg("--target-dir").arg(&target_dir);
     }
+    append_cargo_args(&mut cargo_cmd, cargo_filtered, &[
+        ARG_HOST,
+        ARG_ALL_TARGETS,
+        ARG_PACKAGE,
+        ARG_WORKSPACE,
+        ARG_EXCLUDE,
+    ]);
+    collect_test_executables(cargo_cmd, "zkVM", filterset, package_graph)
+}
 
-    for pkg in packages {
-        cargo_cmd.arg("-p").arg(pkg);
+struct ZkvmBuild<'a> {
+    toolchain:          Option<&'a str>,
+    target:             &'a str,
+    target_is_explicit: bool,
+    target_dir:         Option<&'a Path>,
+}
+
+fn configure_cargo_test(command: &mut Command, packages: &[String]) {
+    command.args(["test", "--no-run", "--message-format=json"]);
+    for package in packages {
+        command.arg("-p").arg(package);
     }
+}
 
-    cargo_cmd.arg("--message-format=json");
+fn collect_test_executables(
+    mut command: Command,
+    phase: &str,
+    filterset: Option<&Filterset>,
+    package_graph: Option<&PackageGraph>,
+) -> Result<Vec<TestExecutable>, i32> {
+    command.stdout(Stdio::piped()).stderr(Stdio::inherit());
+    let mut child = command.spawn().map_err(|err| {
+        eprintln!("{BIN_NAME}: failed to run cargo test for {phase}: {err}");
+        1
+    })?;
+    let stdout = child.stdout.take().expect("cargo stdout was configured as piped");
 
-    let mut iter = cargo_filtered.iter().peekable();
-    while let Some(arg) = iter.next() {
-        let key = arg.split_once('=').map_or(arg.as_str(), |(k, _)| k);
-        match key {
-            "--host" | "--all-targets" => {},
-            "-p" | "--package" => {
-                if !arg.contains('=') {
-                    let _ = iter.next();
-                }
-            },
-            _ => {
-                cargo_cmd.arg(arg);
-            },
-        }
-    }
+    let executables = std::io::BufReader::new(stdout)
+        .lines()
+        .map_while(Result::ok)
+        .filter_map(|line| serde_json::from_str::<Artifact>(&line).ok())
+        .filter_map(Artifact::into_test_executable)
+        .filter(|executable| {
+            !matches!((filterset, package_graph), (Some(filterset), Some(graph))
+            if should_prune_binary(
+                filterset,
+                graph,
+                &executable.package_id,
+                &executable.target_name,
+                &executable.target_kind,
+            ))
+        })
+        .collect();
 
-    cargo_cmd.stdout(Stdio::piped());
-    cargo_cmd.stderr(Stdio::inherit());
-
-    let mut child = match cargo_cmd.spawn() {
-        Ok(child) => child,
-        Err(err) => {
-            eprintln!("{BIN_NAME}: failed to run cargo test for zkVM: {err}");
-            return Err(1);
-        },
-    };
-
-    let stdout = child.stdout.take().expect("failed to open stdout");
-    let reader = std::io::BufReader::new(stdout);
-
-    let mut test_executables = Vec::new();
-    for line in reader.lines().map_while(Result::ok) {
-        let Ok(artifact) = serde_json::from_str::<Artifact>(&line) else {
-            continue;
-        };
-        if artifact.reason != REASON_COMPILER_ARTIFACT {
-            continue;
-        }
-        let is_test = artifact.profile.as_ref().is_some_and(|p| p.test)
-            || artifact.target.as_ref().is_some_and(|t| t.kind.iter().any(|k| k == "test"));
-        if !is_test {
-            continue;
-        }
-        let Some(path) = artifact.executable else {
-            continue;
-        };
-        let target_name = artifact
-            .target
-            .as_ref()
-            .map(|t| t.name.clone())
-            .unwrap_or_else(|| DEFAULT_TARGET_NAME.to_string());
-        let target_kind_str = artifact
-            .target
-            .as_ref()
-            .and_then(|t| t.kind.first().cloned())
-            .unwrap_or_else(|| crate::filter::DEFAULT_TARGET_KIND.to_string());
-        let target_kind = RustTestBinaryKind::new(target_kind_str);
-        let package_id = guppy::PackageId::new(artifact.package_id);
-        let elf_path = PathBuf::from(path);
-
-        if let (Some(filterset), Some(graph)) = (filterset, package_graph)
-            && should_prune_binary(filterset, graph, &package_id, &target_name, &target_kind)
-        {
-            continue;
-        }
-
-        test_executables.push(TestExecutable {
-            target_name,
-            target_kind,
-            package_id,
-            elf_path,
-        });
-    }
-
-    let status = match child.wait() {
-        Ok(s) => s,
-        Err(err) => {
-            eprintln!("{BIN_NAME}: error waiting for zkVM cargo: {err}");
-            return Err(1);
-        },
-    };
-
+    let status = child.wait().map_err(|err| {
+        eprintln!("{BIN_NAME}: error waiting for {phase} cargo: {err}");
+        1
+    })?;
     if !status.success() {
         return Err(status.code().unwrap_or(1));
     }
-
-    Ok(test_executables)
+    Ok(executables)
 }
 
 #[cfg(test)]
@@ -1239,33 +1212,75 @@ mod tests {
         let runner = FlagSpec::of::<RunnerOpts>();
         let cargo = FlagSpec::of::<CargoOpts>();
 
-        for flag in ["--nocapture", "--no-capture", "--exact", "--list", "--profile", "--subcycles", "--opcodes", "-q", "--quiet"] {
-            assert!(runner.booleans.iter().any(|f| f == flag), "{flag} should be a runner boolean");
+        for flag in [
+            "--nocapture",
+            "--no-capture",
+            "--exact",
+            "--list",
+            "--profile",
+            "--subcycles",
+            "--opcodes",
+            "-q",
+            "--quiet",
+        ] {
+            assert_eq!(runner.follow(flag), Some(Follow::None), "{flag} should be a runner boolean");
         }
-        for flag in ["--test-threads", "--prover", "--mode", "--proof-mode", "-E", "--expr", "--junit-path"] {
-            assert!(runner.valued.iter().any(|f| f == flag), "{flag} should be a runner value flag");
+        for flag in [
+            "--test-threads",
+            "--prover",
+            "--mode",
+            "--proof-mode",
+            "-E",
+            "--expr",
+            "--junit-path",
+        ] {
+            assert_eq!(
+                runner.follow(flag),
+                Some(Follow::Required),
+                "{flag} should be a runner value flag"
+            );
         }
-        assert_eq!(runner.optional, vec!["--save-baseline".to_string()]);
+        assert_eq!(runner.follow("--save-baseline"), Some(Follow::Optional));
 
-        for flag in ["-p", "--package", "--exclude", "--target", "--target-dir", "--cargo-profile", "--features"] {
-            assert!(cargo.valued.iter().any(|f| f == flag), "{flag} should be a cargo value flag");
+        for flag in [
+            "-p",
+            "--package",
+            "--exclude",
+            "--target",
+            "--target-dir",
+            "--cargo-profile",
+            "--features",
+        ] {
+            assert_eq!(
+                cargo.follow(flag),
+                Some(Follow::Required),
+                "{flag} should be a cargo value flag"
+            );
         }
-        for flag in ["--release", "--workspace", "--all", "--lib", "--all-features", "--all-targets", "--host"] {
-            assert!(cargo.booleans.iter().any(|f| f == flag), "{flag} should be a cargo boolean");
+        for flag in [
+            "--release",
+            "--workspace",
+            "--all",
+            "--lib",
+            "--all-features",
+            "--all-targets",
+            "--host",
+        ] {
+            assert_eq!(cargo.follow(flag), Some(Follow::None), "{flag} should be a cargo boolean");
         }
 
         // Nothing may be claimed by both sides
-        for flag in runner.booleans.iter().chain(&runner.valued).chain(&runner.optional) {
-            assert!(
-                !cargo.booleans.contains(flag) && !cargo.valued.contains(flag),
-                "{flag} is claimed by both CargoOpts and RunnerOpts"
-            );
+        for flag in runner.flags.keys() {
+            assert!(cargo.get(flag).is_none(), "{flag} is claimed by both CargoOpts and RunnerOpts");
         }
     }
 
     #[test]
     fn test_partition_args_message_format_value() {
-        let args = ["--message-format", "json", "test_name"].iter().map(|s| s.to_string()).collect();
+        let args = ["--message-format", "json", "test_name"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         let (cargo_part, runner_part) = partition_args(args);
         assert_eq!(cargo_part, vec!["--message-format", "json"]);
         assert_eq!(runner_part, vec!["test_name"]);
@@ -1295,16 +1310,18 @@ mod tests {
         ];
         let (cargo_part, runner_part) = partition_args(args);
         assert_eq!(cargo_part, vec!["--package=foo"]);
-        assert_eq!(
-            runner_part,
-            vec!["-E=test(bar)", "--mode=core", "--junit-path=/tmp/junit.xml"]
-        );
+        assert_eq!(runner_part, vec!["-E=test(bar)", "--mode=core", "--junit-path=/tmp/junit.xml"]);
     }
 
     #[test]
     fn test_partition_args_profile_disambiguation() {
         // Cargo profile: `--profile release`
-        let args1 = vec!["--profile".to_string(), "release".to_string(), "-p".to_string(), "foo".to_string()];
+        let args1 = vec![
+            "--profile".to_string(),
+            "release".to_string(),
+            "-p".to_string(),
+            "foo".to_string(),
+        ];
         let (c1, r1) = partition_args(args1);
         assert_eq!(c1, vec!["--profile", "release", "-p", "foo"]);
         assert!(r1.is_empty());
@@ -1395,25 +1412,29 @@ mod tests {
     }
 
     #[test]
-    fn test_flag_value_forms() {
+    fn test_parse_typed_options() {
         let args: Vec<String> = ["--target", "riscv64", "--exclude=foo", "--exclude", "bar", "-q"]
             .iter()
             .map(|s| s.to_string())
             .collect();
 
-        assert_eq!(flag_value(&args, &["--target"]), Some("riscv64"));
-        assert_eq!(flag_values(&args, &["--exclude"]), vec!["foo", "bar"]);
-        assert_eq!(flag_value(&args, &["--missing"]), None);
+        let (cargo_args, runner_args) = partition_args(args);
+        let cargo = parse_cargo_options(&cargo_args).unwrap();
+        let runner = parse_options_from(runner_args).unwrap();
 
-        assert!(flag_present(&args, &["--exclude"]));
-        assert!(flag_present(&args, &["-q", "--quiet"]));
-        assert!(!flag_present(&args, &["--bin"]));
+        assert_eq!(cargo.target.as_deref(), Some("riscv64"));
+        assert_eq!(cargo.exclude, vec!["foo", "bar"]);
+        assert!(cargo.bin.is_empty());
+        assert!(runner.quiet);
     }
 
     #[test]
     fn test_partition_args_cargo_profile() {
         // `--cargo-profile` takes a value, which must not be mistaken for a test filter
-        let args = ["--cargo-profile", "bench", "test_name"].iter().map(|s| s.to_string()).collect();
+        let args = ["--cargo-profile", "bench", "test_name"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         let (cargo_part, runner_part) = partition_args(args);
         assert_eq!(cargo_part, vec!["--cargo-profile", "bench"]);
         assert_eq!(runner_part, vec!["test_name"]);

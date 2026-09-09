@@ -1,6 +1,9 @@
 //! Nextest filter-expression plumbing shared by the runner and the cargo plugin.
 
-use guppy::{PackageId, graph::PackageGraph, graph::cargo::BuildPlatform};
+use guppy::{
+    PackageId,
+    graph::{PackageGraph, cargo::BuildPlatform},
+};
 use nextest_filtering::{
     BinaryQuery, CompiledExpr, EvalContext, Filterset, FiltersetKind, KnownGroups, ParseContext, TestQuery,
 };

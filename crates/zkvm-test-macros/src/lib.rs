@@ -19,29 +19,36 @@ enum Opt {
 }
 
 impl Opt {
-    const ALL: [(&'static str, Opt); 6] = [
-        ("ignore", Opt::Ignore),
-        ("should_panic", Opt::ShouldPanic),
-        (ATTR_EXIT_CODE, Opt::ExitCode),
-        ("max_cycles", Opt::MaxCycles),
-        ("fixture", Opt::Fixture),
-        ("snapshot", Opt::Snapshot),
+    const ALL: [Self; 6] = [
+        Self::Ignore,
+        Self::ShouldPanic,
+        Self::ExitCode,
+        Self::MaxCycles,
+        Self::Fixture,
+        Self::Snapshot,
     ];
 
     fn from_path(path: &syn::Path) -> Option<Self> {
-        Self::ALL.iter().find(|(name, _)| path.is_ident(name)).map(|(_, opt)| *opt)
+        Self::ALL.into_iter().find(|option| path.is_ident(option.name()))
     }
 
-    fn name(self) -> &'static str {
-        Self::ALL
-            .iter()
-            .find(|(_, opt)| *opt == self)
-            .map(|(name, _)| *name)
-            .expect("Opt::ALL covers every variant")
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Ignore => "ignore",
+            Self::ShouldPanic => "should_panic",
+            Self::ExitCode => ATTR_EXIT_CODE,
+            Self::MaxCycles => "max_cycles",
+            Self::Fixture => "fixture",
+            Self::Snapshot => "snapshot",
+        }
     }
 
     fn unsupported() -> String {
-        let names = Self::ALL.iter().map(|(n, _)| format!("`{n}`")).collect::<Vec<_>>().join(", ");
+        let names = Self::ALL
+            .into_iter()
+            .map(|option| format!("`{}`", option.name()))
+            .collect::<Vec<_>>()
+            .join(", ");
         format!("unsupported zkvm_test option (expected one of: {names})")
     }
 }
@@ -187,17 +194,10 @@ macro_rules! option_expr {
 ///
 /// Can be invoked as:
 /// - `#[zkvm_test]` or `#[test]` (via `use zkvm_test::test;`)
-/// - With inline options: `#[zkvm_test(ignore)]`, `#[zkvm_test(should_panic)]`, `#[zkvm_test(max_cycles = 100_000)]`, `#[zkvm_test(fixture = "path.bin")]`, `#[zkvm_test(snapshot = "path.hex")]`
-/// - With standard Rust attributes:
-///   ```rust,ignore
-///   #[test]
-///   #[ignore]
-///   #[should_panic(expected = "...")]
-///   #[max_cycles = 100_000]
-///   #[fixture = "path.bin"]
-///   #[snapshot = "path.hex"]
-///   fn my_test() { ... }
-///   ```
+/// - With inline options: `#[zkvm_test(ignore)]`, `#[zkvm_test(should_panic)]`, `#[zkvm_test(max_cycles = 100_000)]`,
+///   `#[zkvm_test(fixture = "path.bin")]`, `#[zkvm_test(snapshot = "path.hex")]`
+/// - With standard Rust attributes: ```rust,ignore #[test] #[ignore] #[should_panic(expected = "...")] #[max_cycles =
+///   100_000] #[fixture = "path.bin"] #[snapshot = "path.hex"] fn my_test() { ... } ```
 #[proc_macro_attribute]
 pub fn zkvm_test(attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut config = TestConfig::default();
