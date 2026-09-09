@@ -133,3 +133,36 @@ fn test_cargo_zkvm_test_subcycles_alias_reaches_runner() {
         .success()
         .stdout(predicate::str::contains("Instruction Categories:"));
 }
+
+#[test]
+fn test_cargo_zkvm_test_host_only_package() {
+    let mut cmd = cargo_zkvm_test_cmd();
+    cmd.args([
+        "-p",
+        "zkvm-test-runner",
+        "--",
+        "test_parse_libtest_line",
+    ]);
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("does not target zkVM; running host tests"))
+        .stdout(predicate::str::contains("test plugin::tests::test_parse_libtest_line ... ok"));
+}
+
+#[test]
+fn test_cargo_zkvm_test_host_flag_on_zkvm_package() {
+    let mut cmd = cargo_zkvm_test_cmd();
+    cmd.args([
+        "-p",
+        "zkpow-sha256",
+        "--host",
+        "--",
+        "test_genesis_header_hash_snapshot",
+    ]);
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("testing 1 host package: zkpow-sha256"))
+        .stdout(predicate::str::contains("Running host tests for `zkpow_sha256`"))
+        .stdout(predicate::str::contains("test tests::test_genesis_header_hash_snapshot ... ok"));
+}
+

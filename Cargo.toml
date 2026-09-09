@@ -19,7 +19,6 @@ members = [
   "crates/zkvm-test",
   "crates/zkvm-test-macros",
   "crates/test_support",
-
 ]
 resolver = "3"
 

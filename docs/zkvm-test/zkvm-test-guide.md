@@ -12,11 +12,16 @@ A practical, step-by-step guide for bringing Nextest-grade testing, cycle benchm
 4. [Writing zkVM Tests](#4-writing-zkvm-tests)
    - [Basic Tests & Assertions](#basic-tests--assertions)
    - [Testing Panics & Failure Paths](#testing-panics--failure-paths)
+   - [High-Resolution Fault Diagnostics](#high-resolution-fault-diagnostics)
    - [Custom Guest Exit Codes](#custom-guest-exit-codes)
    - [Declarative Cycle Limits](#declarative-cycle-limits)
    - [Hierarchical Sub-Routine Cycle Profiling](#hierarchical-sub-routine-cycle-profiling)
    - [Guest stdout/stderr Output Capture](#guest-stdoutstderr-output-capture)
+   - [Host-Injected Test Fixtures (`fixture = "..."`)](#host-injected-test-fixtures-fixture--)
+   - [Public Values & Output Snapshot Testing (`snapshot = "..."`)](#public-values--output-snapshot-testing-snapshot--)
 5. [CLI Reference & Options](#5-cli-reference--options)
+   - [Automatic Build Cache Isolation (`target/zkvm`)](#automatic-build-cache-isolation-targetzkvm)
+   - [Workspace Defaults & Package Auto-Detection](#workspace-defaults--package-auto-detection)
 6. [Baselines & CI Regression Gating](#6-baselines--ci-regression-gating)
    - [Saving a Baseline](#saving-a-baseline)
    - [Comparing Against a Baseline](#comparing-against-a-baseline)
@@ -28,10 +33,11 @@ A practical, step-by-step guide for bringing Nextest-grade testing, cycle benchm
 8. [Prover Backends & Proof Modes](#8-prover-backends--proof-modes)
    - [Prover Backends: Mock, CPU, and CUDA](#prover-backends-mock-cpu-and-cuda)
    - [Proof Mode Control (`--mode`)](#proof-mode-control---mode)
+   - [The Prover Daemon & Network Prover Roadmap](#the-prover-daemon--network-prover-roadmap)
 9. [Instruction Breakdown & Profiling](#9-instruction-breakdown--profiling)
    - [Instruction Categories Table](#instruction-categories-table)
    - [Precompile & Syscall Tracking](#precompile--syscall-tracking)
-10. [Dual Compilation (Host + zkVM)](#10-dual-compilation-host--zkvm)
+10. [Dual Compilation & Host Execution (`--host`)](#10-dual-compilation--host-execution---host)
 11. [Troubleshooting & FAQs](#11-troubleshooting--faqs)
 
 ---
@@ -42,9 +48,11 @@ A practical, step-by-step guide for bringing Nextest-grade testing, cycle benchm
 
 - **Isolated VM Executions**: Tests run in their own emulator instances. A panic in one test never kills the suite.
 - **Multithreaded Concurrency**: Runs tests in parallel across your available CPU cores.
-- **Cycle & Memory Metrics**: Displays exact VM cycle counts and STARK execution trace sizes per test.
-- **Output Streaming**: Cleanly captures guest `println!` and `eprintln!` output without terminal line interleaving.
-- **Nextest Ergonomics**: Supports test filtering, `--exact`, `--list`, `--ignored`, and `--nocapture`.
+- **Cycle & Prover Gas Metrics**: Displays exact VM cycle counts, prover gas estimations (`calculate_gas`), and STARK execution trace sizes per test.
+- **High-Resolution Fault Diagnostics**: Inspects memory faults with target addresses and opcodes, illegal instruction alignment, unimplemented syscall IDs, and memory watchdog monitor kills.
+- **Output Streaming**: Cleanly captures guest `println!` and `eprintln!` output without terminal line interleaving using bounded snapshots.
+- **Nextest Ergonomics**: Supports test filtering, `--exact`, `--list`, `--ignored`, `--nocapture`, and Nextest-compatible boolean expressions (`-E`).
+- **Dual Target Execution**: Seamlessly executes zkVM tests on the RISC-V target or native host tests via `--host` within the same workflow.
 - **Regression Detection**: Catch performance regressions directly in CI with `--fail-on-regression <N%>`.
 
 ---
@@ -134,15 +142,15 @@ Run tests using the cargo plugin:
 cargo zkvm-test -p my-zkvm-program
 ```
 
-You will see the test suite compile for `riscv64im-succinct-zkvm-elf` and execute with live cycle counts and trace memory stats:
+You will see the test suite compile for `riscv64im-succinct-zkvm-elf` and execute with live cycle counts, prover gas metrics, and trace memory stats:
 
 ```text
      Running zkVM tests for `my_zkvm_program` (target/riscv64im-succinct-zkvm-elf/.../my_zkvm_program-xyz)
 
-running 1 test (prover: mock, threads: 16)
-test tests::test_addition_in_vm ... ok (4,210 cycles, trace: 1.20 MB)
+running 1 test (mode: mock, threads: 16)
+test tests::test_addition_in_vm ... ok (4,210 cycles, 95 gas, trace: 1.20 MB)
 
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s (total cycles: 4,210, peak host rss: 210.4 MB)
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s (total cycles: 4,210, total gas: 95, peak host rss: 210.4 MB)
 ```
 
 ---
@@ -177,6 +185,13 @@ fn test_out_of_bounds_panics() {
     let _ = empty[0];
 }
 
+// Or assert on expected panic text in guest stderr:
+#[test(should_panic(expected = "index out of bounds"))]
+fn test_specific_panic() {
+    let empty: Vec<u8> = Vec::new();
+    let _ = empty[0];
+}
+
 // Or with standard Rust attribute syntax:
 #[test]
 #[should_panic]
@@ -184,6 +199,22 @@ fn test_assertion_failure() {
     assert_eq!(1 + 1, 3);
 }
 ```
+
+### High-Resolution Fault Diagnostics
+
+When a guest program crashes due to a virtual machine fault, standard zkVM test runners typically abort abruptly or print generic "executor failed" messages. `zkvm-test` intercepts and decodes low-level `ExecutionError` variants into actionable, pinpoint diagnostics:
+
+| Fault Type | Diagnostic Output Example | Root Cause |
+| :--- | :--- | :--- |
+| **Illegal Memory Access** | `memory fault: invalid memory access for opcode LD at address 0x12345678` | Reading or writing unmapped or out-of-bounds guest memory. Identifies both the offending RISC-V opcode (`LD`, `SW`, etc.) and the exact target address. |
+| **Unaligned Instruction Fetch** | `alignment fault: unaligned instruction fetch at address 0x80001002 (must be 4-byte aligned)` | PC jumped to an unaligned address in untrusted code. |
+| **Unimplemented Syscall** | `syscall fault: unimplemented syscall 0x00000042 (66)` | Guest attempted an unknown or unconfigured runtime system call. |
+| **Watchdog RSS Monitor Kill** | `memory limit exceeded: child executor killed by watchdog monitor (measured 24576 MB)` | Host runner memory monitor terminated the executor process after exceeding host RSS memory thresholds. |
+| **OS / Cgroup OOM Killer** | `child executor killed externally (possible OS / cgroup OOM-killer)` | Linux cgroup or host OS killed the child worker due to host memory starvation. |
+| **Cycle Limit Exceeded (Watchdog)** | `cycle limit exceeded: program exceeded configured limit of 1,000,000 cycles` | Execution exceeded the maximum instruction count threshold configured for the VM engine watchdog. |
+| **Unconstrained Mode Violations** | `unconstrained mode error: program halted while still in unconstrained execution block` | Guest invoked invalid syscalls or exited while running in unconstrained hint execution. |
+
+These diagnostics appear directly under the test failure report in both CLI output and exported JUnit XML reports.
 
 ### Custom Guest Exit Codes
 
@@ -198,7 +229,7 @@ fn test_custom_exit() {
 
 ### Declarative Cycle Limits
 
-Prevent code bloat or algorithmic complexity bugs from creeping in by enforcing strict per-test cycle limits:
+Prevent code bloat or algorithmic complexity regressions from creeping in by enforcing strict per-test cycle limits:
 
 ```rust
 // Fails if this test consumes more than 250,000 instruction cycles:
@@ -216,6 +247,11 @@ test tests::test_optimized_hashing_budget ... FAILED
 ---- tests::test_optimized_hashing_budget ----
 cycle budget exceeded: 312,450 cycles > budget of 250,000
 ```
+
+> [!NOTE]
+> **Post-hoc Assertion vs. Engine Watchdog**:
+> - **`#[test(max_cycles = N)]`** is an **exact post-hoc assertion** evaluated against the completed run's `report.total_instruction_count()`. Even when a guest finishes normally with exit code 0, if the total cycle count exceeds your declared threshold, the test is marked failed with the exact cycle delta.
+> - **`ExecutionError::ExceededCycleLimit`** is SP1's **runtime runaway watchdog**. It halts VM execution mid-run if an unbounded loop runs away past the coarse engine limit. Declarative `max_cycles` operates at single-cycle resolution and does not require guessing coarse VM chunk boundaries.
 
 ### Hierarchical Sub-Routine Cycle Profiling
 
@@ -250,6 +286,13 @@ test tests::test_pipeline_breakdown ... ok (460,283 cycles, trace: 129.96 MB)
     ├── execute_crypto: 250,110 cycles (54.3%) [1 call]
     └── parse_input: 136,692 cycles (29.7%) [1 call]
 ```
+
+> [!TIP]
+> **How Cycle Tracking Works Under the Hood**:
+> - `sp1_cycle::run_track("label", ...)` writes structured boundary markers directly to guest `stdout` (`fd 1`):
+>   `cycle-tracker-report-start: <label>` and `cycle-tracker-report-end: <label>`.
+> - **The JIT vs. Profiling Trade-off**: In upstream SP1, populating `report.cycle_tracker` is gated on `feature = "profiling"`. Crucially, when `feature = "profiling"` is enabled in `sp1-core-executor`, the build script (`detect_executor`) automatically disables the fast native x86_64 JIT executor on Linux (`not(feature = "profiling")`), falling back to the 5–10× slower portable interpreter across the entire test suite!
+> - **Zero-Overhead Runner Parsing**: Because `zkvm-test` captures guest `stdout` directly via tokio watch channels, the runner can parse start/end boundary markers independently from captured stdout or instruction deltas, completely sidestepping `feature = "profiling"` and keeping the high-speed JIT active for all tests.
 
 ### Guest stdout/stderr Output Capture
 
@@ -354,6 +397,7 @@ cargo zkvm-test [CARGO_OPTIONS] [--] [RUNNER_OPTIONS] [FILTER]
 
 | Option | Category | Description |
 |---|---|---|
+| `--host` | Cargo | Execute tests on native host target instead of zkVM |
 | `-p, --package <SPEC>` | Cargo | Package to compile and test |
 | `--workspace, --all` | Cargo | Test all zkVM packages in workspace (default when run from root) |
 | `--exclude <SPEC>` | Cargo | Exclude packages from the test run |
@@ -378,7 +422,7 @@ cargo zkvm-test [CARGO_OPTIONS] [--] [RUNNER_OPTIONS] [FILTER]
 | `--accept-snapshots` | Runner | Record/update golden snapshot files for tests with `#[test(snapshot = "...")]` |
 | `--test-threads <N>` | Runner | Number of test instances to execute concurrently |
 | `--prover <PROVER>` | Runner | Prover backend: `mock` (default), `cpu`, `cuda` |
-| `--save-baseline [NAME]` | Metrics | Save run metrics as a named baseline (default: `default`) |
+| `--save-baseline [NAME]` | Metrics | Save run metrics (cycles, prover gas, trace sizes, subcycles) as a named baseline (default: `default`) |
 | `--compare-baseline <NAME>`| Metrics | Compare current run against a saved baseline (auto-compares if `default.json` exists) |
 | `--fail-on-regression <N%>` | Metrics | Exit with code 1 if any test's cycles increase by > N% |
 | `-q, --quiet` | Runner | Minimal output format |
@@ -414,6 +458,28 @@ In multi-crate workspaces, running `cargo test` on bare-metal zkVM targets fails
   enable = false # Exclude from default runs
   ```
 
+### High-Concurrency & Shared Memory (`/dev/shm`) in Docker/CI
+
+When executing tests with prover gas estimation enabled (`calculate_gas(true)`), SP1's gas estimator allocates trace buffers and shared memory segments for child execution workers.
+
+In multi-threaded test runs on Linux (e.g. defaulting to `--test-threads 16`), concurrent worker threads can collectively allocate up to **4.4 GiB** of shared memory.
+
+> [!WARNING]
+> **Docker Shared Memory Limits (`/dev/shm`)**:
+> Standard Docker containers default to a restrictive 64 MiB `/dev/shm` size. Running concurrent zkVM tests inside Docker without configuring shared memory will result in mysterious `SIGBUS`, `bus error`, or truncated trace errors.
+>
+> **Best Practices for Containerized CI**:
+> 1. **Allocate Sufficient Shared Memory**: When starting your Docker container, specify `--shm-size=8g` (or at least `--shm-size=4g`):
+>    ```bash
+>    docker run --shm-size=8g ...
+>    ```
+> 2. **Throttle Concurrency in Constrained Environments**: If running in memory-constrained runners or VMs without large `/dev/shm`, limit concurrent test threads:
+>    ```bash
+>    cargo zkvm-test --test-threads 2
+>    # or set the environment variable:
+>    export ZKVM_TEST_THREADS=2
+>    ```
+
 ---
 
 ## 6. Baselines & CI Regression Gating
@@ -428,7 +494,7 @@ On your `main` or stable branch, run tests and save a baseline:
 cargo zkvm-test --save-baseline main
 ```
 
-This writes `.zkvm-test-metrics/main.json` containing exact cycle counts, trace sizes, and sub-routine statistics for every test.
+This writes `.zkvm-test-metrics/main.json` containing exact cycle counts, prover gas estimations, trace sizes, and sub-routine statistics for every test.
 
 ### Comparing Against a Baseline
 
@@ -650,18 +716,38 @@ When testing cryptographic proof generation and on-chain / recursive verifiabili
 
 #### Automatic Key Setup Optimization
 
-When running a test suite with `--mode <mode>`, the runner automatically compiles the program's proving key (`pk`) **once per ELF** upfront before scheduling tests:
+When running a test suite with an active proof mode (e.g. `--prover cpu --mode core`), the runner automatically compiles the program's proving key (`pk`) **once per ELF** upfront before scheduling tests:
 
 ```text
 Setting up proving key for Core mode... Proving key ready in 0.57s
-running 3 tests (prover: mock, mode: Core, threads: 16)
+running 3 tests (prover: cpu, mode: Core, threads: 16)
 test zkpow_sha256::tests::test_single_header_hash ... ok (12,410 cycles, trace: 4.2 MB, Core proof: 0.01s)
 test zkpow_sha256::tests::test_batch_header_hashes ... ok (48,920 cycles, trace: 16.8 MB, Core proof: 0.02s)
 ```
 
+> [!NOTE]
+> **Prover & Mode Banner Semantics**:
+> - **Mock Execution (`--prover mock`)**: Under the default mock prover, no cryptographic proofs are constructed. The runner formats the banner as:
+>   `running 3 tests (mode: mock, threads: 16)`
+>   The redundant `prover` field is omitted so test output is never misleading.
+> - **Real Proving (`--prover cpu|cuda|network`)**: When an actual prover backend is selected with `--mode`, the banner reflects both:
+>   `running 3 tests (prover: cpu, mode: Core, threads: 16)`.
+
 The proving key is shared across all concurrent worker threads in an `Arc<SP1ProvingKey>`, avoiding redundant key generation overhead.
 
 Furthermore, execution correctness and test assertions run **first**. If a test fails or panics, the runner immediately halts that test and surfaces the exact error diagnostics, skipping expensive proof generation for failed runs.
+
+### The Prover Daemon & Network Prover Roadmap
+
+When running large test suites with proof generation enabled (`--mode core`, `--mode compressed`, or `--mode groth16`), creating a fresh `ProverClient` for every test introduces an expensive 10–20 second cold-start overhead per test.
+
+To eliminate this bottleneck, `zkvm-test` incorporates an architectural roadmap for a persistent background **Prover Daemon** (`zkvm-prover-daemon`):
+- **SP1 Network Prover Alignment**: Rather than building a custom IPC protocol, the daemon implements the official SP1 `ProverNetwork` gRPC service (`sp1_sdk::network::prover::NetworkProver`).
+- **Zero Client Overhead**: Tests using `ProverClient::builder().network().hosted().rpc_url("http://127.0.0.1:50051").build()` interact with the local daemon out of the box with zero bespoke client wrappers.
+- **Hybrid Data Plane**: Control calls and status streaming use standard gRPC, while large payloads (guest ELFs, proof artifacts, execution trace buffers) pass via `/dev/shm` shared memory on Linux or memory-mapped files.
+- **Seamless Local ↔ Cloud Continuum**: The exact same test suite can run against the local daemon during development or against the decentralized Succinct Prover Network in CI simply by updating the RPC endpoint.
+
+*(For full architecture diagrams, data flows, and trace mining specifications, see [prover-daemon-trace-mining-and-diagnostics.md](prover-daemon-trace-mining-and-diagnostics.md)).*
 
 ---
 
@@ -713,14 +799,40 @@ This guarantees that developers can immediately spot whether their cryptographic
 
 ---
 
-## 10. Dual Compilation (Host + zkVM)
+## 10. Dual Compilation & Host Execution (`--host`)
 
-Tests written with `use zkvm_test::test;` compile cleanly on **both**:
+Tests written with `use zkvm_test::test;` compile cleanly and can execute seamlessly across both execution pathways:
 
-- **Target OS zkVM**: `cargo zkvm-test` runs them in the virtual machine.
-- **Host OS**: Standard `cargo test` runs them as native Rust host unit tests.
+### 1. zkVM Target Execution (Default)
 
-This allows developers to run standard host unit tests during active feature development, and run `cargo zkvm-test` for cycle verification, memory profiling, and CI gating!
+Running `cargo zkvm-test` targets the RISC-V zkVM architecture (`riscv64im-succinct-zkvm-elf`):
+```bash
+cargo zkvm-test
+```
+- Tests run inside isolated virtual machine instances.
+- Reports live cycle counts, prover gas (`calculate_gas`), trace memory footprints, and instruction breakdowns.
+- Enforces declarative `#[test(max_cycles = ...)]` limits and handles `#[test(snapshot = "...")]` golden files.
+
+### 2. Native Host Execution (`--host`)
+
+Passing `--host` directs `cargo-zkvm-test` to compile and run tests on the host platform (e.g. `x86_64-unknown-linux-gnu` or `aarch64-apple-darwin`):
+```bash
+cargo zkvm-test --host
+```
+- Compiles via the host toolchain using `cargo test --no-run` and executes native test binaries directly on bare metal CPU.
+- Preserves full Nextest-style formatting, test filtering (`-E`), progress reporting, and JUnit XML output without emulator overhead.
+- Test attributes like `#[test(fixture = "...")]` automatically load fixture vectors directly from disk, maintaining 100% test logic parity with the zkVM.
+
+### 3. Mixed Workspace Auto-Detection
+
+In multi-package workspaces containing both zkVM guest programs and host-only infrastructure (such as CLI binaries, network listeners, or RPC services):
+- Running `cargo zkvm-test` from the workspace root automatically inspects crate dependencies.
+- Packages depending on `zkvm-test` are routed to the zkVM compilation and execution pipeline.
+- Packages without `zkvm-test` (or configured with host metadata) are automatically identified and executed on the host native toolchain.
+- You can test an entire heterogeneous workspace in a single invocation:
+  ```bash
+  cargo zkvm-test --workspace
+  ```
 
 ---
 

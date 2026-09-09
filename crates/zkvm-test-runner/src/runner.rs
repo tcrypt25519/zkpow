@@ -534,6 +534,51 @@ struct ExecOutput {
     failure:       Option<String>,
 }
 
+fn format_execution_error(err: &sp1_core_executor::ExecutionError) -> String {
+    match err {
+        sp1_core_executor::ExecutionError::InvalidMemoryAccess(op, addr) => {
+            format!("memory fault: invalid memory access for opcode {op:?} at address 0x{addr:08x}")
+        }
+        sp1_core_executor::ExecutionError::InvalidMemoryAccessUntrustedProgram(addr) => {
+            format!("alignment fault: unaligned instruction fetch at address 0x{addr:08x} (must be 4-byte aligned)")
+        }
+        sp1_core_executor::ExecutionError::UnsupportedSyscall(num) => {
+            format!("syscall fault: unimplemented syscall 0x{num:08x} ({num})")
+        }
+        sp1_core_executor::ExecutionError::Breakpoint() => {
+            "breakpoint encountered (ebreak)".to_string()
+        }
+        sp1_core_executor::ExecutionError::ExceededCycleLimit(limit) => {
+            format!("cycle limit exceeded: program exceeded configured limit of {limit} cycles")
+        }
+        sp1_core_executor::ExecutionError::InvalidSyscallUsage(addr) => {
+            format!("syscall error: syscall invoked in unconstrained mode at address 0x{addr:08x}")
+        }
+        sp1_core_executor::ExecutionError::Unimplemented() => {
+            "illegal instruction: encountered unimplemented opcode (unimp)".to_string()
+        }
+        sp1_core_executor::ExecutionError::EndInUnconstrained() => {
+            "unconstrained mode error: program halted while still in unconstrained execution block".to_string()
+        }
+        sp1_core_executor::ExecutionError::UnconstrainedCycleLimitExceeded(limit) => {
+            format!("unconstrained cycle limit exceeded: exceeded limit of {limit} cycles")
+        }
+        sp1_core_executor::ExecutionError::TooMuchMemory() => {
+            "memory budget exceeded: guest program exceeded configured in-VM memory allocation".to_string()
+        }
+        sp1_core_executor::ExecutionError::KilledByMemoryMonitor(mb) => {
+            format!("memory limit exceeded: child executor killed by watchdog monitor (measured {mb} MB)")
+        }
+        sp1_core_executor::ExecutionError::ChildKilled() => {
+            "child executor killed externally (possible OS / cgroup OOM-killer)".to_string()
+        }
+        sp1_core_executor::ExecutionError::UnexpectedExitCode(code) => {
+            format!("unexpected exit code: {code}")
+        }
+        _ => format!("executor error: {err}"),
+    }
+}
+
 impl ExecOutput {
     fn from_result(
         test: &TestDesc,
@@ -543,7 +588,7 @@ impl ExecOutput {
             Ok(ok) => ok,
             Err(err) => {
                 return Self {
-                    failure: Some(format!("executor error: {err}")),
+                    failure: Some(format_execution_error(&err)),
                     ..Self::default()
                 };
             },
@@ -1867,6 +1912,35 @@ mod tests {
         // Verify updated file on disk
         let updated = std::fs::read_to_string(&snap_file).unwrap();
         assert_eq!(updated.trim(), "cafebabe");
+    }
+
+    #[test]
+    fn test_format_execution_error() {
+        use sp1_core_executor::{ExecutionError, Opcode};
+
+        let mem_err = ExecutionError::InvalidMemoryAccess(Opcode::LD, 0x1234_5678);
+        assert_eq!(
+            format_execution_error(&mem_err),
+            "memory fault: invalid memory access for opcode LD at address 0x12345678"
+        );
+
+        let syscall_err = ExecutionError::UnsupportedSyscall(0x42);
+        assert_eq!(
+            format_execution_error(&syscall_err),
+            "syscall fault: unimplemented syscall 0x00000042 (66)"
+        );
+
+        let monitor_err = ExecutionError::KilledByMemoryMonitor(24_576);
+        assert_eq!(
+            format_execution_error(&monitor_err),
+            "memory limit exceeded: child executor killed by watchdog monitor (measured 24576 MB)"
+        );
+
+        let cycle_err = ExecutionError::ExceededCycleLimit(1_000_000);
+        assert_eq!(
+            format_execution_error(&cycle_err),
+            "cycle limit exceeded: program exceeded configured limit of 1000000 cycles"
+        );
     }
 }
 

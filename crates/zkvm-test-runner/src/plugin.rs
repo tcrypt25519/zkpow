@@ -24,7 +24,14 @@ pub struct Artifact {
     #[serde(default)]
     pub package_id: String,
     pub target:     Option<ArtifactTarget>,
+    pub profile:    Option<ArtifactProfile>,
     pub executable: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ArtifactProfile {
+    #[serde(default)]
+    pub test: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -195,9 +202,13 @@ pub struct CargoOpts {
     #[arg(long, value_name = "NAME")]
     pub bench: Vec<String>,
 
-    /// Test all targets
+    /// Test all targets (both host and zkVM)
     #[arg(long)]
     pub all_targets: bool,
+
+    /// Run native host tests
+    #[arg(long)]
+    pub host: bool,
 
     /// Build artifacts in release mode
     #[arg(long)]
@@ -590,7 +601,7 @@ pub async fn run_cargo_plugin(mut raw_args: Vec<String>) -> i32 {
 
     // Determine toolchain and target
     let toolchain = cargo_raw.iter().find(|a| a.starts_with('+')).cloned();
-    let mut cargo_filtered: Vec<String> = cargo_raw.into_iter().filter(|a| !a.starts_with('+')).collect();
+    let mut cargo_filtered: Vec<String> = cargo_raw.iter().filter(|a| !a.starts_with('+')).cloned().collect();
 
     let has_explicit_packages = flag_present(&cargo_filtered, &["-p", "--package"]);
     let has_explicit_targets = flag_present(&cargo_filtered, &["--bin", "--test", "--example"]);
@@ -614,41 +625,91 @@ pub async fn run_cargo_plugin(mut raw_args: Vec<String>) -> i32 {
         _ => None,
     };
 
-    let mut auto_packages = Vec::new();
-    if !has_explicit_packages
-        && !has_explicit_targets
-        && let Some(ref graph) = package_graph
-    {
-        auto_packages = resolve_default_packages(graph, &cli_excludes);
+    let run_host = flag_present(&cargo_filtered, &["--host"]);
+    let all_targets = flag_present(&cargo_filtered, &["--all-targets"]);
 
-        // A package whose every target the filterset rules out is dropped before it is
-        // ever compiled.
-        if let Some(ref filterset) = filterset {
-            prune_packages_by_filter(&mut auto_packages, graph, filterset);
-            if auto_packages.is_empty() {
-                println!("{BIN_NAME}: 0 packages matched filter expression");
-                return 0;
+    let mut zkvm_packages = Vec::new();
+    let mut host_packages = Vec::new();
+
+    if has_explicit_packages {
+        let explicit_pkgs = flag_values(&cargo_filtered, &["-p", "--package"]);
+        for pkg_name in explicit_pkgs {
+            let is_zkvm = package_graph
+                .as_ref()
+                .and_then(|g| g.workspace().iter().find(|p| p.name() == pkg_name))
+                .is_some_and(|p| is_zkvm_pkg(&p));
+
+            if run_host {
+                host_packages.push(pkg_name.to_string());
+                if all_targets && is_zkvm {
+                    zkvm_packages.push(pkg_name.to_string());
+                }
+            } else if all_targets {
+                if is_zkvm {
+                    zkvm_packages.push(pkg_name.to_string());
+                }
+                host_packages.push(pkg_name.to_string());
+            } else if is_zkvm {
+                zkvm_packages.push(pkg_name.to_string());
+            } else {
+                println!("{BIN_NAME}: `{pkg_name}` does not target zkVM; running host tests");
+                host_packages.push(pkg_name.to_string());
             }
         }
-
-        if auto_packages.is_empty() {
-            eprintln!("{BIN_NAME}: no zkVM test packages found in workspace.");
-            eprintln!("hint: add `zkvm-test` to [dev-dependencies] or configure in Cargo.toml:");
-            eprintln!("    [workspace.metadata.zkvm-test]");
-            eprintln!("    packages = [\"my-guest-crate\"]");
-            return 1;
+    } else if !has_explicit_targets && let Some(ref graph) = package_graph {
+        if run_host && !all_targets {
+            host_packages = graph
+                .workspace()
+                .iter()
+                .filter(|p| !cli_excludes.contains(&p.name().to_string()))
+                .map(|p| p.name().to_string())
+                .collect();
+        } else if all_targets {
+            zkvm_packages = resolve_default_packages(graph, &cli_excludes);
+            host_packages = graph
+                .workspace()
+                .iter()
+                .filter(|p| !cli_excludes.contains(&p.name().to_string()))
+                .map(|p| p.name().to_string())
+                .collect();
+        } else {
+            zkvm_packages = resolve_default_packages(graph, &cli_excludes);
         }
+    }
 
+    if let (Some(filterset), Some(graph)) = (&filterset, &package_graph) {
+        prune_packages_by_filter(&mut zkvm_packages, graph, filterset);
+        prune_packages_by_filter(&mut host_packages, graph, filterset);
+    }
+
+    if zkvm_packages.is_empty() && host_packages.is_empty() && !has_explicit_targets {
+        if filterset.is_some() {
+            println!("{BIN_NAME}: 0 packages matched filter expression");
+            return 0;
+        }
+        eprintln!("{BIN_NAME}: no test packages found in workspace.");
+        return 1;
+    }
+
+    if !zkvm_packages.is_empty() {
         println!(
             "{BIN_NAME}: testing {} zkVM package{}: {}",
-            auto_packages.len(),
-            if auto_packages.len() == 1 { "" } else { "s" },
-            auto_packages.join(", ")
+            zkvm_packages.len(),
+            if zkvm_packages.len() == 1 { "" } else { "s" },
+            zkvm_packages.join(", ")
+        );
+    }
+    if !host_packages.is_empty() {
+        println!(
+            "{BIN_NAME}: testing {} host package{}: {}",
+            host_packages.len(),
+            if host_packages.len() == 1 { "" } else { "s" },
+            host_packages.join(", ")
         );
     }
 
-    // The resolved package list supersedes the selection flags that produced it.
-    if !auto_packages.is_empty() {
+    // Clean selection flags from cargo_filtered
+    if !zkvm_packages.is_empty() || !host_packages.is_empty() {
         let mut cleaned = Vec::new();
         let mut iter = cargo_filtered.into_iter();
         while let Some(arg) = iter.next() {
@@ -671,8 +732,7 @@ pub async fn run_cargo_plugin(mut raw_args: Vec<String>) -> i32 {
         cargo_filtered = cleaned;
     }
 
-    // `--cargo-profile` exists only to disambiguate cargo's `--profile` from the runner's
-    // flag of the same name; cargo itself takes `--profile`.
+    // Disambiguate `--cargo-profile` to `--profile`
     let cargo_filtered: Vec<String> = cargo_filtered
         .into_iter()
         .map(|arg| {
@@ -685,39 +745,282 @@ pub async fn run_cargo_plugin(mut raw_args: Vec<String>) -> i32 {
         })
         .collect();
 
-    let target = flag_value(&cargo_filtered, &["--target"])
-        .map(str::to_string)
-        .unwrap_or_else(|| DEFAULT_SP1_TARGET.to_string());
-
-    let mut cargo_cmd = Command::new("cargo");
-    if let Some(tc) = toolchain {
-        cargo_cmd.arg(tc);
-    } else if let Some(vendor) = Vendor::from_target(&target) {
-        cargo_cmd.arg(vendor.toolchain());
+    // Start fresh JUnit report if requested
+    if let Some(ref junit_path) = junit_path_opt
+        && let Err(err) = remove_file_if_exists(junit_path)
+    {
+        eprintln!("{BIN_NAME}: warning: failed to remove existing JUnit file '{}': {err}", junit_path.display());
     }
 
+    let mut overall_exit_code = 0;
+
+    // 1. Host Test Phase
+    if !host_packages.is_empty() {
+        match compile_host_tests(&host_packages, &cargo_filtered, filterset.as_ref(), package_graph.as_ref()) {
+            Ok(host_executables) => {
+                for exe in host_executables {
+                    let code = run_host_test(
+                        &exe,
+                        &runner_raw,
+                        &cargo_raw,
+                        junit_path_opt.as_deref(),
+                        package_graph.as_ref(),
+                    );
+                    if code != 0 {
+                        overall_exit_code = code;
+                    }
+                }
+            },
+            Err(code) => {
+                overall_exit_code = code;
+            },
+        }
+    }
+
+    // 2. zkVM Test Phase
+    if !zkvm_packages.is_empty() {
+        let target = flag_value(&cargo_filtered, &["--target"])
+            .map(str::to_string)
+            .unwrap_or_else(|| DEFAULT_SP1_TARGET.to_string());
+
+        match compile_zkvm_tests(
+            &zkvm_packages,
+            &cargo_filtered,
+            toolchain.as_deref(),
+            &target,
+            package_graph.as_ref(),
+            filterset.as_ref(),
+        ) {
+            Ok(zkvm_executables) => {
+                let shared_graph = package_graph.map(Arc::new);
+                for exe in zkvm_executables {
+                    println!("\n     Running zkVM tests for `{}` ({})", exe.target_name, exe.elf_path.display());
+
+                    let mut args_list = vec![exe.elf_path.display().to_string()];
+                    args_list.extend(runner_raw.clone());
+
+                    let mut runner_args = match crate::runner::parse_args_from(args_list) {
+                        Ok(args) => args,
+                        Err(err) => {
+                            eprintln!("{BIN_NAME}: {err}");
+                            return 2;
+                        },
+                    };
+                    runner_args.package_id = Some(exe.package_id.repr().to_string());
+                    runner_args.target_name = Some(exe.target_name);
+                    runner_args.target_kind = Some(exe.target_kind.as_str().to_string());
+                    runner_args.package_graph = shared_graph.clone();
+
+                    let code = run(runner_args).await;
+                    if code != 0 {
+                        overall_exit_code = code;
+                    }
+                }
+            },
+            Err(code) => {
+                overall_exit_code = code;
+            },
+        }
+    }
+
+    overall_exit_code
+}
+
+fn parse_libtest_line(line: &str) -> Option<(String, crate::junit::TestCaseStatus)> {
+    let trimmed = line.trim();
+    if !trimmed.starts_with("test ") {
+        return None;
+    }
+    let rest = &trimmed[5..];
+    if let Some((name, status_str)) = rest.split_once(" ... ") {
+        let name = name.trim().to_string();
+        let status = match status_str.trim() {
+            "ok" => crate::junit::TestCaseStatus::Passed,
+            "FAILED" => crate::junit::TestCaseStatus::Failed {
+                message: String::new(),
+                details: String::new(),
+            },
+            "ignored" => crate::junit::TestCaseStatus::Skipped,
+            _ => return None,
+        };
+        return Some((name, status));
+    }
+    None
+}
+
+fn run_host_test(
+    exe: &TestExecutable,
+    runner_raw: &[String],
+    cargo_raw: &[String],
+    junit_path: Option<&Path>,
+    package_graph: Option<&PackageGraph>,
+) -> i32 {
+    println!("\n     Running host tests for `{}` ({})", exe.target_name, exe.elf_path.display());
+
+    let mut cmd = Command::new(&exe.elf_path);
+
+    if let Some(graph) = package_graph {
+        if let Ok(meta) = graph.metadata(&exe.package_id) {
+            if let Some(manifest_dir) = meta.manifest_path().parent() {
+                cmd.current_dir(manifest_dir.as_std_path());
+                cmd.env("CARGO_MANIFEST_DIR", manifest_dir.as_std_path());
+            }
+        }
+    }
+
+    if flag_present(runner_raw, &["--nocapture", "--no-capture"]) {
+        cmd.arg("--nocapture");
+    }
+    if flag_present(runner_raw, &["--exact"]) {
+        cmd.arg("--exact");
+    }
+    if flag_present(runner_raw, &["--ignored"]) {
+        cmd.arg("--ignored");
+    }
+    if flag_present(runner_raw, &["--include-ignored"]) {
+        cmd.arg("--include-ignored");
+    }
+    if flag_present(runner_raw, &["-q", "--quiet"]) {
+        cmd.arg("-q");
+    }
+    if flag_present(runner_raw, &["--list"]) {
+        cmd.arg("--list");
+    }
+    if let Some(threads) = flag_value(runner_raw, &["--test-threads"]) {
+        cmd.arg("--test-threads").arg(threads);
+    }
+    if let Some(color) = flag_value(cargo_raw, &["--color"]) {
+        cmd.arg("--color").arg(color);
+    }
+
+    let spec = FlagSpec::of::<RunnerOpts>();
+    let mut iter = runner_raw.iter();
+    while let Some(arg) = iter.next() {
+        if arg.starts_with('-') {
+            if spec.valued.contains(arg) {
+                let _ = iter.next();
+            }
+            continue;
+        }
+        cmd.arg(arg);
+    }
+
+    if let Some(junit_path) = junit_path {
+        cmd.stdout(Stdio::piped());
+        cmd.stderr(Stdio::piped());
+
+        let start = std::time::Instant::now();
+        let mut child = match cmd.spawn() {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("{BIN_NAME}: failed to execute host test binary {}: {e}", exe.elf_path.display());
+                return 1;
+            },
+        };
+
+        let stdout = child.stdout.take().expect("failed to open stdout");
+        let stderr = child.stderr.take().expect("failed to open stderr");
+
+        let mut stdout_lines = Vec::new();
+        let stdout_reader = std::io::BufReader::new(stdout);
+        for line in stdout_reader.lines().map_while(Result::ok) {
+            println!("{line}");
+            stdout_lines.push(line);
+        }
+
+        let mut stderr_content = String::new();
+        let stderr_reader = std::io::BufReader::new(stderr);
+        for line in stderr_reader.lines().map_while(Result::ok) {
+            eprintln!("{line}");
+            stderr_content.push_str(&line);
+            stderr_content.push('\n');
+        }
+
+        let status = child.wait().map(|s| s.code().unwrap_or(1)).unwrap_or(1);
+        let elapsed = start.elapsed().as_secs_f64();
+
+        let mut cases = Vec::new();
+        for line in &stdout_lines {
+            if let Some((name, status)) = parse_libtest_line(line) {
+                let is_fail = matches!(status, crate::junit::TestCaseStatus::Failed { .. });
+                cases.push(crate::junit::JUnitTestCase {
+                    name,
+                    classname: format!("host::{}", exe.target_name),
+                    time: 0.0,
+                    cycles: 0,
+                    record_bytes: 0,
+                    status,
+                    stdout: String::new(),
+                    stderr: if is_fail { stderr_content.clone() } else { String::new() },
+                });
+            }
+        }
+
+        let suite = crate::junit::JUnitTestSuite {
+            name: format!("host::{}", exe.target_name),
+            time: elapsed,
+            cases,
+        };
+
+        if let Err(e) = crate::junit::write_or_merge_junit_xml(junit_path, suite) {
+            eprintln!("{BIN_NAME}: warning: failed to write JUnit report: {e}");
+        }
+
+        status
+    } else {
+        cmd.stdout(Stdio::inherit());
+        cmd.stderr(Stdio::inherit());
+
+        match cmd.status() {
+            Ok(status) => status.code().unwrap_or(1),
+            Err(e) => {
+                eprintln!("{BIN_NAME}: failed to execute host test binary {}: {e}", exe.elf_path.display());
+                1
+            },
+        }
+    }
+}
+
+fn compile_host_tests(
+    packages: &[String],
+    cargo_filtered: &[String],
+    filterset: Option<&Filterset>,
+    package_graph: Option<&PackageGraph>,
+) -> Result<Vec<TestExecutable>, i32> {
+    let mut cargo_cmd = Command::new("cargo");
     cargo_cmd.arg("test");
     cargo_cmd.arg("--no-run");
-    if !flag_present(&cargo_filtered, &["--target"]) {
-        cargo_cmd.arg("--target").arg(&target);
-    }
+    cargo_cmd.arg("--message-format=json");
 
-    // Isolate zkVM build artifacts to target/zkvm by default to avoid cache
-    // invalidation collisions with the host Rust toolchain.
-    let explicit_target_dir = flag_value(&cargo_filtered, &["--target-dir"]);
-
-    let ws_root = package_graph.as_ref().map(|g| g.workspace().root().as_str());
-    let target_dir = resolve_target_dir(explicit_target_dir, ws_root);
-    if explicit_target_dir.is_none() {
-        cargo_cmd.arg("--target-dir").arg(&target_dir);
-    }
-
-    for pkg in &auto_packages {
+    for pkg in packages {
         cargo_cmd.arg("-p").arg(pkg);
     }
 
-    cargo_cmd.arg("--message-format=json");
-    cargo_cmd.args(&cargo_filtered);
+    let mut iter = cargo_filtered.iter().peekable();
+    while let Some(arg) = iter.next() {
+        let key = arg.split_once('=').map_or(arg.as_str(), |(k, _)| k);
+        match key {
+            "--host" | "--all-targets" => {},
+            "--target" => {
+                if !arg.contains('=') {
+                    let _ = iter.next();
+                }
+            },
+            "-p" | "--package" => {
+                if !arg.contains('=') {
+                    let _ = iter.next();
+                }
+            },
+            "--target-dir" => {
+                if !arg.contains('=') {
+                    let _ = iter.next();
+                }
+            },
+            _ => {
+                cargo_cmd.arg(arg);
+            },
+        }
+    }
 
     cargo_cmd.stdout(Stdio::piped());
     cargo_cmd.stderr(Stdio::inherit());
@@ -725,8 +1028,8 @@ pub async fn run_cargo_plugin(mut raw_args: Vec<String>) -> i32 {
     let mut child = match cargo_cmd.spawn() {
         Ok(child) => child,
         Err(err) => {
-            eprintln!("{BIN_NAME}: failed to run cargo test: {err}");
-            return 1;
+            eprintln!("{BIN_NAME}: failed to run cargo test for host: {err}");
+            return Err(1);
         },
     };
 
@@ -739,6 +1042,11 @@ pub async fn run_cargo_plugin(mut raw_args: Vec<String>) -> i32 {
             continue;
         };
         if artifact.reason != REASON_COMPILER_ARTIFACT {
+            continue;
+        }
+        let is_test = artifact.profile.as_ref().is_some_and(|p| p.test)
+            || artifact.target.as_ref().is_some_and(|t| t.kind.iter().any(|k| k == "test"));
+        if !is_test {
             continue;
         }
         let Some(path) = artifact.executable else {
@@ -758,8 +1066,7 @@ pub async fn run_cargo_plugin(mut raw_args: Vec<String>) -> i32 {
         let package_id = guppy::PackageId::new(artifact.package_id);
         let elf_path = PathBuf::from(path);
 
-        // Skip an executable the filterset rules out entirely
-        if let (Some(filterset), Some(graph)) = (&filterset, &package_graph)
+        if let (Some(filterset), Some(graph)) = (filterset, package_graph)
             && should_prune_binary(filterset, graph, &package_id, &target_name, &target_kind)
         {
             continue;
@@ -776,54 +1083,139 @@ pub async fn run_cargo_plugin(mut raw_args: Vec<String>) -> i32 {
     let status = match child.wait() {
         Ok(s) => s,
         Err(err) => {
-            eprintln!("{BIN_NAME}: error waiting for cargo: {err}");
-            return 1;
+            eprintln!("{BIN_NAME}: error waiting for host cargo: {err}");
+            return Err(1);
         },
     };
 
     if !status.success() {
-        return status.code().unwrap_or(1);
+        return Err(status.code().unwrap_or(1));
     }
 
-    if test_executables.is_empty() {
-        println!("{BIN_NAME}: no test binaries compiled for zkVM target");
-        return 0;
+    Ok(test_executables)
+}
+
+fn compile_zkvm_tests(
+    packages: &[String],
+    cargo_filtered: &[String],
+    toolchain: Option<&str>,
+    target: &str,
+    package_graph: Option<&PackageGraph>,
+    filterset: Option<&Filterset>,
+) -> Result<Vec<TestExecutable>, i32> {
+    let mut cargo_cmd = Command::new("cargo");
+    if let Some(tc) = toolchain {
+        cargo_cmd.arg(tc);
+    } else if let Some(vendor) = Vendor::from_target(target) {
+        cargo_cmd.arg(vendor.toolchain());
     }
 
-    // Each run starts a fresh JUnit report rather than merging into the previous run's
-    if let Some(ref junit_path) = junit_path_opt
-        && let Err(err) = remove_file_if_exists(junit_path)
-    {
-        eprintln!("{BIN_NAME}: warning: failed to remove existing JUnit file '{}': {err}", junit_path.display());
+    cargo_cmd.arg("test");
+    cargo_cmd.arg("--no-run");
+    if !flag_present(cargo_filtered, &["--target"]) {
+        cargo_cmd.arg("--target").arg(target);
     }
 
-    let shared_graph = package_graph.map(Arc::new);
-    let mut overall_exit_code = 0;
-    for exe in test_executables {
-        println!("\n     Running zkVM tests for `{}` ({})", exe.target_name, exe.elf_path.display());
+    let explicit_target_dir = flag_value(cargo_filtered, &["--target-dir"]);
+    let ws_root = package_graph.map(|g| g.workspace().root().as_str());
+    let target_dir = resolve_target_dir(explicit_target_dir, ws_root);
+    if explicit_target_dir.is_none() {
+        cargo_cmd.arg("--target-dir").arg(&target_dir);
+    }
 
-        let mut args_list = vec![exe.elf_path.display().to_string()];
-        args_list.extend(runner_raw.clone());
+    for pkg in packages {
+        cargo_cmd.arg("-p").arg(pkg);
+    }
 
-        let mut runner_args = match crate::runner::parse_args_from(args_list) {
-            Ok(args) => args,
-            Err(err) => {
-                eprintln!("{BIN_NAME}: {err}");
-                return 2;
+    cargo_cmd.arg("--message-format=json");
+
+    let mut iter = cargo_filtered.iter().peekable();
+    while let Some(arg) = iter.next() {
+        let key = arg.split_once('=').map_or(arg.as_str(), |(k, _)| k);
+        match key {
+            "--host" | "--all-targets" => {},
+            "-p" | "--package" => {
+                if !arg.contains('=') {
+                    let _ = iter.next();
+                }
             },
-        };
-        runner_args.package_id = Some(exe.package_id.repr().to_string());
-        runner_args.target_name = Some(exe.target_name);
-        runner_args.target_kind = Some(exe.target_kind.as_str().to_string());
-        runner_args.package_graph = shared_graph.clone();
-
-        let code = run(runner_args).await;
-        if code != 0 {
-            overall_exit_code = code;
+            _ => {
+                cargo_cmd.arg(arg);
+            },
         }
     }
 
-    overall_exit_code
+    cargo_cmd.stdout(Stdio::piped());
+    cargo_cmd.stderr(Stdio::inherit());
+
+    let mut child = match cargo_cmd.spawn() {
+        Ok(child) => child,
+        Err(err) => {
+            eprintln!("{BIN_NAME}: failed to run cargo test for zkVM: {err}");
+            return Err(1);
+        },
+    };
+
+    let stdout = child.stdout.take().expect("failed to open stdout");
+    let reader = std::io::BufReader::new(stdout);
+
+    let mut test_executables = Vec::new();
+    for line in reader.lines().map_while(Result::ok) {
+        let Ok(artifact) = serde_json::from_str::<Artifact>(&line) else {
+            continue;
+        };
+        if artifact.reason != REASON_COMPILER_ARTIFACT {
+            continue;
+        }
+        let is_test = artifact.profile.as_ref().is_some_and(|p| p.test)
+            || artifact.target.as_ref().is_some_and(|t| t.kind.iter().any(|k| k == "test"));
+        if !is_test {
+            continue;
+        }
+        let Some(path) = artifact.executable else {
+            continue;
+        };
+        let target_name = artifact
+            .target
+            .as_ref()
+            .map(|t| t.name.clone())
+            .unwrap_or_else(|| DEFAULT_TARGET_NAME.to_string());
+        let target_kind_str = artifact
+            .target
+            .as_ref()
+            .and_then(|t| t.kind.first().cloned())
+            .unwrap_or_else(|| crate::filter::DEFAULT_TARGET_KIND.to_string());
+        let target_kind = RustTestBinaryKind::new(target_kind_str);
+        let package_id = guppy::PackageId::new(artifact.package_id);
+        let elf_path = PathBuf::from(path);
+
+        if let (Some(filterset), Some(graph)) = (filterset, package_graph)
+            && should_prune_binary(filterset, graph, &package_id, &target_name, &target_kind)
+        {
+            continue;
+        }
+
+        test_executables.push(TestExecutable {
+            target_name,
+            target_kind,
+            package_id,
+            elf_path,
+        });
+    }
+
+    let status = match child.wait() {
+        Ok(s) => s,
+        Err(err) => {
+            eprintln!("{BIN_NAME}: error waiting for zkVM cargo: {err}");
+            return Err(1);
+        },
+    };
+
+    if !status.success() {
+        return Err(status.code().unwrap_or(1));
+    }
+
+    Ok(test_executables)
 }
 
 #[cfg(test)]
@@ -858,7 +1250,7 @@ mod tests {
         for flag in ["-p", "--package", "--exclude", "--target", "--target-dir", "--cargo-profile", "--features"] {
             assert!(cargo.valued.iter().any(|f| f == flag), "{flag} should be a cargo value flag");
         }
-        for flag in ["--release", "--workspace", "--all", "--lib", "--all-features"] {
+        for flag in ["--release", "--workspace", "--all", "--lib", "--all-features", "--all-targets", "--host"] {
             assert!(cargo.booleans.iter().any(|f| f == flag), "{flag} should be a cargo boolean");
         }
 
@@ -1032,5 +1424,28 @@ mod tests {
         let graph = query_package_graph().expect("should resolve package graph");
         let err = crate::filter::parse("test(unclosed", &graph).unwrap_err();
         assert!(err.contains("invalid filter expression"), "{err}");
+    }
+
+    #[test]
+    fn test_parse_libtest_line() {
+        use crate::junit::TestCaseStatus;
+
+        let pass_line = "test tests::my_test ... ok";
+        let (name, status) = parse_libtest_line(pass_line).expect("should parse ok");
+        assert_eq!(name, "tests::my_test");
+        assert!(matches!(status, TestCaseStatus::Passed));
+
+        let fail_line = "test tests::failing_test ... FAILED";
+        let (name, status) = parse_libtest_line(fail_line).expect("should parse failed");
+        assert_eq!(name, "tests::failing_test");
+        assert!(matches!(status, TestCaseStatus::Failed { .. }));
+
+        let ignored_line = "test tests::slow_test ... ignored";
+        let (name, status) = parse_libtest_line(ignored_line).expect("should parse ignored");
+        assert_eq!(name, "tests::slow_test");
+        assert!(matches!(status, TestCaseStatus::Skipped));
+
+        assert!(parse_libtest_line("running 3 tests").is_none());
+        assert!(parse_libtest_line("test result: ok. 1 passed; 0 failed").is_none());
     }
 }
