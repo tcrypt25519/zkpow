@@ -81,6 +81,19 @@ fn test_cargo_zkvm_test_nextest_filter_execution() {
     cmd.args(["-p", "zkpow-sha256", "-E", "test(genesis)"]);
     cmd.assert()
         .success()
+        .stdout(predicate::str::contains("PASS"))
+        .stdout(predicate::str::contains(
+            "zkpow_sha256::tests::test_genesis_header_hash_snapshot",
+        ))
+        .stdout(predicate::str::contains("test result: ok. 1 passed; 0 failed"));
+}
+
+#[test]
+fn test_cargo_zkvm_test_format_cargo() {
+    let mut cmd = cargo_zkvm_test_cmd();
+    cmd.args(["-p", "zkpow-sha256", "-E", "test(genesis)", "--format", "cargo"]);
+    cmd.assert()
+        .success()
         .stdout(predicate::str::contains(
             "test zkpow_sha256::tests::test_genesis_header_hash_snapshot ... ok",
         ))
@@ -102,9 +115,12 @@ fn test_cargo_zkvm_test_junit_export() {
         junit_file.to_str().unwrap(),
     ]);
 
-    cmd.assert().success().stdout(predicate::str::contains(
-        "test zkpow_sha256::tests::test_genesis_header_hash_snapshot ... ok",
-    ));
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("PASS"))
+        .stdout(predicate::str::contains(
+            "zkpow_sha256::tests::test_genesis_header_hash_snapshot",
+        ));
 
     assert!(junit_file.exists(), "JUnit XML file should be created");
     let content = std::fs::read_to_string(&junit_file).unwrap();

@@ -53,6 +53,28 @@ impl std::str::FromStr for ProofMode {
     }
 }
 
+pub use crate::style::{Palette, format_bytes, format_commas};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum OutputFormat {
+    #[default]
+    Nextest,
+    Cargo,
+}
+
+impl std::str::FromStr for OutputFormat {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "nextest" => Ok(OutputFormat::Nextest),
+            "cargo" | "libtest" => Ok(OutputFormat::Cargo),
+            other => Err(format!(
+                "unknown format '{other}'. Expected 'nextest' or 'cargo'"
+            )),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct RunnerArgs {
     pub elf_path:           String,
@@ -66,6 +88,7 @@ pub struct RunnerArgs {
     pub profile:            bool,
     pub instructions:       bool,
     pub mode:               Option<String>,
+    pub format:             OutputFormat,
     pub test_threads:       usize,
     pub prover:             Option<String>,
     pub save_baseline:      Option<String>,
@@ -74,6 +97,7 @@ pub struct RunnerArgs {
     pub accept_snapshots:   bool,
     pub filter_expr:        Option<String>,
     pub junit_path:         Option<String>,
+    pub fixtures:           Option<PathBuf>,
     pub package_id:         Option<String>,
     pub target_name:        Option<String>,
     pub target_kind:        Option<String>,
@@ -112,6 +136,11 @@ where
         })
     };
 
+    let format = match options.format.as_deref() {
+        Some(s) => s.parse::<OutputFormat>()?,
+        None => OutputFormat::Nextest,
+    };
+
     Ok(RunnerArgs {
         filters: options.filters,
         list: options.list,
@@ -123,6 +152,7 @@ where
         profile: options.profile,
         instructions: options.instructions,
         mode: options.mode,
+        format,
         test_threads,
         prover: options.prover,
         save_baseline: options.save_baseline,
@@ -131,6 +161,7 @@ where
         accept_snapshots: options.accept_snapshots,
         filter_expr: options.filter_expr,
         junit_path: options.junit_path.map(|path| path.display().to_string()),
+        fixtures: options.fixtures,
         package_id: options.package_id,
         target_name: options.target_name,
         target_kind: options.target_kind,
@@ -323,10 +354,12 @@ fn resolve_resource_path(path_str: &str, roots: &[PathBuf]) -> Option<PathBuf> {
     roots.iter().map(|root| root.join(p)).find(|candidate| candidate.exists())
 }
 
-fn resolve_and_read_fixture(path_str: &str, roots: &[PathBuf]) -> Result<Vec<u8>, String> {
-    let resolved = resolve_resource_path(path_str, roots)
-        .ok_or_else(|| format!("fixture file '{path_str}' not found on host filesystem"))?;
-    std::fs::read(&resolved).map_err(|e| format!("cannot read {}: {e}", resolved.display()))
+fn resolve_and_read_fixture(
+    path_str: &str,
+    package_root: Option<&Path>,
+    fixtures_override: Option<&Path>,
+) -> Result<Vec<u8>, String> {
+    zkvm_test::fixture::read(path_str, package_root, fixtures_override)
 }
 
 /// Unlike a fixture, a snapshot may legitimately not exist yet, so an unresolvable
@@ -771,31 +804,6 @@ impl AnyProver {
     }
 }
 
-pub fn format_commas(n: u64) -> String {
-    let s = n.to_string();
-    let mut result = String::with_capacity(s.len() + s.len() / 3);
-    let offset = s.len() % 3;
-    for (i, c) in s.chars().enumerate() {
-        if i > 0 && i % 3 == offset {
-            result.push(',');
-        }
-        result.push(c);
-    }
-    result
-}
-
-pub fn format_bytes(bytes: u64) -> String {
-    if bytes < 1024 {
-        format!("{bytes} B")
-    } else if bytes < 1024 * 1024 {
-        format!("{:.1} KB", bytes as f64 / 1024.0)
-    } else if bytes < 1024 * 1024 * 1024 {
-        format!("{:.2} MB", bytes as f64 / (1024.0 * 1024.0))
-    } else {
-        format!("{:.2} GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
-    }
-}
-
 fn tree_branch(index: usize, len: usize) -> &'static str {
     if index + 1 >= len { "└── " } else { "├── " }
 }
@@ -811,59 +819,108 @@ fn print_profile_breakdown(
     cycle_tracker: &std::collections::BTreeMap<String, u64>,
     invocations: &std::collections::BTreeMap<String, u64>,
     total_cycles: u64,
+    palette: &Palette,
+    has_subsequent: bool,
 ) {
     if cycle_tracker.is_empty() {
         return;
     }
-    println!("    Sub-Routine Cycles:");
+    println!("        {}{}", palette.dim("┌─ "), palette.bold("Sub-Routine Cycles:"));
     let mut entries: Vec<_> = cycle_tracker.iter().collect();
     entries.sort_by(|a, b| b.1.cmp(a.1));
+    let max_label_len = entries
+        .iter()
+        .map(|(label, _)| label.len())
+        .max()
+        .unwrap_or(20)
+        .clamp(20, 48);
+
+    let pipe = if has_subsequent { "│  " } else { "   " };
     for (i, (label, count)) in entries.iter().enumerate() {
+        let branch = tree_branch(i, entries.len());
         let calls = match invocations.get(*label) {
-            Some(1) => " [1 call]".to_string(),
-            Some(n) => format!(" [{n} calls]"),
+            Some(1) => palette.dim("[1 call]"),
+            Some(n) => palette.dim(&format!("[{n} calls]")),
             None => String::new(),
         };
+        let count_str = palette.cyan(&format!("{:>11}", format_commas(**count)));
+        let pct = percent_of(**count, total_cycles);
+        let pct_str = palette.dim_cyan(&format!("({:>5.1}%)", pct));
+        let cyc_unit = palette.dim("cyc");
         println!(
-            "        {}{label}: {} cycles ({:.1}%){calls}",
-            tree_branch(i, entries.len()),
-            format_commas(**count),
-            percent_of(**count, total_cycles)
+            "        {}{}{:<width$}  {count_str} {cyc_unit}  {pct_str}  {calls}",
+            palette.dim(pipe),
+            palette.dim(branch),
+            label,
+            width = max_label_len
         );
+    }
+    if has_subsequent {
+        println!("        {}", palette.dim("│"));
     }
 }
 
-fn print_instruction_breakdown(b: &InstructionBreakdown, total_cycles: u64) {
-    println!("    Instruction Categories:");
+fn print_instruction_breakdown(
+    b: &InstructionBreakdown,
+    total_cycles: u64,
+    palette: &Palette,
+    has_previous: bool,
+    has_subsequent: bool,
+) {
+    let prefix = if has_previous && has_subsequent {
+        "├─ "
+    } else if has_previous {
+        "└─ "
+    } else {
+        "┌─ "
+    };
+    println!("        {}{}", palette.dim(prefix), palette.bold("Instruction Categories:"));
     let categories = [
-        ("ALU (arithmetic/logic)", b.alu),
         ("Memory (load/store)", b.memory),
+        ("ALU (arithmetic/logic)", b.alu),
         ("Control (branch/jump)", b.control_flow),
         ("Math (mul/div/rem)", b.mul_div),
         ("System (ecall/trap)", b.system),
     ];
     let non_zero: Vec<_> = categories.into_iter().filter(|(_, count)| *count > 0).collect();
+    let pipe = if has_subsequent { "│  " } else { "   " };
     for (i, (name, count)) in non_zero.iter().enumerate() {
+        let branch = tree_branch(i, non_zero.len());
+        let count_str = palette.cyan(&format!("{:>10}", format_commas(*count)));
+        let pct = percent_of(*count, total_cycles);
+        let pct_str = palette.dim_cyan(&format!("({:>5.1}%)", pct));
+        let inst_unit = palette.dim("inst");
         println!(
-            "        {}{name:24} : {:>10} instructions ({:>5.1}%)",
-            tree_branch(i, non_zero.len()),
-            format_commas(*count),
-            percent_of(*count, total_cycles)
+            "        {}{}{:24}  {count_str} {inst_unit}  {pct_str}",
+            palette.dim(pipe),
+            palette.dim(branch),
+            name
         );
+    }
+    if has_subsequent {
+        println!("        {}", palette.dim("│"));
     }
 }
 
-fn print_top_syscalls(syscalls: &[(String, u64)]) {
+fn print_top_syscalls(
+    syscalls: &[(String, u64)],
+    palette: &Palette,
+    has_previous: bool,
+) {
     let top = &syscalls[..syscalls.len().min(TOP_SYSCALL_COUNT)];
     if top.is_empty() {
         return;
     }
-    println!("    Syscalls & Precompiles:");
+    let prefix = if has_previous { "└─ " } else { "┌─ " };
+    println!("        {}{}", palette.dim(prefix), palette.bold("Syscalls & Precompiles:"));
     for (i, (name, count)) in top.iter().enumerate() {
+        let branch = tree_branch(i, top.len());
+        let count_str = palette.cyan(&format!("{:>10}", format_commas(*count)));
+        let calls_unit = palette.dim("invocations");
         println!(
-            "        {}{name:24} : {:>10} invocations",
-            tree_branch(i, top.len()),
-            format_commas(*count)
+            "           {}{:24}  {count_str} {calls_unit}",
+            palette.dim(branch),
+            name
         );
     }
 }
@@ -872,56 +929,122 @@ fn print_test_status(
     test: &TestDesc,
     output: &ExecOutput,
     failure: Option<&str>,
+    duration: std::time::Duration,
     proof: Option<(ProofMode, std::time::Duration)>,
     profile: bool,
     instructions: bool,
+    format: OutputFormat,
+    palette: &Palette,
 ) {
-    if failure.is_some() {
-        println!("test {} ... FAILED", test.name);
-        return;
-    }
-
-    let mut metadata = Vec::new();
-    match (test.expected_exit_code, test.should_panic) {
-        (Some(code), _) => metadata.push(format!("exit code: {code}")),
-        (None, true) => metadata.push("should panic".to_string()),
-        (None, false) => {},
-    }
-    if let Some(max_cycles) = test.max_cycles {
-        metadata.push(format!("budget: {}", format_commas(max_cycles)));
-    }
-    metadata.push(format!("{} cycles", format_commas(output.cycles)));
-    if let Some(gas) = output.gas {
-        metadata.push(format!("{} gas", format_commas(gas)));
-    }
-    if output.record_bytes > 0 {
-        metadata.push(format!("trace: {}", format_bytes(output.record_bytes)));
-    }
-    if let Some((mode, duration)) = proof {
-        metadata.push(format!("{mode:?} proof: {:.2}s", duration.as_secs_f64()));
-    }
-    println!("test {} ... ok ({})", test.name, metadata.join(", "));
-
-    if profile {
-        print_profile_breakdown(&output.cycle_tracker, &output.invocations, output.cycles);
-    }
-    if profile || instructions {
-        if let Some(breakdown) = &output.breakdown {
-            print_instruction_breakdown(breakdown, output.cycles);
+    if format == OutputFormat::Cargo {
+        if failure.is_some() {
+            println!("test {} ... FAILED", test.name);
+            return;
         }
-        print_top_syscalls(&output.top_syscalls);
+
+        let mut metadata = Vec::new();
+        match (test.expected_exit_code, test.should_panic) {
+            (Some(code), _) => metadata.push(format!("exit code: {code}")),
+            (None, true) => metadata.push("should panic".to_string()),
+            (None, false) => {},
+        }
+        if let Some(max_cycles) = test.max_cycles {
+            metadata.push(format!("budget: {}", format_commas(max_cycles)));
+        }
+        metadata.push(format!("{} cycles", format_commas(output.cycles)));
+        if let Some(gas) = output.gas {
+            metadata.push(format!("{} gas", format_commas(gas)));
+        }
+        if output.record_bytes > 0 {
+            metadata.push(format!("trace: {}", format_bytes(output.record_bytes)));
+        }
+        if let Some((mode, dur)) = proof {
+            metadata.push(format!("{mode:?} proof: {:.2}s", dur.as_secs_f64()));
+        }
+        println!("test {} ... ok ({})", test.name, metadata.join(", "));
+    } else {
+        if failure.is_some() {
+            let status = palette.status_fail();
+            let pill = palette.metric_pill(
+                output.cycles,
+                output.gas,
+                output.record_bytes,
+                duration.as_secs_f64(),
+            );
+            println!("{status}{pill} {}", test.name);
+            if let Some(err) = failure {
+                println!("             {}", palette.red(err));
+            }
+            return;
+        }
+
+        let status = palette.status_pass();
+        let pill = palette.metric_pill(
+            output.cycles,
+            output.gas,
+            output.record_bytes,
+            duration.as_secs_f64(),
+        );
+
+        let mut extra = Vec::new();
+        if let Some(code) = test.expected_exit_code {
+            extra.push(palette.dim(&format!("[exit: {code}]")));
+        } else if test.should_panic {
+            extra.push(palette.dim("[should panic]"));
+        }
+        if let Some(max_cycles) = test.max_cycles {
+            extra.push(palette.budget_badge(output.cycles, max_cycles));
+        }
+        if let Some((mode, dur)) = proof {
+            extra.push(palette.cyan(&format!("[{mode:?} proof: {:.2}s]", dur.as_secs_f64())));
+        }
+        let extra_str = if extra.is_empty() {
+            String::new()
+        } else {
+            format!(" {}", extra.join(" "))
+        };
+        println!("{status}{pill} {}{extra_str}", test.name);
+    }
+
+    let has_profile = profile && !output.cycle_tracker.is_empty();
+    let has_instructions = (profile || instructions) && output.breakdown.is_some();
+    let has_syscalls = (profile || instructions) && !output.top_syscalls.is_empty();
+
+    if has_profile {
+        print_profile_breakdown(
+            &output.cycle_tracker,
+            &output.invocations,
+            output.cycles,
+            palette,
+            has_instructions || has_syscalls,
+        );
+    }
+    if has_instructions {
+        if let Some(breakdown) = &output.breakdown {
+            print_instruction_breakdown(
+                breakdown,
+                output.cycles,
+                palette,
+                has_profile,
+                has_syscalls,
+            );
+        }
+    }
+    if has_syscalls {
+        print_top_syscalls(&output.top_syscalls, palette, has_profile || has_instructions);
     }
 }
 
-fn print_failures(failures: &[&TestOutcome]) {
+fn print_failures(failures: &[&TestOutcome], palette: &Palette) {
     if failures.is_empty() {
         return;
     }
-    println!("\nfailures:\n");
+    println!("\n{}", palette.divider());
+    println!(" {}", palette.bold_red("failures:"));
     for f in failures {
-        println!("---- {} ----", f.desc.name);
+        println!("\n---- {} ----", palette.bold(&f.desc.name));
         if let Some(reason) = &f.failure_reason {
-            println!("{reason}");
+            println!("{}", palette.red(reason));
         }
         if !f.stdout.is_empty() {
             println!("\n---- {} stdout ----", f.desc.name);
@@ -940,7 +1063,7 @@ fn print_failures(failures: &[&TestOutcome]) {
     }
     println!("\nfailures:");
     for f in failures {
-        println!("    {}", f.desc.name);
+        println!("    {}", palette.red(&f.desc.name));
     }
 }
 
@@ -949,6 +1072,7 @@ fn compare_against_baseline(
     outcomes: &[TestOutcome],
     threshold: Option<f64>,
     is_explicit: bool,
+    palette: &Palette,
 ) -> bool {
     let path = format!("{METRICS_DIR}/{baseline_name}.json");
     let Ok(content) = std::fs::read_to_string(&path) else {
@@ -972,9 +1096,10 @@ fn compare_against_baseline(
         return false;
     }
 
-    println!("\nBaseline comparison against '{baseline_name}':");
-    println!("{:<60} {:>14} {:>14} {:>14}", "Test Name", "Baseline", "Current", "Change");
-    println!("{}", "-".repeat(106));
+    println!("\n{}", palette.divider());
+    println!(" {}", palette.bold(&format!("Baseline comparison against '{baseline_name}':")));
+    println!("  {:<60} {:>14} {:>14} {:>14}", "Test Name", "Baseline", "Current", "Change");
+    println!("  {}", palette.wide_divider(106));
 
     let mut regression_detected = false;
     for o in outcomes {
@@ -991,13 +1116,20 @@ fn compare_against_baseline(
         let is_regression = threshold.is_some_and(|t| pct > t);
         let flag = if is_regression {
             regression_detected = true;
-            " [REGRESSION]"
+            format!(" {}", palette.bold_red("[REGRESSION]"))
         } else {
-            ""
+            String::new()
         };
-        let change_str = format!("{sign}{pct:.1}%");
+        let change_text = format!("{sign}{pct:.1}%");
+        let change_str = if is_regression {
+            palette.bold_red(&change_text)
+        } else if diff < 0 {
+            palette.green(&change_text)
+        } else {
+            palette.dim(&change_text)
+        };
         println!(
-            "{:<60} {:>14} {:>14} {:>14}{}",
+            "  {:<60} {:>14} {:>14} {:>14}{}",
             o.desc.name,
             format_commas(base_metric.cycles),
             format_commas(o.cycles),
@@ -1005,7 +1137,7 @@ fn compare_against_baseline(
             flag
         );
     }
-    println!("{}", "-".repeat(106));
+    println!("  {}", palette.wide_divider(106));
     regression_detected
 }
 
@@ -1137,6 +1269,7 @@ pub async fn run(args: RunnerArgs) -> i32 {
         .unwrap_or("");
 
     let pkg_name = args.target_name.clone().unwrap_or_else(|| raw_elf_name.to_string());
+    let palette = Palette::from_env();
 
     let package_root = args
         .package_graph
@@ -1232,9 +1365,6 @@ pub async fn run(args: RunnerArgs) -> i32 {
         }
 
         if test.ignore && !args.ignored && !args.include_ignored {
-            if !args.quiet {
-                println!("test {} ... ignored", test.name);
-            }
             ignored_tests.push(test);
             continue;
         }
@@ -1269,10 +1399,42 @@ pub async fn run(args: RunnerArgs) -> i32 {
         } else {
             format!("prover: {prover_choice}, threads: {}", args.test_threads)
         };
-        println!(
-            "\nrunning {total_count} test{} ({banner_details})",
-            if total_count == 1 { "" } else { "s" },
-        );
+
+        if args.format == OutputFormat::Cargo {
+            println!(
+                "\nrunning {total_count} test{} ({banner_details})",
+                if total_count == 1 { "" } else { "s" },
+            );
+            for test in &ignored_tests {
+                println!("test {} ... ignored", test.name);
+            }
+        } else {
+            println!("{}", palette.divider());
+            let target_str = args.target_name.as_deref().unwrap_or(&pkg_name);
+            let filtered_str = if filtered_out > 0 {
+                format!(", {filtered_out} filtered out")
+            } else {
+                String::new()
+            };
+            let run_word = if total_count == 1 { "test" } else { "tests" };
+            println!(
+                "    {} {} {run_word} across 1 binary ({})",
+                palette.bold("Starting"),
+                total_count,
+                palette.cyan(target_str),
+            );
+            println!(
+                "      {} ({banner_details}{filtered_str})",
+                palette.dim("Target config:"),
+            );
+            for test in &ignored_tests {
+                println!(
+                    "{}[                 - │                 - │         - │  0.00s ] {}",
+                    palette.status_skip(),
+                    test.name
+                );
+            }
+        }
     }
 
     let pk = if proof_mode != ProofMode::None && !tests_to_run.is_empty() {
@@ -1302,6 +1464,8 @@ pub async fn run(args: RunnerArgs) -> i32 {
 
     let peak_rss_kb = Arc::new(std::sync::atomic::AtomicU64::new(memuse::rss_kb().unwrap_or(0)));
     let resource_roots = Arc::new(resource_roots(Some(Path::new(&args.elf_path)), package_root.as_deref()));
+    let fixtures_override = Arc::new(args.fixtures.clone());
+    let pkg_root = Arc::new(package_root.clone());
 
     for test in tests_to_run {
         let sem = semaphore.clone();
@@ -1309,12 +1473,16 @@ pub async fn run(args: RunnerArgs) -> i32 {
         let pk = pk.clone();
         let elf = elf.clone();
         let roots = resource_roots.clone();
+        let fixtures_dir = fixtures_override.clone();
+        let pkg_root = pkg_root.clone();
         let quiet = args.quiet;
         let profile = args.profile;
         let instructions = args.instructions;
         let nocapture = args.nocapture;
         let accept_snapshots = args.accept_snapshots;
         let peak_rss = peak_rss_kb.clone();
+        let format = args.format;
+        let palette = palette;
 
         let handle = tokio::spawn(async move {
             let _permit = sem.acquire().await.unwrap();
@@ -1329,7 +1497,11 @@ pub async fn run(args: RunnerArgs) -> i32 {
 
             let mut fixture_bytes = None;
             if let Some(ref fix_path) = test.fixture {
-                match resolve_and_read_fixture(fix_path, &roots) {
+                match resolve_and_read_fixture(
+                    fix_path,
+                    pkg_root.as_ref().as_deref(),
+                    fixtures_dir.as_ref().as_deref(),
+                ) {
                     Ok(bytes) => {
                         run_stdin.write_slice(&bytes);
                         fixture_bytes = Some(bytes);
@@ -1386,14 +1558,18 @@ pub async fn run(args: RunnerArgs) -> i32 {
                 }
             }
 
+            let duration = test_start.elapsed();
             if !quiet {
                 print_test_status(
                     &test,
                     &out,
                     failure.as_deref(),
+                    duration,
                     proof_duration.map(|duration| (proof_mode, duration)),
                     profile,
                     instructions,
+                    format,
+                    &palette,
                 );
                 if nocapture {
                     if !stdout.is_empty() {
@@ -1453,7 +1629,7 @@ pub async fn run(args: RunnerArgs) -> i32 {
         }
     }
 
-    print_failures(&failures);
+    print_failures(&failures, &palette);
 
     let mut regression_failed = false;
     let default_baseline_path = format!("{METRICS_DIR}/{DEFAULT_BASELINE_NAME}.json");
@@ -1466,7 +1642,7 @@ pub async fn run(args: RunnerArgs) -> i32 {
     };
 
     if let Some(name) = baseline_name {
-        regression_failed = compare_against_baseline(name, &outcomes, args.fail_on_regression, is_explicit);
+        regression_failed = compare_against_baseline(name, &outcomes, args.fail_on_regression, is_explicit, &palette);
     }
 
     if let Some(save_name) = &args.save_baseline {
@@ -1477,34 +1653,92 @@ pub async fn run(args: RunnerArgs) -> i32 {
         println!("\nerror: performance regression detected exceeding configured threshold!");
     }
 
-    let peak_mb = peak_rss_kb.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1024.0;
-    let peak_str = if peak_mb >= 1024.0 {
-        format!(", peak host rss: {:.2} GB", peak_mb / 1024.0)
-    } else if peak_mb > 0.0 {
-        format!(", peak host rss: {:.1} MB", peak_mb)
-    } else {
-        String::new()
-    };
+    let success = failed_count == 0 && !regression_failed;
+    let peak_kb = peak_rss_kb.load(std::sync::atomic::Ordering::Relaxed);
+    if args.format == OutputFormat::Cargo {
+        let peak_mb = peak_kb as f64 / 1024.0;
+        let peak_str = if peak_mb >= 1024.0 {
+            format!(", peak host rss: {:.2} GB", peak_mb / 1024.0)
+        } else if peak_mb > 0.0 {
+            format!(", peak host rss: {:.1} MB", peak_mb)
+        } else {
+            String::new()
+        };
 
-    let gas_str = if has_gas {
-        format!(", total gas: {}", format_commas(total_gas))
-    } else {
-        String::new()
-    };
+        let gas_str = if has_gas {
+            format!(", total gas: {}", format_commas(total_gas))
+        } else {
+            String::new()
+        };
 
-    let status_str = if failed_count == 0 && !regression_failed {
-        "ok"
+        let status_str = if success {
+            "ok"
+        } else {
+            "FAILED"
+        };
+        println!(
+            "\ntest result: {status_str}. {passed_count} passed; {failed_count} failed; {ignored_count} ignored; \
+             0 measured; {filtered_out} filtered out; finished in {:.2}s (total cycles: {}{}{})\n",
+            elapsed.as_secs_f64(),
+            format_commas(total_cycles),
+            gas_str,
+            peak_str
+        );
     } else {
-        "FAILED"
-    };
-    println!(
-        "\ntest result: {status_str}. {passed_count} passed; {failed_count} failed; {ignored_count} ignored; \
-         0 measured; {filtered_out} filtered out; finished in {:.2}s (total cycles: {}{}{})\n",
-        elapsed.as_secs_f64(),
-        format_commas(total_cycles),
-        gas_str,
-        peak_str
-    );
+        println!("{}", palette.divider());
+        let prefix = palette.summary_prefix(success);
+        let time_str = palette.dim(&format!("[{:>6.2}s]", elapsed.as_secs_f64()));
+        let passed_str = if passed_count > 0 {
+            palette.bold_green(&format!("{passed_count} passed"))
+        } else {
+            "0 passed".to_string()
+        };
+        let failed_str = if failed_count > 0 {
+            palette.bold_red(&format!("{failed_count} failed"))
+        } else {
+            "0 failed".to_string()
+        };
+        let skipped_str = if ignored_count > 0 {
+            palette.bold_yellow(&format!("{ignored_count} ignored"))
+        } else {
+            "0 ignored".to_string()
+        };
+        let filtered_str = if filtered_out > 0 {
+            format!(", {filtered_out} filtered out")
+        } else {
+            String::new()
+        };
+
+        let run_word = if total_count == 1 { "test" } else { "tests" };
+        println!(
+            "{prefix}{time_str} {total_count} {run_word} run: {passed_str}, {failed_str}, {skipped_str}{filtered_str}"
+        );
+
+        let sep = palette.dim("│");
+        let cyc_part = format!("Total: {} cycles", palette.cyan(&format_commas(total_cycles)));
+        let gas_part = if has_gas {
+            format!(" {sep} {} gas", palette.cyan(&format_commas(total_gas)))
+        } else {
+            String::new()
+        };
+        let peak_part = if peak_kb > 0 {
+            format!(" {sep} peak rss: {}", palette.magenta(&format_bytes(peak_kb * 1024)))
+        } else {
+            String::new()
+        };
+        println!("             {cyc_part}{gas_part}{peak_part}");
+
+        // Also print standard libtest line for CI toolchains / test parsers
+        let status_str = if success {
+            palette.bold_green("ok")
+        } else {
+            palette.bold_red("FAILED")
+        };
+        println!(
+            "test result: {status_str}. {passed_count} passed; {failed_count} failed; {ignored_count} ignored; 0 measured; {filtered_out} filtered out; finished in {:.2}s\n",
+            elapsed.as_secs_f64()
+        );
+    }
 
     if let Some(ref junit_path) = args.junit_path {
         let suite_name = if !pkg_name.is_empty() {
@@ -1882,8 +2116,8 @@ mod tests {
 
     #[test]
     fn test_print_top_syscalls_handles_empty() {
-        print_top_syscalls(&[]);
-        print_top_syscalls(&[("HALT".to_string(), 1)]);
+        print_top_syscalls(&[], &Palette::no_color(), false);
+        print_top_syscalls(&[("HALT".to_string(), 1)], &Palette::no_color(), false);
     }
 
     #[test]

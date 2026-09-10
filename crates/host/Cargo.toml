@@ -9,12 +9,8 @@ name = "zkpow-host"
 path = "src/main.rs"
 
 [[bin]]
-name = "sp1_stress"
-path = "src/bin/sp1_stress.rs"
-
-[[bin]]
-name = "host_hash_vectors"
-path = "src/bin/host_hash_vectors.rs"
+name = "sp1-stress"
+path = "src/bin/sp1-stress.rs"
 
 [lib]
 path = "src/lib.rs"

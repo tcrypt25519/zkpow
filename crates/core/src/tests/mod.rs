@@ -1,11 +1,13 @@
 use alloc::{vec, vec::Vec};
-
+use sp1_cycle::run_track;
 
 
 use zkvm_test::zkvm_test;
 
+#[cfg(not(target_os = "zkvm"))]
 extern crate std;
 
+mod errors;
 mod halt;
 mod input;
 mod public_values;
@@ -94,46 +96,52 @@ fn dense_median_hints_for_headers(initial_state: &State, headers: &[HeaderInput]
 
 fn median_hints_for_headers(initial_state: &State, headers: &[HeaderInput]) -> Vec<BlockTimestamp> {
     let dense_hints = dense_median_hints_for_headers(initial_state, headers);
-    let mut state = *initial_state;
+    let state = *initial_state;
     let warm_start = if state.height == 0 {
         (WINDOW_SIZE - 1).min(headers.len())
     } else {
         0
     };
-    for header in &headers[..warm_start] {
-        state.height += 1;
-        state.timestamps[state.height as usize % WINDOW_SIZE] = header.timestamp;
-    }
+    let mut needed = Vec::with_capacity(headers.len());
+    let mut ordered_run = ordered_timestamp_run(&state.timestamps, state.height);
+    let mut previous_timestamp = if state.height == 0 {
+        None
+    } else {
+        Some(state.timestamps[timestamp_slot(state.height)].into_inner())
+    };
 
-    let mut hints = Vec::new();
-    if warm_start == headers.len() {
-        return hints;
-    }
-
-    let mut ordered_run_len = ordered_timestamp_run(&state.timestamps, state.height.into());
-    for index in warm_start..headers.len() {
-        if !has_ordered_timestamp_window(ordered_run_len) {
-            hints.push(dense_hints[index]);
+    for (index, header) in headers.iter().enumerate() {
+        if index < warm_start {
+            ordered_run = advance_ordered_timestamp_run(
+                ordered_run,
+                previous_timestamp.unwrap_or(header.timestamp.into_inner()),
+                header.timestamp.into_inner(),
+            );
+            previous_timestamp = Some(header.timestamp.into_inner());
+            continue;
         }
-        let previous_timestamp = state.timestamps[state.height as usize % WINDOW_SIZE];
-        state.height += 1;
-        state.timestamps[state.height as usize % WINDOW_SIZE] = headers[index].timestamp;
-        ordered_run_len = advance_ordered_timestamp_run(
-            ordered_run_len,
-            previous_timestamp.into_inner(),
-            headers[index].timestamp.into_inner(),
+
+        if !has_ordered_timestamp_window(ordered_run) {
+            needed.push(dense_hints[index]);
+        }
+
+        ordered_run = advance_ordered_timestamp_run(
+            ordered_run,
+            previous_timestamp.unwrap_or(header.timestamp.into_inner()),
+            header.timestamp.into_inner(),
         );
+        previous_timestamp = Some(header.timestamp.into_inner());
     }
-    hints
+
+    needed
 }
 
 fn failure_public_value_bytes(state: &State, error_code: ErrorCode) -> [u8; PublicValues::SIZE] {
-    PublicValues::new(
-        *state,
-        VerifierKeyDigest::from_raw([0xA5A5_A5A5; 8]),
-        ReturnCode::from(error_code),
-    )
-    .to_bytes()
+    let mut bytes = [0u8; PublicValues::SIZE];
+    bytes[0..State::SIZE].copy_from_slice(bytemuck::bytes_of(state));
+    bytes[State::SIZE..State::SIZE + 32].copy_from_slice(bytemuck::bytes_of(&VerifierKeyDigest::default()));
+    bytes[PublicValues::SIZE - 1] = ReturnCode::from(error_code).into_u8();
+    bytes
 }
 
 fn expected_upper_median(height: u32) -> BlockTimestamp {
@@ -144,7 +152,7 @@ fn expected_upper_median(height: u32) -> BlockTimestamp {
     }
 }
 
-#[zkvm_test]
+#[zkvm_test(max_cycles = 100_000)]
 fn fixed_width_wire_sizes_match_protocol() {
     assert_eq!(HeaderInput::SIZE, 44);
     assert_eq!(State::SIZE, 152);
@@ -156,7 +164,7 @@ fn fixed_width_wire_sizes_match_protocol() {
     assert_eq!(align_of::<State>(), 8);
 }
 
-#[zkvm_test]
+#[zkvm_test(max_cycles = 150_000)]
 fn public_values_round_trips() {
     let state: State = State {
         block_hash: BlockHash::new([0xAB; 32]),
@@ -240,19 +248,19 @@ fn block_work_mul_u32_scales_by_small_count() {
     assert_eq!(result, ChainWork::from_limbs([21, 0, 0, 0]));
 }
 
-#[zkvm_test]
+#[zkvm_test(max_cycles = 150_000)]
 fn check_proof_of_work_accepts_exact_target_boundary() {
     let hash = BlockHash::new(GENESIS_TARGET.to_le_bytes());
     assert!(check_proof_of_work(hash, &GENESIS_TARGET));
 }
 
-#[zkvm_test]
+#[zkvm_test(max_cycles = 150_000)]
 fn target_to_bits_round_trips_genesis_target() {
     let round_trip = target_to_bits(GENESIS_TARGET);
     assert_eq!(round_trip, CompactTarget::new(GENESIS_NBITS));
 }
 
-#[zkvm_test]
+#[zkvm_test(max_cycles = 150_000)]
 fn target_from_bits_expands_genesis_bits() {
     let expanded = target_from_bits(CompactTarget::new(GENESIS_NBITS));
     assert_eq!(expanded, GENESIS_TARGET);
@@ -288,7 +296,7 @@ fn scoped_hash_mock_rejects_nested_override() {
     assert_eq!(hash_sample_header(), real_hash);
 }
 
-#[zkvm_test]
+#[zkvm_test(max_cycles = 1_200_000)]
 fn apply_headers_flushes_deferred_chain_work_on_success() {
     let _hash_guard = set_hash_success();
     let mut state = test_state();
@@ -302,9 +310,11 @@ fn apply_headers_flushes_deferred_chain_work_on_success() {
         .collect();
 
     let hints = median_hints_for_headers(&state, &headers);
-    state
-        .apply_headers_from_genesis::<TestConsensus>(&headers, &hints)
-        .expect("headers should validate");
+    run_track("cold_start_10_headers", || {
+        state
+            .apply_headers_from_genesis::<TestConsensus>(&headers, &hints)
+            .expect("headers should validate");
+    });
 
     let block_work = block_work_from_target(GENESIS_TARGET);
     let mut new_chain_work = block_work * 10u32;
@@ -595,7 +605,7 @@ fn median_time_past_uses_upper_median_across_window_sizes() {
     }
 }
 
-#[zkvm_test]
+#[zkvm_test(max_cycles = 500_000)]
 fn next_overwrites_only_the_next_ring_slot() {
     let _hash_guard = set_hash_success();
     let original = [
@@ -625,7 +635,9 @@ fn next_overwrites_only_the_next_ring_slot() {
         nonce:       7,
     };
     let median_hints = median_hints_for_headers(&state, &[header]);
-    state.apply_headers::<TestConsensus>(&[header], &median_hints).unwrap();
+    run_track("ring_buffer_slot_advance", || {
+        state.apply_headers::<TestConsensus>(&[header], &median_hints).unwrap();
+    });
 
     let mut expected = original;
     expected[1] = ts(999);
@@ -1064,17 +1076,17 @@ fn parse_u32_str(s: &str) -> u32 {
 }
 
 #[allow(dead_code)]
-struct ParsedBlock {
-    expected_hash: BlockHash,
-    version:        u32,
-    prev_blockhash: BlockHash,
-    merkle_root:    [u8; 32],
-    timestamp:      u32,
-    compact_target: u32,
-    nonce:          u32,
+pub(crate) struct ParsedBlock {
+    pub(crate) expected_hash: BlockHash,
+    pub(crate) version:        u32,
+    pub(crate) prev_blockhash: BlockHash,
+    pub(crate) merkle_root:    [u8; 32],
+    pub(crate) timestamp:      u32,
+    pub(crate) compact_target: u32,
+    pub(crate) nonce:          u32,
 }
 
-fn parse_fixture_blocks(fixture_str: &str) -> Vec<ParsedBlock> {
+pub(crate) fn parse_fixture_blocks(fixture_str: &str) -> Vec<ParsedBlock> {
     let mut blocks = Vec::new();
     for line in fixture_str.lines() {
         let trimmed = line.trim();
@@ -1102,7 +1114,7 @@ fn parse_fixture_blocks(fixture_str: &str) -> Vec<ParsedBlock> {
     blocks
 }
 
-#[zkvm_test(fixture = "headers_fixture.bin")]
+#[zkvm_test(fixture = "headers_fixture.bin", max_cycles = 12_000_000)]
 fn test_real_bitcoin_header_chain_unmocked_verification() {
     let fixture_str = zkvm_test::fixture_str();
     let blocks = parse_fixture_blocks(&fixture_str);
@@ -1140,9 +1152,11 @@ fn test_real_bitcoin_header_chain_unmocked_verification() {
     let hints = median_hints_for_headers(&state, &header_inputs);
 
     // NOTICE: NO MOCK! This verifies real SHA-256 and real PoW across all 49 blocks!
-    state
-        .apply_headers_from_genesis::<TestConsensus>(&header_inputs, &hints)
-        .expect("all 49 real Bitcoin headers must validate without mocks");
+    run_track("unmocked_bitcoin_chain_49_headers", || {
+        state
+            .apply_headers_from_genesis::<TestConsensus>(&header_inputs, &hints)
+            .expect("all 49 real Bitcoin headers must validate without mocks");
+    });
 
     assert_eq!(state.height, 49);
     assert_eq!(state.block_hash, blocks[49].expected_hash);

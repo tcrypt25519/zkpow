@@ -4,7 +4,7 @@
 //! the memory ratchet is inside SP1's proving layer or in application code.
 //!
 //! Usage:
-//!   cargo run --release -p zkpow-host --bin sp1_stress
+//!   cargo run --release -p zkpow-host --bin sp1-stress
 //!
 //! Environment:
 //!   ITERATIONS           Number of prove loops (default: 5)

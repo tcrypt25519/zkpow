@@ -175,6 +175,112 @@ pub fn fixture_str() -> String {
     String::from_utf8(fixture()).expect("zkvm-test: fixture is not valid UTF-8")
 }
 
+/// Fixture resolution shared by the host test harness and `zkvm-test-runner`.
+#[cfg(not(target_os = "zkvm"))]
+pub mod fixture {
+    use alloc::{string::String, vec::Vec};
+    use std::path::{Path, PathBuf};
+
+    /// Resolve a declared fixture path using the shared search hierarchy:
+    ///
+    /// 1. Dynamic Override: If `fixtures_override` is provided (via CLI `--fixtures`),
+    ///    or the `ZKVM_FIXTURES` (or `ZKVM_FIXTURES_DIR`) environment variable is set:
+    ///    - checks `<override>/<path>`
+    ///    - checks `<override>/<file_name>`
+    /// 2. Direct Path: If `Path::new(path)` exists directly on the filesystem (absolute
+    ///    or relative to CWD), it is returned.
+    /// 3. Reverse Directory Walk: Starting at `start_dir` (or `CARGO_MANIFEST_DIR` / CWD),
+    ///    traversing upwards to the workspace root:
+    ///    - `dir.join(path)` (direct relative)
+    ///    - `dir.join("fixtures").join(file_name)` (crate-level or workspace-level `fixtures/`)
+    ///    - `dir.join("tests").join("fixtures").join(file_name)` (crate-level integration `tests/fixtures/`)
+    ///    Stops at the workspace root (does not search outside the workspace).
+    pub fn resolve(
+        path_str: &str,
+        start_dir: Option<&Path>,
+        fixtures_override: Option<&Path>,
+    ) -> Option<PathBuf> {
+        let p = Path::new(path_str);
+        let file_name = p.file_name().unwrap_or(p.as_os_str());
+
+        // 1. Dynamic override: explicit parameter or ZKVM_FIXTURES / ZKVM_FIXTURES_DIR env var
+        let env_override = std::env::var_os("ZKVM_FIXTURES")
+            .or_else(|| std::env::var_os("ZKVM_FIXTURES_DIR"))
+            .map(PathBuf::from);
+        let override_dir = fixtures_override.or(env_override.as_deref());
+
+        if let Some(dir) = override_dir {
+            let candidate = dir.join(p);
+            if candidate.exists() {
+                return Some(candidate);
+            }
+            let candidate_name = dir.join(file_name);
+            if candidate_name.exists() {
+                return Some(candidate_name);
+            }
+        }
+
+        // 2. Direct path check (absolute or CWD-relative)
+        if p.exists() {
+            return Some(p.to_path_buf());
+        }
+
+        // 3. Reverse directory walk starting from `start_dir` up to workspace root
+        let start = start_dir
+            .map(Path::to_path_buf)
+            .or_else(|| std::env::var_os("CARGO_MANIFEST_DIR").map(PathBuf::from))
+            .or_else(|| std::env::current_dir().ok())?;
+
+        for dir in std::iter::successors(Some(start.as_path()), |d| d.parent()) {
+            // Direct relative to ancestor
+            let candidate = dir.join(p);
+            if candidate.exists() {
+                return Some(candidate);
+            }
+
+            // Crate-level / workspace-level fixtures/ directory
+            let candidate = dir.join("fixtures").join(file_name);
+            if candidate.exists() {
+                return Some(candidate);
+            }
+
+            // Crate-level integration tests/fixtures/ directory
+            let candidate = dir.join("tests").join("fixtures").join(file_name);
+            if candidate.exists() {
+                return Some(candidate);
+            }
+
+            // Stop at workspace root (no looking above workspace root)
+            if is_workspace_root(dir) {
+                break;
+            }
+        }
+
+        None
+    }
+
+    /// Read the bytes of a declared fixture, returning a descriptive error if not found.
+    pub fn read(
+        path_str: &str,
+        start_dir: Option<&Path>,
+        fixtures_override: Option<&Path>,
+    ) -> Result<Vec<u8>, String> {
+        let resolved = resolve(path_str, start_dir, fixtures_override)
+            .ok_or_else(|| std::format!("fixture file '{path_str}' not found on host filesystem"))?;
+        std::fs::read(&resolved).map_err(|e| std::format!("cannot read {}: {e}", resolved.display()))
+    }
+
+    pub fn is_workspace_root(dir: &Path) -> bool {
+        let cargo_toml = dir.join("Cargo.toml");
+        if let Ok(content) = std::fs::read_to_string(&cargo_toml) {
+            if content.contains("[workspace]") {
+                return true;
+            }
+        }
+        dir.join(".git").exists()
+    }
+}
+
 /// Golden-file comparison shared by the host harness and `zkvm-test-runner`.
 #[cfg(not(target_os = "zkvm"))]
 pub mod snapshot {
@@ -341,25 +447,25 @@ pub mod __internal {
     }
 
     pub fn read_host_fixture(path: &str) -> Vec<u8> {
-        let resolved = resolve_host_path(path)
-            .unwrap_or_else(|| panic!("zkvm-test: could not find fixture file '{path}' on host"));
-        std::fs::read(&resolved)
-            .unwrap_or_else(|e| panic!("zkvm-test: failed to read fixture '{}': {e}", resolved.display()))
+        crate::fixture::read(path, None, None)
+            .unwrap_or_else(|e| panic!("zkvm-test: {e}"))
     }
 
     fn find_in_manifest_ancestors(path: &Path, manifest_dir: &Path) -> Option<PathBuf> {
-        std::iter::successors(Some(manifest_dir), |dir| dir.parent())
-            .map(|dir| dir.join(path))
-            .find(|candidate| candidate.exists())
+        for dir in std::iter::successors(Some(manifest_dir), |dir| dir.parent()) {
+            let candidate = dir.join(path);
+            if candidate.exists() {
+                return Some(candidate);
+            }
+            if crate::fixture::is_workspace_root(dir) {
+                break;
+            }
+        }
+        None
     }
 
     pub fn resolve_host_path(path: &str) -> Option<PathBuf> {
-        let p = Path::new(path);
-        if p.exists() {
-            return Some(p.to_path_buf());
-        }
-        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").ok()?;
-        find_in_manifest_ancestors(p, Path::new(&manifest_dir))
+        crate::fixture::resolve(path, None, None)
     }
 
     /// Like `resolve_host_path`, but yields the path a missing snapshot should be created at.
@@ -381,5 +487,54 @@ pub mod __internal {
         if let Err(err) = crate::snapshot::verify(&resolved, committed, accept) {
             panic!("zkvm-test: {err}");
         }
+    }
+}
+
+#[cfg(all(test, not(target_os = "zkvm")))]
+mod tests {
+    use super::fixture;
+    use std::fs;
+
+    #[test]
+    fn test_fixture_resolve_override() {
+        let temp = tempfile::tempdir().unwrap();
+        let override_dir = temp.path().join("custom_fixtures");
+        fs::create_dir_all(&override_dir).unwrap();
+        fs::write(override_dir.join("sample.bin"), b"custom").unwrap();
+
+        let resolved = fixture::resolve("sample.bin", None, Some(&override_dir)).unwrap();
+        assert_eq!(fs::read(resolved).unwrap(), b"custom");
+    }
+
+    #[test]
+    fn test_fixture_resolve_crate_and_workspace_hierarchy() {
+        let temp = tempfile::tempdir().unwrap();
+        let ws = temp.path();
+        // Mark as workspace root
+        fs::write(ws.join("Cargo.toml"), "[workspace]\nmembers = [\"crates/*\"]\n").unwrap();
+        fs::create_dir_all(ws.join("fixtures")).unwrap();
+        fs::write(ws.join("fixtures/workspace_fix.bin"), b"ws").unwrap();
+
+        let my_crate = ws.join("crates/my_crate");
+        fs::create_dir_all(my_crate.join("fixtures")).unwrap();
+        fs::create_dir_all(my_crate.join("tests/fixtures")).unwrap();
+        fs::write(my_crate.join("fixtures/crate_fix.bin"), b"crate").unwrap();
+        fs::write(my_crate.join("tests/fixtures/integration_fix.bin"), b"integration").unwrap();
+
+        // 1. Crate-level fixtures/
+        let r1 = fixture::resolve("crate_fix.bin", Some(&my_crate), None).unwrap();
+        assert_eq!(fs::read(r1).unwrap(), b"crate");
+
+        // 2. Integration tests/fixtures/
+        let r2 = fixture::resolve("integration_fix.bin", Some(&my_crate), None).unwrap();
+        assert_eq!(fs::read(r2).unwrap(), b"integration");
+
+        // 3. Workspace-level fixtures/
+        let r3 = fixture::resolve("workspace_fix.bin", Some(&my_crate), None).unwrap();
+        assert_eq!(fs::read(r3).unwrap(), b"ws");
+
+        // 4. Missing fixture should not escape above workspace root
+        let missing = fixture::resolve("nonexistent.bin", Some(&my_crate), None);
+        assert!(missing.is_none());
     }
 }

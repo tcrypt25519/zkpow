@@ -43,6 +43,7 @@ rust_dev_packages:
 
 cargo_intalled_packages:
   - eza
+  - sccache
 
 # Ubuntu ships these under different names to avoid clashes. Symlinked into
 # ~/.local/bin under the names everyone actually types.

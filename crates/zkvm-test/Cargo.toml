@@ -9,3 +9,7 @@ zkvm-test-macros = { path = "../zkvm-test-macros" }
 
 [target.'cfg(target_os = "zkvm")'.dependencies]
 sp1-zkvm = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
+

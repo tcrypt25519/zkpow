@@ -12,18 +12,13 @@ build-linux-release = "zigbuild --release --target x86_64-unknown-linux-gnu.2.35
 # The rustflags mirror sp1-build's get_rust_compiler_flags (sp1-build/src/command/utils.rs)
 # and must track it when sp1 is upgraded. 2013265920 = 0x78000000 = sp1 STACK_TOP.
 [target.riscv64im-succinct-zkvm-elf]
+runner = ["sh", "-c", 'exec "$bin" "$@"', "cargo-zkvm-test"]
 # runner = [
 #   "sh",
 #   "-c",
-#   'bin="$(git rev-parse --show-toplevel)/target/release/zkvm-test-runner"; [ -x "$bin" ] || { echo "zkvm-test-runner is not built; run: cargo build --release -p zkvm-test-runner" >&2; exit 2; }; exec "$bin" "$@"',
-#   "zkvm-test-runner",
+#   'bin="/Users/tcrypt/.sp1/bin/cargo-prover"; [ -x "$bin" ] || { echo "cargo-prover is not built; run: cargo build --release -p cargo-prover" >&2; exit 2; }; exec "$bin" "$@"',
+#   "cargo-prover",
 # ]
-runner = [
-  "sh",
-  "-c",
-  'bin="/Users/tcrypt/.sp1/bin/cargo-prover"; [ -x "$bin" ] || { echo "cargo-prover is not built; run: cargo build --release -p cargo-prover" >&2; exit 2; }; exec "$bin" "$@"',
-  "cargo-prover",
-]
 rustflags = [
   "-C",
   "passes=lower-atomic",

@@ -1,4 +1,5 @@
 use alloc::format;
+use zkvm_test::test;
 
 use super::*;
 
@@ -159,3 +160,162 @@ fn a_cold_start_reports_how_short_the_batch_was() {
         actual:   1,
     });
 }
+
+#[zkvm_test(fixture = "headers_fixture.bin", max_cycles = 8_000_000)]
+fn test_unmocked_timestamp_too_old_rejection_at_height_12() {
+    let fixture_str = zkvm_test::fixture_str();
+    let blocks = parse_fixture_blocks(&fixture_str);
+
+    let mut state = State {
+        chain_work:      ChainWork::from_limbs(*TestConsensus::PARAMS.genesis_work.as_limbs()),
+        genesis_hash:    TestConsensus::GENESIS_HASH,
+        block_hash:      TestConsensus::GENESIS_HASH,
+        height:          0,
+        current_nbits:   TestConsensus::PARAMS.genesis.compact_target,
+        epoch_timestamp: TestConsensus::PARAMS.genesis.timestamp,
+        timestamps:      {
+            let mut arr = [BlockTimestamp::new(0); WINDOW_SIZE];
+            arr[0] = TestConsensus::PARAMS.genesis.timestamp;
+            arr
+        },
+    };
+
+    // Take 13 headers (blocks 1..=13). Mutate the 12th header (index 11, block 12)
+    // to have timestamp equal to genesis timestamp (1231006505).
+    let mut header_inputs: Vec<HeaderInput> = blocks[1..=13]
+        .iter()
+        .map(|b| HeaderInput {
+            version:     b.version,
+            merkle_root: b.merkle_root,
+            timestamp:   BlockTimestamp::new(b.timestamp),
+            nonce:       b.nonce,
+        })
+        .collect();
+    header_inputs[11].timestamp = BlockTimestamp::new(1231006505);
+
+    let hints = median_hints_for_headers(&state, &header_inputs);
+
+    // Header 12's timestamp is now <= median time past of blocks 1..11, triggering TimestampTooOld at height 12
+    let err = state
+        .apply_headers_from_genesis::<TestConsensus>(&header_inputs, &hints)
+        .unwrap_err();
+
+    assert_eq!(err.error_code(), Some(ErrorCode::TIMESTAMP_TOO_OLD));
+    match err {
+        ApplyError::TimestampTooOld { height, timestamp, median } => {
+            assert_eq!(height, 12);
+            assert_eq!(timestamp, BlockTimestamp::new(1231006505));
+            assert!(timestamp <= median);
+        }
+        other => panic!("expected TimestampTooOld, got {:?}", other),
+    }
+
+    // Verify public values commit format on failure matches expected error code and height
+    let pv_bytes = failure_public_value_bytes(&state, ErrorCode::TIMESTAMP_TOO_OLD);
+    let parsed_pv = PublicValues::parse(&pv_bytes).expect("parse public values");
+    assert!(parsed_pv.is_failure());
+    assert_eq!(parsed_pv.validation_error_code(), Some(ErrorCode::TIMESTAMP_TOO_OLD));
+    assert_eq!(parsed_pv.state.height + 1, 12);
+}
+
+#[zkvm_test(fixture = "headers_fixture.bin", max_cycles = 7_500_000)]
+fn test_unmocked_pow_insufficient_rejection_at_height_1() {
+    let fixture_str = zkvm_test::fixture_str();
+    let blocks = parse_fixture_blocks(&fixture_str);
+
+    let mut state = State {
+        chain_work:      ChainWork::from_limbs(*TestConsensus::PARAMS.genesis_work.as_limbs()),
+        genesis_hash:    TestConsensus::GENESIS_HASH,
+        block_hash:      TestConsensus::GENESIS_HASH,
+        height:          0,
+        current_nbits:   TestConsensus::PARAMS.genesis.compact_target,
+        epoch_timestamp: TestConsensus::PARAMS.genesis.timestamp,
+        timestamps:      {
+            let mut arr = [BlockTimestamp::new(0); WINDOW_SIZE];
+            arr[0] = TestConsensus::PARAMS.genesis.timestamp;
+            arr
+        },
+    };
+
+    let mut header_inputs: Vec<HeaderInput> = blocks[1..=13]
+        .iter()
+        .map(|b| HeaderInput {
+            version:     b.version,
+            merkle_root: b.merkle_root,
+            timestamp:   BlockTimestamp::new(b.timestamp),
+            nonce:       b.nonce,
+        })
+        .collect();
+    header_inputs[0].nonce ^= 0xFF;
+
+    let hints = median_hints_for_headers(&state, &header_inputs);
+
+    let err = state
+        .apply_headers_from_genesis::<TestConsensus>(&header_inputs, &hints)
+        .unwrap_err();
+
+    assert_eq!(err.error_code(), Some(ErrorCode::POW_INSUFFICIENT));
+    match err {
+        ApplyError::PowInsufficient { height, .. } => {
+            assert_eq!(height, 1);
+        }
+        other => panic!("expected PowInsufficient, got {:?}", other),
+    }
+
+    let pv_bytes = failure_public_value_bytes(&state, ErrorCode::POW_INSUFFICIENT);
+    let parsed_pv = PublicValues::parse(&pv_bytes).expect("parse public values");
+    assert!(parsed_pv.is_failure());
+    assert_eq!(parsed_pv.validation_error_code(), Some(ErrorCode::POW_INSUFFICIENT));
+    assert_eq!(parsed_pv.state.height + 1, 1);
+}
+
+#[zkvm_test(fixture = "headers_fixture.bin", max_cycles = 8_000_000)]
+fn test_pv_public_values_format_and_committed_state_match() {
+    let fixture_str = zkvm_test::fixture_str();
+    let blocks = parse_fixture_blocks(&fixture_str);
+
+    let mut state = State {
+        chain_work:      ChainWork::from_limbs(*TestConsensus::PARAMS.genesis_work.as_limbs()),
+        genesis_hash:    TestConsensus::GENESIS_HASH,
+        block_hash:      TestConsensus::GENESIS_HASH,
+        height:          0,
+        current_nbits:   TestConsensus::PARAMS.genesis.compact_target,
+        epoch_timestamp: TestConsensus::PARAMS.genesis.timestamp,
+        timestamps:      {
+            let mut arr = [BlockTimestamp::new(0); WINDOW_SIZE];
+            arr[0] = TestConsensus::PARAMS.genesis.timestamp;
+            arr
+        },
+    };
+
+    let header_inputs: Vec<HeaderInput> = blocks[1..=10]
+        .iter()
+        .map(|b| HeaderInput {
+            version:     b.version,
+            merkle_root: b.merkle_root,
+            timestamp:   BlockTimestamp::new(b.timestamp),
+            nonce:       b.nonce,
+        })
+        .collect();
+
+    let hints = median_hints_for_headers(&state, &header_inputs);
+    state
+        .apply_headers_from_genesis::<TestConsensus>(&header_inputs, &hints)
+        .expect("10 valid headers must validate");
+
+    assert_eq!(state.height, 10);
+    assert_eq!(state.block_hash, blocks[10].expected_hash);
+
+    // Construct public values as guest does
+    let verifier_key = VerifierKeyDigest::default();
+    let pv = PublicValues::new(state, verifier_key, ReturnCode::SUCCESS);
+    let pv_bytes = pv.to_bytes();
+
+    assert_eq!(pv_bytes.len(), PublicValues::SIZE);
+    let parsed = PublicValues::parse(&pv_bytes).expect("PublicValues::parse");
+    assert!(parsed.is_success());
+    assert_eq!(parsed.state.height, 10);
+    assert_eq!(parsed.state, state);
+    assert_eq!(parsed.verifier_key, verifier_key);
+}
+

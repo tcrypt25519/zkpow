@@ -379,9 +379,17 @@ pub struct RunnerOpts {
     #[arg(long, value_name = "PROVER")]
     pub prover: Option<String>,
 
+    /// Override the directory to search for test fixtures [alias: --fixtures-dir]
+    #[arg(long = "fixtures", visible_alias = "fixtures-dir", value_name = "DIR")]
+    pub fixtures: Option<PathBuf>,
+
     /// Display one character per test instead of one line
     #[arg(short = 'q', long = "quiet")]
     pub quiet: bool,
+
+    /// Output format: nextest (default), cargo
+    #[arg(long, value_name = "FORMAT")]
+    pub format: Option<String>,
 
     /// Positional test name filter patterns
     #[arg(value_name = "FILTER")]

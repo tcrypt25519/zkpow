@@ -13,6 +13,8 @@ profiling/
 docs/plans/
 zkpow-host
 *.bin
+!fixtures/**
+!**/fixtures/**
 *.log
 
 # No mds in root except README
