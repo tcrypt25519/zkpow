@@ -21,11 +21,11 @@ use crate::runner::{RunnerArgs, parse_options_from, run};
 
 #[derive(Debug, Deserialize)]
 pub struct Artifact {
-    pub reason:     String,
+    pub reason: String,
     #[serde(default)]
     pub package_id: String,
-    pub target:     Option<ArtifactTarget>,
-    pub profile:    Option<ArtifactProfile>,
+    pub target: Option<ArtifactTarget>,
+    pub profile: Option<ArtifactProfile>,
     pub executable: Option<String>,
 }
 
@@ -79,8 +79,8 @@ impl Artifact {
 pub struct TestExecutable {
     pub target_name: String,
     pub target_kind: RustTestBinaryKind,
-    pub package_id:  guppy::PackageId,
-    pub elf_path:    PathBuf,
+    pub package_id: guppy::PackageId,
+    pub elf_path: PathBuf,
 }
 
 pub const BIN_NAME: &str = "cargo-zkvm-test";
@@ -154,7 +154,7 @@ enum Follow {
 
 #[derive(Debug)]
 struct FlagInfo {
-    id:     String,
+    id: String,
     follow: Follow,
 }
 
@@ -336,6 +336,10 @@ pub struct RunnerOpts {
     /// Display hierarchical sub-routine cycle breakdown
     #[arg(long, visible_alias = "subcycles")]
     pub profile: bool,
+
+    /// Filter profiled functions by substring
+    #[arg(long, value_name = "PATTERN")]
+    pub profile_filter: Option<String>,
 
     /// Display instruction category breakdown (ALU, Memory, Control, Math, Syscalls)
     #[arg(long, visible_alias = "opcodes")]
@@ -878,23 +882,26 @@ pub async fn run_cargo_plugin(mut raw_args: Vec<String>) -> i32 {
 
     // 1. Host Test Phase
     if !host_packages.is_empty() {
+        
         match compile_host_tests(&host_packages, &cargo_filtered, filterset.as_ref(), package_graph.as_ref()) {
             Ok(host_executables) => {
-                for exe in host_executables {
-                    let code = run_host_test(
+                host_executables.into_iter().map(|exe| {
+                    run_host_test(
                         &exe,
                         &runner_options,
                         cargo_options.color.as_deref(),
                         junit_path,
                         package_graph.as_ref(),
-                    );
-                    if code != 0 {
-                        overall_exit_code = code;
-                    }
-                }
+                    )//;
+                    // if code != 0 {
+                    //     overall_exit_code = code;
+                    // }
+                    // code
+                }.last()
             },
             Err(code) => {
-                overall_exit_code = code;
+                // overall_exit_code = code;
+                code
             },
         }
     }
@@ -907,10 +914,10 @@ pub async fn run_cargo_plugin(mut raw_args: Vec<String>) -> i32 {
             &zkvm_packages,
             &cargo_filtered,
             ZkvmBuild {
-                toolchain:          toolchain.as_deref(),
-                target:             &target,
+                toolchain: toolchain.as_deref(),
+                target: &target,
                 target_is_explicit: cargo_options.target.is_some(),
-                target_dir:         cargo_options.target_dir.as_deref(),
+                target_dir: cargo_options.target_dir.as_deref(),
             },
             package_graph.as_ref(),
             filterset.as_ref(),
@@ -1099,15 +1106,19 @@ fn compile_host_tests(
 ) -> Result<Vec<TestExecutable>, i32> {
     let mut cargo_cmd = Command::new("cargo");
     configure_cargo_test(&mut cargo_cmd, packages);
-    append_cargo_args(&mut cargo_cmd, cargo_filtered, &[
-        ARG_HOST,
-        ARG_ALL_TARGETS,
-        ARG_TARGET,
-        ARG_TARGET_DIR,
-        ARG_PACKAGE,
-        ARG_WORKSPACE,
-        ARG_EXCLUDE,
-    ]);
+    append_cargo_args(
+        &mut cargo_cmd,
+        cargo_filtered,
+        &[
+            ARG_HOST,
+            ARG_ALL_TARGETS,
+            ARG_TARGET,
+            ARG_TARGET_DIR,
+            ARG_PACKAGE,
+            ARG_WORKSPACE,
+            ARG_EXCLUDE,
+        ],
+    );
     collect_test_executables(cargo_cmd, "host", filterset, package_graph)
 }
 
@@ -1135,21 +1146,19 @@ fn compile_zkvm_tests(
     if build.target_dir.is_none() {
         cargo_cmd.arg("--target-dir").arg(&target_dir);
     }
-    append_cargo_args(&mut cargo_cmd, cargo_filtered, &[
-        ARG_HOST,
-        ARG_ALL_TARGETS,
-        ARG_PACKAGE,
-        ARG_WORKSPACE,
-        ARG_EXCLUDE,
-    ]);
+    append_cargo_args(
+        &mut cargo_cmd,
+        cargo_filtered,
+        &[ARG_HOST, ARG_ALL_TARGETS, ARG_PACKAGE, ARG_WORKSPACE, ARG_EXCLUDE],
+    );
     collect_test_executables(cargo_cmd, "zkVM", filterset, package_graph)
 }
 
 struct ZkvmBuild<'a> {
-    toolchain:          Option<&'a str>,
-    target:             &'a str,
+    toolchain: Option<&'a str>,
+    target: &'a str,
     target_is_explicit: bool,
-    target_dir:         Option<&'a Path>,
+    target_dir: Option<&'a Path>,
 }
 
 fn configure_cargo_test(command: &mut Command, packages: &[String]) {

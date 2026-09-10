@@ -61,6 +61,8 @@ sp1-prover = { version = "6.6.0", default-features = false, features = [
   "debug",
 ] }
 sp1-core-executor = { version = "6.6.0" }
+sp1-core-executor-runner = { version = "6.6.0" }
+sp1-jit = { version = "6.6.0" }
 
 memuse = { path = "./memuse" }
 # dhat = "0.3.3"

@@ -86,6 +86,7 @@ pub struct RunnerArgs {
     pub nocapture:          bool,
     pub quiet:              bool,
     pub profile:            bool,
+    pub profile_filter:     Option<String>,
     pub instructions:       bool,
     pub mode:               Option<String>,
     pub format:             OutputFormat,
@@ -150,6 +151,7 @@ where
         nocapture: options.nocapture,
         quiet: options.quiet,
         profile: options.profile,
+        profile_filter: options.profile_filter,
         instructions: options.instructions,
         mode: options.mode,
         format,
@@ -496,6 +498,8 @@ pub struct TestMetric {
     pub invocations:           std::collections::BTreeMap<String, u64>,
     #[serde(default)]
     pub instruction_breakdown: Option<InstructionBreakdown>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub function_profiles:     Vec<crate::profile::FunctionProfile>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -552,15 +556,16 @@ fn cycle_budget_verdict(test: &TestDesc, cycles: u64) -> Option<String> {
 /// still passing; the declarative checks in `run` fill it in afterwards.
 #[derive(Default)]
 struct ExecOutput {
-    cycles:        u64,
-    gas:           Option<u64>,
-    record_bytes:  u64,
-    cycle_tracker: std::collections::BTreeMap<String, u64>,
-    invocations:   std::collections::BTreeMap<String, u64>,
-    public_values: Vec<u8>,
-    breakdown:     Option<InstructionBreakdown>,
-    top_syscalls:  Vec<(String, u64)>,
-    failure:       Option<String>,
+    cycles:            u64,
+    gas:               Option<u64>,
+    record_bytes:      u64,
+    cycle_tracker:     std::collections::BTreeMap<String, u64>,
+    invocations:       std::collections::BTreeMap<String, u64>,
+    public_values:     Vec<u8>,
+    breakdown:         Option<InstructionBreakdown>,
+    top_syscalls:      Vec<(String, u64)>,
+    function_profiles: Vec<crate::profile::FunctionProfile>,
+    failure:           Option<String>,
 }
 
 fn format_execution_error(err: &sp1_core_executor::ExecutionError) -> String {
@@ -639,6 +644,7 @@ impl ExecOutput {
             public_values: pv.to_vec(),
             cycle_tracker: report.cycle_tracker.into_iter().collect(),
             invocations: report.invocation_tracker.into_iter().collect(),
+            function_profiles: Vec::new(),
         }
     }
 }
@@ -655,6 +661,7 @@ pub struct TestOutcome {
     pub cycle_tracker:         std::collections::BTreeMap<String, u64>,
     pub invocations:           std::collections::BTreeMap<String, u64>,
     pub instruction_breakdown: Option<InstructionBreakdown>,
+    pub function_profiles:     Vec<crate::profile::FunctionProfile>,
     pub duration:              std::time::Duration,
 }
 
@@ -672,6 +679,7 @@ impl TestOutcome {
             cycle_tracker: std::collections::BTreeMap::new(),
             invocations: std::collections::BTreeMap::new(),
             instruction_breakdown: None,
+            function_profiles: Vec::new(),
             duration,
         }
     }
@@ -1006,6 +1014,14 @@ fn print_test_status(
         println!("{status}{pill} {}{extra_str}", test.name);
     }
 
+    let has_fn_profile = profile && !output.function_profiles.is_empty();
+    if has_fn_profile {
+        print!(
+            "{}",
+            crate::profile::format_function_profile_table(&output.function_profiles, output.cycles, palette)
+        );
+    }
+
     let has_profile = profile && !output.cycle_tracker.is_empty();
     let has_instructions = (profile || instructions) && output.breakdown.is_some();
     let has_syscalls = (profile || instructions) && !output.top_syscalls.is_empty();
@@ -1154,6 +1170,7 @@ fn save_metrics_baseline(save_name: &str, outcomes: &[TestOutcome], total_cycles
             cycle_tracker:         o.cycle_tracker.clone(),
             invocations:           o.invocations.clone(),
             instruction_breakdown: o.instruction_breakdown.clone(),
+            function_profiles:     o.function_profiles.clone(),
         });
     }
 
@@ -1185,13 +1202,15 @@ fn save_metrics_baseline(save_name: &str, outcomes: &[TestOutcome], total_cycles
 }
 
 pub async fn run(args: RunnerArgs) -> i32 {
-    let elf = match std::fs::read(&args.elf_path) {
-        Ok(bytes) => Elf::from(bytes),
+    let raw_elf_bytes = match std::fs::read(&args.elf_path) {
+        Ok(bytes) => bytes,
         Err(err) => {
             eprintln!("zkvm-test-runner: failed to read {}: {err}", args.elf_path);
             return 2;
         },
     };
+    let elf_bytes = Arc::new(raw_elf_bytes);
+    let elf = Elf::from(elf_bytes.to_vec());
 
     let prover_choice = args
         .prover
@@ -1466,12 +1485,16 @@ pub async fn run(args: RunnerArgs) -> i32 {
     let resource_roots = Arc::new(resource_roots(Some(Path::new(&args.elf_path)), package_root.as_deref()));
     let fixtures_override = Arc::new(args.fixtures.clone());
     let pkg_root = Arc::new(package_root.clone());
+    let elf_bytes_arc = elf_bytes.clone();
+    let profile_filter_arc = Arc::new(args.profile_filter.clone());
 
     for test in tests_to_run {
         let sem = semaphore.clone();
         let prover = prover.clone();
         let pk = pk.clone();
         let elf = elf.clone();
+        let elf_bytes = elf_bytes_arc.clone();
+        let profile_filter = profile_filter_arc.clone();
         let roots = resource_roots.clone();
         let fixtures_dir = fixtures_override.clone();
         let pkg_root = pkg_root.clone();
@@ -1519,7 +1542,7 @@ pub async fn run(args: RunnerArgs) -> i32 {
             let (stdout_tx, stdout_rx) = tokio::sync::watch::channel(String::new());
             let (stderr_tx, stderr_rx) = tokio::sync::watch::channel(String::new());
 
-            let res = prover.execute_test(elf, run_stdin, stdout_tx, stderr_tx).await;
+            let res = prover.execute_test(elf, run_stdin.clone(), stdout_tx, stderr_tx).await;
 
             if let Some(rss) = memuse::rss_kb() {
                 peak_rss.fetch_max(rss, std::sync::atomic::Ordering::Relaxed);
@@ -1539,6 +1562,21 @@ pub async fn run(args: RunnerArgs) -> i32 {
                         verify_or_update_snapshot(snapshot, &out.public_values, accept_snapshots, &roots).err()
                     })
                 });
+
+            if profile && failure.is_none() {
+                match crate::profile::mine_trace_profile(
+                    &elf_bytes,
+                    &run_stdin,
+                    profile_filter.as_deref(),
+                ) {
+                    Ok(profiles) => {
+                        out.function_profiles = profiles;
+                    },
+                    Err(err) => {
+                        eprintln!("zkvm-test-runner: warning: profiling trace mining failed: {err}");
+                    },
+                }
+            }
 
             let mut proof_duration = None;
             if failure.is_none()
@@ -1593,6 +1631,7 @@ pub async fn run(args: RunnerArgs) -> i32 {
                 cycle_tracker: out.cycle_tracker,
                 invocations: out.invocations,
                 instruction_breakdown: out.breakdown,
+                function_profiles: out.function_profiles,
                 duration: test_start.elapsed(),
             }
         });

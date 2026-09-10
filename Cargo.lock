@@ -294,7 +294,7 @@ dependencies = [
  "cfg-if",
  "libc",
  "miniz_oxide 0.8.9",
- "object",
+ "object 0.37.3",
  "rustc-demangle",
  "serde",
  "windows-link",
@@ -2753,6 +2753,17 @@ checksum = "830b246a0e5f20af87141b25c173cd1b609bd7779a4617d6ec582abaf90870f3"
 
 [[package]]
 name = "object"
+version = "0.36.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62948e14d923ea95ea2c7c86c71013138b66525b86bdc08d2dcc262bdb497b87"
+dependencies = [
+ "flate2",
+ "memchr",
+ "ruzstd 0.7.3",
+]
+
+[[package]]
+name = "object"
 version = "0.37.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ff76201f031d8863c38aa7f905eca4f53abbfa15f609db4277d44cd8938f33fe"
@@ -2762,7 +2773,7 @@ dependencies = [
  "hashbrown 0.15.5",
  "indexmap 2.14.1",
  "memchr",
- "ruzstd",
+ "ruzstd 0.8.3",
 ]
 
 [[package]]
@@ -3937,11 +3948,20 @@ checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 
 [[package]]
 name = "ruzstd"
+version = "0.7.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fad02996bfc73da3e301efe90b1837be9ed8f4a462b6ed410aa35d00381de89f"
+dependencies = [
+ "twox-hash 1.6.3",
+]
+
+[[package]]
+name = "ruzstd"
 version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a7c1c839d570d835527c9a5e4db7cb2198683a988cb9d7293fc8674e6bd58fc8"
 dependencies = [
- "twox-hash",
+ "twox-hash 2.1.4",
 ]
 
 [[package]]
@@ -4632,7 +4652,7 @@ dependencies = [
  "itertools 0.14.0",
  "memmap2",
  "num",
- "object",
+ "object 0.37.3",
  "rrs-succinct",
  "serde",
  "serde_arrays",
@@ -5883,6 +5903,16 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
 name = "twox-hash"
+version = "1.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "97fee6b57c6a41524a810daee9286c02d7752c4253064d0b05472833a438f675"
+dependencies = [
+ "cfg-if",
+ "static_assertions",
+]
+
+[[package]]
+name = "twox-hash"
 version = "2.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5283634e518fe9e82c7b20520bb4bc209009fd16c82077c802f8111ecbb0117a"
@@ -6702,10 +6732,14 @@ dependencies = [
  "memuse",
  "nextest-filtering",
  "nextest-metadata",
+ "object 0.36.7",
  "predicates",
+ "rustc-demangle",
  "serde",
  "serde_json",
  "sp1-core-executor",
+ "sp1-core-executor-runner",
+ "sp1-jit",
  "sp1-sdk",
  "tempfile",
  "tokio",
