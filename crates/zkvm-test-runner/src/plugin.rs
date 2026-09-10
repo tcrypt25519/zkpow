@@ -882,26 +882,23 @@ pub async fn run_cargo_plugin(mut raw_args: Vec<String>) -> i32 {
 
     // 1. Host Test Phase
     if !host_packages.is_empty() {
-        
         match compile_host_tests(&host_packages, &cargo_filtered, filterset.as_ref(), package_graph.as_ref()) {
             Ok(host_executables) => {
-                host_executables.into_iter().map(|exe| {
-                    run_host_test(
+                for exe in host_executables {
+                    let code = run_host_test(
                         &exe,
                         &runner_options,
                         cargo_options.color.as_deref(),
                         junit_path,
                         package_graph.as_ref(),
-                    )//;
-                    // if code != 0 {
-                    //     overall_exit_code = code;
-                    // }
-                    // code
-                }.last()
+                    );
+                    if code != 0 {
+                        overall_exit_code = code;
+                    }
+                }
             },
             Err(code) => {
-                // overall_exit_code = code;
-                code
+                overall_exit_code = code;
             },
         }
     }
