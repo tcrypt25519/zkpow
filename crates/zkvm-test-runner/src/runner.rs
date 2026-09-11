@@ -979,10 +979,12 @@ fn print_test_status(
                 output.record_bytes,
                 duration.as_secs_f64(),
             );
-            println!("{status}{pill} {}", test.name);
+            println!("{status}{}", test.name);
+            println!("             {pill}");
             if let Some(err) = failure {
                 println!("             {}", palette.red(err));
             }
+            println!();
             return;
         }
 
@@ -1011,7 +1013,8 @@ fn print_test_status(
         } else {
             format!(" {}", extra.join(" "))
         };
-        println!("{status}{pill} {}{extra_str}", test.name);
+        println!("{status}{}", test.name);
+        println!("             {pill}{extra_str}");
     }
 
     let has_fn_profile = profile && !output.function_profiles.is_empty();
@@ -1048,6 +1051,10 @@ fn print_test_status(
     }
     if has_syscalls {
         print_top_syscalls(&output.top_syscalls, palette, has_profile || has_instructions);
+    }
+
+    if format != OutputFormat::Cargo {
+        println!();
     }
 }
 
@@ -1447,11 +1454,8 @@ pub async fn run(args: RunnerArgs) -> i32 {
                 palette.dim("Target config:"),
             );
             for test in &ignored_tests {
-                println!(
-                    "{}[                 - │                 - │         - │  0.00s ] {}",
-                    palette.status_skip(),
-                    test.name
-                );
+                println!("{}{}", palette.status_skip(), test.name);
+                println!("             [                 - │                 - │         - │  0.00s ]\n");
             }
         }
     }

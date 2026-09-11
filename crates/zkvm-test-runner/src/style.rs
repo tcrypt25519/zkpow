@@ -176,6 +176,22 @@ impl Palette {
         }
     }
 
+    pub fn blue(&self, s: &str) -> String {
+        if self.enabled {
+            format!("\x1b[34m{s}\x1b[0m")
+        } else {
+            s.to_string()
+        }
+    }
+
+    pub fn bright_blue(&self, s: &str) -> String {
+        if self.enabled {
+            format!("\x1b[94m{s}\x1b[0m")
+        } else {
+            s.to_string()
+        }
+    }
+
     /// Horizontal divider line (`────────────`).
     pub fn divider(&self) -> String {
         self.dim("────────────")

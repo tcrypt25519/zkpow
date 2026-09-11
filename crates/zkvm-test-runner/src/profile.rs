@@ -345,6 +345,53 @@ pub fn mine_trace_profile(
     Ok(selected.into_iter().cloned().collect())
 }
 
+/// Strip crate and module disambiguator hashes like `[bb7aedaf0461c108]` while preserving
+/// array type syntax like `[u8; 4]`.
+pub fn strip_symbol_hashes(name: &str) -> String {
+    let mut result = String::with_capacity(name.len());
+    let mut chars = name.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '[' {
+            let mut buf = String::new();
+            let mut is_hex_disambiguator = false;
+            while let Some(&next) = chars.peek() {
+                if next == ']' {
+                    chars.next(); // consume ']'
+                    if buf.len() >= 8 && buf.chars().all(|ch| ch.is_ascii_hexdigit()) {
+                        is_hex_disambiguator = true;
+                    }
+                    break;
+                } else if next.is_ascii_hexdigit() {
+                    buf.push(chars.next().unwrap());
+                } else {
+                    break;
+                }
+            }
+            if !is_hex_disambiguator {
+                result.push('[');
+                result.push_str(&buf);
+            }
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
+/// Truncate long symbol names with middle ellipsis (`head...tail`), preserving both
+/// the top-level namespace and the target function name.
+pub fn truncate_symbol_name(name: &str, max_len: usize) -> String {
+    if name.len() <= max_len {
+        return name.to_string();
+    }
+    if max_len < 8 {
+        return name[..max_len].to_string();
+    }
+    let head_len = (max_len - 3) / 2;
+    let tail_len = max_len - 3 - head_len;
+    format!("{}...{}", &name[..head_len], &name[name.len() - tail_len..])
+}
+
 /// Render an aligned table of function profiles.
 pub fn format_function_profile_table(
     functions: &[FunctionProfile],
@@ -355,46 +402,122 @@ pub fn format_function_profile_table(
         return String::new();
     }
 
+    let cleaned_names: Vec<String> = functions.iter().map(|f| strip_symbol_hashes(&f.name)).collect();
+    let max_name_len = cleaned_names.iter().map(|n| n.len()).max().unwrap_or(40);
+    let fn_col_width = max_name_len.clamp(40, 64);
+
+    let cycles_col_width = functions
+        .iter()
+        .map(|f| crate::style::format_commas(f.cycles).len())
+        .max()
+        .unwrap_or(6)
+        .max(6); // at least "Cycles".len() == 6
+
+    let calls_col_width = functions
+        .iter()
+        .map(|f| crate::style::format_commas(f.invocations).len())
+        .max()
+        .unwrap_or(5)
+        .max(5); // at least "Calls".len() == 5
+
+    let math_col_width = functions
+        .iter()
+        .map(|f| crate::style::format_commas(f.math_cycles()).len())
+        .max()
+        .unwrap_or(4)
+        .max(4); // at least "Math".len() == 4
+
+    let mem_col_width = functions
+        .iter()
+        .map(|f| crate::style::format_commas(f.memory).len())
+        .max()
+        .unwrap_or(6)
+        .max(6); // at least "Memory".len() == 6
+
+    let pct_col_width = 6; // e.g. " 100.0%" or " % Tot"
+
     let mut out = String::new();
-    let prefix = "       ";
-    out.push_str(&format!("{prefix}{}\n", palette.dim("┌─ function cycle profile ─────────────────────────────────────────────────────────┐")));
+    let prefix = "        ";
+
+    let total_width = fn_col_width
+        + cycles_col_width
+        + pct_col_width
+        + calls_col_width
+        + math_col_width
+        + mem_col_width
+        + 19;
+
+    let sep_top = format!(
+        "┌─ function cycle profile {bar}┐",
+        bar = "─".repeat(total_width.saturating_sub(27))
+    );
+
+    let sep_mid = format!(
+        "├{f_bar}┼{c_bar}┼{p_bar}┼{cl_bar}┼{m_bar}┼{mem_bar}┤",
+        f_bar = "─".repeat(fn_col_width + 2),
+        c_bar = "─".repeat(cycles_col_width + 2),
+        p_bar = "─".repeat(pct_col_width + 2),
+        cl_bar = "─".repeat(calls_col_width + 2),
+        m_bar = "─".repeat(math_col_width + 2),
+        mem_bar = "─".repeat(mem_col_width + 2),
+    );
+
+    let sep_bot = format!(
+        "└{f_bar}┴{c_bar}┴{p_bar}┴{cl_bar}┴{m_bar}┴{mem_bar}┘",
+        f_bar = "─".repeat(fn_col_width + 2),
+        c_bar = "─".repeat(cycles_col_width + 2),
+        p_bar = "─".repeat(pct_col_width + 2),
+        cl_bar = "─".repeat(calls_col_width + 2),
+        m_bar = "─".repeat(math_col_width + 2),
+        mem_bar = "─".repeat(mem_col_width + 2),
+    );
+
+    out.push_str(&format!("{prefix}{}\n", palette.dim(&sep_top)));
     out.push_str(&format!(
-        "{prefix}│ {:<36} │ {:>10} │ {:>6} │ {:>6} │ {:>8} │ {:>8} │\n",
+        "{prefix}│ {:<fn_w$} │ {:>cyc_w$} │ {:>pct_w$} │ {:>call_w$} │ {:>math_w$} │ {:>mem_w$} │\n",
         palette.bold("Function"),
         palette.bold("Cycles"),
         palette.bold("% Tot"),
         palette.bold("Calls"),
         palette.bold("Math"),
         palette.bold("Memory"),
+        fn_w = fn_col_width,
+        cyc_w = cycles_col_width,
+        pct_w = pct_col_width,
+        call_w = calls_col_width,
+        math_w = math_col_width,
+        mem_w = mem_col_width,
     ));
-    out.push_str(&format!("{prefix}{}\n", palette.dim("├──────────────────────────────────────┼────────────┼────────┼────────┼──────────┼──────────┤")));
+    out.push_str(&format!("{prefix}{}\n", palette.dim(&sep_mid)));
 
-    for f in functions {
+    for (f, cleaned_name) in functions.iter().zip(cleaned_names.iter()) {
         let pct = if total_test_cycles > 0 {
             (f.cycles as f64 / total_test_cycles as f64) * 100.0
         } else {
             0.0
         };
 
-        // Truncate function name if too long to keep column alignment clean
-        let display_name = if f.name.len() > 36 {
-            format!("...{}", &f.name[f.name.len() - 33..])
-        } else {
-            f.name.clone()
-        };
+        let display_name = truncate_symbol_name(cleaned_name, fn_col_width);
+
+        let cycles_str = format!("{:>width$}", crate::style::format_commas(f.cycles), width = cycles_col_width);
+        let pct_str = format!("{:>5.1}%", pct);
+        let calls_str = format!("{:>width$}", crate::style::format_commas(f.invocations), width = calls_col_width);
+        let math_str = format!("{:>width$}", crate::style::format_commas(f.math_cycles()), width = math_col_width);
+        let mem_str = format!("{:>width$}", crate::style::format_commas(f.memory), width = mem_col_width);
 
         out.push_str(&format!(
-            "{prefix}│ {:<36} │ {:>10} │ {:>5.1}% │ {:>6} │ {:>8} │ {:>8} │\n",
+            "{prefix}│ {:<fn_w$} │ {} │ {} │ {} │ {} │ {} │\n",
             display_name,
-            palette.cyan(&crate::style::format_commas(f.cycles)),
-            pct,
-            f.invocations,
-            crate::style::format_commas(f.math_cycles()),
-            crate::style::format_commas(f.memory),
+            palette.cyan(&cycles_str),
+            palette.dim_cyan(&pct_str),
+            palette.magenta(&calls_str),
+            palette.yellow(&math_str),
+            palette.bright_blue(&mem_str),
+            fn_w = fn_col_width,
         ));
     }
 
-    out.push_str(&format!("{prefix}{}\n", palette.dim("└──────────────────────────────────────┴────────────┴────────┴────────┴──────────┴──────────┘")));
+    out.push_str(&format!("{prefix}{}\n", palette.dim(&sep_bot)));
     out
 }
 
@@ -474,21 +597,52 @@ mod tests {
     fn test_format_function_profile_table() {
         let palette = Palette::no_color();
         let mut p1 = FunctionProfile::new("crate::hash::sha256".to_string());
-        p1.cycles = 5000;
-        p1.invocations = 10;
-        p1.alu = 4000;
-        p1.memory = 1000;
+        p1.cycles = 50000;
+        p1.invocations = 1000;
+        p1.alu = 40000;
+        p1.memory = 10000;
 
         let mut p2 = FunctionProfile::new("crate::state::verify".to_string());
-        p2.cycles = 2500;
-        p2.invocations = 1;
-        p2.mul_div = 1500;
-        p2.memory = 1000;
+        p2.cycles = 124;
+        p2.invocations = 2;
+        p2.mul_div = 100;
+        p2.memory = 24;
 
-        let table = format_function_profile_table(&[p1, p2], 10000, &palette);
+        let table = format_function_profile_table(&[p1, p2], 100000, &palette);
         assert!(table.contains("crate::hash::sha256"));
         assert!(table.contains("crate::state::verify"));
         assert!(table.contains("50.0%"));
-        assert!(table.contains("25.0%"));
+        assert!(table.contains(" 0.1%"));
+        assert!(table.contains("1,000")); // comma in calls!
+
+        // All table rows (headers, separators, data rows) must have the EXACT same character length!
+        let lines: Vec<&str> = table.lines().collect();
+        assert!(lines.len() >= 5);
+        let first_len = lines[0].chars().count();
+        for line in &lines {
+            assert_eq!(line.chars().count(), first_len, "table line misaligned: '{line}'");
+        }
+    }
+
+    #[test]
+    fn test_strip_symbol_hashes() {
+        let raw = "sha2[bb7aedaf0461c108]::sha256::soft::sha256_digest_round_x2";
+        assert_eq!(strip_symbol_hashes(raw), "sha2::sha256::soft::sha256_digest_round_x2");
+
+        let array_type = "<[u8; 4] as core::convert::TryFrom<&[u8]>>::try_from";
+        assert_eq!(strip_symbol_hashes(array_type), "<[u8; 4] as core::convert::TryFrom<&[u8]>>::try_from");
+    }
+
+    #[test]
+    fn test_truncate_symbol_name() {
+        let short = "sha2::compress";
+        assert_eq!(truncate_symbol_name(short, 40), "sha2::compress");
+
+        let long = "my_crate::very_long_module_name::nested_submodule::important_function";
+        let truncated = truncate_symbol_name(long, 30);
+        assert_eq!(truncated.len(), 30);
+        assert!(truncated.starts_with("my_crate::ver"));
+        assert!(truncated.ends_with("rtant_function"));
+        assert!(truncated.contains("..."));
     }
 }
