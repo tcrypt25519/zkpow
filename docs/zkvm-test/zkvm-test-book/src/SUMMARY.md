@@ -15,16 +15,19 @@
 - [Cycle budgets](writing/cycle-budgets.md)
 - [Fixtures](writing/fixtures.md)
 - [Snapshots](writing/snapshots.md)
+- [Output and logging](writing/logging.md)
 
 # Running tests
 
 - [Selecting which tests run](running/selecting-tests.md)
 - [Reading the output](running/output.md)
+- [Host testing and dual execution](running/host-mode.md)
 - [Provers and proof modes](running/provers.md)
 
 # Measuring performance
 
 - [Cycle profiling](performance/profiling.md)
+- [Instruction breakdown](performance/instructions.md)
 - [Baselines and regression gates](performance/baselines.md)
 
 # Continuous integration
