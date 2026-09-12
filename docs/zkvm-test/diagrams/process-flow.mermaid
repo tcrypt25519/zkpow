@@ -1,13 +1,14 @@
 flowchart TD
-    CMD["cargo zkvm-test [OPTIONS]"] --> CHECK_PKG{"Target Check:<br/>--host flag OR<br/>host-only package?"}
+    CMD["cargo zkvm test [OPTIONS]<br/>(alias: cargo zkvm-test)"] --> CHECK_PKG{"Target Check:<br/>--host flag OR<br/>host-only package?"}
 
     %% Branch 1: Host Native
-    CHECK_PKG -- Yes --> HOST_COMPILE["cargo test --no-run (Host toolchain)"]
+    HOST_COMPILE["cargo test --no-run (Host toolchain)"]
+    CHECK_PKG -- Yes --> HOST_COMPILE
     HOST_COMPILE --> HOST_RUN["Execute Host Test Binary<br/>target/debug/deps/...<br/>(Bare Metal Native CPU)"]
 
     %% Branch 2: zkVM Target
     CHECK_PKG -- No --> ZKVM_COMPILE["cargo +succinct test --no-run<br/>--target riscv64im-succinct-zkvm-elf"]
-    ZKVM_COMPILE --> RUNNER["cargo-zkvm-test Runner Orchestrator"]
+    ZKVM_COMPILE --> RUNNER["cargo-zkvm Runner Orchestrator"]
     
     RUNNER --> DETECT{"sp1-core-executor build detection:<br/>OS == Linux AND Arch == x86_64 AND<br/>not(profiling) AND not(mprotect)?"}
 

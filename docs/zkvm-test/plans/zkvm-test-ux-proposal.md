@@ -1,264 +1,389 @@
-# zkVM Test Runner: Developer Experience and Toolchain Integration Proposal
+# Unified zkVM Developer Experience and Toolchain Integration Proposal
 
-**A proposal for standalone global distribution, transparent toolchain orchestration, and zero-configuration testing for zkVM applications.**
+**A proposal for a unified Cargo plugin (`cargo-zkvm`) providing zero-configuration building, testing, trace profiling, and execution across zkVM applications.**
 
 |                |                                                                                             |
 | -------------- | ------------------------------------------------------------------------------------------- |
 | **Status**     | Request for Comments (Draft)                                                                |
 | **Owner**      | Tyler (tcrypt) / Core Tooling                                                               |
-| **Scope**      | Distribution, Cargo subcommand UX, toolchain encapsulation, and zero-config workspace setup |
+| **Scope**      | Distribution, CLI taxonomy (`cargo zkvm`), toolchain encapsulation, compiler flag injection, and workspace package discovery |
 | **Related**    | [zkvm-test.md](file:///Users/tcrypt/code/github.com/tcrypt25519/bitcoin-header-chain/docs/zkvm-test/plans/zkvm-test.md), [zkvm-test-guide.md](file:///Users/tcrypt/code/github.com/tcrypt25519/bitcoin-header-chain/docs/zkvm-test/zkvm-test-guide.md) |
-| **Audience**   | zkVM engineers, compiler/toolchain maintainers, and downstream SP1/RISC Zero developers     |
+| **Audience**   | zkVM engineers, compiler and toolchain maintainers, and downstream SP1 and RISC Zero developers |
 
 ---
 
 ## 1. Summary
 
-We propose elevating `zkvm-test-runner` to a globally distributable, standalone Cargo plugin named `cargo-zkvm-test` (installed once via `cargo install cargo-zkvm-test` or bundled into `sp1up`).
+We propose replacing fragmented zkVM CLI tooling (`cargo prove`, `cargo-zkvm-test`, and manual `cargo +succinct` invocations) with a single, globally distributable Cargo plugin: `cargo-zkvm`.
 
 Under this design:
-1. **Developers invoke tests via `cargo zkvm-test`** without toolchain specifiers (`+succinct`), without target flags (`--target riscv64im-succinct-zkvm-elf`), and without custom Cargo aliases.
-2. **The plugin acts as a compilation and execution supervisor** (mirroring `cargo-nextest`), directly orchestrating the build subprocess, automatically injecting required SP1 linker/runtime flags (`-C link-arg=--image-base=2013265920`, `-C passes=lower-atomic`, `--cfg getrandom_backend="custom"`), and extracting ELF test artifacts from the compiler JSON stream.
-3. **Repository configuration becomes zero-overhead**: projects no longer require `runner` entries or target-specific `rustflags` in `.cargo/config.toml`.
-4. **Standard `cargo test` remains intact for rapid host verification** (`cfg(not(target_os = "zkvm"))`), while `cargo zkvm-test` provides true in-VM execution, cycle counting, instruction breakdown, and hierarchical trace profiling.
+1. **Unified CLI taxonomy:** Developers interact with a single command suite featuring dedicated subcommands:
+   - `cargo zkvm test`: Nextest-grade test runner with cycle metering, hierarchical trace profiling, and parallel VM execution.
+   - `cargo zkvm build`: Compiles guest programs to reproducible zkVM ELFs, replacing `cargo prove build` with accurate, non-misleading terminology.
+   - `cargo zkvm run`: Executes guest binaries in the zkVM without generating cryptographic proofs, reporting cycle metrics and guest outputs.
+   - `cargo zkvm prove`: Generates zero-knowledge STARK/SNARK proofs using local or distributed prover backends.
+2. **Global distribution:** Installed once via `cargo install cargo-zkvm --locked`, pre-compiled via `cargo binstall cargo-zkvm`, or bundled directly into `sp1up`.
+3. **Transparent toolchain and flag encapsulation:** The plugin directly supervises compilation subprocesses. It automatically discovers the active toolchain (`succinct` or `risc0`), silences rustup proxy warnings, resolves target architecture triples (`riscv64im` vs `riscv32im`), and injects all required compiler flags (`--cfg getrandom_backend="custom"`, `-C link-arg=--image-base=2013265920`, `-C passes=lower-atomic`, `-C panic=abort`).
+4. **Zero-configuration workspace integration:** Downstream repositories require **no** `.cargo/config.toml` runner scripts, custom rustflags, or stack pointer constants. A repository only needs to declare dev-dependencies.
+5. **Robust package and target discovery:** Eliminates compilation failures on non-guest workspace crates by validating guest compatibility before invoking the zkVM cross-compiler.
 
 ---
 
-## 2. Context and Problem Analysis
+## 2. Grounding and Problem Analysis
 
-### 2.1 Current Friction in zkVM Testing Workflows
+### 2.1 Investigation of Current Flakiness and Failures
 
-The current zkVM developer experience suffers from four primary friction points:
+Recent developer testing revealed three distinct points of friction when using the test runner across workspace packages:
 
-1. **Toolchain Dispatch Fragmentation (`cargo +succinct ...`):**
-   SP1 programs require the custom `succinct` Rust toolchain to compile for `riscv64im-succinct-zkvm-elf`. Because Cargo aliases (`.cargo/config.toml`) cannot specify rustup toolchain flags (rustup parses `+toolchain` before cargo is invoked), users cannot create a simple alias like `cargo test-zkvm`. Every invocation requires typing `cargo +succinct ...`.
-2. **Missing `rustdoc` in Custom Toolchains:**
-   The `succinct` toolchain does not distribute a custom `rustdoc`. Running standard `cargo test` under `+succinct` attempts to build and run documentation tests, which immediately fails unless `--lib`, `--tests`, or `--no-run` is passed.
-3. **Pervasive `.cargo/config.toml` Boilerplate:**
-   To link an SP1 guest binary, `rustc` requires specific low-level arguments (`image-base=0x78000000`, `passes=lower-atomic`, `panic=abort`). In current setups, every downstream repository must maintain these flags in `.cargo/config.toml`, alongside a `runner = ["cargo-zkvm-test"]` hook. If a new repository omits these flags, compilation fails with cryptic linker errors.
-4. **Disjoint Tooling between Building (`cargo prove`) and Testing:**
-   Developers build guest ELFs using `cargo prove build`, but have no unified tool for testing. Running tests via custom scripts, manual target runners, or off-target mock harnesses introduces split mental models between build environments and test execution.
+#### 2.1.1 Target Architecture Mismatch and the `getrandom` Failure
+When running `cargo zkvm-test` across the workspace without a package filter (`-p`), compilation fails immediately:
+```
+cargo-zkvm-test: testing 4 zkVM packages: zkpow-core, zkpow-params, zkpow-sha256, zkpow-types
+   Compiling getrandom v0.3.4
+error: could not compile `getrandom` (lib) due to 4 previous errors
+```
+
+Investigation of the root cause revealed a configuration discrepancy:
+1. The repository's `.cargo/config.toml` configured rustflags under `[target.riscv32im-succinct-zkvm-elf]`:
+   ```toml
+   [target.riscv32im-succinct-zkvm-elf]
+   rustflags = [
+     "-C", "passes=lower-atomic",
+     "-C", "link-arg=--image-base=2013265920",
+     "-C", "panic=abort",
+     "--cfg", 'getrandom_backend="custom"',
+   ]
+   ```
+2. The test runner plugin defaulted to the 64-bit target `riscv64im-succinct-zkvm-elf`.
+3. Because the target triples differed (`riscv64im` vs `riscv32im`), Cargo ignored the section in `.cargo/config.toml`.
+4. Modern crates utilizing `getrandom` v0.3+ on custom or bare-metal targets require `--cfg getrandom_backend="custom"` to locate their entropy provider. Without this flag injected, `getrandom` fails to compile.
+5. Single-package invocations like `cargo zkvm-test -p zkpow-sha256` succeeded solely because `zkpow-sha256` had no dependency path leading to `getrandom` v0.3.
+
+#### 2.1.2 Rustup Toolchain Proxy Warnings
+Every invocation under `+succinct` produces the following notice:
+```
+info: `cargo` is unavailable for the active toolchain
+info: falling back to "/Users/tcrypt/.rustup/toolchains/nightly-aarch64-apple-darwin/bin/cargo"
+```
+The upstream `succinct` toolchain distributes a patched `rustc` and LLVM toolset, but does not package a standalone `cargo` binary. Rustup's wrapper emits this fallback notice to stderr on every command, creating visual clutter and confusing users into suspecting a broken toolchain installation.
+
+#### 2.1.3 Misleading Terminology in `cargo prove`
+In the SP1 ecosystem, compiling guest binaries relies on `cargo prove build`. This naming is semantically inaccurate: the command does not generate proofs; it compiles Rust code into a RISC-V ELF binary. This conflation creates conceptual confusion for engineers new to zkVM development, who expect `prove` to initiate cryptographic proving.
 
 ---
 
-## 3. Architecture and UX Design
+## 3. Architecture and Unified CLI Taxonomy
+
+We propose creating a unified Cargo binary named `cargo-zkvm`, invoked as `cargo zkvm <subcommand>`.
 
 ```
 +-----------------------------------------------------------------------------+
 |                               Developer Action                              |
-|                             $ cargo zkvm-test                               |
+|                             $ cargo zkvm <cmd>                              |
 +-----------------------------------------------------------------------------+
                                        |
                                        v
 +-----------------------------------------------------------------------------+
-|                      cargo-zkvm-test CLI Supervisor                         |
-|   1. Inspects workspace package graph via guppy                             |
-|   2. Detects target architecture & required toolchain (succinct / risc0)    |
-|   3. Verifies toolchain installation via rustup                             |
+|                            cargo-zkvm CLI Suite                             |
+|                                                                             |
+|   +-------------------+  +-------------------+  +-----------------------+   |
+|   | cargo zkvm test   |  | cargo zkvm build  |  | cargo zkvm run        |   |
+|   | Unit/integ tests  |  | Guest ELF build   |  | In-VM execution       |   |
+|   | Trace profiling   |  | Replaces `prove`  |  | Cycle metering        |   |
+|   | Cycle breakdown   |  | Metadata export   |  | Stdout / Stderr logs  |   |
+|   +-------------------+  +-------------------+  +-----------------------+   |
 +-----------------------------------------------------------------------------+
                                        |
-                   Spawns compiler with injected env & flags
-                                       |
-                                       v
-+-----------------------------------------------------------------------------+
-|                             Compilation Phase                               |
-|   $ cargo +succinct test --no-run --message-format=json                     |
-|     --target riscv64im-succinct-zkvm-elf                                    |
-|     RUSTFLAGS="-C passes=lower-atomic -C link-arg=--image-base=2013265920"  |
-+-----------------------------------------------------------------------------+
-                                       |
-                      Streams JSON Compiler Artifacts
+                    Supervises Compiler & Runtime Harness
                                        |
                                        v
 +-----------------------------------------------------------------------------+
-|                             Execution Phase                                 |
-|   For each discovered ELF:                                                  |
-|   1. Query test catalog via two-phase protocol (CMD_LIST)                   |
-|   2. Filter tests via nextest filter expressions                            |
-|   3. Run isolated VM instances in parallel across worker pool               |
-|   4. Capture guest stdout/stderr, cycles, and hierarchical profiles         |
-|   5. Export JUnit XML / update golden snapshots                             |
+|                        Toolchain Encapsulation Layer                        |
+|   1. Detects & validates rustup toolchains (succinct / risc0)               |
+|   2. Sets RUSTC direct path (eliminates rustup fallback noise)              |
+|   3. Injects RUSTFLAGS: lower-atomic, image-base, custom getrandom_backend  |
+|   4. Directs build artifacts to isolated target/zkvm/ directory             |
 +-----------------------------------------------------------------------------+
 ```
 
-### 3.1 Global Distribution Model
+### 3.1 Subcommand Specifications
 
-`cargo-zkvm-test` will be packaged as a standalone host CLI utility:
+#### 3.1.1 `cargo zkvm test`
+Replaces `cargo zkvm-test`. Executes unit tests, integration tests, and doc tests compiled for the zkVM target:
+- Supports Nextest filter expressions (`-E 'package(zkpow-core) & test(mtp)'`).
+- Collects cycle counts, instruction categories (Math, Memory, Control Flow, System), and hierarchical trace profiles (`--profile`).
+- Runs test cases in parallel across a configurable worker pool (`--test-threads`).
+- Supports dual-mode testing: running native host tests for rapid iteration (`--host`) or full validation across both environments (`--all-targets`).
 
-1. **Crates.io Release:** Published as `cargo-zkvm-test`. Users install it globally via:
-   ```bash
-   cargo install cargo-zkvm-test --locked
-   ```
-2. **Pre-compiled Binary Distribution:** Pre-built releases for `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `x86_64-apple-darwin`, and `aarch64-apple-darwin`, installable via `cargo-binstall`:
-   ```bash
-   cargo binstall cargo-zkvm-test
-   ```
-3. **Upstream Bundling via `sp1up`:**
-   Because `cargo-zkvm-test` is designed for the SP1 and RISC Zero ecosystems, we propose an RFC to Succinct to bundle `cargo-zkvm-test` into `sp1up`. Running `sp1up` will install `cargo-prove`, the `succinct` toolchain, and `cargo-zkvm-test` in a single command.
+#### 3.1.2 `cargo zkvm build`
+Replaces `cargo prove build`. Compiles guest binaries into optimized zkVM ELF executables:
+```bash
+# Build guest binary in release mode
+cargo zkvm build --release
 
-> **Why & What - Standalone Binary vs Workspace Build Dependency**
+# Build specific guest package
+cargo zkvm build -p zkpow-guest --bin guest-prover
+```
+- Injects standard production compiler flags (stack top `0x78000000`, atomic lowering, abort on panic).
+- Emits structured compilation metadata and ELF hashes to `<workspace>/target/zkvm/release/`.
+- Validates binary size and warns if program sections exceed zkVM memory address limits.
+
+#### 3.1.3 `cargo zkvm run`
+Executes a compiled guest binary inside the zkVM without generating cryptographic proofs:
+```bash
+# Execute guest ELF with input arguments
+cargo zkvm run -p zkpow-guest -- --input-path fixtures/block_100k.bin
+
+# Run with cycle profiling enabled
+cargo zkvm run -p zkpow-guest --profile
+```
+- Provides instant cycle count, gas estimation, memory footprint, and execution trace inspection.
+- Streams guest runtime logs (`sp1_zkvm::io::print`) directly to terminal stdout.
+
+#### 3.1.4 `cargo zkvm prove`
+Generates zero-knowledge proofs for production verification:
+```bash
+# Generate STARK proof locally
+cargo zkvm prove -p zkpow-guest --prover cpu
+
+# Generate Groth16 / PLONK proof via Succinct Prover Network
+cargo zkvm prove -p zkpow-guest --prover network --network-key $SP1_PROVER_KEY
+```
+
+> **Why & What - Unified `cargo-zkvm` vs Separate Standalone Tools**
 >
-> **What:** Package `cargo-zkvm-test` as an independently installed host CLI tool rather than a repository build dependency or artifact dependency.
+> **What:** Combine testing, building, running, and proving into a single `cargo-zkvm` binary with subcommands, rather than maintaining independent tools (`cargo-prove`, `cargo-zkvm-test`, custom runners).
 >
-> **Why:** Cargo artifact dependencies (`-Z bindeps`) require the nightly compiler on every project build and tie the test runner lifecycle to the workspace lockfile. A global host installation mirrors `cargo-nextest` and `cargo-audit`, allowing immediate usage across any existing repository without modifying `Cargo.toml`.
+> **Why:** Developers currently navigate multiple disjoint tools with differing argument conventions, duplicate dependencies, and conflicting configuration expectations. A single binary reduces toolchain installation to a single step, provides a cohesive mental model, and centralizes flag injection and toolchain discovery.
 >
 > **Alternatives considered:**
-> - *Cargo artifact dependency (`bindeps` in Cargo.toml):* Requires `-Z bindeps`, permanently forcing developers and CI into nightly toolchains even for simple builds.
-> - *Submodule or vendored CLI:* Burdens every downstream project with maintaining build scripts and duplicate compile times.
+> - *Keep `cargo zkvm-test` separate from `cargo-prove`:* Downstream users must install and update two heavy CLI binaries that duplicate SP1 runtime dependencies.
+> - *Rebrand under `cargo-prove`:* "Prove" implies cryptographic proof generation; using it for building or testing is confusing for developers unfamiliar with the ecosystem.
 >
-> **Fallback:** Developers can install directly from git via `cargo install --git https://github.com/tcrypt25519/bitcoin-header-chain cargo-zkvm-test`.
+> **Fallback:** `cargo-zkvm` can provide backward-compatible symlinks or aliases for `cargo zkvm-test` and `cargo-prove`.
 
 ---
 
-### 3.2 Invocation and Toolchain Encapsulation
+## 4. Toolchain Encapsulation and Flag Injection
 
-Developers run tests using standard Cargo syntax:
+### 4.1 Eliminating the `cargo +succinct` Requirement
 
-```bash
-# Run all zkVM tests across the workspace
-cargo zkvm-test
+Running commands with `cargo +succinct` exposes developers to internal rustup mechanics and generates confusing fallback warnings. 
 
-# Run tests for a specific package
-cargo zkvm-test -p zkpow-core
-
-# Run specific test with substring filter
-cargo zkvm-test mtp
-
-# Run with Nextest boolean filter expressions
-cargo zkvm-test -E 'package(zkpow-core) & test(header)'
-
-# Profile cycles and instruction categories
-cargo zkvm-test -p zkpow-core --profile --instructions
-```
-
-The user never writes `+succinct` or `--target riscv64im-succinct-zkvm-elf`. 
-
-Under the hood, `cargo-zkvm-test` executes the following sequence:
-1. **Toolchain Discovery:** Queries `rustup toolchain list`.
-2. **Actionable Diagnosis:** If `succinct` is missing, the process exits with an explicit installation hint:
+`cargo-zkvm` encapsulates the toolchain entirely:
+1. **Toolchain Discovery:** The CLI queries `rustup which --toolchain succinct rustc` to obtain the direct filesystem path to the patched compiler.
+2. **Subprocess Invocation:** Rather than executing `cargo +succinct`, `cargo-zkvm` executes the host's standard `cargo` binary with explicit environment variables:
+   - `RUSTC=<path-to-succinct-rustc>`
+   - `RUSTUP_TOOLCHAIN=succinct` (if needed by build scripts)
+3. **Outcome:** Host `cargo` drives compilation using the Succinct compiler without invoking the rustup toolchain proxy. The `info: cargo is unavailable` warning is completely eliminated.
+4. **Actionable Diagnostics:** If the toolchain is not found, `cargo-zkvm` exits with explicit remediation:
    ```
    error: required toolchain 'succinct' is not installed.
    info:  to install the SP1 toolchain, run:
             curl -L https://sp1.succinct.xyz | bash
             sp1up
    ```
-3. **Subprocess Construction:** Spawns `cargo +succinct test --no-run --message-format=json --target riscv64im-succinct-zkvm-elf` with all user-specified feature flags, package filters, and build profiles.
 
-> **Why & What - Subcommand Plugin vs Cargo Target Runner**
->
-> **What:** Adopt the Cargo subcommand plugin model (`cargo zkvm-test`) and abandon reliance on Cargo target runners (`[target.<triple>] runner = ...`).
->
-> **Why:** Cargo target runners are invoked serially by Cargo for each built binary, with Cargo managing the terminal, test selection, and lifecycle. A target runner cannot coordinate multi-package filtering, cannot prevent `rustdoc` invocations, cannot aggregate cycle counts across packages, and cannot encapsulate the `+succinct` toolchain flag. A subcommand supervisor owns the entire build-and-run lifecycle.
->
-> **Alternatives considered:**
-> - *Cargo Target Runner in `.cargo/config.toml`:* Keeps `cargo test` syntax, but fails on rustdoc, requires manual `+succinct`, and cannot support nextest filter expressions.
->
-> **Fallback:** `zkvm-test-runner` retains its target runner entrypoint (`src/main.rs`) for environments that strictly require invocation via Cargo's runner interface.
+### 4.2 Automated Flag Injection via `CARGO_ENCODED_RUSTFLAGS`
 
----
+To eliminate the need for `.cargo/config.toml` rustflags, `cargo-zkvm` constructs and injects required flags at process launch.
 
-### 3.3 Zero-Configuration Workspace Integration
-
-Currently, an SP1 project requires specific entries in `.cargo/config.toml`:
-
-```toml
-# Legacy .cargo/config.toml requirement (TO BE ELIMINATED)
-[target.riscv64im-succinct-zkvm-elf]
-runner = ["cargo-zkvm-test"]
-rustflags = [
-  "-C", "passes=lower-atomic",
-  "-C", "link-arg=--image-base=2013265920",
-  "-C", "panic=abort",
-  "--cfg", 'getrandom_backend="custom"',
-]
+The supervisor defines standard flags matching `sp1-build`:
+```rust
+let image_base = 0x78000000; // 2013265920 = SP1 STACK_TOP
+let zkvm_flags = [
+    "-C", "passes=lower-atomic",
+    "-C", &format!("link-arg=--image-base={image_base}"),
+    "-C", "panic=abort",
+    "--cfg", "getrandom_backend=\"custom\"",
+    "-C", "llvm-args=-misched-prera-direction=bottomup",
+    "-C", "llvm-args=-misched-postra-direction=bottomup",
+];
 ```
 
-Under this proposal, `cargo-zkvm-test` injects these flags directly when launching the build subprocess:
-1. It reads existing `RUSTFLAGS` from the environment or `.cargo/config.toml`.
-2. It appends the required compiler flags (`lower-atomic`, `image-base`, `panic=abort`, `getrandom_backend`).
-3. It sets `CARGO_TARGET_DIR` to `<workspace>/target/zkvm` (unless overridden via `--target-dir`), preventing host and guest build artifacts from colliding.
+The injection algorithm:
+1. Reads existing flags from `RUSTFLAGS` or Cargo config files.
+2. Merges project-specific flags with `zkvm_flags`, avoiding duplicate arguments.
+3. Encodes the result using unit separators (`\x1f`) into `CARGO_ENCODED_RUSTFLAGS`.
+4. Spawns the compilation step with the injected environment.
 
-**Downstream impact:** Downstream projects require **zero** configuration in `.cargo/config.toml`. A project only needs to add `zkvm-test` to its `[dev-dependencies]` in `Cargo.toml`.
+This guarantees that `--cfg getrandom_backend="custom"` and stack base definitions are always present during zkVM compilation, regardless of target architecture or project configuration.
 
----
+### 4.3 Target Architecture Resolution
 
-### 3.4 Dual-Mode Testing Strategy: Host Simulation vs zkVM Fidelity
+SP1 supports both 32-bit and 64-bit RISC-V targets (`riscv32im-succinct-zkvm-elf` and `riscv64im-succinct-zkvm-elf`).
 
-A central question in zkVM ergonomics is: *Should `cargo test` be replaced or preserved?*
-
-We propose maintaining an intentional separation:
-
-| Command | Target | Execution Engine | Speed | Use Case |
-| :--- | :--- | :--- | :--- | :--- |
-| `cargo test` | Host (`aarch64`, `x86_64`) | Native CPU (Libtest) | ~0.05s | Inner developer loop: rapid logic verification, mocking, and unit testing |
-| `cargo zkvm-test` | `riscv64im-succinct-zkvm-elf` | SP1 zkVM Executor | ~0.50s | In-VM fidelity: cycle metering, memory bounds, proof mode, trace profiling |
-| `cargo zkvm-test --all-targets` | Both Host & zkVM | Sequenced Host + VM | Combined | Full CI/CD validation before committing |
-
-Because `zkvm-test` provides transparent off-target fallback (`cfg(not(target_os = "zkvm"))`), existing tests annotated with `#[zkvm_test]` run natively on the host during `cargo test`. 
-
-Developers get the best of both worlds:
-- Instant feedback during code edits via standard `cargo test`.
-- Deep cryptographic and architectural verification via `cargo zkvm-test`.
-
-> **Why & What - Preserving Host Tests vs Forcing All Tests Into the zkVM**
->
-> **What:** Keep `cargo test` as an ultra-fast host test pass and reserve `cargo zkvm-test` for zkVM execution.
->
-> **Why:** zkVM execution incurs an unavoidable simulation and runtime cost (emulating RISC-V instructions, syscall dispatch, trace generation). Forcing every local test run into the VM slows down the inner iteration loop by an order of magnitude and prevents using host debugging tools (lldb, gdb, valgrind).
->
-> **Alternatives considered:**
-> - *Alias `cargo test` to always cross-compile to zkVM:* Rejected because developers lose fast unit test iteration and host tooling.
->
-> **Fallback:** Users can run `cargo zkvm-test --host` or `cargo zkvm-test --all-targets` to control execution scope from a single tool.
+`cargo-zkvm` handles target resolution using a clear precedence hierarchy:
+1. **Explicit CLI flag:** `--target <triple>` takes highest precedence.
+2. **Crate metadata:** Inspects `Cargo.toml` for package-level target overrides:
+   ```toml
+   [package.metadata.zkvm]
+   target = "riscv32im-succinct-zkvm-elf"
+   ```
+3. **Workspace configuration:** Inspects workspace-level `[workspace.metadata.zkvm]`.
+4. **Default fallback:** Defaults to `riscv64im-succinct-zkvm-elf` for modern SP1 projects, with automatic fallback detection if a crate specifies 32-bit assembly constraints.
 
 ---
 
-### 3.5 Eliminating the `cargo prove` Divergence
+## 5. Workspace Package Discovery and Filtering
 
-In the SP1 ecosystem, developers use `cargo prove build` to generate production ELFs. 
+### 5.1 Preventing Non-Guest Compilation Failures
 
-`cargo-zkvm-test` unifies the test workflow by adopting the identical compilation profile and flag definitions as `sp1-build`:
-- Compilation targets the same ELF output format.
-- Stack base addresses (`0x78000000`), atomic lowering, and memory configurations match production prover environments.
-- Tests exercise the exact binary code that will be proven in production, eliminating discrepancies between test ELFs and production ELFs.
+When a user runs `cargo zkvm test` or `cargo zkvm build` from a workspace root without specifying `-p`, compiling every crate for a zkVM target will fail if host-only crates (such as CLI tools, native storage adapters, or web servers) contain platform-incompatible dependencies.
 
-For command-line consistency across tools, `cargo zkvm-test` supports standard SP1 environment variables:
-- `SP1_PROVER`: sets default backend (`mock`, `cpu`, `cuda`).
-- `ZKVM_PROVER`: generic backend override.
-- `SP1_DUMP_PATH`: dumps execution traces for external diagnostic tools.
+`cargo-zkvm` implements intelligent package classification:
+
+```
++-----------------------------------------------------------------------------+
+|                          Workspace Package Discovery                        |
++-----------------------------------------------------------------------------+
+                                       |
+                                       v
+         +-----------------------------------------------------------+
+         | For each package in workspace:                            |
+         | 1. Does package depend on `zkvm-test` or `sp1-zkvm`?      |
+         | 2. Does `[package.metadata.zkvm]` specify `enabled = true`?|
+         | 3. Does `[package.metadata.zkvm]` specify `target`?       |
+         +-----------------------------------------------------------+
+                        /                             \
+                       /                               \
+               YES (Guest Compatible)            NO (Host Only)
+                     /                                   \
+                    v                                     v
+     +------------------------------+     +-------------------------------+
+     | Added to zkVM compile list   |     | Excluded from zkVM target     |
+     | Target: riscv*-succinct-zkvm |     | Included only if --all-targets|
+     +------------------------------+     | or --host is active           |
+                                          +-------------------------------+
+```
+
+### 5.2 Discovery Rules
+
+1. **Direct Dependency Detection:** Any package depending on `zkvm-test`, `zkvm-test-macros`, `sp1-zkvm`, or `risc0-zkvm` is classified as a zkVM package.
+2. **Metadata Opt-In:** Packages can explicitly declare zkVM status:
+   ```toml
+   [package.metadata.zkvm]
+   enable = true
+   ```
+3. **Metadata Opt-Out:** Packages can explicitly exclude themselves:
+   ```toml
+   [package.metadata.zkvm]
+   enable = false
+   ```
+4. **Workspace-Level Selection:** The root `Cargo.toml` can declare the default test package list:
+   ```toml
+   [workspace.metadata.zkvm]
+   packages = ["zkpow-core", "zkpow-sha256", "zkpow-types"]
+   exclude = ["zkpow-host", "zkpow-cli"]
+   ```
+
+Running `cargo zkvm test` without flags will compile and execute tests *only* for verified zkVM packages, preventing unnecessary build failures in host crates.
 
 ---
 
-## 4. Open Questions
+## 6. Global Distribution and Installation
+
+### 6.1 Installation Workflow
+
+Developers install `cargo-zkvm` as a standard global host utility:
+
+```bash
+# Standard installation via crates.io
+cargo install cargo-zkvm --locked
+
+# Fast pre-compiled binary installation via cargo-binstall
+cargo binstall cargo-zkvm
+
+# Upstream SP1 bundling (proposed RFC to Succinct)
+sp1up
+```
+
+### 6.2 Pre-compiled Release Binaries
+
+To minimize compilation time for users, pre-compiled binaries are published on GitHub Releases for major development platforms:
+- `x86_64-apple-darwin` (Intel macOS)
+- `aarch64-apple-darwin` (Apple Silicon macOS)
+- `x86_64-unknown-linux-gnu` (x86 Linux)
+- `aarch64-unknown-linux-gnu` (ARM64 Linux)
+
+Using `cargo-binstall cargo-zkvm` allows developers to set up the tool in seconds without compiling heavy SP1 VM dependencies locally.
+
+---
+
+## 7. Downstream Repository Integration
+
+### 7.1 Zero-Configuration Setup
+
+Under this proposal, a new repository adopting `cargo-zkvm` requires no configuration in `.cargo/config.toml`. 
+
+The developer experience consists of:
+1. Adding `zkvm-test` to the crate's `Cargo.toml`:
+   ```toml
+   [dev-dependencies]
+   zkvm-test = "0.1"
+   ```
+2. Writing standard tests annotated with `#[zkvm_test]`:
+   ```rust
+   #[zkvm_test]
+   fn test_header_validation() {
+       assert!(verify_header(&fixture()));
+   }
+   ```
+3. Executing tests:
+   ```bash
+   cargo zkvm test
+   ```
+
+### 7.2 Migration from Legacy `.cargo/config.toml`
+
+Existing repositories with custom runners and compiler flags in `.cargo/config.toml` can cleanly remove them:
+
+```diff
+- [target.riscv32im-succinct-zkvm-elf]
+- runner = ["cargo-zkvm-test"]
+- rustflags = [
+-   "-C", "passes=lower-atomic",
+-   "-C", "link-arg=--image-base=2013265920",
+-   "-C", "panic=abort",
+-   "--cfg", 'getrandom_backend="custom"',
+- ]
+```
+
+`cargo-zkvm` detects existing `.cargo/config.toml` entries and ensures injected flags do not conflict or duplicate repository-defined options.
+
+---
+
+## 8. Open Questions
 
 | Question | Owner | Impact |
 | :--- | :--- | :--- |
-| **Q1:** Should the binary be named `cargo-zkvm-test` (invoked as `cargo zkvm-test`) or `cargo-zkvm` with subcommands (`cargo zkvm test`, `cargo zkvm profile`)? | Core Tooling / tcrypt | CLI taxonomy and future expansion to build/proving commands |
-| **Q2:** How should toolchain auto-update be handled if the upstream Succinct toolchain releases a breaking update? | Tooling Maintainers | Version pinning between `sp1-sdk` dependency and toolchain release |
-| **Q3:** Should `cargo-zkvm-test` feature flag support RISC Zero natively out of the box, or split into vendor-specific crates? | Ecosystem Integrations | Dependency footprint and build time of `cargo-zkvm-test` |
+| **Q1:** What is the ideal binary name? `cargo-zkvm` is straightforward and aligns with `cargo-binstall` and `cargo-nextest`. Would an alternative (e.g. `cargo-polyzk`, `cargo-zksuite`, or extending `cargo-prove`) be preferred? | Tyler (tcrypt) | Ecosystem naming and user recognition |
+| **Q2:** How should toolchain version mismatches be reported if a user updates their local Rust toolchain while keeping an older SP1 SDK? | Tooling Maintainers | Providing actionable warnings when compiler and SDK versions diverge |
+| **Q3:** Should `cargo zkvm` support multi-zkVM backends (SP1 and RISC Zero) in a single binary, or provide modular cargo features? | Core Tooling | Binary download size and dependency footprints |
 
 ---
 
-## 5. Benefits and Costs
+## 9. Benefits and Costs
 
-### 5.1 Benefits
-- **Zero-Friction Adoption:** New developers run `cargo install cargo-zkvm-test` and immediately run tests on any SP1 repository.
-- **No `+succinct` Noise:** Developers stop wrestling with rustup toolchain flags and broken Cargo aliases.
-- **Clean Configuration:** Eliminates custom linker flags, target runners, and dummy scripts from repository `.cargo/config.toml` files.
-- **Deterministic CI:** Automated JUnit XML generation, regression detection (`--fail-on-regression`), and baseline comparisons work identically in CI and local machines.
+### 9.1 Benefits
+- **Zero Configuration:** Eliminates all `.cargo/config.toml` runner and rustflag boilerplate across repositories.
+- **Unified Tooling:** Consolidates building (`build`), running (`run`), profiling (`test`), and proving (`prove`) under a single command suite.
+- **Clean Terminal Output:** Silences rustup proxy warnings and isolates compiler artifacts.
+- **Robust Package Discovery:** Automatically skips host-only crates during workspace runs, preventing `getrandom` and target-mismatch compilation errors.
+- **Accurate Semantics:** Distinguishes between compiling guest binaries (`cargo zkvm build`) and generating cryptographic proofs (`cargo zkvm prove`).
 
-### 5.2 Costs and Trade-offs
-- **Binary Size & Compilation Time:** `cargo-zkvm-test` links `sp1-core-executor` and `sp1-sdk`, resulting in a non-trivial binary size (~100MB unstripped) and longer initial install times when built via `cargo install`. *Mitigation: Distribute pre-compiled release binaries via GitHub Releases and `cargo-binstall`.*
-- **Toolchain Flag Tracking:** As SP1 evolves (e.g. changing `STACK_TOP` or linker requirements), `cargo-zkvm-test` must maintain alignment with `sp1-build`.
-
----
-
-## 6. Residual Risks and What NOT to Do
-
-1. **DO NOT attempt to hack Cargo's built-in `[alias]` table to support `+succinct`:** Cargo explicitly does not permit toolchain overrides in aliases. Workarounds using shell wrappers or makefiles break cross-platform portability.
-2. **DO NOT hijack standard `cargo test` as the only way to run zkVM tests:** Forcing developers into the VM runner on every test invocation degrades iteration speed. Keep host tests fast and separate.
-3. **DO NOT rely on runtime environment variables for mandatory compiler flags:** Inject flags explicitly during the subprocess invocation so tests remain reproducible regardless of the user's shell environment.
+### 9.2 Costs and Trade-offs
+- **Binary Footprint:** A combined binary embedding the SP1 executor and profiling machinery is ~100MB unstripped. *Mitigation: Distribute stripped release binaries via GitHub Releases and `cargo-binstall`.*
+- **Maintenance Alignment:** Compiler flags injected by the tool must track updates to `sp1-build` as SP1 evolves.
 
 ---
 
-*This document is a Request for Comments. Technical facts are verified against `crates/zkvm-test-runner` and the `sp1-build` compiler specifications in commit `HEAD`.*
+## 10. Residual Risks and What NOT to Do
+
+1. **DO NOT rely on shell scripts or Cargo aliases for toolchain dispatch:** Cargo aliases cannot invoke rustup toolchains cleanly and break cross-platform support.
+2. **DO NOT enforce zkVM compilation on host-only workspace packages:** Blindly passing a zkVM target triple to every package in a workspace causes compilation failures on crates utilizing native OS system calls. Always classify packages prior to compilation.
+3. **DO NOT force standard `cargo test` into the zkVM:** Preserving native host testing (`cfg(not(target_os = "zkvm"))`) maintains sub-second test iteration for routine development.
+
+---
+
+*This document is a Request for Comments. Technical findings regarding `getrandom` compilation requirements, rustflags injection, and toolchain discovery are verified against `sp1-build` and `crates/zkvm-test-runner`.*

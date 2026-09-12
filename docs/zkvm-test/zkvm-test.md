@@ -1,6 +1,6 @@
 # zkvm-test: Architecture & Technical Specification
 
-`zkvm-test` is a Nextest-grade, cycle-aware, multi-backend testing framework and CLI runner for zero-knowledge virtual machines (SP1 and RISC Zero).
+`zkvm-test` is a Nextest-grade, cycle-aware testing framework and CLI runner for zero-knowledge virtual machines (featuring production execution for SP1 and target recognition / planned backend execution for RISC Zero).
 
 It brings the ergonomics, speed, and safety of modern Rust test runners (`cargo test` and `cargo nextest`) into zkVM guest environments—providing **per-test isolation**, **concurrency**, **guest output capture**, **sub-routine cycle profiling**, **deterministic memory metrics**, and **CI performance regression gates**.
 
@@ -28,11 +28,11 @@ Testing zkVM guest code has traditionally been difficult and painful:
 +-------------------------------------------------------------------------+
 |                               HOST OS                                   |
 |                                                                         |
-|  cargo zkvm-test [CARGO_OPTS] [--] [RUNNER_OPTS] [FILTERS]               |
+|  cargo zkvm test [CARGO_OPTS] [--] [RUNNER_OPTS] [FILTERS] (alias: cargo zkvm-test) |
 |         │                                                               |
 |         ▼                                                               |
 |  ┌───────────────────────────────────────────────────────────────────┐  |
-|  │ cargo-zkvm-test (crates/zkvm-test-runner/src/cargo_plugin.rs)     │  |
+|  │ cargo-zkvm (crates/zkvm-test-runner/src/plugin.rs)                 │  |
 |  │  - Invokes: cargo test --no-run --target riscv64im-... --json     │  |
 |  │  - Discovers compiler artifacts (.elf binaries)                   │  |
 |  │  - Dispatches execution to zkvm_test_runner::runner::run          │  |
@@ -81,7 +81,7 @@ Testing zkVM guest code has traditionally been difficult and painful:
 
 `zkvm-test` operates through two complementary modalities:
 
-1. **`cargo zkvm-test` (Recommended CLI Plugin)**:
+1. **`cargo zkvm test` (Primary CLI Plugin, alias `cargo zkvm-test`)**:
    A turnkey wrapper that:
    - Dynamically selects the appropriate compiler toolchain (e.g. `+succinct` for `riscv64im-succinct-zkvm-elf`, `+risc0` for `riscv32im-risc0-zkvm-elf`).
    - Executes `cargo test --no-run --message-format=json` with all forwarded cargo flags (`-p`, `--lib`, `--test`, `--release`, etc.).
@@ -367,10 +367,10 @@ When `--instructions` or `--profile` is passed, the runner queries the SP1 opcod
 Metrics can be snapshotted to disk and verified in CI:
 
 1. **Saving a Baseline**:
-   `cargo zkvm-test --save-baseline main`
+   `cargo zkvm test --save-baseline main`
    Serializes all test metrics to `.zkvm-test-metrics/main.json`.
 2. **Comparing Against a Baseline**:
-   `cargo zkvm-test --compare-baseline main`
+   `cargo zkvm test --compare-baseline main`
    Renders a formatted variance table:
 
    ```text
@@ -383,8 +383,8 @@ Metrics can be snapshotted to disk and verified in CI:
    ```
 
 3. **Automated CI Regression Gate**:
-   `cargo zkvm-test --compare-baseline main --fail-on-regression 5%`
-   If any test's cycle count increases by more than the specified percentage, the runner flags `[REGRESSION]` and exits with non-zero exit code `1`.
+   `cargo zkvm test --compare-baseline main --fail-on-regression 5%`
+   If any test's cycle count increases by more than the specified percentage, the runner flags `[REGRESSION]` and exits with non-zero exit code `1`. Note: `cargo zkvm-test` is fully supported as an identical drop-in alias for all invocations.
 
 ---
 
