@@ -40,21 +40,21 @@ zkvm-test = { path = "../zkvm-test/crates/zkvm-test" }
 ##
 ## SP1
 ##
-sp1-build = { version = "6.6.0" }
-sp1-derive = { version = "6.6.0" }
-sp1-lib = { version = "6.6.0" }
-sp1-sdk = { version = "6.6.0" }
-sp1-zkvm = { version = "6.6.0", default-features = false, features = [
+sp1-build = { version = "6.8.0" }
+sp1-derive = { version = "6.8.0" }
+sp1-lib = { version = "6.8.0" }
+sp1-sdk = { version = "6.8.0" }
+sp1-zkvm = { version = "6.8.0", default-features = false, features = [
   "lib",
   "verify",
 ] }
-sp1-prover = { version = "6.6.0", default-features = false, features = [
+sp1-prover = { version = "6.8.0", default-features = false, features = [
   "bigint-rug",
   "debug",
 ] }
-sp1-core-executor = { version = "6.6.0" }
-sp1-core-executor-runner = { version = "6.6.0" }
-sp1-jit = { version = "6.6.0" }
+sp1-core-executor = { version = "6.8.0" }
+sp1-core-executor-runner = { version = "6.8.0" }
+sp1-jit = { version = "6.8.0" }
 
 memuse = { path = "./memuse" }
 
