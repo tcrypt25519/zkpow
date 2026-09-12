@@ -10,6 +10,7 @@ use alloc::{string::String, vec::Vec};
 pub use zkvm_test_macros::{test, zkvm_test};
 
 pub const MAGIC: &[u8; 4] = b"ZKVT";
+pub const PROTOCOL_VERSION: u8 = 1;
 pub const CMD_LIST: u8 = 0;
 pub const CMD_RUN: u8 = 1;
 
@@ -24,6 +25,14 @@ pub enum TestFlag {
     Snapshot         = 1 << 5,
     ExpectedMessage  = 1 << 6,
 }
+
+pub const KNOWN_FLAGS_MASK: u8 = (1 << 0)
+    | (1 << 1)
+    | (1 << 2)
+    | (1 << 3)
+    | (1 << 4)
+    | (1 << 5)
+    | (1 << 6);
 
 impl TestFlag {
     pub const fn mask(self) -> u8 {
@@ -120,6 +129,7 @@ pub fn test_runner(tests: &[&TestCase]) {
             // from an ELF that ignored the command entirely.
             let mut buf = Vec::new();
             buf.extend_from_slice(MAGIC);
+            buf.push(PROTOCOL_VERSION);
             buf.extend_from_slice(&(tests.len() as u32).to_le_bytes());
             for t in tests {
                 t.encode(&mut buf);
@@ -423,6 +433,15 @@ pub mod __internal {
         COMMITTED_BYTES.with(|b| b.borrow_mut().extend_from_slice(slice));
     }
 
+    struct HostContextGuard;
+
+    impl Drop for HostContextGuard {
+        fn drop(&mut self) {
+            CURRENT_FIXTURE.with(|c| *c.borrow_mut() = None);
+            COMMITTED_BYTES.with(|b| b.borrow_mut().clear());
+        }
+    }
+
     /// Run a host test body with its declared fixture in scope, verifying its committed
     /// public values against the declared snapshot afterwards. The macro emits one call
     /// with whichever of the two the test declared.
@@ -432,13 +451,11 @@ pub mod __internal {
         f: impl FnOnce() -> R,
     ) -> R {
         CURRENT_FIXTURE.with(|c| *c.borrow_mut() = fixture);
-        if snapshot.is_some() {
-            COMMITTED_BYTES.with(|b| b.borrow_mut().clear());
-        }
+        COMMITTED_BYTES.with(|b| b.borrow_mut().clear());
+        let _guard = HostContextGuard;
 
         let res = f();
 
-        CURRENT_FIXTURE.with(|c| *c.borrow_mut() = None);
         if let Some(path) = snapshot {
             let committed = COMMITTED_BYTES.with(|b| b.borrow().clone());
             verify_host_snapshot(path, &committed);
@@ -536,5 +553,24 @@ mod tests {
         // 4. Missing fixture should not escape above workspace root
         let missing = fixture::resolve("nonexistent.bin", Some(&my_crate), None);
         assert!(missing.is_none());
+    }
+
+    #[test]
+    fn test_host_context_restoration_on_panic() {
+        use crate::__internal::{with_host_context, CURRENT_FIXTURE, COMMITTED_BYTES, record_host_commit};
+
+        let res = std::panic::catch_unwind(|| {
+            with_host_context(Some("my_fix.bin"), None, || {
+                record_host_commit(&[1, 2, 3]);
+                CURRENT_FIXTURE.with(|c| assert_eq!(*c.borrow(), Some("my_fix.bin")));
+                COMMITTED_BYTES.with(|b| assert_eq!(b.borrow().as_slice(), &[1, 2, 3]));
+                panic!("intentional panic inside test body");
+            });
+        });
+
+        assert!(res.is_err());
+        // Verify that thread-local state was restored by HostContextGuard despite the panic
+        CURRENT_FIXTURE.with(|c| assert_eq!(*c.borrow(), None));
+        COMMITTED_BYTES.with(|b| assert!(b.borrow().is_empty()));
     }
 }

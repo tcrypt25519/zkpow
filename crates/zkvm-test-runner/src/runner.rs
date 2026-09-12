@@ -5,7 +5,7 @@ use std::{
 };
 
 use sp1_sdk::{Elf, ProverClient, SP1Stdin, prelude::*};
-pub use zkvm_test::{CMD_LIST, CMD_RUN, MAGIC, TestFlag};
+pub use zkvm_test::{CMD_LIST, CMD_RUN, MAGIC, PROTOCOL_VERSION, KNOWN_FLAGS_MASK, TestFlag};
 
 pub const METRICS_DIR: &str = ".zkvm-test-metrics";
 pub const DEFAULT_BASELINE_NAME: &str = "default";
@@ -210,6 +210,10 @@ impl<'a> ByteReader<'a> {
         let bytes = self.read_bytes(len)?;
         std::str::from_utf8(bytes).ok().map(String::from)
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.offset >= self.data.len()
+    }
 }
 
 impl TestDesc {
@@ -236,6 +240,9 @@ impl TestDesc {
     /// Mirror of `zkvm_test::TestCase::encode`; the field order is the wire contract.
     pub fn decode(reader: &mut ByteReader) -> Option<Self> {
         let flags = reader.read_u8()?;
+        if (flags & !KNOWN_FLAGS_MASK) != 0 {
+            return None;
+        }
         let present = |flag: TestFlag| (flags & flag.mask()) != 0;
 
         let expected_exit_code = match present(TestFlag::ExpectedExitCode) {
@@ -291,6 +298,12 @@ pub fn decode_test_list(bytes: &[u8]) -> Catalog {
     };
 
     let mut reader = ByteReader::new(body);
+    let Some(version) = reader.read_u8() else {
+        return Catalog::Corrupt;
+    };
+    if version != PROTOCOL_VERSION {
+        return Catalog::Corrupt;
+    }
     let Some(count) = reader.read_u32_le() else {
         return Catalog::Corrupt;
     };
@@ -300,6 +313,9 @@ pub fn decode_test_list(bytes: &[u8]) -> Catalog {
             Some(test) => tests.push(test),
             None => return Catalog::Corrupt,
         }
+    }
+    if !reader.is_empty() {
+        return Catalog::Corrupt;
     }
     Catalog::Tests(tests)
 }
@@ -1096,27 +1112,33 @@ fn compare_against_baseline(
     threshold: Option<f64>,
     is_explicit: bool,
     palette: &Palette,
-) -> bool {
+) -> Result<bool, String> {
     let path = format!("{METRICS_DIR}/{baseline_name}.json");
-    let Ok(content) = std::fs::read_to_string(&path) else {
-        if is_explicit {
-            eprintln!("zkvm-test-runner: failed to read baseline from {path}");
+    let content = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(e) => {
+            if is_explicit {
+                return Err(format!("failed to read baseline from {path}: {e}"));
+            }
+            return Ok(false);
         }
-        return false;
     };
-    let Ok(baseline) = serde_json::from_str::<BaselineSuite>(&content) else {
-        if is_explicit {
-            eprintln!("zkvm-test-runner: failed to parse baseline from {path}");
+    let baseline = match serde_json::from_str::<BaselineSuite>(&content) {
+        Ok(b) => b,
+        Err(e) => {
+            if is_explicit {
+                return Err(format!("failed to parse baseline from {path}: {e}"));
+            }
+            return Ok(false);
         }
-        return false;
     };
 
     let matching_count = outcomes.iter().filter(|o| baseline.tests.contains_key(&o.desc.name)).count();
     if matching_count == 0 {
         if is_explicit {
-            println!("\nBaseline comparison against '{baseline_name}': no matching tests found.");
+            return Err(format!("baseline comparison against '{baseline_name}': no matching tests found in suite"));
         }
-        return false;
+        return Ok(false);
     }
 
     println!("\n{}", palette.divider());
@@ -1161,7 +1183,7 @@ fn compare_against_baseline(
         );
     }
     println!("  {}", palette.wide_divider(106));
-    regression_detected
+    Ok(regression_detected)
 }
 
 fn save_metrics_baseline(save_name: &str, outcomes: &[TestOutcome], total_cycles: u64, total_gas: Option<u64>) {
@@ -1492,6 +1514,7 @@ pub async fn run(args: RunnerArgs) -> i32 {
     let elf_bytes_arc = elf_bytes.clone();
     let profile_filter_arc = Arc::new(args.profile_filter.clone());
 
+    let total_tests_count = tests_to_run.len();
     for test in tests_to_run {
         let sem = semaphore.clone();
         let prover = prover.clone();
@@ -1511,6 +1534,7 @@ pub async fn run(args: RunnerArgs) -> i32 {
         let format = args.format;
         let palette = palette;
 
+        let test_desc = test.clone();
         let handle = tokio::spawn(async move {
             let _permit = sem.acquire().await.unwrap();
             let test_start = Instant::now();
@@ -1640,15 +1664,27 @@ pub async fn run(args: RunnerArgs) -> i32 {
             }
         });
 
-        handles.push(handle);
+        handles.push((test_desc, handle));
     }
 
     let mut outcomes = Vec::new();
-    for h in handles {
-        if let Ok(outcome) = h.await {
-            outcomes.push(outcome);
+    for (test_desc, h) in handles {
+        match h.await {
+            Ok(outcome) => outcomes.push(outcome),
+            Err(join_err) => {
+                let err_msg = if join_err.is_panic() {
+                    "runner worker task panicked".to_string()
+                } else if join_err.is_cancelled() {
+                    "runner worker task was cancelled".to_string()
+                } else {
+                    format!("runner worker task failed: {join_err}")
+                };
+                eprintln!("zkvm-test-runner: {}: internal error: {}", test_desc.name, err_msg);
+                outcomes.push(TestOutcome::failed(test_desc, err_msg, std::time::Duration::ZERO));
+            }
         }
     }
+    assert_eq!(outcomes.len(), total_tests_count, "every test task must yield an outcome");
 
     let elapsed = start_time.elapsed();
     let mut passed_count = 0;
@@ -1685,7 +1721,15 @@ pub async fn run(args: RunnerArgs) -> i32 {
     };
 
     if let Some(name) = baseline_name {
-        regression_failed = compare_against_baseline(name, &outcomes, args.fail_on_regression, is_explicit, &palette);
+        match compare_against_baseline(name, &outcomes, args.fail_on_regression, is_explicit, &palette) {
+            Ok(regressed) => {
+                regression_failed = regressed;
+            }
+            Err(err) => {
+                eprintln!("zkvm-test-runner: error: {err}");
+                regression_failed = true;
+            }
+        }
     }
 
     if let Some(save_name) = &args.save_baseline {
@@ -1798,9 +1842,14 @@ pub async fn run(args: RunnerArgs) -> i32 {
             .cases
             .extend(ignored_tests.into_iter().map(TestDesc::into_skipped_junit_case));
 
+        let mut junit_failed = false;
         let p = Path::new(junit_path);
         if let Err(e) = crate::junit::write_or_merge_junit_xml(p, suite) {
             eprintln!("zkvm-test-runner: error writing JUnit XML: {e}");
+            junit_failed = true;
+        }
+        if junit_failed {
+            return 1;
         }
     }
 
@@ -1897,6 +1946,7 @@ mod tests {
     #[test]
     fn test_decode_test_list_valid() {
         let mut bytes = MAGIC.to_vec();
+        bytes.push(PROTOCOL_VERSION);
         // Count: 3 tests
         bytes.extend_from_slice(&3u32.to_le_bytes());
 
@@ -1968,13 +2018,38 @@ mod tests {
 
         // Tagged, but truncated: says 5 tests and ends
         let mut truncated = MAGIC.to_vec();
+        truncated.push(PROTOCOL_VERSION);
         truncated.extend_from_slice(&5u32.to_le_bytes());
         assert!(matches!(decode_test_list(&truncated), Catalog::Corrupt));
 
-        // Tagged, but not even a count
+        // Tagged, but not even a version or count
         assert!(matches!(decode_test_list(MAGIC.as_slice()), Catalog::Corrupt));
 
+        // Version mismatch: version 99 vs PROTOCOL_VERSION 1
+        let mut bad_version = MAGIC.to_vec();
+        bad_version.push(99);
+        bad_version.extend_from_slice(&0u32.to_le_bytes());
+        assert!(matches!(decode_test_list(&bad_version), Catalog::Corrupt));
+
+        // Trailing data after valid catalog
+        let mut trailing = MAGIC.to_vec();
+        trailing.push(PROTOCOL_VERSION);
+        trailing.extend_from_slice(&0u32.to_le_bytes());
+        trailing.push(0xDE); // Trailing garbage byte
+        assert!(matches!(decode_test_list(&trailing), Catalog::Corrupt));
+
+        // Unknown flag bits
+        let mut unknown_flag = MAGIC.to_vec();
+        unknown_flag.push(PROTOCOL_VERSION);
+        unknown_flag.extend_from_slice(&1u32.to_le_bytes());
+        unknown_flag.push(0b1000_0000); // Bit 7 is unknown
+        let name = "test_unknown";
+        unknown_flag.extend_from_slice(&(name.len() as u32).to_le_bytes());
+        unknown_flag.extend_from_slice(name.as_bytes());
+        assert!(matches!(decode_test_list(&unknown_flag), Catalog::Corrupt));
+
         let mut empty_suite = MAGIC.to_vec();
+        empty_suite.push(PROTOCOL_VERSION);
         empty_suite.extend_from_slice(&0u32.to_le_bytes());
         assert!(matches!(decode_test_list(&empty_suite), Catalog::Tests(tests) if tests.is_empty()));
     }
@@ -2115,6 +2190,7 @@ mod tests {
     fn test_decode_test_list_rejects_absurd_count() {
         // A corrupt catalog must not be trusted into a huge allocation
         let mut bytes = MAGIC.to_vec();
+        bytes.push(PROTOCOL_VERSION);
         bytes.extend_from_slice(&u32::MAX.to_le_bytes());
         bytes.push(0);
         assert!(matches!(decode_test_list(&bytes), Catalog::Corrupt));

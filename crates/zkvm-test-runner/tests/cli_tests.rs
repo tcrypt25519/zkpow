@@ -12,6 +12,36 @@ fn cargo_zkvm_test_cmd() -> Command {
     cmd.env_remove("CLICOLOR_FORCE").env("NO_COLOR", "1");
     cmd
 }
+fn cargo_zkvm_cmd() -> Command {
+    let mut cmd = Command::cargo_bin("cargo-zkvm").unwrap();
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    if let Some(ws_root) = manifest_dir.parent().and_then(|p| p.parent()) {
+        cmd.current_dir(ws_root);
+    }
+    cmd.env_remove("CLICOLOR_FORCE").env("NO_COLOR", "1");
+    cmd
+}
+
+#[test]
+fn test_cargo_zkvm_top_level_help() {
+    let mut cmd = cargo_zkvm_cmd();
+    cmd.arg("--help");
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("cargo-zkvm: Nextest-grade developer suite"))
+        .stdout(predicate::str::contains("test    Run zkVM tests"));
+}
+
+#[test]
+fn test_cargo_zkvm_test_subcommand_help() {
+    let mut cmd = cargo_zkvm_cmd();
+    cmd.args(["test", "--help"]);
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("Nextest-grade test runner for zkVM binaries"))
+        .stdout(predicate::str::contains("-p, --package"));
+}
+
 #[test]
 fn test_cargo_zkvm_test_help() {
     let mut cmd = cargo_zkvm_test_cmd();
@@ -173,4 +203,56 @@ fn test_cargo_zkvm_test_host_flag_on_zkvm_package() {
         .stdout(predicate::str::contains("testing 1 host package: zkpow-sha256"))
         .stdout(predicate::str::contains("Running host tests for `zkpow_sha256`"))
         .stdout(predicate::str::contains("test tests::test_genesis_header_hash_snapshot ... ok"));
+}
+
+#[test]
+fn test_target_only_invocation_fails_when_target_not_found() {
+    let mut cmd = cargo_zkvm_test_cmd();
+    cmd.args(["--test", "nonexistent_target_12345"]);
+    cmd.assert()
+        .code(1)
+        .stderr(predicate::str::contains("no test packages found in workspace matching specified targets."));
+}
+
+#[test]
+fn test_explicit_missing_baseline_fails() {
+    let mut cmd = cargo_zkvm_test_cmd();
+    cmd.args([
+        "-p",
+        "zkpow-sha256",
+        "-E",
+        "test(genesis)",
+        "--compare-baseline",
+        "definitely_nonexistent_baseline_file_9999",
+    ]);
+    cmd.assert()
+        .failure()
+        .stderr(predicate::str::contains("failed to read baseline from"));
+}
+
+#[test]
+fn test_junit_write_failure_fails_command() {
+    let mut cmd = cargo_zkvm_test_cmd();
+    cmd.args([
+        "-p",
+        "zkpow-sha256",
+        "-E",
+        "test(genesis)",
+        "--junit-path",
+        "/nonexistent_root_dir_cannot_write_999/junit.xml",
+    ]);
+    cmd.assert()
+        .failure()
+        .stderr(predicate::str::contains("error writing JUnit XML"));
+}
+
+#[test]
+fn test_target_only_invocation_from_member_dir() {
+    let mut cmd = cargo_zkvm_test_cmd();
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    if let Some(ws_root) = manifest_dir.parent().and_then(|p| p.parent()) {
+        cmd.current_dir(ws_root.join("crates/zkvm-test"));
+    }
+    cmd.args(["--test", "nonexistent_integration"]);
+    cmd.assert().failure();
 }

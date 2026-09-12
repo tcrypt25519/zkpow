@@ -166,7 +166,9 @@ pub fn write_or_merge_junit_xml(path: &Path, new_suite: JUnitTestSuite) -> Resul
     }
     out.push_str("</testsuites>\n");
 
-    std::fs::write(path, out).map_err(|e| format!("failed to write JUnit XML to {}: {e}", path.display()))
+    let tmp_path = path.with_extension(format!("tmp.{}", std::process::id()));
+    std::fs::write(&tmp_path, out).map_err(|e| format!("failed to write JUnit XML to {}: {e}", tmp_path.display()))?;
+    std::fs::rename(&tmp_path, path).map_err(|e| format!("failed to finalize JUnit XML to {}: {e}", path.display()))
 }
 
 fn parse_existing_suites(xml: &str) -> Vec<(String, String)> {

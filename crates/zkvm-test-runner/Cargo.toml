@@ -13,8 +13,12 @@ name = "zkvm-test-runner"
 path = "src/main.rs"
 
 [[bin]]
-name = "cargo-zkvm-test"
+name = "cargo-zkvm"
 path = "src/cargo_plugin.rs"
+
+[[bin]]
+name = "cargo-zkvm-test"
+path = "src/cargo_zkvm_test_compat.rs"
 
 [features]
 default = []

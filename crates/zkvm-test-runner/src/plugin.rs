@@ -83,7 +83,8 @@ pub struct TestExecutable {
     pub elf_path: PathBuf,
 }
 
-pub const BIN_NAME: &str = "cargo-zkvm-test";
+pub const BIN_NAME: &str = "cargo-zkvm";
+pub const COMPAT_BIN_NAME: &str = "cargo-zkvm-test";
 
 pub const DEFAULT_SP1_TARGET: &str = "riscv64im-succinct-zkvm-elf";
 pub const DEFAULT_RISC0_TARGET: &str = "riscv32im-risc0-zkvm-elf";
@@ -215,9 +216,9 @@ fn runner_flags() -> &'static FlagSpec {
 
 #[derive(Parser, Debug, Clone)]
 #[command(
-    name = "cargo-zkvm-test",
-    bin_name = "cargo zkvm-test",
-    before_help = "cargo-zkvm-test: Nextest-grade test runner for zkVM binaries",
+    name = "cargo-zkvm",
+    bin_name = "cargo zkvm test",
+    before_help = "cargo-zkvm: Nextest-grade test runner for zkVM binaries",
     about = "Nextest-grade test runner for zkVM binaries"
 )]
 pub struct CargoPluginCli {
@@ -448,8 +449,10 @@ fn is_zkvm_pkg(pkg: &guppy::graph::PackageMetadata) -> bool {
         return explicit;
     }
 
-    pkg.direct_links()
-        .any(|link| link.to().name() == ZKVM_TEST_CRATE || link.to().name() == ZKVM_TEST_CRATE_ALT)
+    pkg.direct_links().any(|link| {
+        let name = link.to().name();
+        name == ZKVM_TEST_CRATE || name == ZKVM_TEST_CRATE_ALT
+    })
 }
 
 fn contains_name(names: &[String], candidate: &str) -> bool {
@@ -527,6 +530,17 @@ fn workspace_packages(graph: &PackageGraph, excludes: &[String]) -> Vec<String> 
         .collect()
 }
 
+fn package_has_target(pkg: &guppy::graph::PackageMetadata, cargo_options: &CargoOpts) -> bool {
+    pkg.build_targets().any(|bt| {
+        let name = bt.name();
+        let is_test = cargo_options.test.iter().any(|t| t == name);
+        let is_bin = cargo_options.bin.iter().any(|b| b == name);
+        let is_example = cargo_options.example.iter().any(|e| e == name);
+        let is_bench = cargo_options.bench.iter().any(|b| b == name);
+        is_test || is_bin || is_example || is_bench
+    })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PackageMode {
     Zkvm,
@@ -555,8 +569,11 @@ fn print_packages(kind: &str, packages: &[String]) {
     );
 }
 
-pub fn print_help() {
-    let _ = CargoPluginCli::command().print_help();
+pub fn print_help(bin_name: &str) {
+    let mut cmd = CargoPluginCli::command()
+        .bin_name(bin_name)
+        .before_help(format!("{bin_name}: Nextest-grade test runner for zkVM binaries"));
+    let _ = cmd.print_help();
     println!();
 }
 
@@ -746,14 +763,70 @@ pub fn should_prune_binary(
     !binary.can_match(filterset)
 }
 
-pub async fn run_cargo_plugin(mut raw_args: Vec<String>) -> i32 {
-    // If invoked as `cargo zkvm-test`, cargo passes "zkvm-test" as the first argument.
-    if raw_args.first().is_some_and(|s| s == "zkvm-test") {
+pub fn print_top_level_help() {
+    println!(
+        "cargo-zkvm: Nextest-grade developer suite and test runner for zkVM binaries\n\n\
+        Usage: cargo zkvm <COMMAND>\n\n\
+        Commands:\n  \
+          test    Run zkVM tests with cycle metering, hierarchical trace profiling, and Nextest filtering\n  \
+          help    Print this message or the help of the given subcommand(s)\n\n\
+        Options:\n  \
+          -h, --help     Print help\n  \
+          -V, --version  Print version"
+    );
+}
+
+pub async fn run_cargo_zkvm(mut raw_args: Vec<String>) -> i32 {
+    // If cargo invokes as `cargo zkvm <subcmd>`, cargo passes "zkvm" as the first argument.
+    if raw_args.first().is_some_and(|s| s == "zkvm") {
         raw_args.remove(0);
     }
 
+    if raw_args.is_empty() {
+        print_top_level_help();
+        return 0;
+    }
+
+    let first = raw_args[0].as_str();
+    match first {
+        "test" => {
+            raw_args.remove(0);
+            run_cargo_plugin_inner(raw_args, "cargo zkvm test").await
+        },
+        "-h" | "--help" | "help" => {
+            print_top_level_help();
+            0
+        },
+        "-V" | "--version" => {
+            println!("cargo-zkvm {}", env!("CARGO_PKG_VERSION"));
+            0
+        },
+        unknown => {
+            eprintln!("error: unrecognized subcommand '{unknown}'\n\nFor more information, try '--help'.");
+            2
+        },
+    }
+}
+
+pub async fn run_cargo_zkvm_test(mut raw_args: Vec<String>) -> i32 {
+    // If invoked via `cargo zkvm-test ...`, cargo passes "zkvm-test" as the first argument.
+    if raw_args.first().is_some_and(|s| s == "zkvm-test" || s == "zkvm") {
+        raw_args.remove(0);
+    }
+    // If user passed `test` as next arg, remove it as well
+    if raw_args.first().is_some_and(|s| s == "test") {
+        raw_args.remove(0);
+    }
+    run_cargo_plugin_inner(raw_args, "cargo-zkvm-test").await
+}
+
+pub async fn run_cargo_plugin(raw_args: Vec<String>) -> i32 {
+    run_cargo_zkvm_test(raw_args).await
+}
+
+pub async fn run_cargo_plugin_inner(mut raw_args: Vec<String>, display_bin_name: &str) -> i32 {
     if raw_args.iter().any(|arg| arg == "-h" || arg == "--help") {
-        print_help();
+        print_help(display_bin_name);
         return 0;
     }
 
@@ -787,8 +860,10 @@ pub async fn run_cargo_plugin(mut raw_args: Vec<String>) -> i32 {
     let cargo_filtered: Vec<String> = cargo_raw.iter().filter(|a| !a.starts_with('+')).cloned().collect();
 
     let has_explicit_packages = !cargo_options.package.is_empty();
-    let has_explicit_targets =
-        !cargo_options.bin.is_empty() || !cargo_options.test.is_empty() || !cargo_options.example.is_empty();
+    let has_explicit_targets = !cargo_options.bin.is_empty()
+        || !cargo_options.test.is_empty()
+        || !cargo_options.example.is_empty()
+        || !cargo_options.bench.is_empty();
     let cli_excludes = &cargo_options.exclude;
 
     let package_graph = query_package_graph();
@@ -827,14 +902,67 @@ pub async fn run_cargo_plugin(mut raw_args: Vec<String>) -> i32 {
                 },
             }
         }
-    } else if !has_explicit_targets && let Some(ref graph) = package_graph {
-        match (cargo_options.host, cargo_options.all_targets) {
-            (true, false) => host_packages = workspace_packages(graph, cli_excludes),
-            (_, true) => {
-                zkvm_packages = resolve_default_packages(graph, cli_excludes);
-                host_packages = workspace_packages(graph, cli_excludes);
-            },
-            (false, false) => zkvm_packages = resolve_default_packages(graph, cli_excludes),
+    } else if let Some(ref graph) = package_graph {
+        let current_dir = std::env::current_dir().unwrap_or_default();
+        let is_workspace_root = current_dir == Path::new(graph.workspace().root().as_str());
+        let current_pkg = if !is_workspace_root {
+            graph.workspace().iter().find(|p| {
+                Path::new(p.manifest_path().as_str())
+                    .parent()
+                    .is_some_and(|parent| current_dir.starts_with(parent))
+            })
+        } else {
+            None
+        };
+
+        if let Some(pkg) = current_pkg {
+            if !contains_name(cli_excludes, pkg.name()) {
+                let pkg_name = pkg.name().to_string();
+                let is_zkvm = is_zkvm_pkg(&pkg);
+                if !is_zkvm && !cargo_options.host && !cargo_options.all_targets {
+                    println!("{BIN_NAME}: `{pkg_name}` does not target zkVM; running host tests");
+                }
+                match package_mode(cargo_options.host, cargo_options.all_targets, is_zkvm) {
+                    PackageMode::Zkvm => zkvm_packages.push(pkg_name),
+                    PackageMode::Host => host_packages.push(pkg_name),
+                    PackageMode::Both => {
+                        zkvm_packages.push(pkg_name.clone());
+                        host_packages.push(pkg_name);
+                    },
+                }
+            }
+        } else if has_explicit_targets {
+            for pkg in graph.workspace().iter() {
+                if contains_name(cli_excludes, pkg.name()) {
+                    continue;
+                }
+                if package_has_target(&pkg, &cargo_options) {
+                    let pkg_name = pkg.name().to_string();
+                    let is_zkvm = is_zkvm_pkg(&pkg);
+                    if !is_zkvm && !cargo_options.host && !cargo_options.all_targets {
+                        println!("{BIN_NAME}: `{pkg_name}` does not target zkVM; running host tests");
+                    }
+                    match package_mode(cargo_options.host, cargo_options.all_targets, is_zkvm) {
+                        PackageMode::Zkvm => zkvm_packages.push(pkg_name),
+                        PackageMode::Host => host_packages.push(pkg_name),
+                        PackageMode::Both => {
+                            zkvm_packages.push(pkg_name.clone());
+                            host_packages.push(pkg_name);
+                        },
+                    }
+                }
+            }
+        } else {
+            match (cargo_options.host, cargo_options.all_targets) {
+                (true, false) => host_packages = workspace_packages(graph, cli_excludes),
+                (_, true) => {
+                    zkvm_packages = resolve_default_packages_from_dir(graph, cli_excludes, &current_dir);
+                    host_packages = workspace_packages(graph, cli_excludes);
+                },
+                (false, false) => {
+                    zkvm_packages = resolve_default_packages_from_dir(graph, cli_excludes, &current_dir);
+                },
+            }
         }
     }
 
@@ -843,12 +971,16 @@ pub async fn run_cargo_plugin(mut raw_args: Vec<String>) -> i32 {
         prune_packages_by_filter(&mut host_packages, graph, filterset);
     }
 
-    if zkvm_packages.is_empty() && host_packages.is_empty() && !has_explicit_targets {
+    if zkvm_packages.is_empty() && host_packages.is_empty() {
         if filterset.is_some() {
             println!("{BIN_NAME}: 0 packages matched filter expression");
             return 0;
         }
-        eprintln!("{BIN_NAME}: no test packages found in workspace.");
+        if has_explicit_targets {
+            eprintln!("{BIN_NAME}: no test packages found in workspace matching specified targets.");
+        } else {
+            eprintln!("{BIN_NAME}: no test packages found in workspace.");
+        }
         return 1;
     }
 
@@ -873,9 +1005,10 @@ pub async fn run_cargo_plugin(mut raw_args: Vec<String>) -> i32 {
         && let Err(err) = remove_file_if_exists(junit_path)
     {
         eprintln!(
-            "{BIN_NAME}: warning: failed to remove existing JUnit file '{}': {err}",
+            "{BIN_NAME}: error: failed to remove existing JUnit file '{}': {err}",
             junit_path.display()
         );
+        return 1;
     }
 
     let mut overall_exit_code = 0;
@@ -1035,20 +1168,29 @@ fn run_host_test(
         let stdout = child.stdout.take().expect("failed to open stdout");
         let stderr = child.stderr.take().expect("failed to open stderr");
 
-        let mut stdout_lines = Vec::new();
-        let stdout_reader = std::io::BufReader::new(stdout);
-        for line in stdout_reader.lines().map_while(Result::ok) {
-            println!("{line}");
-            stdout_lines.push(line);
-        }
+        let stdout_handle = std::thread::spawn(move || {
+            let mut stdout_lines: Vec<String> = Vec::new();
+            let stdout_reader = std::io::BufReader::new(stdout);
+            for line in stdout_reader.lines().flatten() {
+                println!("{line}");
+                stdout_lines.push(line);
+            }
+            stdout_lines
+        });
 
-        let mut stderr_content = String::new();
-        let stderr_reader = std::io::BufReader::new(stderr);
-        for line in stderr_reader.lines().map_while(Result::ok) {
-            eprintln!("{line}");
-            stderr_content.push_str(&line);
-            stderr_content.push('\n');
-        }
+        let stderr_handle = std::thread::spawn(move || {
+            let mut stderr_content = String::new();
+            let stderr_reader = std::io::BufReader::new(stderr);
+            for line in stderr_reader.lines().flatten() {
+                eprintln!("{line}");
+                stderr_content.push_str(&line);
+                stderr_content.push('\n');
+            }
+            stderr_content
+        });
+
+        let stdout_lines = stdout_handle.join().unwrap_or_default();
+        let stderr_content = stderr_handle.join().unwrap_or_default();
 
         let status = child.wait().map(|s| s.code().unwrap_or(1)).unwrap_or(1);
         let elapsed = start.elapsed().as_secs_f64();
@@ -1077,7 +1219,8 @@ fn run_host_test(
         };
 
         if let Err(e) = crate::junit::write_or_merge_junit_xml(junit_path, suite) {
-            eprintln!("{BIN_NAME}: warning: failed to write JUnit report: {e}");
+            eprintln!("{BIN_NAME}: error: failed to write JUnit report: {e}");
+            return 1;
         }
 
         status
@@ -1119,6 +1262,136 @@ fn compile_host_tests(
     collect_test_executables(cargo_cmd, "host", filterset, package_graph)
 }
 
+/// Validate whether an active RUSTFLAGS environment variable includes all flags required by SP1.
+///
+/// If any required flag is missing or has an incorrect value, a warning is printed to stderr.
+pub fn validate_zkvm_rustflags(env_var: &str, flags: &[&str], target: &str) {
+    if !target.contains("succinct") {
+        return;
+    }
+
+    let mut has_atomic = false;
+    let mut has_image_base = false;
+    let mut bad_image_base = None;
+    let mut has_panic_abort = false;
+    let mut has_getrandom = false;
+
+    for flag in flags {
+        let trimmed = flag.trim();
+        // Check atomic lowering
+        if trimmed == "passes=lower-atomic"
+            || trimmed == "passes=loweratomic"
+            || trimmed.contains("passes=lower-atomic")
+            || trimmed.contains("passes=loweratomic")
+        {
+            has_atomic = true;
+        }
+
+        // Check image-base
+        if let Some((_, val)) = trimmed.split_once("link-arg=--image-base=") {
+            has_image_base = true;
+            let val = val.trim_matches('"').trim_matches('\'');
+            if val != "2013265920" && val != "0x78000000" {
+                bad_image_base = Some(val.to_string());
+            }
+        } else if trimmed.contains("--image-base=") {
+            has_image_base = true;
+        }
+
+        // Check panic=abort
+        if trimmed == "panic=abort" || trimmed.contains("panic=abort") {
+            has_panic_abort = true;
+        }
+
+        // Check getrandom_backend="custom"
+        if trimmed.contains("getrandom_backend=\"custom\"")
+            || trimmed.contains("getrandom_backend='custom'")
+            || trimmed.contains("getrandom_backend=custom")
+        {
+            has_getrandom = true;
+        }
+    }
+
+    if !has_atomic {
+        eprintln!("{BIN_NAME}: warning: `{env_var}` does not include required SP1 pass `-C passes=lower-atomic`");
+    }
+    if !has_image_base {
+        eprintln!("{BIN_NAME}: warning: `{env_var}` does not include required SP1 stack base `-C link-arg=--image-base=2013265920`");
+    } else if let Some(bad_val) = bad_image_base {
+        eprintln!("{BIN_NAME}: warning: `{env_var}` sets image base to `{bad_val}`, but SP1 STACK_TOP is 2013265920 (0x78000000)");
+    }
+    if !has_panic_abort {
+        eprintln!("{BIN_NAME}: warning: `{env_var}` does not include required flag `-C panic=abort`");
+    }
+    if !has_getrandom {
+        eprintln!("{BIN_NAME}: warning: `{env_var}` does not include `--cfg getrandom_backend=\"custom\"`, which may cause `getrandom` compilation failures");
+    }
+}
+
+/// Determine RUSTFLAGS to pass to the compiler subprocess.
+///
+/// If `CARGO_ENCODED_RUSTFLAGS`, `CARGO_RUSTFLAGS`, or `RUSTFLAGS` is already set in the environment,
+/// this function inspects the active flags for completeness (warning on missing/incorrect values)
+/// and returns `None` to avoid interfering with the environment.
+///
+/// If no RUSTFLAGS environment variable is set, it returns `Some(("CARGO_ENCODED_RUSTFLAGS", flags))`
+/// containing all necessary SP1 flags separated by `\x1f`.
+pub fn configure_zkvm_rustflags(target: &str) -> Option<(&'static str, String)> {
+    if let Ok(encoded) = std::env::var("CARGO_ENCODED_RUSTFLAGS") {
+        let parts: Vec<&str> = encoded.split('\x1f').collect();
+        validate_zkvm_rustflags("CARGO_ENCODED_RUSTFLAGS", &parts, target);
+        return None;
+    }
+    if let Ok(cargo_flags) = std::env::var("CARGO_RUSTFLAGS") {
+        let parts: Vec<&str> = cargo_flags.split_whitespace().collect();
+        validate_zkvm_rustflags("CARGO_RUSTFLAGS", &parts, target);
+        return None;
+    }
+    if let Ok(rustflags) = std::env::var("RUSTFLAGS") {
+        let parts: Vec<&str> = rustflags.split_whitespace().collect();
+        validate_zkvm_rustflags("RUSTFLAGS", &parts, target);
+        return None;
+    }
+
+    if target.contains("succinct") {
+        let flags = [
+            "-C",
+            "passes=lower-atomic",
+            "-C",
+            "link-arg=--image-base=2013265920",
+            "-C",
+            "panic=abort",
+            "--cfg",
+            "getrandom_backend=\"custom\"",
+            "-C",
+            "llvm-args=-misched-prera-direction=bottomup",
+            "-C",
+            "llvm-args=-misched-postra-direction=bottomup",
+        ];
+        Some(("CARGO_ENCODED_RUSTFLAGS", flags.join("\x1f")))
+    } else {
+        None
+    }
+}
+
+/// Locate the Succinct compiler directly via `rustup which --toolchain succinct rustc`.
+///
+/// Bypasses rustup's cargo proxy to eliminate the `info: cargo is unavailable for the active toolchain` notice.
+pub fn resolve_succinct_rustc() -> Option<PathBuf> {
+    let output = Command::new("rustup")
+        .args(["which", "--toolchain", "succinct", "rustc"])
+        .output()
+        .ok()?;
+    if output.status.success() {
+        let path_str = String::from_utf8(output.stdout).ok()?;
+        let path = PathBuf::from(path_str.trim());
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    None
+}
+
 fn compile_zkvm_tests(
     packages: &[String],
     cargo_filtered: &[String],
@@ -1129,8 +1402,18 @@ fn compile_zkvm_tests(
     let mut cargo_cmd = Command::new("cargo");
     if let Some(tc) = build.toolchain {
         cargo_cmd.arg(tc);
+    } else if build.target.contains("succinct") {
+        if let Some(rustc_path) = resolve_succinct_rustc() {
+            cargo_cmd.env("RUSTC", rustc_path);
+        } else if let Some(vendor) = Vendor::from_target(build.target) {
+            cargo_cmd.arg(vendor.toolchain());
+        }
     } else if let Some(vendor) = Vendor::from_target(build.target) {
         cargo_cmd.arg(vendor.toolchain());
+    }
+
+    if let Some((env_var, val)) = configure_zkvm_rustflags(build.target) {
+        cargo_cmd.env(env_var, val);
     }
 
     configure_cargo_test(&mut cargo_cmd, packages);
@@ -1482,5 +1765,52 @@ mod tests {
 
         assert!(parse_libtest_line("running 3 tests").is_none());
         assert!(parse_libtest_line("test result: ok. 1 passed; 0 failed").is_none());
+    }
+
+    #[test]
+    fn test_validate_zkvm_rustflags_complete() {
+        let flags = [
+            "-C",
+            "passes=lower-atomic",
+            "-C",
+            "link-arg=--image-base=2013265920",
+            "-C",
+            "panic=abort",
+            "--cfg",
+            "getrandom_backend=\"custom\"",
+        ];
+        validate_zkvm_rustflags("CARGO_RUSTFLAGS", &flags, "riscv64im-succinct-zkvm-elf");
+    }
+
+    #[test]
+    fn test_validate_zkvm_rustflags_hex_image_base() {
+        let flags = [
+            "-C",
+            "passes=lower-atomic",
+            "-C",
+            "link-arg=--image-base=0x78000000",
+            "-C",
+            "panic=abort",
+            "--cfg",
+            "getrandom_backend=\"custom\"",
+        ];
+        validate_zkvm_rustflags("CARGO_RUSTFLAGS", &flags, "riscv64im-succinct-zkvm-elf");
+    }
+
+    #[test]
+    fn test_configure_zkvm_rustflags_default() {
+        if std::env::var("CARGO_ENCODED_RUSTFLAGS").is_err()
+            && std::env::var("CARGO_RUSTFLAGS").is_err()
+            && std::env::var("RUSTFLAGS").is_err()
+        {
+            let res = configure_zkvm_rustflags("riscv64im-succinct-zkvm-elf");
+            assert!(res.is_some());
+            let (var, val) = res.unwrap();
+            assert_eq!(var, "CARGO_ENCODED_RUSTFLAGS");
+            assert!(val.contains("passes=lower-atomic"));
+            assert!(val.contains("link-arg=--image-base=2013265920"));
+            assert!(val.contains("panic=abort"));
+            assert!(val.contains("getrandom_backend=\"custom\""));
+        }
     }
 }

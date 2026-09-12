@@ -5,7 +5,7 @@
 //! - Test filtering: test name substring matching, `--exact`, `--list`, `--ignored`.
 //! - `#[should_panic]` and `#[should_panic, exit_code = N]` support.
 //! - Output capture: captures guest `stdout` and `stderr` streams, weaving them into failure reports and `--nocapture`.
-//! - Configurable prover: `--prover <mock|cpu|cuda|network>` and `ZKVM_PROVER` env var.
+//! - Configurable prover: `--prover <mock|cpu|cuda>` and `ZKVM_PROVER` env var.
 //! - Cycle counts: reports exact VM instruction/cycle counts per test and total.
 //! - Parallel execution: runs test instances concurrently across threads.
 //! - Tier 1 fallback: seamlessly runs legacy/stock libtest binaries if present.
