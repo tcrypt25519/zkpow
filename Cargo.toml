@@ -15,9 +15,6 @@ members = [
   "crates/types",
   "crates/sha256_const",
   "crates/worker",
-  "crates/zkvm-test-runner",
-  "crates/zkvm-test",
-  "crates/zkvm-test-macros",
   "crates/test_support",
 ]
 exclude = ["sp1", "memuse"]
@@ -26,12 +23,9 @@ resolver = "3"
 [workspace.dependencies]
 zkpow-controller = { path = "crates/controller" }
 zkpow-core = { path = "crates/core" }
-# zkpow-guest = { path = "crates/guest" }
-# zkpow-host = { path = "crates/host" }
 zkpow-sha256 = { path = "crates/sha256" }
 zkpow-store = { path = "crates/store" }
 zkpow-sync-headers = { path = "crates/sync-headers" }
-# zkpow-cli = { path = "crates/cli" }
 zkpow-params = { path = "crates/params" }
 zkpow-types = { path = "crates/types" }
 zkpow-worker = { path = "crates/worker" }
@@ -41,8 +35,7 @@ sha256_const = { path = "crates/sha256_const" }
 sp1-cycle = { path = "crates/sp1-cycle" }
 sp1-cycle-macros = { path = "crates/sp1-cycle-macros" }
 test-support = { path = "crates/test_support" }
-zkvm-test = { path = "crates/zkvm-test" }
-# zkvm-test-macros = { path = "crates/zkvm-test-macros" }
+zkvm-test = { path = "../zkvm-test/crates/zkvm-test" }
 
 ##
 ## SP1
@@ -55,7 +48,6 @@ sp1-zkvm = { version = "6.6.0", default-features = false, features = [
   "lib",
   "verify",
 ] }
-# sp1-recursion-gnark-ffi = { version = "6.6.0", default-features = false }
 sp1-prover = { version = "6.6.0", default-features = false, features = [
   "bigint-rug",
   "debug",
@@ -65,12 +57,9 @@ sp1-core-executor-runner = { version = "6.6.0" }
 sp1-jit = { version = "6.6.0" }
 
 memuse = { path = "./memuse" }
-# dhat = "0.3.3"
-# sp1-sha2 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", tag = "patch-sha2-0.10.8-sp1-6.0.0" }
 
 sha2 = { version = "0.10.8" }
 bitcoin = { version = "0.32", features = ["serde"] }
-# bitcoin-io = "0.6.0"
 
 tracing = { version = "0.1.44" }
 tracing-subscriber = { version = "0.3.23" }
@@ -78,12 +67,10 @@ tracing-subscriber = { version = "0.3.23" }
 tokio = { version = "1.53.1", features = ["full"] }
 hex = "0.4.3"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
-# humantime = "2.4"
 num-bigint = "0.5.1"
 clap = { version = "4.6.6", features = ["derive"] }
 thiserror = "2.0.20"
 rand = "0.10.2"
-# anyhow = "1.0.104"
 
 bytemuck = { version = "1.25.2", features = ["derive"] }
 rkyv = { version = "0.8.18", default-features = false, features = [
@@ -92,7 +79,6 @@ rkyv = { version = "0.8.18", default-features = false, features = [
   "little_endian",
   "aligned",
 ] }
-# bytes = { version = "1.12.1" }
 
 ##
 ## To remove
@@ -120,6 +106,8 @@ sp1-primitives = { path = "sp1/crates/primitives" }
 sp1-jit = { path = "sp1/crates/core/jit" }
 sp1-core-executor-runner = { path = "sp1/crates/core/runner" }
 sp1-core-executor-runner-binary = { path = "sp1/crates/core/runner-binary" }
+zkvm-test = { path = "../zkvm-test/crates/zkvm-test" }
+zkvm-test-macros = { path = "../zkvm-test/crates/zkvm-test-macros" }
 
 [profile.release]
 incremental = false
