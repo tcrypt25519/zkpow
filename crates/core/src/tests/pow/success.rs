@@ -138,3 +138,34 @@ fn unmocked_bitcoin_chain_verifies_first_50_blocks() {
     let expected_work = ChainWork::from_limbs([0x0000_0001_0001_0001 * 50, 0, 0, 0]);
     assert_eq!(state.chain_work, expected_work);
 }
+
+#[zkvm_test]
+fn target_conversions_and_limb_rollover_edge_cases() {
+    // 1. target_to_bits with 0
+    let zero_target = Target::from_limbs([0, 0, 0, 0]);
+    let zero_bits = crate::target_to_bits(zero_target);
+    assert_eq!(zero_bits, CompactTarget::new(0));
+
+    // 2. target_to_bits with nbytes <= 3
+    let small_target = Target::from_limbs([0x1234, 0, 0, 0]);
+    let small_bits = crate::target_to_bits(small_target);
+    assert_eq!(small_bits, CompactTarget::new(0x0212_3400));
+
+    // 3. target_from_bits with size <= 3
+    let decoded_small = crate::target_from_bits(CompactTarget::new(0x0212_3400));
+    assert_eq!(decoded_small, small_target);
+
+    // 4. block_work_from_target with saturated limb 0 rolling over to limb 1
+    let rollover_target = Target::from_limbs([u64::MAX, 1, 0, 0]);
+    let work = crate::block_work_from_target(rollover_target);
+    assert!(work.into_inner() > zkpow_types::u256::from_limbs([0; 4]));
+
+    // 5. NonMaxU256 returns None on u256::MAX
+    let max_u256 = zkpow_types::u256::from_limbs([u64::MAX; 4]);
+    assert!(zkpow_types::NonMaxU256::new(max_u256).is_none());
+
+    // 6. Branded and PublicValues formatting
+    let branded: zkpow_types::Branded<(), u32> = zkpow_types::Branded::new(42);
+    assert_eq!(alloc::format!("{branded:?}"), "42");
+}
+
