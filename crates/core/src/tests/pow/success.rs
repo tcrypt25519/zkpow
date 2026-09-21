@@ -169,3 +169,19 @@ fn target_conversions_and_limb_rollover_edge_cases() {
     assert_eq!(alloc::format!("{branded:?}"), "42");
 }
 
+
+#[zkvm_test]
+fn mul2_with_overflow_doubles_and_reports_evicted_msb() {
+    let cases: [([u64; 4], [u64; 4], bool); 5] = [
+        ([0; 4], [0; 4], false),
+        ([1, 0, 0, 0], [2, 0, 0, 0], false),
+        ([1 << 63, 1 << 63, 1 << 63, 0], [0, 1, 1, 1], false),
+        ([1 << 63, 0, 0, 1 << 63], [0, 1, 0, 0], true),
+        ([u64::MAX; 4], [u64::MAX - 1, u64::MAX, u64::MAX, u64::MAX], true),
+    ];
+    for (input, expected, overflow) in cases {
+        let mut value = zkpow_types::u256::from_limbs(input);
+        assert_eq!(crate::mul2_with_overflow(&mut value), overflow, "{input:x?}");
+        assert_eq!(value.into_limbs(), expected, "{input:x?}");
+    }
+}

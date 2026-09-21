@@ -313,17 +313,30 @@ pub(crate) fn increment_target(target: NonMaxU256) -> u256 {
     target
 }
 
-/// Shift `value` left by one bit in place, returning the carry (the evicted MSB).
+/// Double `value` in place modulo 2^256, returning whether the true product overflowed.
 #[must_use]
-fn shl1_with_carry(value: &mut u256) -> bool {
+fn mul2_with_overflow(value: &mut u256) -> bool {
     let limbs = value.as_limbs_mut();
-    let mut carry = 0u64;
-    for limb in limbs.iter_mut() {
-        let next_carry = *limb >> 63;
-        *limb = (*limb << 1) | carry;
-        carry = next_carry;
+    let overflow = limbs[3] >> 63 != 0;
+
+    #[cfg(target_os = "zkvm")]
+    // SAFETY: both pointers are live and 8-byte aligned; the zero modulus means 2^256.
+    unsafe {
+        static TWO_MOD_2_256: [u64; 8] = [2, 0, 0, 0, 0, 0, 0, 0];
+        sp1_lib::syscall_uint256_mulmod(limbs, TWO_MOD_2_256.as_ptr().cast());
     }
-    carry > 0
+
+    #[cfg(not(target_os = "zkvm"))]
+    {
+        let mut carry = 0u64;
+        for limb in limbs.iter_mut() {
+            let next_carry = *limb >> 63;
+            *limb = (*limb << 1) | carry;
+            carry = next_carry;
+        }
+    }
+
+    overflow
 }
 
 /// Compute one-block cumulative-work units from the expanded target.
@@ -343,7 +356,7 @@ pub fn block_work_from_target(target: Target) -> BlockWork {
         for bit in (0..=256u32).rev() {
             // Shift remainder left, absorbing the next dividend bit.
             // At bit == 256 the dividend is 2^256, so its MSB is 1; all lower bits are 0.
-            let carry = shl1_with_carry(&mut remainder);
+            let carry = mul2_with_overflow(&mut remainder);
             if bit == 256 {
                 // Inject the implicit leading 1 of 2^256 into the LSB of the shifted remainder.
                 remainder.as_limbs_mut()[0] |= 1;
