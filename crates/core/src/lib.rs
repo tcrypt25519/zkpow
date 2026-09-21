@@ -58,8 +58,8 @@ fn hash_header_input(input: &HeaderInput, prev_blockhash: &BlockHash, compact_ta
         }
         BlockHash::new(zkpow_sha256::of_header(
             input.version,
-            *prev_blockhash.as_inner(),
-            input.merkle_root,
+            prev_blockhash.as_inner(),
+            &input.merkle_root,
             *input.timestamp.as_inner(),
             compact_target.into_inner(),
             input.nonce,

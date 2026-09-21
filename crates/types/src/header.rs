@@ -74,8 +74,8 @@ impl From<&Header> for BlockHash {
         {
             BlockHash::new(zkpow_sha256::of_header(
                 header.version,
-                *header.prev_blockhash.as_inner(),
-                header.merkle_root,
+                header.prev_blockhash.as_inner(),
+                &header.merkle_root,
                 *header.timestamp.as_inner(),
                 *header.compact_target.as_inner(),
                 header.nonce,

@@ -186,16 +186,16 @@ pub fn of_public_values(state_bytes: &[u8], verifier_key: &[u8], return_code: u8
 /// Build the first SHA-256 block words for a Bitcoin header represented by
 /// disjoint prover/header-state fields.
 #[inline]
-fn header_first_block(version: u32, prev_blockhash: [u8; 32], merkle_root: [u8; 32]) -> [u64; 16] {
+fn header_first_block(version: u32, prev_blockhash: &[u8; 32], merkle_root: &[u8; 32]) -> [u64; 16] {
     // Only the 16 low message words: the SHA-256 message schedule derives
     // w[16..64] from these, so the caller never materializes the tail.
     let mut words = [0u64; 16];
     words[0] = word_from_le_u32(version);
     for i in 0..8 {
-        words[1 + i] = word_from_bytes(&prev_blockhash, i);
+        words[1 + i] = word_from_bytes(prev_blockhash, i);
     }
     for i in 0..7 {
-        words[9 + i] = word_from_bytes(&merkle_root, i);
+        words[9 + i] = word_from_bytes(merkle_root, i);
     }
     words
 }
@@ -203,11 +203,11 @@ fn header_first_block(version: u32, prev_blockhash: [u8; 32], merkle_root: [u8; 
 /// Build the second SHA-256 block words for a Bitcoin header represented by
 /// disjoint prover/header-state fields.
 #[inline]
-fn header_second_block(merkle_root: [u8; 32], timestamp: u32, compact_target: u32, nonce: u32) -> [u64; 16] {
+fn header_second_block(merkle_root: &[u8; 32], timestamp: u32, compact_target: u32, nonce: u32) -> [u64; 16] {
     // Live words only (data + padding + length); w[5..15] stay zero as SHA
     // padding, w[16..64] are filled by the message schedule.
     let mut words = [0u64; 16];
-    words[0] = word_from_bytes(&merkle_root, 7);
+    words[0] = word_from_bytes(merkle_root, 7);
     words[1] = word_from_le_u32(timestamp);
     words[2] = word_from_le_u32(compact_target);
     words[3] = word_from_le_u32(nonce);
@@ -223,8 +223,8 @@ fn header_second_block(merkle_root: [u8; 32], timestamp: u32, compact_target: u3
 /// but avoids materializing either a full [`zkpow_core::Header`] or `[u8; 80]`.
 pub fn of_header(
     version: u32,
-    prev_blockhash: [u8; 32],
-    merkle_root: [u8; 32],
+    prev_blockhash: &[u8; 32],
+    merkle_root: &[u8; 32],
     timestamp: u32,
     compact_target: u32,
     nonce: u32,

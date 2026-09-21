@@ -113,8 +113,8 @@ fn test_block_headers_fixture_verification() {
 
         let actual_hash = of_header(
             version,
-            prev_blockhash,
-            merkle_root,
+            &prev_blockhash,
+            &merkle_root,
             timestamp,
             compact_target,
             nonce,
@@ -142,8 +142,8 @@ fn test_genesis_header_hash_snapshot() {
 
     let hash = of_header(
         version,
-        prev_blockhash,
-        merkle_root,
+        &prev_blockhash,
+        &merkle_root,
         timestamp,
         compact_target,
         nonce,
@@ -220,7 +220,7 @@ fn of_header_differential_testing_against_reference_sha256d() {
     for (v, prev, mr, ts, target, nonce) in test_cases {
         let wire = build_wire_header(v, prev, mr, ts, target, nonce);
         let expected = reference_sha256d(&wire);
-        let actual = of_header(v, prev, mr, ts, target, nonce);
+        let actual = of_header(v, &prev, &mr, ts, target, nonce);
         assert_eq!(actual, expected, "of_header mismatch for version {v}");
     }
 
@@ -241,7 +241,7 @@ fn of_header_differential_testing_against_reference_sha256d() {
 
         let wire = build_wire_header(v, prev, mr, ts, target, nonce);
         let expected = reference_sha256d(&wire);
-        let actual = of_header(v, prev, mr, ts, target, nonce);
+        let actual = of_header(v, &prev, &mr, ts, target, nonce);
         assert_eq!(actual, expected, "of_header fuzz mismatch for seed {seed}");
     }
 }
@@ -290,7 +290,7 @@ fn test_mainnet_headers_0_to_7_hash_vectors() {
         let compact_target = u32::from_le_bytes(wire[72..76].try_into().unwrap());
         let nonce = u32::from_le_bytes(wire[76..80].try_into().unwrap());
 
-        let hash = of_header(version, prev, mr, timestamp, compact_target, nonce);
+        let hash = of_header(version, &prev, &mr, timestamp, compact_target, nonce);
         assert_eq!(hash, reference_sha256d(&wire));
         committed_hashes[i * 32..(i + 1) * 32].copy_from_slice(&hash);
     }
