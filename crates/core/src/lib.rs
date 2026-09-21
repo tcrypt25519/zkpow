@@ -24,7 +24,6 @@ pub use header::HeaderInput;
 
 mod public_values;
 pub use public_values::{ErrorCode, PublicValues, ReturnCode, VerifierKeyDigest};
-pub use sp1_cycle;
 
 mod state;
 pub use state::State;
@@ -312,6 +311,7 @@ fn sub_assign(lhs: &mut u256, rhs: u256) -> bool {
 ///
 /// We can iterate until we find a limb < max u64, add 1 to it, and we're done. As long as we find max u64 limbs we
 /// just set them to 0 and move forward. [`NonMaxU256`] guarantees that the carry cannot escape the final limb.
+#[sp1_cycle::tracked]
 pub(crate) fn increment_target(target: NonMaxU256) -> u256 {
     let mut target = target.into_inner();
     for (i, limb) in target.as_limbs_mut().iter_mut().enumerate() {
@@ -334,7 +334,8 @@ pub(crate) fn increment_target(target: NonMaxU256) -> u256 {
 
 /// Double `value` in place modulo 2^256, returning whether the true product overflowed.
 #[must_use]
-fn mul2_with_overflow(value: &mut u256) -> bool {
+#[allow(dead_code)]
+pub(crate) fn mul2_with_overflow(value: &mut u256) -> bool {
     let limbs = value.as_limbs_mut();
     let overflow = limbs[3] >> 63 != 0;
 
@@ -358,14 +359,103 @@ fn mul2_with_overflow(value: &mut u256) -> bool {
     overflow
 }
 
-/// Compute one-block cumulative-work units from the expanded target.
-///
-/// Uses binary long division to compute `floor(2^256 / (target + 1))`.
-/// The quotient of `2^256` divided by a divisor with bit length `n` has no set bits above
-/// `257 - n`. Starting at bit `257 - n` with remainder preset to `2^(n - 1)` eliminates
-/// `n - 1` leading zero iterations, running in `258 - n` iterations instead of 257.
-#[sp1_cycle::tracked]
-pub fn block_work_from_target(target: Target) -> BlockWork {
+pub(crate) fn uint256_mul_with_carry(
+    a: &[u64; 4],
+    b: &[u64; 4],
+    c: &[u64; 4],
+) -> ([u64; 4], [u64; 4]) {
+    #[cfg(target_os = "zkvm")]
+    unsafe {
+        let mut lo = [0u64; 4];
+        let mut hi = [0u64; 4];
+        sp1_lib::syscall_uint256_mul_with_carry(
+            a.as_ptr().cast(),
+            b.as_ptr().cast(),
+            c.as_ptr().cast(),
+            lo.as_mut_ptr().cast(),
+            hi.as_mut_ptr().cast(),
+        );
+        (lo, hi)
+    }
+
+    #[cfg(not(target_os = "zkvm"))]
+    {
+        let mut res = [0u128; 8];
+        for i in 0..4 {
+            res[i] = c[i] as u128;
+        }
+        for i in 0..4 {
+            for j in 0..4 {
+                res[i + j] += (a[i] as u128) * (b[j] as u128);
+            }
+        }
+        let mut carry = 0u128;
+        let mut out = [0u64; 8];
+        for i in 0..8 {
+            let total = res[i] + carry;
+            out[i] = total as u64;
+            carry = total >> 64;
+        }
+        let mut lo = [0u64; 4];
+        let mut hi = [0u64; 4];
+        lo.copy_from_slice(&out[0..4]);
+        hi.copy_from_slice(&out[4..8]);
+        (lo, hi)
+    }
+}
+
+pub(crate) fn verify_block_work_witness(work: BlockWork, divisor: u256) {
+    let w_limbs = work.into_inner().into_limbs();
+    let d_limbs = divisor.into_limbs();
+    let zero = [0u64; 4];
+
+    // Check 1: work * (target + 1) <= 2^256
+    let (lo1, hi1) = uint256_mul_with_carry(&w_limbs, &d_limbs, &zero);
+    let le_2_256 = if hi1[1..4] != [0; 3] {
+        false
+    } else if hi1[0] > 1 {
+        false
+    } else if hi1[0] == 1 {
+        lo1 == [0; 4]
+    } else {
+        true
+    };
+    if !le_2_256 {
+        crate::invalid_hint!("block work product exceeds 2^256");
+    }
+
+    // Check 2: (work + 1) * (target + 1) > 2^256
+    let w1 = work.into_inner() + u256::from_limbs([1, 0, 0, 0]);
+    let (lo2, hi2) = uint256_mul_with_carry(&w1.into_limbs(), &d_limbs, &zero);
+    let gt_2_256 = if hi2[1..4] != [0; 3] {
+        true
+    } else if hi2[0] > 1 {
+        true
+    } else if hi2[0] == 1 {
+        lo2 != [0; 4]
+    } else {
+        false
+    };
+    if !gt_2_256 {
+        crate::invalid_hint!("(block work + 1) product does not exceed 2^256");
+    }
+}
+
+#[must_use]
+fn mul2_shift(value: &mut u256) -> bool {
+    let limbs = value.as_limbs_mut();
+    let mut carry = 0u64;
+    for limb in limbs.iter_mut() {
+        let next_carry = *limb >> 63;
+        *limb = (*limb << 1) | carry;
+        carry = next_carry;
+    }
+    carry > 0
+}
+
+/// Compute one-block cumulative-work units from the expanded target using binary long division.
+#[must_use]
+pub fn compute_block_work_division(target: Target) -> BlockWork {
     let divisor = increment_target(target.into_inner());
     let n = divisor.bits();
 
@@ -376,24 +466,56 @@ pub fn block_work_from_target(target: Target) -> BlockWork {
     remainder_limbs[((n - 1) / 64) as usize] = 1u64 << ((n - 1) % 64);
     let mut remainder = u256::from_limbs(remainder_limbs);
 
-    sp1_cycle::track!("work_target_loop", {
-        if remainder >= divisor {
-            let _ = sub_assign(&mut remainder, divisor);
-            if start_bit < 256 {
-                quotient[(start_bit / 64) as usize] |= 1u64 << (start_bit % 64);
-            }
+    if remainder >= divisor {
+        let _ = sub_assign(&mut remainder, divisor);
+        if start_bit < 256 {
+            quotient[(start_bit / 64) as usize] |= 1u64 << (start_bit % 64);
         }
+    }
 
-        for bit in (0..start_bit).rev() {
-            let carry = mul2_with_overflow(&mut remainder);
-            if carry || remainder >= divisor {
-                let _ = sub_assign(&mut remainder, divisor);
-                quotient[(bit / 64) as usize] |= 1u64 << (bit % 64);
-            }
+    for bit in (0..start_bit).rev() {
+        let carry = mul2_shift(&mut remainder);
+        if carry || remainder >= divisor {
+            let _ = sub_assign(&mut remainder, divisor);
+            quotient[(bit / 64) as usize] |= 1u64 << (bit % 64);
         }
-    });
+    }
 
     BlockWork::from_limbs(quotient)
+}
+
+/// Compute one-block cumulative-work units from the expanded target.
+///
+/// In the zkVM, the quotient `floor(2^256 / (target + 1))` is supplied as a prover hint
+/// and verified in ~70 cycles using two `syscall_uint256_mul_with_carry` calls:
+/// 1. `work * (target + 1) <= 2^256`
+/// 2. `(work + 1) * (target + 1) > 2^256`
+#[sp1_cycle::tracked]
+pub fn block_work_from_target(target: Target) -> BlockWork {
+    let divisor = increment_target(target.into_inner());
+
+    #[cfg(target_os = "zkvm")]
+    {
+        sp1_lib::unconstrained!({
+            let work = compute_block_work_division(target);
+            sp1_lib::io::hint_slice(bytemuck::bytes_of(&work.into_inner().into_limbs()));
+        });
+        let read_res = unsafe { sp1_lib::read_vec_raw() };
+        if read_res.ptr.is_null() || read_res.len != 32 {
+            crate::invalid_hint!("failed to read block work hint");
+        }
+        let limbs: [u64; 4] = unsafe { *(read_res.ptr as *const [u64; 4]) };
+        let work = BlockWork::from_limbs(limbs);
+        verify_block_work_witness(work, divisor);
+        work
+    }
+
+    #[cfg(not(target_os = "zkvm"))]
+    {
+        let work = compute_block_work_division(target);
+        verify_block_work_witness(work, divisor);
+        work
+    }
 }
 
 /// Compute the compact and normalized full target required at a difficulty boundary.

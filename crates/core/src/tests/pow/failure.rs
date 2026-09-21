@@ -141,3 +141,26 @@ fn unmocked_chain_rejects_parent_blockhash_mismatch() {
         .unwrap_err();
     assert!(matches!(err, ApplyError::PowInsufficient { height: 1, .. }));
 }
+
+#[zkvm_test(should_panic(expected = "halt: invalid hint (3)"), exit_code = 3)]
+fn block_work_witness_rejects_understated_work() {
+    let target = zkpow_params::Mainnet::PARAMS.genesis_target;
+    let true_work = crate::compute_block_work_division(target);
+    let mut bad_work_u256 = true_work.into_inner();
+    let _ = crate::sub_assign(&mut bad_work_u256, zkpow_types::u256::from_limbs([1, 0, 0, 0]));
+    let bad_work = zkpow_types::BlockWork::from_limbs(bad_work_u256.into_limbs());
+    let divisor = crate::increment_target(target.into_inner());
+    crate::verify_block_work_witness(bad_work, divisor);
+}
+
+#[zkvm_test(should_panic(expected = "halt: invalid hint (3)"), exit_code = 3)]
+fn block_work_witness_rejects_overstated_work() {
+    let target = zkpow_params::Mainnet::PARAMS.genesis_target;
+    let true_work = crate::compute_block_work_division(target);
+    let bad_work = zkpow_types::BlockWork::from_limbs(
+        (true_work.into_inner() + zkpow_types::u256::from_limbs([1, 0, 0, 0])).into_limbs(),
+    );
+    let divisor = crate::increment_target(target.into_inner());
+    crate::verify_block_work_witness(bad_work, divisor);
+}
+

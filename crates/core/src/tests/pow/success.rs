@@ -231,3 +231,25 @@ fn block_work_from_target_computes_exact_quotients() {
         [0x5555555555555555; 4]
     );
 }
+
+#[zkvm_test]
+fn test_uint256_mul_with_carry_precompile() {
+    let a = [2u64, 0, 0, 0];
+    let b = [3u64, 0, 0, 0];
+    let c = [4u64, 0, 0, 0];
+    let (lo, hi) = crate::uint256_mul_with_carry(&a, &b, &c);
+    assert_eq!(lo, [10, 0, 0, 0]);
+    assert_eq!(hi, [0, 0, 0, 0]);
+
+    // Test with overflow into upper 256 bits:
+    // (2^256 - 1) * 2 = 2^257 - 2 = (1 * 2^256) + (2^256 - 2)
+    let max_u256 = [u64::MAX; 4];
+    let two = [2u64, 0, 0, 0];
+    let zero = [0u64; 4];
+    let (lo_overflow, hi_overflow) = crate::uint256_mul_with_carry(&max_u256, &two, &zero);
+    assert_eq!(lo_overflow, [u64::MAX - 1, u64::MAX, u64::MAX, u64::MAX]);
+    assert_eq!(hi_overflow, [1, 0, 0, 0]);
+}
+
+
+
