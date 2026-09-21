@@ -33,8 +33,6 @@ impl ProofVerifier for PreparedProverVerifier {
         let verified = match &self.prepared {
             PreparedProver::Mock { prover, proving_key } => prover.verify(&proof, proving_key.verifying_key(), None),
             PreparedProver::Cpu { prover, proving_key } => prover.verify(&proof, proving_key.verifying_key(), None),
-            #[cfg(feature = "CUDA")]
-            PreparedProver::Cuda { prover, proving_key } => prover.verify(&proof, proving_key.verifying_key(), None),
         };
         verified.map_err(|err| format!("SP1 verification failed: {err}"))
     }

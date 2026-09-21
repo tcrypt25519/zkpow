@@ -2,21 +2,16 @@ pub(crate) mod compressed;
 
 use std::sync::OnceLock;
 
-#[cfg(feature = "CUDA")]
-use sp1_sdk::CudaProver;
 use sp1_sdk::{prelude::*, CpuProver, MockProver, Prover, ProverClient, SP1ProvingKey};
 use tokio::sync::Mutex as AsyncMutex;
 
-#[cfg(feature = "CUDA")]
-use crate::pipeline::diagnostics::timed_sync;
 use crate::pipeline::{diagnostics::timed_async, BoxError, ProverBackend, ELF};
 
 static PREPARED_PROVER: OnceLock<AsyncMutex<Option<(PreparedProverConfig, PreparedProver)>>> = OnceLock::new();
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct PreparedProverConfig {
-    backend:        ProverBackend,
-    cuda_device_id: Option<u32>,
+    backend: ProverBackend,
 }
 
 #[derive(Clone)]
@@ -29,11 +24,6 @@ pub(crate) enum PreparedProver {
         prover:      CpuProver,
         proving_key: SP1ProvingKey,
     },
-    #[cfg(feature = "CUDA")]
-    Cuda {
-        prover:      CudaProver,
-        proving_key: <CudaProver as Prover>::ProvingKey,
-    },
 }
 
 impl PreparedProver {
@@ -42,8 +32,6 @@ impl PreparedProver {
         match self {
             PreparedProver::Mock { proving_key, .. } => proving_key.verifying_key(),
             PreparedProver::Cpu { proving_key, .. } => proving_key.verifying_key(),
-            #[cfg(feature = "CUDA")]
-            PreparedProver::Cuda { proving_key, .. } => proving_key.verifying_key(),
         }
     }
 
@@ -59,11 +47,9 @@ fn prepared_prover_store() -> &'static AsyncMutex<Option<(PreparedProverConfig, 
 
 pub(crate) async fn get_prepared_prover(
     prover_backend: ProverBackend,
-    cuda_device_id: Option<u32>,
 ) -> Result<PreparedProver, BoxError> {
     let desired = PreparedProverConfig {
         backend: prover_backend,
-        cuda_device_id,
     };
 
     {
@@ -72,16 +58,13 @@ pub(crate) async fn get_prepared_prover(
             if *cached_cfg == desired {
                 tracing::info!(
                     backend = ?desired.backend,
-                    cuda_device_id = desired.cuda_device_id,
                     "reusing prepared prover"
                 );
                 return Ok(prepared.clone());
             }
             tracing::info!(
                 cached_backend = ?cached_cfg.backend,
-                cached_cuda_device_id = cached_cfg.cuda_device_id,
                 requested_backend = ?desired.backend,
-                requested_cuda_device_id = desired.cuda_device_id,
                 "prepared prover cache miss due to config change"
             );
         }
@@ -89,7 +72,6 @@ pub(crate) async fn get_prepared_prover(
 
     tracing::info!(
         backend = ?desired.backend,
-        cuda_device_id = desired.cuda_device_id,
         "building prepared prover"
     );
 
@@ -110,33 +92,6 @@ pub(crate) async fn get_prepared_prover(
             .await?;
             let proving_key = timed_async("setup_vkey", || async { prover.setup(ELF).await }).await?;
             PreparedProver::Cpu { prover, proving_key }
-        },
-        ProverBackend::Cuda => {
-            #[cfg(feature = "CUDA")]
-            {
-                let report = timed_sync("cuda_preflight", || crate::cuda_env::run_preflight(cuda_device_id))?;
-                crate::cuda_env::log_preflight(&report);
-                let prover = timed_async("build_cuda_prover", || async {
-                    let device_id = cuda_device_id;
-                    let handle = tokio::spawn(async move {
-                        let builder = if let Some(device_id) = device_id {
-                            ProverClient::builder().cuda().with_device_id(device_id)
-                        } else {
-                            ProverClient::builder().cuda()
-                        };
-                        builder.build().await
-                    });
-                    handle
-                        .await
-                        .map_err(|err| -> BoxError { format!("failed to initialize CUDA prover task: {err}").into() })
-                })
-                .await?;
-                let proving_key = timed_async("setup_vkey", || async { prover.setup(ELF).await }).await?;
-                PreparedProver::Cuda { prover, proving_key }
-            }
-
-            #[cfg(not(feature = "CUDA"))]
-            unreachable!("CUDA config should already be rejected when the CUDA feature is absent")
         },
     };
 

@@ -47,7 +47,6 @@ pub const ELF: Elf = include_elf!("zkpow-guest");
 pub enum ProverBackend {
     Mock,
     Cpu,
-    Cuda,
 }
 
 #[derive(Debug, Clone)]
@@ -61,7 +60,6 @@ pub struct ProofGenerationConfig {
     pub db_path:          std::path::PathBuf,
     pub execute_only:     bool,
     pub prover_backend:   ProverBackend,
-    pub cuda_device_id:   Option<u32>,
 }
 
 pub(crate) fn is_header_exhaustion_error(err: &BoxError) -> bool {
@@ -79,8 +77,8 @@ pub async fn run_batch_session<C: Consensus>() -> Result<u32, BoxError> {
         return run_execution_session::<C>(config).await;
     }
 
-    log_prover_backend_selection(config.prover_backend, config.cuda_device_id);
-    let prepared = get_prepared_prover(config.prover_backend, config.cuda_device_id).await?;
+    log_prover_backend_selection(config.prover_backend);
+    let prepared = get_prepared_prover(config.prover_backend).await?;
     let runtime = build_local_controller::<C>(&config, &prepared)?;
     run_batch_session_with(runtime, config, prepared).await
 }
@@ -288,8 +286,6 @@ async fn run_batch(prepared: &PreparedProver, stdin: SP1Stdin) -> Result<SP1Proo
     match prepared {
         PreparedProver::Mock { prover, proving_key } => prove_batch(prover, proving_key, stdin).await,
         PreparedProver::Cpu { prover, proving_key } => prove_batch(prover, proving_key, stdin).await,
-        #[cfg(feature = "CUDA")]
-        PreparedProver::Cuda { prover, proving_key } => prove_batch(prover, proving_key, stdin).await,
     }
 }
 
@@ -353,23 +349,9 @@ fn log_batch_completion(total_duration_secs: f64) {
     }
 }
 
-fn log_prover_backend_selection(prover_backend: ProverBackend, cuda_device_id: Option<u32>) {
+fn log_prover_backend_selection(prover_backend: ProverBackend) {
     match prover_backend {
         ProverBackend::Mock => tracing::info!("Using the Mock prover for instant execution"),
-        ProverBackend::Cpu => {
-            if cfg!(feature = "CUDA") {
-                tracing::info!("CUDA support is compiled in, but CUDA=1 was not set; using the CPU prover");
-            } else {
-                tracing::info!("CUDA support is not compiled in; using the CPU prover");
-            }
-        },
-        ProverBackend::Cuda => {
-            tracing::info!(
-                "CUDA=1 requested; preparing the GPU prover{}",
-                cuda_device_id
-                    .map(|id| format!(" on device {id}"))
-                    .unwrap_or_else(|| " on device 0".to_owned()),
-            );
-        },
+        ProverBackend::Cpu => tracing::info!("Using the CPU prover"),
     }
 }

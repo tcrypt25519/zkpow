@@ -19,9 +19,6 @@ pub const ENV_ZKPOW_SHOW_COMPRESSED_PROOF_SPANS: &str = "ZKPOW_SHOW_COMPRESSED_P
 
 pub const ENV_ZKPOW_EXECUTE_ONLY: &str = "ZKPOW_EXECUTE_ONLY";
 
-pub const ENV_ZKPOW_USE_CUDA: &str = "ZKPOW_USE_CUDA";
-pub const ENV_ZKPOW_CUDA_DEVICE_ID: &str = "ZKPOW_CUDA_DEVICE_ID";
-
 const DEFAULT_RUN_ID: &str = "dev";
 const DEFAULT_PROOF_STORE_DIR: &str = "proof_store";
 use zkpow_params::Consensus;
@@ -65,43 +62,17 @@ fn parse_path_env(var_name: &'static str) -> Option<PathBuf> {
     std::env::var_os(var_name).map(PathBuf::from)
 }
 
-pub(crate) fn ensure_cuda_requested_configuration(
-    use_cuda: bool,
-    cuda_device_id: Option<u32>,
-) -> Result<ProverBackend, BoxError> {
-    if !use_cuda {
-        if cuda_device_id.is_some() {
-            return Err(format!("{ENV_ZKPOW_CUDA_DEVICE_ID} is only valid when {ENV_ZKPOW_USE_CUDA}=1").into());
-        }
-        return Ok(ProverBackend::Cpu);
-    }
-
-    #[cfg(feature = "CUDA")]
-    {
-        return Ok(ProverBackend::Cuda);
-    }
-
-    #[cfg(not(feature = "CUDA"))]
-    let _ = cuda_device_id;
-    #[cfg(not(feature = "CUDA"))]
-    Err(format!("{ENV_ZKPOW_USE_CUDA}=1 requires building zkpow-host with `--features CUDA`").into())
-}
-
 pub fn config_from_env<C: Consensus>() -> Result<ProofGenerationConfig, BoxError> {
-    let use_cuda = parse_bool_env(ENV_ZKPOW_USE_CUDA)?;
-    let cuda_device_id = parse_u32_env(ENV_ZKPOW_CUDA_DEVICE_ID)?;
-
     let execute_only = parse_bool_env(ENV_ZKPOW_EXECUTE_ONLY)?;
 
     // One difficulty epoch per controller-selected batch unless overridden.
     let local_batch_size = parse_u32_env_or(ENV_ZKPOW_BATCH_SIZE, C::PARAMS.epoch_length)?;
     let batch_count = parse_u32_env_or(ENV_ZKPOW_BATCH_COUNT, DEFAULT_BATCH_COUNT)?;
 
-    let configured_backend = ensure_cuda_requested_configuration(use_cuda, cuda_device_id)?;
-    let prover_backend = if execute_only && configured_backend == ProverBackend::Cpu {
+    let prover_backend = if execute_only {
         ProverBackend::Mock
     } else {
-        configured_backend
+        ProverBackend::Cpu
     };
 
     Ok(ProofGenerationConfig {
@@ -111,7 +82,6 @@ pub fn config_from_env<C: Consensus>() -> Result<ProofGenerationConfig, BoxError
         db_path: parse_path_env(ENV_ZKPOW_DB_PATH).unwrap_or_else(zkpow_controller::db_path),
         execute_only,
         prover_backend,
-        cuda_device_id,
     })
 }
 

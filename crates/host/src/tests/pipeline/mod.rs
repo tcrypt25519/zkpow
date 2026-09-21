@@ -10,8 +10,8 @@ mod artifacts;
 
 use crate::pipeline::{
     input::{
-        config_from_env, ensure_cuda_requested_configuration, parse_bool_env, parse_u32_env, ENV_ZKPOW_BATCH_SIZE,
-        ENV_ZKPOW_CUDA_DEVICE_ID, ENV_ZKPOW_EXECUTE_ONLY, ENV_ZKPOW_RUN_ID, ENV_ZKPOW_USE_CUDA,
+        config_from_env, parse_bool_env, parse_u32_env, ENV_ZKPOW_BATCH_SIZE,
+        ENV_ZKPOW_EXECUTE_ONLY, ENV_ZKPOW_RUN_ID,
     },
     is_header_exhaustion_error, run_batch_session, BoxError, ProverBackend,
 };
@@ -32,35 +32,22 @@ fn remove_env(name: &str) {
 }
 
 #[test]
-fn rejects_cuda_device_without_cuda_flag() {
-    assert!(ensure_cuda_requested_configuration(false, Some(0)).is_err());
-    assert!(ensure_cuda_requested_configuration(false, None).is_ok());
-}
-
-#[test]
-#[cfg(not(feature = "CUDA"))]
-fn rejects_cuda_when_feature_is_not_compiled_in() {
-    let err = ensure_cuda_requested_configuration(true, None).unwrap_err();
-    assert!(err.to_string().contains("--features CUDA"), "unexpected error: {err}",);
-}
-
-#[test]
 fn config_validation_matrix_invalid_values() {
     let _guard = _env_test_mutex().lock().unwrap();
 
-    set_env(ENV_ZKPOW_USE_CUDA, "maybe");
+    set_env(ENV_ZKPOW_EXECUTE_ONLY, "maybe");
     assert!(
-        parse_bool_env(ENV_ZKPOW_USE_CUDA).is_err(),
-        "{ENV_ZKPOW_USE_CUDA}=maybe should be invalid"
+        parse_bool_env(ENV_ZKPOW_EXECUTE_ONLY).is_err(),
+        "{ENV_ZKPOW_EXECUTE_ONLY}=maybe should be invalid"
     );
-    remove_env(ENV_ZKPOW_USE_CUDA);
+    remove_env(ENV_ZKPOW_EXECUTE_ONLY);
 
-    set_env(ENV_ZKPOW_CUDA_DEVICE_ID, "abc");
+    set_env(ENV_ZKPOW_BATCH_SIZE, "abc");
     assert!(
-        parse_u32_env(ENV_ZKPOW_CUDA_DEVICE_ID).is_err(),
-        "{ENV_ZKPOW_CUDA_DEVICE_ID}=abc should be invalid"
+        parse_u32_env(ENV_ZKPOW_BATCH_SIZE).is_err(),
+        "{ENV_ZKPOW_BATCH_SIZE}=abc should be invalid"
     );
-    remove_env(ENV_ZKPOW_CUDA_DEVICE_ID);
+    remove_env(ENV_ZKPOW_BATCH_SIZE);
 }
 
 #[test]

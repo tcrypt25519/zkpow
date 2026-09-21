@@ -12,9 +12,6 @@
 //!   # Name the IVC chain (default: "dev")
 //!   ZKPOW_RUN_ID=mainnet-01 cargo run --release -p zkpow-host --bin zkpow-host
 //!
-//!   # Use the CUDA prover (must compile with --features CUDA)
-//!   ZKPOW_USE_CUDA=1 cargo run --release -p zkpow-host --features CUDA --bin zkpow-host
-//!
 //!   # Run multiple batches in one process
 //!   ZKPOW_BATCH_COUNT=10 cargo run --release -p zkpow-host --bin zkpow-host
 

@@ -1,8 +1,6 @@
 #[cfg(test)]
 mod tests;
 
-#[cfg(feature = "CUDA")]
-pub(crate) mod cuda_env;
 pub mod memory_monitor;
 pub mod observability;
 pub mod pipeline;
