@@ -360,33 +360,35 @@ fn mul2_with_overflow(value: &mut u256) -> bool {
 
 /// Compute one-block cumulative-work units from the expanded target.
 ///
-/// Uses non-restoring binary long division to compute `floor(2^256 / (target + 1))`.
-/// The loop processes 257 bits (indices 256 down to 0): at `bit == 256` we introduce
-/// the implicit leading 1 of the dividend `2^256`; for `bit < 256` we set the
-/// corresponding quotient bit when the remainder meets the divisor.
+/// Uses binary long division to compute `floor(2^256 / (target + 1))`.
+/// The quotient of `2^256` divided by a divisor with bit length `n` has no set bits above
+/// `257 - n`. Starting at bit `257 - n` with remainder preset to `2^(n - 1)` eliminates
+/// `n - 1` leading zero iterations, running in `258 - n` iterations instead of 257.
 #[sp1_cycle::tracked]
 pub fn block_work_from_target(target: Target) -> BlockWork {
     let divisor = increment_target(target.into_inner());
+    let n = divisor.bits();
 
-    let mut remainder = u256::from_limbs([0u64; 4]);
     let mut quotient = [0u64; 4];
+    let start_bit = 257 - n;
 
-    sp1_cycle::track!("zkpow_core::lib::work_from_target.loop", {
-        for bit in (0..=256u32).rev() {
-            // Shift remainder left, absorbing the next dividend bit.
-            // At bit == 256 the dividend is 2^256, so its MSB is 1; all lower bits are 0.
-            let carry = mul2_with_overflow(&mut remainder);
-            if bit == 256 {
-                // Inject the implicit leading 1 of 2^256 into the LSB of the shifted remainder.
-                remainder.as_limbs_mut()[0] |= 1;
+    let mut remainder_limbs = [0u64; 4];
+    remainder_limbs[((n - 1) / 64) as usize] = 1u64 << ((n - 1) % 64);
+    let mut remainder = u256::from_limbs(remainder_limbs);
+
+    sp1_cycle::track!("work_target_loop", {
+        if remainder >= divisor {
+            let _ = sub_assign(&mut remainder, divisor);
+            if start_bit < 256 {
+                quotient[(start_bit / 64) as usize] |= 1u64 << (start_bit % 64);
             }
-            // If carry is set the remainder is effectively > 2^256, which is always >= divisor.
+        }
 
+        for bit in (0..start_bit).rev() {
+            let carry = mul2_with_overflow(&mut remainder);
             if carry || remainder >= divisor {
                 let _ = sub_assign(&mut remainder, divisor);
-                if bit < 256 {
-                    quotient[(bit / 64) as usize] |= 1u64 << (bit % 64);
-                }
+                quotient[(bit / 64) as usize] |= 1u64 << (bit % 64);
             }
         }
     });

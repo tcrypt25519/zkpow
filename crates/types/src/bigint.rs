@@ -69,6 +69,26 @@ impl u256 {
         out[24..32].copy_from_slice(&self.0[3].to_le_bytes());
         out
     }
+
+    /// Return the number of leading zero bits in the 256-bit representation.
+    #[must_use]
+    pub const fn leading_zeros(&self) -> u32 {
+        if self.0[3] != 0 {
+            self.0[3].leading_zeros()
+        } else if self.0[2] != 0 {
+            64 + self.0[2].leading_zeros()
+        } else if self.0[1] != 0 {
+            128 + self.0[1].leading_zeros()
+        } else {
+            192 + self.0[0].leading_zeros()
+        }
+    }
+
+    /// Return the minimum number of bits required to represent this integer.
+    #[must_use]
+    pub const fn bits(&self) -> u32 {
+        256 - self.leading_zeros()
+    }
 }
 
 impl core::ops::Add for u256 {

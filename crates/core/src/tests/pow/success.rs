@@ -185,3 +185,49 @@ fn mul2_with_overflow_doubles_and_reports_evicted_msb() {
         assert_eq!(value.into_limbs(), expected, "{input:x?}");
     }
 }
+
+#[zkvm_test]
+fn block_work_from_target_computes_exact_quotients() {
+    use zkpow_types::Target;
+
+    // 1. Genesis target work matches known constant:
+    let genesis_work = crate::block_work_from_target(zkpow_params::Mainnet::PARAMS.genesis_target);
+    assert_eq!(genesis_work.into_inner().into_limbs(), [0x100010001, 0, 0, 0]);
+
+    // 2. Power of 2 divisors:
+    // target = 1 => divisor = 2 => floor(2^256 / 2) = 2^255
+    let target_1 = Target::from_limbs([1, 0, 0, 0]);
+    assert_eq!(
+        crate::block_work_from_target(target_1).into_inner().into_limbs(),
+        [0, 0, 0, 1 << 63]
+    );
+
+    // target = 3 => divisor = 4 => floor(2^256 / 4) = 2^254
+    let target_3 = Target::from_limbs([3, 0, 0, 0]);
+    assert_eq!(
+        crate::block_work_from_target(target_3).into_inner().into_limbs(),
+        [0, 0, 0, 1 << 62]
+    );
+
+    // target = 2^64 - 1 => divisor = 2^64 => floor(2^256 / 2^64) = 2^192
+    let target_2_64 = Target::from_limbs([u64::MAX, 0, 0, 0]);
+    assert_eq!(
+        crate::block_work_from_target(target_2_64).into_inner().into_limbs(),
+        [0, 0, 0, 1]
+    );
+
+    // target = 2^128 - 1 => divisor = 2^128 => floor(2^256 / 2^128) = 2^128
+    let target_2_128 = Target::from_limbs([u64::MAX, u64::MAX, 0, 0]);
+    assert_eq!(
+        crate::block_work_from_target(target_2_128).into_inner().into_limbs(),
+        [0, 0, 1, 0]
+    );
+
+    // 3. Non-power of 2 divisors:
+    // target = 2 => divisor = 3 => floor(2^256 / 3) = 0x5555...5555
+    let target_2 = Target::from_limbs([2, 0, 0, 0]);
+    assert_eq!(
+        crate::block_work_from_target(target_2).into_inner().into_limbs(),
+        [0x5555555555555555; 4]
+    );
+}
