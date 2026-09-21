@@ -1,6 +1,9 @@
 # Build artifacts
 target/
 *.svg
+**/*.profraw
+lcov.info
+
 
 # Database
 *.db
