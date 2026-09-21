@@ -105,3 +105,23 @@ fn u256_try_from_slice_validates_exact_length() {
     let long_bytes = [0x42u8; 33];
     assert!(u256::try_from(long_bytes.as_slice()).is_err());
 }
+
+#[test]
+fn u256_from_words_matches_from_le_bytes() {
+    let raw_bytes: [u8; 32] = [
+        0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0,
+        0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
+        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+        0xfe, 0xdc, 0xba, 0x98, 0x76, 0x54, 0x32, 0x10,
+    ];
+
+    let words: [u64; 8] = core::array::from_fn(|i| {
+        let chunk: [u8; 4] = raw_bytes[i * 4..(i + 1) * 4].try_into().unwrap();
+        u32::from_be_bytes(chunk) as u64
+    });
+
+    let from_bytes = u256::from_le_bytes(raw_bytes);
+    let from_words = u256::from_words(&words);
+    assert_eq!(from_words, from_bytes);
+}
+

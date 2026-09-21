@@ -49,34 +49,40 @@ fn hash_header(header: &Header) -> BlockHash {
 }
 
 #[sp1_cycle::tracked]
-fn hash_header_input(input: &HeaderInput, prev_blockhash: &BlockHash, compact_target: CompactTarget) -> BlockHash {
+fn hash_header_input(input: &HeaderInput, prev_blockhash_words: &[u64; 8], compact_target: CompactTarget) -> [u64; 8] {
     #[cfg(target_os = "zkvm")]
     {
         #[cfg(test)]
         if let Some(hash) = test_hash_mock::get() {
-            return BlockHash::new(hash);
+            return zkpow_sha256::hash_to_state(&hash);
         }
-        BlockHash::new(zkpow_sha256::of_header(
+        zkpow_sha256::of_header_words(
             input.version,
-            prev_blockhash.as_inner(),
+            prev_blockhash_words,
             &input.merkle_root,
             *input.timestamp.as_inner(),
             compact_target.into_inner(),
             input.nonce,
-        ))
+        )
     }
 
     #[cfg(not(target_os = "zkvm"))]
     {
+        #[cfg(test)]
+        if let Some(hash) = test_hash_mock::get() {
+            return zkpow_sha256::hash_to_state(&hash);
+        }
+        let prev_hash_bytes = zkpow_sha256::state_to_hash(prev_blockhash_words);
         let header = Header {
             version: input.version,
-            prev_blockhash: *prev_blockhash,
+            prev_blockhash: BlockHash::new(prev_hash_bytes),
             merkle_root: input.merkle_root,
             timestamp: input.timestamp,
             compact_target,
             nonce: input.nonce,
         };
-        hash_header(&header)
+        let hash = hash_header(&header);
+        zkpow_sha256::hash_to_state(hash.as_inner())
     }
 }
 
@@ -250,6 +256,19 @@ pub fn target_from_bits(compact_target: CompactTarget) -> Target {
 #[sp1_cycle::tracked]
 pub fn check_proof_of_work(hash: BlockHash, target: &Target) -> bool {
     u256::from_le_bytes(*hash.as_inner()) <= *target.as_inner().as_inner()
+}
+
+/// Check whether a header hash in SHA state words satisfies a target.
+#[must_use]
+#[sp1_cycle::tracked]
+fn check_pow_words(words: &[u64; 8], target: &Target) -> bool {
+    u256::from_words(words) <= *target.as_inner().as_inner()
+}
+
+/// Check whether a header hash in SHA state words satisfies a target.
+#[must_use]
+pub fn check_proof_of_work_words(words: &[u64; 8], target: &Target) -> bool {
+    check_pow_words(words, target)
 }
 
 /// Subtract `rhs` from `self` in place. Returns `true` if there was an underflow (borrow out).

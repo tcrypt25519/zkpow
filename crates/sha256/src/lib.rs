@@ -23,7 +23,7 @@ const SHA256_IV: [u64; 8] = [
 /// Extract a 32-byte hash from the SHA-256 state.
 /// The state stores 8 × u64; each contributes its low 32 bits in big-endian order.
 #[inline]
-fn state_to_hash(state: &[u64; 8]) -> [u8; 32] {
+pub fn state_to_hash(state: &[u64; 8]) -> [u8; 32] {
     let b0 = state[0].to_be_bytes();
     let b1 = state[1].to_be_bytes();
     let b2 = state[2].to_be_bytes();
@@ -41,6 +41,22 @@ fn state_to_hash(state: &[u64; 8]) -> [u8; 32] {
         b5[4], b5[5], b5[6], b5[7], //
         b6[4], b6[5], b6[6], b6[7], //
         b7[4], b7[5], b7[6], b7[7], //
+    ]
+}
+
+/// Pack a 32-byte hash into 8 SHA state words.
+/// Each word holds a big-endian 32-bit word in its low 32 bits.
+#[inline]
+pub const fn hash_to_state(hash: &[u8; 32]) -> [u64; 8] {
+    [
+        word_from_bytes(hash, 0),
+        word_from_bytes(hash, 1),
+        word_from_bytes(hash, 2),
+        word_from_bytes(hash, 3),
+        word_from_bytes(hash, 4),
+        word_from_bytes(hash, 5),
+        word_from_bytes(hash, 6),
+        word_from_bytes(hash, 7),
     ]
 }
 
@@ -124,7 +140,8 @@ fn of_block(low16: &[u64; 16], state: &mut [u64; 8]) {
 /// buffer would carry the identical information in a different shape.
 ///
 /// Single block: 32 bytes of digest + 0x80 + zeros + 8-byte length (256 bits).
-fn of_digest(prev_state: &[u64; 8]) -> [u8; 32] {
+#[inline]
+pub fn of_digest_words(prev_state: &[u64; 8]) -> [u64; 8] {
     let mut state = SHA256_IV;
 
     let mut w = [0u64; 16];
@@ -137,6 +154,11 @@ fn of_digest(prev_state: &[u64; 8]) -> [u8; 32] {
     w[15] = 0x100;
 
     of_block(&w, &mut state);
+    state
+}
+
+pub fn of_digest(prev_state: &[u64; 8]) -> [u8; 32] {
+    let state = of_digest_words(prev_state);
     state_to_hash(&state)
 }
 
@@ -184,15 +206,15 @@ pub fn of_public_values(state_bytes: &[u8], verifier_key: &[u8], return_code: u8
 //
 
 /// Build the first SHA-256 block words for a Bitcoin header represented by
-/// disjoint prover/header-state fields.
+/// disjoint prover/header-state fields with previous blockhash in state words.
 #[inline]
-fn header_first_block(version: u32, prev_blockhash: &[u8; 32], merkle_root: &[u8; 32]) -> [u64; 16] {
+fn header_first_block_words(version: u32, prev_blockhash: &[u64; 8], merkle_root: &[u8; 32]) -> [u64; 16] {
     // Only the 16 low message words: the SHA-256 message schedule derives
     // w[16..64] from these, so the caller never materializes the tail.
     let mut words = [0u64; 16];
     words[0] = word_from_le_u32(version);
     for i in 0..8 {
-        words[1 + i] = word_from_bytes(prev_blockhash, i);
+        words[1 + i] = prev_blockhash[i];
     }
     for i in 0..7 {
         words[9 + i] = word_from_bytes(merkle_root, i);
@@ -216,6 +238,26 @@ fn header_second_block(merkle_root: &[u8; 32], timestamp: u32, compact_target: u
     words
 }
 
+/// Compute SHA256d over a Bitcoin header, returning the 8 SHA state words directly.
+pub fn of_header_words(
+    version: u32,
+    prev_blockhash: &[u64; 8],
+    merkle_root: &[u8; 32],
+    timestamp: u32,
+    compact_target: u32,
+    nonce: u32,
+) -> [u64; 8] {
+    let mut state = SHA256_IV;
+
+    let block1 = header_first_block_words(version, prev_blockhash, merkle_root);
+    of_block(&block1, &mut state);
+
+    let block2 = header_second_block(merkle_root, timestamp, compact_target, nonce);
+    of_block(&block2, &mut state);
+
+    of_digest_words(&state)
+}
+
 /// Compute SHA256d over a Bitcoin header represented by disjoint fields.
 ///
 /// This is byte-for-byte equivalent to hashing:
@@ -229,15 +271,16 @@ pub fn of_header(
     compact_target: u32,
     nonce: u32,
 ) -> [u8; 32] {
-    let mut state = SHA256_IV;
-
-    let block1 = header_first_block(version, prev_blockhash, merkle_root);
-    of_block(&block1, &mut state);
-
-    let block2 = header_second_block(merkle_root, timestamp, compact_target, nonce);
-    of_block(&block2, &mut state);
-
-    of_digest(&state)
+    let prev_words = hash_to_state(prev_blockhash);
+    let state = of_header_words(
+        version,
+        &prev_words,
+        merkle_root,
+        timestamp,
+        compact_target,
+        nonce,
+    );
+    state_to_hash(&state)
 }
 
 #[cfg(test)]

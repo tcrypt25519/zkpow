@@ -48,6 +48,17 @@ impl u256 {
         ])
     }
 
+    /// Construct from eight 32-bit big-endian SHA state words.
+    #[must_use]
+    pub const fn from_words(words: &[u64; 8]) -> Self {
+        Self([
+            ((words[0] as u32).swap_bytes() as u64) | (((words[1] as u32).swap_bytes() as u64) << 32),
+            ((words[2] as u32).swap_bytes() as u64) | (((words[3] as u32).swap_bytes() as u64) << 32),
+            ((words[4] as u32).swap_bytes() as u64) | (((words[5] as u32).swap_bytes() as u64) << 32),
+            ((words[6] as u32).swap_bytes() as u64) | (((words[7] as u32).swap_bytes() as u64) << 32),
+        ])
+    }
+
     /// Serialize to a 32-byte little-endian byte array.
     #[must_use]
     pub fn to_le_bytes(&self) -> [u8; 32] {

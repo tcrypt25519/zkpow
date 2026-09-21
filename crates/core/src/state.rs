@@ -7,10 +7,10 @@ use sp1_cycle::tracked;
 use zkpow_params::{Consensus, WINDOW_SIZE, WINDOW_SMALL_HALF_SIZE};
 
 use crate::{
-    advance_ordered_timestamp_run, block_work_from_target, calculate_next_target_required, check_proof_of_work,
-    has_ordered_timestamp_window, hash_header_input, ordered_median_timestamp_slot, ordered_timestamp_run,
-    target_from_bits, timestamp_slot, ApplyError, BlockHash, BlockTimestamp, BlockWork, ChainWork, CompactTarget,
-    HeaderInput, Target,
+    advance_ordered_timestamp_run, block_work_from_target, calculate_next_target_required,
+    check_proof_of_work_words, has_ordered_timestamp_window, hash_header_input,
+    ordered_median_timestamp_slot, ordered_timestamp_run, target_from_bits, timestamp_slot, ApplyError,
+    BlockHash, BlockTimestamp, BlockWork, ChainWork, CompactTarget, HeaderInput, Target,
 };
 
 /// Complete authenticated validation state, serialized between recursive iterations.
@@ -108,15 +108,21 @@ impl State {
     // Applies the first headers of the chain, before the MTP window has been filled. This lets the
     // warm path assume it always has a full window.
     fn apply_cold_batch<C: Consensus>(&mut self, headers: &[HeaderInput]) -> Result<(), ApplyError> {
+        let mut prev_hash_words = zkpow_sha256::hash_to_state(self.block_hash.as_inner());
         for (i, new_header) in headers.iter().enumerate() {
             let slot = i / 2;
-            self.seal_header::<C>(
+            if let Err(e) = self.seal_header::<C>(
                 C::PARAMS.compact_target(),
                 &C::PARAMS.genesis_target,
                 new_header,
                 self.timestamps[slot],
-            )?;
+                &mut prev_hash_words,
+            ) {
+                self.block_hash = BlockHash::new(zkpow_sha256::state_to_hash(&prev_hash_words));
+                return Err(e);
+            }
         }
+        self.block_hash = BlockHash::new(zkpow_sha256::state_to_hash(&prev_hash_words));
         self.chain_work += C::PARAMS.genesis_work * headers.len() as u32;
 
         Ok(())
@@ -136,6 +142,7 @@ impl State {
         let mut hint_iter = median_hints.iter();
 
         let mut ordered_run_len = sp1_cycle::track!({ ordered_timestamp_run(&self.timestamps, self.height) }) as usize;
+        let mut prev_hash_words = zkpow_sha256::hash_to_state(self.block_hash.as_inner());
 
         while header_iter.len() > 0 {
             let epoch_start_height = self.height;
@@ -184,9 +191,20 @@ impl State {
                     new_header.timestamp.into_inner(),
                 ) as usize;
 
-                state.seal_header::<C>(active_nbits, &active_target, new_header, claimed_median)?;
+                if let Err(e) = state.seal_header::<C>(
+                    active_nbits,
+                    &active_target,
+                    new_header,
+                    claimed_median,
+                    &mut prev_hash_words,
+                ) {
+                    state.block_hash = BlockHash::new(zkpow_sha256::state_to_hash(&prev_hash_words));
+                    return Err(e);
+                }
             }
         }
+
+        self.block_hash = BlockHash::new(zkpow_sha256::state_to_hash(&prev_hash_words));
 
         if let Some(median_time) = hint_iter.next() {
             crate::invalid_hint!("median_hint left over after application: {}", *median_time);
@@ -201,6 +219,7 @@ impl State {
         active_target: &Target,
         new_header: &HeaderInput,
         known_median: BlockTimestamp,
+        hash_words: &mut [u64; 8],
     ) -> Result<(), ApplyError> {
         // Check that the incoming timestamp is > `known_median`
         if new_header.timestamp <= known_median {
@@ -211,9 +230,10 @@ impl State {
             });
         }
 
-        // Compute the block's hash and check that it meets the PoW target
-        let hash = hash_header_input(new_header, &self.block_hash, active_nbits);
-        if !check_proof_of_work(hash, active_target) {
+        // Compute the block's hash words and check that it meets the PoW target
+        let next_hash_words = hash_header_input(new_header, hash_words, active_nbits);
+        if !check_proof_of_work_words(&next_hash_words, active_target) {
+            let hash = BlockHash::new(zkpow_sha256::state_to_hash(&next_hash_words));
             return Err(ApplyError::PowInsufficient {
                 height: self.height + 1,
                 hash,
@@ -222,15 +242,15 @@ impl State {
         }
 
         // Advance the state to be after this block; infallible
-        self.advance_state::<C>(new_header.timestamp, hash);
+        self.advance_state::<C>(new_header.timestamp);
+        *hash_words = next_hash_words;
 
         Ok(())
     }
 
     #[tracked]
-    fn advance_state<C: Consensus>(&mut self, timestamp: BlockTimestamp, hash: BlockHash) {
+    fn advance_state<C: Consensus>(&mut self, timestamp: BlockTimestamp) {
         self.height += 1;
-        self.block_hash = hash;
         self.timestamps[timestamp_slot(self.height)] = timestamp;
         if self.height.is_multiple_of(C::PARAMS.epoch_length) {
             self.epoch_timestamp = timestamp;
