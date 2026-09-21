@@ -289,9 +289,8 @@ impl<'a> EpochManager<'a> {
             return;
         }
 
-        sp1_cycle::track!({
-            self.state.chain_work += self.active_block_work * processed;
-        });
+        self.state.chain_work += self.active_block_work * processed;
+
 
         // TODO: This only needs to happen after re-calculating difficulty
         self.state.current_nbits = self.active_nbits;

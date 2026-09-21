@@ -3,6 +3,10 @@ name = "sp1-cycle"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = []
+cycle-tracking = []
+
 [dependencies]
 sp1-zkvm = { workspace = true }
 sp1-cycle-macros = { workspace = true }

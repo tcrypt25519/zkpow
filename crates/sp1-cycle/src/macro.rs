@@ -4,7 +4,7 @@
 /// back to the call site. This removes the verbosity of manually naming every
 /// small span while still feeding the `cycle-tracker-report-*` data used by the
 /// host execution report.
-#[cfg(target_os = "zkvm")]
+#[cfg(all(target_os = "zkvm", feature = "cycle-tracking"))]
 #[macro_export]
 macro_rules! track {
     ($body:expr) => {
@@ -15,7 +15,7 @@ macro_rules! track {
     };
 }
 
-#[cfg(not(target_os = "zkvm"))]
+#[cfg(not(all(target_os = "zkvm", feature = "cycle-tracking")))]
 #[macro_export]
 macro_rules! track {
     ($body:expr) => {
@@ -25,3 +25,4 @@ macro_rules! track {
         $body
     };
 }
+

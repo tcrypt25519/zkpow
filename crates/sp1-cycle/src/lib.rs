@@ -2,12 +2,12 @@ mod r#macro;
 
 pub use sp1_cycle_macros::tracked;
 
-#[cfg(target_os = "zkvm")]
+#[cfg(all(target_os = "zkvm", feature = "cycle-tracking"))]
 extern crate alloc;
-#[cfg(target_os = "zkvm")]
+#[cfg(all(target_os = "zkvm", feature = "cycle-tracking"))]
 use sp1_zkvm;
 
-#[cfg(target_os = "zkvm")]
+#[cfg(all(target_os = "zkvm", feature = "cycle-tracking"))]
 #[inline(always)]
 #[doc(hidden)]
 pub fn run_track<T, F>(label: &'static str, f: F) -> T
@@ -20,7 +20,7 @@ where
     output
 }
 
-#[cfg(not(target_os = "zkvm"))]
+#[cfg(not(all(target_os = "zkvm", feature = "cycle-tracking")))]
 #[inline(always)]
 #[doc(hidden)]
 pub fn run_track<T, F>(_label: &'static str, f: F) -> T
@@ -29,3 +29,4 @@ where
 {
     f()
 }
+

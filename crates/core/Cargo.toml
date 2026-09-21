@@ -8,9 +8,10 @@ publish = false
 path = "src/lib.rs"
 
 [features]
-profiling = []
+profiling = ["sp1-cycle/cycle-tracking"]
 # The reproducible fake header chain in `chain.rs`, for other crates' tests.
 test-support = []
+
 
 [dependencies]
 #sp1-zkvm = { workspace = true }
