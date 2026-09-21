@@ -62,11 +62,13 @@ pub fn log_execution_report(report: &ExecutionReport, total_proving_time_secs: f
     tracing::info!("Execution report");
     tracing::info!("  total instructions: {}", report.total_instruction_count());
 
+    let prover_gas = report.gas().unwrap_or(0);
+    tracing::info!("  prover gas: {}", prover_gas);
+
     if report.cycle_tracker.is_empty() {
-        tracing::info!("  cycle tracker: unavailable or empty");
-        tracing::info!("  prover gas: {}", report.gas().unwrap_or(0));
         return;
     }
+
 
     let mut entries: Vec<_> = report.cycle_tracker.iter().collect();
     entries.sort_unstable_by(|(label_a, cycles_a), (label_b, cycles_b)| {
