@@ -4,6 +4,7 @@ members = [
   "crates/core",
   "crates/guest",
   "crates/host",
+  "crates/mtp",
   "crates/sha256",
   "crates/store",
   "crates/sync-headers",
