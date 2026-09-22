@@ -22,6 +22,12 @@ pub enum NotMedian {
     TooOld,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InsufficientColdHeaders {
+    Required(usize),
+    Actual(usize),
+}
+
 impl fmt::Display for NotMedian {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
@@ -37,10 +43,10 @@ impl fmt::Display for NotMedian {
 /// An unwritten slot is zero, so a ring that has not wrapped yet knows how many values it holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Ring<const N: usize> {
-    values:      [u32; N],
-    counter:     u32,
+    values: [u32; N],
+    counter: u32,
     ordered_run: u32,
-    last_value:  u32,
+    last_value: u32,
 }
 
 impl<const N: usize> Ring<N> {
@@ -60,10 +66,10 @@ impl<const N: usize> Ring<N> {
     #[must_use]
     pub const fn new() -> Self {
         Self {
-            values:      [0; N],
-            counter:     0,
+            values: [0; N],
+            counter: 0,
             ordered_run: 0,
-            last_value:  0,
+            last_value: 0,
         }
     }
 
@@ -172,4 +178,14 @@ impl<const N: usize> Default for Ring<N> {
     fn default() -> Self {
         Self::new()
     }
+}
+
+// let Ok((cold, warm)) = mtp.split_off_cold_headers(headers)?;
+pub fn split_off_cold_headers(
+    headers: &[HeaderInput],
+) -> Result<(&[HeaderInput], &[HeaderInput]), InsufficientColdHeaders> {
+    if headers.len() < WINDOW_SIZE - 1 {
+        return Err(InsufficientColdHeaders::Required(WINDOW_SIZE - 1));
+    }
+    Ok(headers.split_at(WINDOW_SIZE - 1))
 }

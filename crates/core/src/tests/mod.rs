@@ -48,12 +48,12 @@ pub(crate) fn zero_hash() -> BlockHash {
 
 pub(crate) fn sample_header() -> Header {
     Header {
-        version:        1,
+        version: 1,
         prev_blockhash: BlockHash::new([0x11; 32]),
-        merkle_root:    [0x22; 32],
-        timestamp:      ts(10),
+        merkle_root: [0x22; 32],
+        timestamp: ts(10),
         compact_target: CompactTarget::new(GENESIS_NBITS),
-        nonce:          7,
+        nonce: 7,
     }
 }
 
@@ -109,17 +109,7 @@ pub(crate) fn median_hints_for_headers(initial_state: &State, headers: &[HeaderI
     };
 
     for (index, header) in headers.iter().enumerate() {
-        if index < warm_start {
-            ordered_run = advance_ordered_timestamp_run(
-                ordered_run,
-                previous_timestamp.unwrap_or(header.timestamp.into_inner()),
-                header.timestamp.into_inner(),
-            );
-            previous_timestamp = Some(header.timestamp.into_inner());
-            continue;
-        }
-
-        if !has_ordered_timestamp_window(ordered_run) {
+        if index >= warm_start && !has_ordered_timestamp_window(ordered_run) {
             needed.push(dense_hints[index]);
         }
 
@@ -150,9 +140,6 @@ pub(crate) fn expected_upper_median(height: u32) -> BlockTimestamp {
     }
 }
 
-
-
-
 pub(crate) fn ordered_warm_state(height: u32) -> State {
     let _hash_guard = set_hash_success();
     let mut state = test_state();
@@ -167,10 +154,10 @@ pub(crate) fn headers_from_timestamps(timestamps: &[u32]) -> Vec<HeaderInput> {
     timestamps
         .iter()
         .map(|timestamp| HeaderInput {
-            version:     1,
+            version: 1,
             merkle_root: [0x22; 32],
-            timestamp:   ts(*timestamp),
-            nonce:       7,
+            timestamp: ts(*timestamp),
+            nonce: 7,
         })
         .collect()
 }
@@ -182,8 +169,6 @@ pub(crate) fn apply_sequentially(state: &mut State, headers: &[HeaderInput]) -> 
     }
     Ok(())
 }
-
-
 
 fn parse_hex_byte(s: &[u8]) -> u8 {
     let hi = match s[0] {
@@ -221,12 +206,12 @@ fn parse_u32_str(s: &str) -> u32 {
 #[allow(dead_code)]
 pub(crate) struct ParsedBlock {
     pub(crate) expected_hash: BlockHash,
-    pub(crate) version:        u32,
+    pub(crate) version: u32,
     pub(crate) prev_blockhash: BlockHash,
-    pub(crate) merkle_root:    [u8; 32],
-    pub(crate) timestamp:      u32,
+    pub(crate) merkle_root: [u8; 32],
+    pub(crate) timestamp: u32,
     pub(crate) compact_target: u32,
-    pub(crate) nonce:          u32,
+    pub(crate) nonce: u32,
 }
 
 pub(crate) fn parse_fixture_blocks(fixture_str: &str) -> Vec<ParsedBlock> {
@@ -256,5 +241,3 @@ pub(crate) fn parse_fixture_blocks(fixture_str: &str) -> Vec<ParsedBlock> {
     }
     blocks
 }
-
-

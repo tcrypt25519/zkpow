@@ -7,10 +7,10 @@ use sp1_cycle::tracked;
 use zkpow_params::{Consensus, WINDOW_SIZE, WINDOW_SMALL_HALF_SIZE};
 
 use crate::{
-    advance_ordered_timestamp_run, block_work_from_target, calculate_next_target_required,
-    check_proof_of_work_words, has_ordered_timestamp_window, hash_header_input,
-    ordered_median_timestamp_slot, ordered_timestamp_run, target_from_bits, timestamp_slot, ApplyError,
-    BlockHash, BlockTimestamp, BlockWork, ChainWork, CompactTarget, HeaderInput, Target,
+    advance_ordered_timestamp_run, block_work_from_target, calculate_next_target_required, check_proof_of_work_words,
+    has_ordered_timestamp_window, hash_header_input, ordered_median_timestamp_slot, ordered_timestamp_run,
+    target_from_bits, timestamp_slot, ApplyError, BlockHash, BlockTimestamp, BlockWork, ChainWork, CompactTarget,
+    HeaderInput, Target,
 };
 
 /// Complete authenticated validation state, serialized between recursive iterations.
@@ -84,25 +84,13 @@ impl State {
         median_hints: &[BlockTimestamp],
     ) -> Result<(), ApplyError> {
         // The first run *MUST* contain at least `window_size - 1` headers
-        let cold_count = WINDOW_SIZE - 1;
-        if headers.len() < cold_count {
-            return Err(ApplyError::InsufficientColdHeaders {
-                required: cold_count,
-                actual: headers.len(),
-            });
-        }
-
-        // Invariant: We rejected calls with less than `cold_count` headers and now we split up to
-        // cold_count` headers, so we necessarily have exactly `cold_count` cold headers
-        let (cold, warm) = headers.split_at(cold_count);
-
+        let Ok((cold, warm)) = mtp.split_off_cold_headers(headers)?;
         self.apply_cold_batch::<C>(cold)?;
-
-        if warm.is_empty() {
-            Ok(())
-        } else {
-            self.apply_headers::<C>(warm, median_hints)
+        if !warm.is_empty() {
+            self.apply_headers::<C>(warm, median_hints)?
         }
+
+        Ok(())
     }
 
     // Applies the first headers of the chain, before the MTP window has been filled. This lets the
@@ -290,7 +278,6 @@ impl<'a> EpochManager<'a> {
         }
 
         self.state.chain_work += self.active_block_work * processed;
-
 
         // TODO: This only needs to happen after re-calculating difficulty
         self.state.current_nbits = self.active_nbits;
