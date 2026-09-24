@@ -30,12 +30,6 @@ pub struct State {
 }
 
 impl State {
-    #[must_use]
-    #[inline]
-    fn current_timestamp(&self) -> BlockTimestamp {
-        self.timestamps[timestamp_slot(self.height)]
-    }
-
     /// Serialize to exactly [`STATE_SIZE`] bytes.
     #[must_use]
     pub fn to_bytes(&self) -> [u8; Self::SIZE] {
@@ -47,16 +41,15 @@ impl State {
     /// Called when the State reflects the final block of epoch N
     /// to compute the difficulty values that are active in epoch N+1.
     #[tracked]
-    fn prepare_next_epoch<C: Consensus>(&self) -> (CompactTarget, Target, BlockWork) {
+    fn prepare_next_epoch<C: Consensus>(&self, current_timestamp: BlockTimestamp) -> (CompactTarget, Target, BlockWork) {
         let current_target = target_from_bits(self.current_nbits);
-        let current_timestamp = self.current_timestamp();
         calculate_next_target_required::<C>(current_target, self.epoch_timestamp, current_timestamp)
     }
 
-    fn new_epoch_manager<'a, C: Consensus>(&'_ mut self) -> EpochManager<'_> {
+    fn new_epoch_manager<'a, C: Consensus>(&'_ mut self, current_timestamp: BlockTimestamp) -> EpochManager<'_> {
         let (active_nbits, active_target, active_block_work) =
             if (self.height + 1).is_multiple_of(C::PARAMS.epoch_length) {
-                self.prepare_next_epoch::<C>()
+                self.prepare_next_epoch::<C>(current_timestamp)
             } else {
                 let active_nbits = self.current_nbits;
                 let active_target = target_from_bits(active_nbits);
@@ -113,11 +106,13 @@ impl State {
                 &mut prev_hash_words,
             ) {
                 self.block_hash = BlockHash::new(zkpow_sha256::state_to_hash(&prev_hash_words));
+                self.store_timestamps(mtp.parts().0);
                 return Err(e);
             }
             mtp.push(new_header.timestamp.into_inner());
         }
         self.block_hash = BlockHash::new(zkpow_sha256::state_to_hash(&prev_hash_words));
+        self.store_timestamps(mtp.parts().0);
         self.chain_work += C::PARAMS.genesis_work * headers.len() as u32;
 
         Ok(mtp.warm().expect("the cold batch did not fill the MTP window"))
@@ -150,7 +145,7 @@ impl State {
 
         while header_iter.len() > 0 {
             let epoch_start_height = self.height;
-            let mut context = self.new_epoch_manager::<C>();
+            let mut context = self.new_epoch_manager::<C>(BlockTimestamp::new(mtp.newest()));
             let epoch_len_remaining =
                 (C::PARAMS.epoch_length - ((epoch_start_height + 1) % C::PARAMS.epoch_length)) as usize;
 
@@ -190,6 +185,7 @@ impl State {
                     &mut prev_hash_words,
                 ) {
                     state.block_hash = BlockHash::new(zkpow_sha256::state_to_hash(&prev_hash_words));
+                    state.store_timestamps(mtp.parts().0);
                     return Err(e);
                 }
 
@@ -198,12 +194,17 @@ impl State {
         }
 
         self.block_hash = BlockHash::new(zkpow_sha256::state_to_hash(&prev_hash_words));
+        self.store_timestamps(mtp.parts().0);
 
         if let Some(median_time) = hint_iter.next() {
             crate::invalid_hint!("median_hint left over after application: {}", *median_time);
         };
 
         Ok(())
+    }
+
+    fn store_timestamps(&mut self, values: &[u32; WINDOW_SIZE]) {
+        self.timestamps = values.map(BlockTimestamp::new);
     }
 
     fn cold_mtp_ring(&self) -> mtp::Window {
@@ -257,7 +258,6 @@ impl State {
     #[tracked]
     fn advance_state<C: Consensus>(&mut self, timestamp: BlockTimestamp) {
         self.height += 1;
-        self.timestamps[timestamp_slot(self.height)] = timestamp;
         if self.height.is_multiple_of(C::PARAMS.epoch_length) {
             self.epoch_timestamp = timestamp;
         }

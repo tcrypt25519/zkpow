@@ -78,7 +78,29 @@ fn header_rejects_timestamp_older_than_median_deep_in_batch() {
             expected,
             "timestamp {dip} against median {median}"
         );
+        assert_eq!(batched.height, parent.height);
+        assert_eq!(batched.timestamps, parent.timestamps, "failed batch must keep the sealed timestamps");
     }
+}
+
+#[zkvm_test]
+fn cold_batch_failure_keeps_sealed_timestamps() {
+    const DIP_INDEX: usize = 5;
+    let _hash_guard = set_hash_success();
+    let mut timestamps: Vec<u32> = (1..=10).map(|i| i * 10).collect();
+    timestamps[DIP_INDEX] = 0;
+    let headers = headers_from_timestamps(&timestamps);
+
+    let mut state = test_state();
+    let failure = state
+        .apply_headers_from_genesis::<TestConsensus>(&headers, &[])
+        .expect_err("the dipped header must fail");
+    assert_eq!(expect_error_code(failure), ErrorCode::TIMESTAMP_TOO_OLD);
+    assert_eq!(state.height as usize, DIP_INDEX);
+    for (height, expected) in timestamps[..DIP_INDEX].iter().enumerate() {
+        assert_eq!(state.timestamps[height + 1], ts(*expected));
+    }
+    assert_eq!(state.timestamps[DIP_INDEX + 1], ts(0), "the rejected header must not be stored");
 }
 
 #[cfg(not(target_os = "zkvm"))]

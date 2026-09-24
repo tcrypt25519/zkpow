@@ -63,7 +63,7 @@ pub enum InvalidParts {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InsufficientColdHeaders {
     required: usize,
-    actual:   usize,
+    actual: usize,
 }
 
 impl InsufficientColdHeaders {
@@ -88,12 +88,12 @@ impl fmt::Display for InsufficientColdHeaders {
 /// nondecreasing run ending at the newest value, capped at `N`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Ring<const N: usize, F = Cold> {
-    values:      [u32; N],
-    next:        usize,
-    len:         usize,
+    values: [u32; N],
+    next: usize,
+    len: usize,
     ordered_run: usize,
-    last_value:  u32,
-    fill:        PhantomData<F>,
+    last_value: u32,
+    fill: PhantomData<F>,
 }
 
 impl<const N: usize, F> Ring<N, F> {
@@ -156,12 +156,12 @@ impl<const N: usize> Ring<N, Cold> {
     pub const fn new() -> Self {
         assert!(N > 0, "a timestamp ring must have nonzero capacity");
         Self {
-            values:      [0; N],
-            next:        0,
-            len:         0,
+            values: [0; N],
+            next: 0,
+            len: 0,
             ordered_run: 0,
-            last_value:  0,
-            fill:        PhantomData,
+            last_value: 0,
+            fill: PhantomData,
         }
     }
 
@@ -206,12 +206,12 @@ impl<const N: usize> Ring<N, Cold> {
             return Err(InvalidParts::NotWarm);
         }
         Ok(Ring {
-            values:      self.values,
-            next:        self.next,
-            len:         N,
+            values: self.values,
+            next: self.next,
+            len: N,
             ordered_run: self.ordered_run,
-            last_value:  self.last_value,
-            fill:        PhantomData,
+            last_value: self.last_value,
+            fill: PhantomData,
         })
     }
 }
@@ -223,6 +223,8 @@ impl<const N: usize> Default for Ring<N, Cold> {
 }
 
 impl<const N: usize> Ring<N, Warm> {
+    const WINDOW_SMALL_HALF_SIZE: usize = N / 2;
+
     /// Slot of the median indexed by the oldest slot.
     const MEDIAN_SLOT: [usize; N] = {
         let mut table = [0; N];
@@ -258,6 +260,12 @@ impl<const N: usize> Ring<N, Warm> {
         self.push_value(value);
     }
 
+    /// The most recently pushed timestamp.
+    #[must_use]
+    pub const fn newest(&self) -> u32 {
+        self.last_value
+    }
+
     /// The upper median in constant time, or `None` while the window holds a decrease.
     #[must_use]
     pub fn median(&self) -> Option<u32> {
@@ -266,7 +274,7 @@ impl<const N: usize> Ring<N, Warm> {
 
     /// Checks a claimed median by rank.
     pub fn is_value_median(&self, claimed_median: u32) -> Result<(), NotMedian> {
-        rank_median(&self.values, N / 2, claimed_median)
+        rank_median(&self.values, Self::WINDOW_SMALL_HALF_SIZE, claimed_median)
     }
 }
 
