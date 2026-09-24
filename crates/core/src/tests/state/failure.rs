@@ -4,7 +4,7 @@ use zkvm_test::zkvm_test;
 
 use crate::tests::*;
 use crate::{
-    block_work_from_target, ApplyError, ChainWork, CompactTarget, ErrorCode, HeaderInput, State,
+    block_work_from_target, ApplyError, ChainWork, CompactTarget, ErrorCode, HeaderInput, State, WINDOW_SIZE,
 };
 
 #[zkvm_test]
@@ -29,12 +29,26 @@ fn cold_start_rejects_fewer_than_ten_headers() {
     );
 }
 
+#[cfg(not(target_os = "zkvm"))]
+#[test]
+#[should_panic(expected = "apply_headers requires a full MTP window")]
+fn warm_apply_rejects_a_cold_state() {
+    let mut state = test_state();
+    let header = HeaderInput {
+        version:     1,
+        merkle_root: [0; 32],
+        timestamp:   ts(100),
+        nonce:       0,
+    };
+    let _ = state.apply_headers::<TestConsensus>(&[header], &[]);
+}
+
 #[zkvm_test]
 fn failure_height_reports_absolute_chain_height() {
     let _hash_guard = set_hash_fail();
-    // Start at height 5 and fail on the first new header -> failure_height = 6.
+    // Start at the first warm height and fail on the first new header.
     let mut state: State = State {
-        height: 5,
+        height: (WINDOW_SIZE - 1) as u32,
         current_nbits: CompactTarget::new(GENESIS_NBITS),
         ..State::default()
     };
@@ -50,7 +64,7 @@ fn failure_height_reports_absolute_chain_height() {
         .expect_err("should fail PoW");
 
     assert_eq!(expect_error_code(failure), ErrorCode::POW_INSUFFICIENT);
-    assert_eq!(state.height + 1, 6);
+    assert_eq!(state.height + 1, WINDOW_SIZE as u32);
 }
 
 #[zkvm_test]

@@ -4,13 +4,13 @@ compile_error!("zkpow wire types require a little-endian target");
 use bytemuck::{Pod, Zeroable};
 use derive_size::Size;
 use sp1_cycle::tracked;
-use zkpow_params::{Consensus, WINDOW_SIZE, WINDOW_SMALL_HALF_SIZE};
+use zkpow_mtp_typestate::{self as mtp, Cold, NotMedian, Warm};
+use zkpow_params::{Consensus, WINDOW_SIZE};
 
 use crate::{
-    advance_ordered_timestamp_run, block_work_from_target, calculate_next_target_required, check_proof_of_work_words,
-    has_ordered_timestamp_window, hash_header_input, ordered_median_timestamp_slot, ordered_timestamp_run,
-    target_from_bits, timestamp_slot, ApplyError, BlockHash, BlockTimestamp, BlockWork, ChainWork, CompactTarget,
-    HeaderInput, Target,
+    block_work_from_target, calculate_next_target_required, check_proof_of_work_words, hash_header_input,
+    target_from_bits, timestamp_count, timestamp_slot, ApplyError, BlockHash, BlockTimestamp, BlockWork, ChainWork,
+    CompactTarget, HeaderInput, Target,
 };
 
 /// Complete authenticated validation state, serialized between recursive iterations.
@@ -74,20 +74,22 @@ impl State {
         }
     }
 
-    /// Apply the cold start batch. This path is intended for the first `window_size - 1` headers
-    /// of the chain, starting from genesis. After those headers are applied any remaining headers
-    /// are passed to [`State::apply_warm`].
+    /// Apply the cold start batch. This is executed exactly once for a chain, applying the first `window_size - 1`
+    /// headers, isolating any logic dealing with an incomplete MTP window so that the main path can always assume
+    /// it has a full window. It fails if fewer than `window_size - 1` headers are provided. If more headers than
+    /// necessary are given, they're passed to on to [`State::apply_headers`] automatically.
     #[tracked]
     pub fn apply_headers_from_genesis<C: Consensus>(
         &mut self,
         headers: &[HeaderInput],
         median_hints: &[BlockTimestamp],
     ) -> Result<(), ApplyError> {
-        // The first run *MUST* contain at least `window_size - 1` headers
-        let Ok((cold, warm)) = mtp.split_off_cold_headers(headers)?;
-        self.apply_cold_batch::<C>(cold)?;
-        if !warm.is_empty() {
-            self.apply_headers::<C>(warm, median_hints)?
+        // Requires at least `window_size - 1` headers.
+        let (cold_headers, warm_headers) = mtp::split_off_cold_headers(headers)?;
+        let mtp = self.apply_cold_batch::<C>(cold_headers)?;
+
+        if !warm_headers.is_empty() {
+            self.apply_warm_batch::<C>(warm_headers, median_hints, mtp)?
         }
 
         Ok(())
@@ -95,25 +97,30 @@ impl State {
 
     // Applies the first headers of the chain, before the MTP window has been filled. This lets the
     // warm path assume it always has a full window.
-    fn apply_cold_batch<C: Consensus>(&mut self, headers: &[HeaderInput]) -> Result<(), ApplyError> {
+    fn apply_cold_batch<C: Consensus>(&mut self, headers: &[HeaderInput]) -> Result<mtp::Window<Warm>, ApplyError> {
+        let mut mtp = self.cold_mtp_ring();
         let mut prev_hash_words = zkpow_sha256::hash_to_state(self.block_hash.as_inner());
-        for (i, new_header) in headers.iter().enumerate() {
-            let slot = i / 2;
+        for new_header in headers {
+            let median = mtp
+                .median()
+                .or_else(|| sp1_cycle::track!(mtp.median_by_sort()))
+                .expect("the cold batch starts from a genesis timestamp");
             if let Err(e) = self.seal_header::<C>(
                 C::PARAMS.compact_target(),
                 &C::PARAMS.genesis_target,
                 new_header,
-                self.timestamps[slot],
+                BlockTimestamp::new(median),
                 &mut prev_hash_words,
             ) {
                 self.block_hash = BlockHash::new(zkpow_sha256::state_to_hash(&prev_hash_words));
                 return Err(e);
             }
+            mtp.push(new_header.timestamp.into_inner());
         }
         self.block_hash = BlockHash::new(zkpow_sha256::state_to_hash(&prev_hash_words));
         self.chain_work += C::PARAMS.genesis_work * headers.len() as u32;
 
-        Ok(())
+        Ok(mtp.warm().expect("the cold batch did not fill the MTP window"))
     }
 
     /// Apply headers while assuming the MTP window is full. The caller is responsible for only
@@ -126,10 +133,19 @@ impl State {
         headers: &[HeaderInput],
         median_hints: &[BlockTimestamp],
     ) -> Result<(), ApplyError> {
+        let mtp = sp1_cycle::track!({ self.warm_mtp_ring() });
+        self.apply_warm_batch::<C>(headers, median_hints, mtp)
+    }
+
+    fn apply_warm_batch<C: Consensus>(
+        &mut self,
+        headers: &[HeaderInput],
+        median_hints: &[BlockTimestamp],
+        mut mtp: mtp::Window<Warm>,
+    ) -> Result<(), ApplyError> {
         let mut header_iter = headers.iter();
         let mut hint_iter = median_hints.iter();
 
-        let mut ordered_run_len = sp1_cycle::track!({ ordered_timestamp_run(&self.timestamps, self.height) }) as usize;
         let mut prev_hash_words = zkpow_sha256::hash_to_state(self.block_hash.as_inner());
 
         while header_iter.len() > 0 {
@@ -140,44 +156,31 @@ impl State {
 
             for new_header in header_iter.by_ref().take(epoch_len_remaining) {
                 let state = &mut context.state;
-                let height = state.height;
                 let active_nbits = context.active_nbits;
                 let active_target = context.active_target;
 
-                let claimed_median = if has_ordered_timestamp_window(ordered_run_len as u64) {
-                    state.timestamps[ordered_median_timestamp_slot(height)]
-                } else {
-                    let Some(claimed_median) = hint_iter.next() else {
-                        crate::invalid_hint!("median_hint not available for application");
-                    };
-
-                    let (less_count, equal_count) = sp1_cycle::track!({
-                        let mut counts: [usize; 3] = [0, 0, 0];
-                        for i in 0..WINDOW_SIZE {
-                            let timestamp = state.timestamps[timestamp_slot(height.wrapping_sub(i as u32))];
-                            counts[((timestamp.cmp(claimed_median) as i8) + 1) as usize] += 1;
+                let claimed_median = match mtp.median() {
+                    Some(median) => BlockTimestamp::new(median),
+                    None => {
+                        let Some(claimed_median) = hint_iter.next() else {
+                            crate::invalid_hint!("median_hint not available for application");
+                        };
+                        match sp1_cycle::track!(mtp.is_value_median(claimed_median.into_inner())) {
+                            Ok(()) => {},
+                            Err(NotMedian::TooNew) => {
+                                crate::invalid_hint!(
+                                    "claimed_median is newer than half of the known window: {claimed_median}"
+                                );
+                            },
+                            Err(NotMedian::TooOld) => {
+                                crate::invalid_hint!(
+                                    "claimed_median is older than half of the known window: {claimed_median}"
+                                );
+                            },
                         }
-                        (counts[0], counts[1])
-                    });
-                    let half = WINDOW_SMALL_HALF_SIZE;
-                    if less_count > half {
-                        crate::invalid_hint!("claimed_median is newer than half of the known window: {claimed_median} (less_count={less_count})");
-                    }
-                    if less_count + equal_count <= half {
-                        crate::invalid_hint!("claimed_median is older than half of the known window: {claimed_median} (less_count={less_count}, equal_count={equal_count})");
-                    }
-                    if equal_count == 0 {
-                        crate::invalid_hint!("claimed_median is not in the known window: {claimed_median}");
-                    }
-                    *claimed_median
+                        *claimed_median
+                    },
                 };
-
-                let current_timestamp = state.current_timestamp();
-                ordered_run_len = advance_ordered_timestamp_run(
-                    ordered_run_len as u64,
-                    current_timestamp.into_inner(),
-                    new_header.timestamp.into_inner(),
-                ) as usize;
 
                 if let Err(e) = state.seal_header::<C>(
                     active_nbits,
@@ -189,6 +192,8 @@ impl State {
                     state.block_hash = BlockHash::new(zkpow_sha256::state_to_hash(&prev_hash_words));
                     return Err(e);
                 }
+
+                mtp.push(new_header.timestamp.into_inner());
             }
         }
 
@@ -199,6 +204,19 @@ impl State {
         };
 
         Ok(())
+    }
+
+    fn cold_mtp_ring(&self) -> mtp::Window {
+        let values = self.timestamps.map(BlockTimestamp::into_inner);
+        mtp::Window::<Cold>::from_parts(values, timestamp_count(self.height))
+            .expect("apply_headers_from_genesis requires a cold MTP window")
+    }
+
+    fn warm_mtp_ring(&self) -> mtp::Window<Warm> {
+        let values = self.timestamps.map(BlockTimestamp::into_inner);
+        let next = timestamp_slot(self.height.wrapping_add(1));
+        mtp::Window::<Warm>::from_parts(values, next, timestamp_count(self.height))
+            .expect("apply_headers requires a full MTP window")
     }
 
     fn seal_header<C: Consensus>(

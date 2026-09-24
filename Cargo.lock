@@ -6226,6 +6226,7 @@ dependencies = [
  "sp1-cycle-macros",
  "sp1-lib",
  "thiserror 2.0.20",
+ "zkpow-mtp-typestate",
  "zkpow-params",
  "zkpow-sha256",
  "zkpow-types",
@@ -6267,6 +6268,10 @@ dependencies = [
  "zkpow-params",
  "zkpow-worker",
 ]
+
+[[package]]
+name = "zkpow-mtp-typestate"
+version = "0.1.0"
 
 [[package]]
 name = "zkpow-params"

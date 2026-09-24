@@ -29,7 +29,7 @@ fn header_rejects_mocked_hash_exceeding_target() {
 fn rejected_header_reports_its_own_height_and_hash() {
     let _hash_guard = set_hash_fail();
     let mut state = State {
-        height: 5,
+        height: (WINDOW_SIZE - 1) as u32,
         current_nbits: CompactTarget::new(GENESIS_NBITS),
         ..State::default()
     };
@@ -46,11 +46,15 @@ fn rejected_header_reports_its_own_height_and_hash() {
         .expect_err("the mocked hash exceeds the target");
 
     assert_eq!(failure, ApplyError::PowInsufficient {
-        height: 6,
+        height: WINDOW_SIZE as u32,
         hash:   BlockHash::new([0xFF; 32]),
         nbits:  CompactTarget::new(GENESIS_NBITS),
     });
-    assert_eq!(state.height, 5, "the rejected header must not advance the tip");
+    assert_eq!(
+        state.height,
+        (WINDOW_SIZE - 1) as u32,
+        "the rejected header must not advance the tip"
+    );
 }
 
 #[zkvm_test(fixture = "headers_fixture.bin", max_cycles = 7_500_000)]
@@ -163,4 +167,3 @@ fn block_work_witness_rejects_overstated_work() {
     let divisor = crate::increment_target(target.into_inner());
     crate::verify_block_work_witness(bad_work, divisor);
 }
-

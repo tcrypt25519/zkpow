@@ -129,6 +129,20 @@ fn hinted_apply_headers_matches_sorted_apply_headers_across_window_wrap() {
 }
 
 #[zkvm_test]
+fn cold_unordered_window_uses_sorted_median_then_warm_hint() {
+    let _hash_guard = set_hash_success();
+    let headers = headers_from_timestamps(&[100, 200, 150, 250, 300, 350, 400, 450, 500, 550, 600]);
+    let mut state = test_state();
+    let hints = median_hints_for_headers(&state, &headers);
+
+    assert_eq!(hints, [ts(300)]);
+    state
+        .apply_headers_from_genesis::<TestConsensus>(&headers, &hints)
+        .expect("cold unordered and warm hinted paths should both validate");
+    assert_eq!(state.height, 11);
+}
+
+#[zkvm_test]
 fn hinted_median_validation_accepts_duplicate_median_values() {
     let _hash_guard = set_hash_success();
     let mut state: State = State {
