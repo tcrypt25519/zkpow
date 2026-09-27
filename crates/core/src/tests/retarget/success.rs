@@ -1,11 +1,9 @@
+use zkpow_params::ShortEpoch;
 use zkvm_test::zkvm_test;
 
-use zkpow_params::ShortEpoch;
-
-use crate::tests::*;
 use crate::{
-    calculate_next_target_required, target_from_bits, target_to_bits,
-    CompactTarget, Consensus, HeaderInput, Target,
+    calculate_next_target_required, target_from_bits, target_to_bits, tests::*, CompactTarget, Consensus, HeaderInput,
+    Target,
 };
 
 #[zkvm_test(max_cycles = 150_000)]
@@ -72,21 +70,14 @@ fn retargeting_clamping_bounds_match_fourfold_limits() {
         calculate_next_target_required::<TestConsensus>(old_target, ts(0), ts(100 * 86400));
     let (_, target_56_days, work_56_days) =
         calculate_next_target_required::<TestConsensus>(old_target, ts(0), ts(56 * 86400));
-    assert_eq!(
-        target_100_days, target_56_days,
-        "timespan > 4x must clamp to 4x"
-    );
+    assert_eq!(target_100_days, target_56_days, "timespan > 4x must clamp to 4x");
     assert_eq!(work_100_days, work_56_days);
 
     // 1 day vs 3.5 days (clamped lower bound: 0.25x expected timespan)
-    let (_, target_1_day, work_1_day) =
-        calculate_next_target_required::<TestConsensus>(old_target, ts(0), ts(86400));
+    let (_, target_1_day, work_1_day) = calculate_next_target_required::<TestConsensus>(old_target, ts(0), ts(86400));
     let (_, target_quarter, work_quarter) =
         calculate_next_target_required::<TestConsensus>(old_target, ts(0), ts(302400));
-    assert_eq!(
-        target_1_day, target_quarter,
-        "timespan < 0.25x must clamp to 0.25x"
-    );
+    assert_eq!(target_1_day, target_quarter, "timespan < 0.25x must clamp to 0.25x");
     assert_eq!(work_1_day, work_quarter);
 
     // Excessively slow retarget clamped to genesis pow_limit

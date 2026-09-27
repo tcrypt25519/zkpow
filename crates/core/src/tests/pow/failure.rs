@@ -1,10 +1,8 @@
 use alloc::vec::Vec;
+
 use zkvm_test::zkvm_test;
 
-use crate::tests::*;
-use crate::{
-    ApplyError, BlockHash, CompactTarget, HeaderInput, State, WINDOW_SIZE,
-};
+use crate::{tests::*, ApplyError, BlockHash, CompactTarget, HeaderInput, State, WINDOW_SIZE};
 
 #[zkvm_test]
 fn header_rejects_mocked_hash_exceeding_target() {
@@ -57,10 +55,10 @@ fn rejected_header_reports_its_own_height_and_hash() {
     );
 }
 
-#[zkvm_test(fixture = "headers_fixture.bin", max_cycles = 7_500_000)]
+#[zkvm_test(fixture = "headers_fixture.bin", max_cycles = 1_000_000)]
 fn unmocked_chain_rejects_corrupted_nonce_at_height_1() {
-    let fixture_str = zkvm_test::fixture_str();
-    let blocks = parse_fixture_blocks(&fixture_str);
+    let fixture_bytes = zkvm_test::fixture();
+    let blocks = parse_fixture_blocks(&fixture_bytes);
 
     let mut state = State {
         chain_work:      ChainWork::from_limbs(*TestConsensus::PARAMS.genesis_work.as_limbs()),
@@ -97,7 +95,7 @@ fn unmocked_chain_rejects_corrupted_nonce_at_height_1() {
     match err {
         ApplyError::PowInsufficient { height, .. } => {
             assert_eq!(height, 1);
-        }
+        },
         other => panic!("expected PowInsufficient, got {:?}", other),
     }
 
@@ -110,8 +108,8 @@ fn unmocked_chain_rejects_corrupted_nonce_at_height_1() {
 
 #[zkvm_test(fixture = "headers_fixture.bin")]
 fn unmocked_chain_rejects_parent_blockhash_mismatch() {
-    let fixture_str = zkvm_test::fixture_str();
-    let blocks = parse_fixture_blocks(&fixture_str);
+    let fixture_bytes = zkvm_test::fixture();
+    let blocks = parse_fixture_blocks(&fixture_bytes);
 
     // Set an invalid parent block hash in the state
     let mut state = State {

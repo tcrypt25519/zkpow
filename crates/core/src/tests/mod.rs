@@ -48,12 +48,12 @@ pub(crate) fn zero_hash() -> BlockHash {
 
 pub(crate) fn sample_header() -> Header {
     Header {
-        version: 1,
+        version:        1,
         prev_blockhash: BlockHash::new([0x11; 32]),
-        merkle_root: [0x22; 32],
-        timestamp: ts(10),
+        merkle_root:    [0x22; 32],
+        timestamp:      ts(10),
         compact_target: CompactTarget::new(GENESIS_NBITS),
-        nonce: 7,
+        nonce:          7,
     }
 }
 
@@ -154,10 +154,10 @@ pub(crate) fn headers_from_timestamps(timestamps: &[u32]) -> Vec<HeaderInput> {
     timestamps
         .iter()
         .map(|timestamp| HeaderInput {
-            version: 1,
+            version:     1,
             merkle_root: [0x22; 32],
-            timestamp: ts(*timestamp),
-            nonce: 7,
+            timestamp:   ts(*timestamp),
+            nonce:       7,
         })
         .collect()
 }
@@ -170,74 +170,18 @@ pub(crate) fn apply_sequentially(state: &mut State, headers: &[HeaderInput]) -> 
     Ok(())
 }
 
-fn parse_hex_byte(s: &[u8]) -> u8 {
-    let hi = match s[0] {
-        b'0'..=b'9' => s[0] - b'0',
-        b'a'..=b'f' => s[0] - b'a' + 10,
-        b'A'..=b'F' => s[0] - b'A' + 10,
-        _ => panic!("invalid hex"),
-    };
-    let lo = match s[1] {
-        b'0'..=b'9' => s[1] - b'0',
-        b'a'..=b'f' => s[1] - b'a' + 10,
-        b'A'..=b'F' => s[1] - b'A' + 10,
-        _ => panic!("invalid hex"),
-    };
-    (hi << 4) | lo
-}
-
-fn parse_hex_32_str(s: &str) -> [u8; 32] {
-    let bytes = s.as_bytes();
-    let mut out = [0u8; 32];
-    for i in 0..32 {
-        out[i] = parse_hex_byte(&bytes[i * 2..i * 2 + 2]);
-    }
-    out
-}
-
-fn parse_u32_str(s: &str) -> u32 {
-    let mut val = 0u32;
-    for &b in s.as_bytes() {
-        val = val * 10 + (b - b'0') as u32;
-    }
-    val
-}
-
-#[allow(dead_code)]
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct ParsedBlock {
-    pub(crate) expected_hash: BlockHash,
-    pub(crate) version: u32,
+    pub(crate) expected_hash:  BlockHash,
+    pub(crate) version:        u32,
     pub(crate) prev_blockhash: BlockHash,
-    pub(crate) merkle_root: [u8; 32],
-    pub(crate) timestamp: u32,
+    pub(crate) merkle_root:    [u8; 32],
+    pub(crate) timestamp:      u32,
     pub(crate) compact_target: u32,
-    pub(crate) nonce: u32,
+    pub(crate) nonce:          u32,
 }
 
-pub(crate) fn parse_fixture_blocks(fixture_str: &str) -> Vec<ParsedBlock> {
-    let mut blocks = Vec::new();
-    for line in fixture_str.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let mut parts = trimmed.split_whitespace();
-        let expected_hash = BlockHash::new(parse_hex_32_str(parts.next().unwrap()));
-        let version = parse_u32_str(parts.next().unwrap());
-        let prev_blockhash = BlockHash::new(parse_hex_32_str(parts.next().unwrap()));
-        let merkle_root = parse_hex_32_str(parts.next().unwrap());
-        let timestamp = parse_u32_str(parts.next().unwrap());
-        let compact_target = parse_u32_str(parts.next().unwrap());
-        let nonce = parse_u32_str(parts.next().unwrap());
-        blocks.push(ParsedBlock {
-            expected_hash,
-            version,
-            prev_blockhash,
-            merkle_root,
-            timestamp,
-            compact_target,
-            nonce,
-        });
-    }
-    blocks
+pub(crate) fn parse_fixture_blocks(fixture_bytes: &[u8]) -> &[ParsedBlock] {
+    bytemuck::cast_slice(fixture_bytes)
 }

@@ -1,10 +1,8 @@
 use alloc::vec::Vec;
+
 use zkvm_test::zkvm_test;
 
-use crate::tests::*;
-use crate::{
-    BlockTimestamp, CompactTarget, HeaderInput, State, WINDOW_SIZE,
-};
+use crate::{tests::*, BlockTimestamp, CompactTarget, HeaderInput, State, WINDOW_SIZE};
 
 #[zkvm_test]
 fn header_rejects_timestamp_equal_to_median() {
@@ -79,7 +77,10 @@ fn header_rejects_timestamp_older_than_median_deep_in_batch() {
             "timestamp {dip} against median {median}"
         );
         assert_eq!(batched.height, parent.height);
-        assert_eq!(batched.timestamps, parent.timestamps, "failed batch must keep the sealed timestamps");
+        assert_eq!(
+            batched.timestamps, parent.timestamps,
+            "failed batch must keep the sealed timestamps"
+        );
     }
 }
 
@@ -176,7 +177,19 @@ fn hint_validation_rejects_claimed_median_not_in_window_zkvm() {
     let state: State = State {
         height: WINDOW_SIZE as u32,
         current_nbits: CompactTarget::new(GENESIS_NBITS),
-        timestamps: [ts(10), ts(20), ts(30), ts(40), ts(50), ts(60), ts(70), ts(80), ts(90), ts(100), ts(110)],
+        timestamps: [
+            ts(10),
+            ts(20),
+            ts(30),
+            ts(40),
+            ts(50),
+            ts(60),
+            ts(70),
+            ts(80),
+            ts(90),
+            ts(100),
+            ts(110),
+        ],
         ..State::default()
     };
     let headers = [HeaderInput {
@@ -212,10 +225,10 @@ fn hint_validation_rejects_leftover_trailing_median_hints_zkvm() {
     state.apply_headers::<TestConsensus>(&headers, &[ts(6), ts(99)]).unwrap();
 }
 
-#[zkvm_test(fixture = "headers_fixture.bin", max_cycles = 8_000_000)]
+#[zkvm_test(fixture = "headers_fixture.bin", max_cycles = 1_000_000)]
 fn unmocked_chain_rejects_timestamp_too_old_at_height_12() {
-    let fixture_str = zkvm_test::fixture_str();
-    let blocks = parse_fixture_blocks(&fixture_str);
+    let fixture_bytes = zkvm_test::fixture();
+    let blocks = parse_fixture_blocks(&fixture_bytes);
 
     let mut state = State {
         chain_work:      ChainWork::from_limbs(*TestConsensus::PARAMS.genesis_work.as_limbs()),
@@ -250,11 +263,15 @@ fn unmocked_chain_rejects_timestamp_too_old_at_height_12() {
 
     assert_eq!(err.error_code(), Some(ErrorCode::TIMESTAMP_TOO_OLD));
     match err {
-        ApplyError::TimestampTooOld { height, timestamp, median } => {
+        ApplyError::TimestampTooOld {
+            height,
+            timestamp,
+            median,
+        } => {
             assert_eq!(height, 12);
             assert_eq!(timestamp, BlockTimestamp::new(1231006505));
             assert!(timestamp <= median);
-        }
+        },
         other => panic!("expected TimestampTooOld, got {:?}", other),
     }
 

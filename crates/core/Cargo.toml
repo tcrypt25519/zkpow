@@ -20,7 +20,7 @@ thiserror = { version = "2.0", default-features = false }
 bytemuck = { workspace = true }
 sp1-cycle = { workspace = true }
 sp1-cycle-macros = { workspace = true }
-zkpow-mtp-typestate = { workspace = true }
+zkpow-mtp = { workspace = true }
 zkpow-params = { workspace = true }
 zkpow-types = { workspace = true }
 zkpow-sha256 = { workspace = true }

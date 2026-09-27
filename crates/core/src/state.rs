@@ -4,13 +4,12 @@ compile_error!("zkpow wire types require a little-endian target");
 use bytemuck::{Pod, Zeroable};
 use derive_size::Size;
 use sp1_cycle::tracked;
-use zkpow_mtp_typestate::{self as mtp, Cold, NotMedian, Warm};
-use zkpow_params::{Consensus, WINDOW_SIZE};
+use zkpow_mtp::{self as mtp, errors::NotMedian, timestamp_count, timestamp_slot, Cold, Warm, WINDOW_SIZE};
+use zkpow_params::Consensus;
 
 use crate::{
     block_work_from_target, calculate_next_target_required, check_proof_of_work_words, hash_header_input,
-    target_from_bits, timestamp_count, timestamp_slot, ApplyError, BlockHash, BlockTimestamp, BlockWork, ChainWork,
-    CompactTarget, HeaderInput, Target,
+    target_from_bits, ApplyError, BlockHash, BlockTimestamp, BlockWork, ChainWork, CompactTarget, HeaderInput, Target,
 };
 
 /// Complete authenticated validation state, serialized between recursive iterations.
@@ -19,14 +18,14 @@ use crate::{
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Pod, Zeroable, Size)]
 pub struct State {
-    pub chain_work: ChainWork,
+    pub chain_work:   ChainWork,
     pub genesis_hash: BlockHash,
-    pub block_hash: BlockHash,
-    pub height: u32,
+    pub block_hash:   BlockHash,
+    pub height:       u32,
 
-    pub current_nbits: CompactTarget,
+    pub current_nbits:   CompactTarget,
     pub epoch_timestamp: BlockTimestamp,
-    pub timestamps: [BlockTimestamp; WINDOW_SIZE],
+    pub timestamps:      [BlockTimestamp; WINDOW_SIZE],
 }
 
 impl State {
@@ -41,7 +40,10 @@ impl State {
     /// Called when the State reflects the final block of epoch N
     /// to compute the difficulty values that are active in epoch N+1.
     #[tracked]
-    fn prepare_next_epoch<C: Consensus>(&self, current_timestamp: BlockTimestamp) -> (CompactTarget, Target, BlockWork) {
+    fn prepare_next_epoch<C: Consensus>(
+        &self,
+        current_timestamp: BlockTimestamp,
+    ) -> (CompactTarget, Target, BlockWork) {
         let current_target = target_from_bits(self.current_nbits);
         calculate_next_target_required::<C>(current_target, self.epoch_timestamp, current_timestamp)
     }
@@ -231,9 +233,9 @@ impl State {
         // Check that the incoming timestamp is > `known_median`
         if new_header.timestamp <= known_median {
             return Err(ApplyError::TimestampTooOld {
-                height: self.height + 1,
+                height:    self.height + 1,
                 timestamp: new_header.timestamp,
-                median: known_median,
+                median:    known_median,
             });
         }
 
@@ -267,23 +269,23 @@ impl State {
 impl Default for State {
     fn default() -> Self {
         Self {
-            block_hash: BlockHash::default(),
-            genesis_hash: BlockHash::default(),
-            current_nbits: CompactTarget::default(),
-            height: 0,
-            chain_work: ChainWork::default(),
+            block_hash:      BlockHash::default(),
+            genesis_hash:    BlockHash::default(),
+            current_nbits:   CompactTarget::default(),
+            height:          0,
+            chain_work:      ChainWork::default(),
             epoch_timestamp: BlockTimestamp::default(),
-            timestamps: [BlockTimestamp::default(); WINDOW_SIZE],
+            timestamps:      [BlockTimestamp::default(); WINDOW_SIZE],
         }
     }
 }
 
 struct EpochManager<'a> {
-    state: &'a mut State,
-    start_height: u32,
+    state:             &'a mut State,
+    start_height:      u32,
     active_block_work: BlockWork,
-    active_nbits: CompactTarget,
-    active_target: Target,
+    active_nbits:      CompactTarget,
+    active_target:     Target,
 }
 
 impl<'a> EpochManager<'a> {

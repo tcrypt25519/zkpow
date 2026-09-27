@@ -1,10 +1,6 @@
 use zkvm_test::zkvm_test;
 
-use crate::tests::*;
-use crate::{
-    calculate_next_target_required,
-    CompactTarget, Target,
-};
+use crate::{calculate_next_target_required, tests::*, CompactTarget, Target};
 
 #[zkvm_test]
 fn retarget_clamps_negative_and_zero_timespans() {
@@ -33,8 +29,7 @@ fn retarget_clamps_to_pow_limit_on_extreme_slowdown() {
     // Starting already at genesis pow_limit
     let genesis_target = GENESIS_TARGET;
     // Epoch took 1000 days (huge timespan)
-    let (nbits, target, _) =
-        calculate_next_target_required::<TestConsensus>(genesis_target, ts(0), ts(1000 * 86400));
+    let (nbits, target, _) = calculate_next_target_required::<TestConsensus>(genesis_target, ts(0), ts(1000 * 86400));
 
     // Must clamp to pow_limit (GENESIS_TARGET / GENESIS_NBITS)
     assert_eq!(nbits, CompactTarget::new(GENESIS_NBITS));

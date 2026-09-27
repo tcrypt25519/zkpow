@@ -69,7 +69,6 @@ pub fn log_execution_report(report: &ExecutionReport, total_proving_time_secs: f
         return;
     }
 
-
     let mut entries: Vec<_> = report.cycle_tracker.iter().collect();
     entries.sort_unstable_by(|(label_a, cycles_a), (label_b, cycles_b)| {
         cycles_b.cmp(cycles_a).then_with(|| label_a.cmp(label_b))

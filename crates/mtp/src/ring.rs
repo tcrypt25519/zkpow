@@ -1,28 +1,9 @@
-//! Median time past over a ring of block timestamps.
-//!
-//! A [`Ring`] is [`Cold`] while it fills and [`Warm`] once every slot holds a timestamp. The warm
-//! ring reads its median off a compile-time slot table. Ordering is tracked at runtime, so
-//! [`Ring::median`] is `None` while the window holds a chronological decrease.
-//!
-//! ```
-//! use zkpow_mtp_typestate::Window;
-//!
-//! let mut ring = Window::new();
-//! for value in 0..11 {
-//!     ring.push(value);
-//! }
-//! let ring = ring.warm().unwrap();
-//! assert_eq!(ring.median(), Some(5));
-//! ```
+use core::{cmp::Ordering, marker::PhantomData};
 
-#![no_std]
-
-#[cfg(test)]
-mod tests;
-
-use core::{cmp::Ordering, fmt, marker::PhantomData};
-
-const WINDOW_SIZE: usize = 11;
+use crate::{
+    WINDOW_SIZE,
+    errors::{InvalidParts, NotMedian},
+};
 
 /// The consensus timestamp window.
 pub type Window<F = Cold> = Ring<WINDOW_SIZE, F>;
@@ -35,65 +16,16 @@ pub struct Cold;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Warm;
 
-/// Why a claimed median is not the window's median.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NotMedian {
-    TooNew,
-    TooOld,
-}
-
-impl fmt::Display for NotMedian {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::TooNew => "claimed median is newer than half of the known window",
-            Self::TooOld => "claimed median is older than half of the known window",
-        })
-    }
-}
-
-/// Why persisted ring parts could not be rebuilt in the requested fill state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InvalidParts {
-    NotCold,
-    NotWarm,
-    NextSlotOutOfBounds,
-}
-
-/// Why a header slice cannot be split into the cold prefix and warm remainder.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct InsufficientColdHeaders {
-    required: usize,
-    actual: usize,
-}
-
-impl InsufficientColdHeaders {
-    #[must_use]
-    pub const fn required(self) -> usize {
-        self.required
-    }
-
-    #[must_use]
-    pub const fn actual(self) -> usize {
-        self.actual
-    }
-}
-
-impl fmt::Display for InsufficientColdHeaders {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "a cold start needs at least {} headers, got {}", self.required, self.actual)
-    }
-}
-
 /// The last `N` timestamps, oldest overwritten first. `ordered_run` is the length of the
 /// nondecreasing run ending at the newest value, capped at `N`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Ring<const N: usize, F = Cold> {
-    values: [u32; N],
-    next: usize,
-    len: usize,
+    values:      [u32; N],
+    next:        usize,
+    len:         usize,
     ordered_run: usize,
-    last_value: u32,
-    fill: PhantomData<F>,
+    last_value:  u32,
+    fill:        PhantomData<F>,
 }
 
 impl<const N: usize, F> Ring<N, F> {
@@ -156,12 +88,12 @@ impl<const N: usize> Ring<N, Cold> {
     pub const fn new() -> Self {
         assert!(N > 0, "a timestamp ring must have nonzero capacity");
         Self {
-            values: [0; N],
-            next: 0,
-            len: 0,
+            values:      [0; N],
+            next:        0,
+            len:         0,
             ordered_run: 0,
-            last_value: 0,
-            fill: PhantomData,
+            last_value:  0,
+            fill:        PhantomData,
         }
     }
 
@@ -206,12 +138,12 @@ impl<const N: usize> Ring<N, Cold> {
             return Err(InvalidParts::NotWarm);
         }
         Ok(Ring {
-            values: self.values,
-            next: self.next,
-            len: N,
+            values:      self.values,
+            next:        self.next,
+            len:         N,
             ordered_run: self.ordered_run,
-            last_value: self.last_value,
-            fill: PhantomData,
+            last_value:  self.last_value,
+            fill:        PhantomData,
         })
     }
 }
@@ -303,16 +235,4 @@ fn rank_median(values: &[u32], half: usize, claimed_median: u32) -> Result<(), N
         return Err(NotMedian::TooOld);
     }
     Ok(())
-}
-
-/// Splits headers into the prefix that fills an empty consensus window and the warm remainder.
-pub fn split_off_cold_headers<T>(headers: &[T]) -> Result<(&[T], &[T]), InsufficientColdHeaders> {
-    let required = WINDOW_SIZE - 1;
-    if headers.len() < required {
-        return Err(InsufficientColdHeaders {
-            required,
-            actual: headers.len(),
-        });
-    }
-    Ok(headers.split_at(required))
 }

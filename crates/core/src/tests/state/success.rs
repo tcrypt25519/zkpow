@@ -1,12 +1,10 @@
 use alloc::vec::Vec;
 use core::mem::{align_of, size_of};
+
 use sp1_cycle::run_track;
 use zkvm_test::zkvm_test;
 
-use crate::tests::*;
-use crate::{
-    block_work_from_target, BlockHash, BlockWork, ChainWork, CompactTarget, HeaderInput, State,
-};
+use crate::{block_work_from_target, tests::*, BlockHash, BlockWork, ChainWork, CompactTarget, HeaderInput, State};
 
 #[zkvm_test(max_cycles = 100_000)]
 fn state_and_header_fixed_sizes_match_protocol() {
@@ -28,13 +26,13 @@ fn state_and_header_input_layout_and_offsets() {
     assert_eq!(align_of::<HeaderInput>(), 4);
 
     let state = State {
-        chain_work: ChainWork::from_limbs([1, 2, 3, 4]),
-        genesis_hash: BlockHash::new([0x11; 32]),
-        block_hash: BlockHash::new([0x22; 32]),
-        height: 42,
-        current_nbits: CompactTarget::new(0x1d00ffff),
+        chain_work:      ChainWork::from_limbs([1, 2, 3, 4]),
+        genesis_hash:    BlockHash::new([0x11; 32]),
+        block_hash:      BlockHash::new([0x22; 32]),
+        height:          42,
+        current_nbits:   CompactTarget::new(0x1d00ffff),
         epoch_timestamp: BlockTimestamp::new(1000),
-        timestamps: [BlockTimestamp::new(2000); WINDOW_SIZE],
+        timestamps:      [BlockTimestamp::new(2000); WINDOW_SIZE],
     };
     let bytes = state.to_bytes();
     assert_eq!(bytes.len(), 152);

@@ -3,10 +3,7 @@ use alloc::string::ToString;
 
 use zkvm_test::test;
 
-use crate::{
-    BlockHash, BlockHashTag, BlockTimestamp, BlockWork, Branded, ChainWork, CompactTarget, Target,
-};
-
+use crate::{BlockHash, BlockHashTag, BlockTimestamp, BlockWork, Branded, ChainWork, CompactTarget, Target};
 
 #[test]
 fn branded_construction_and_accessors() {
@@ -23,8 +20,8 @@ fn branded_construction_and_accessors() {
 #[test]
 fn branded_zero_copy_byte_conversions() {
     let original: [u8; 32] = [
-        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
-        26, 27, 28, 29, 30, 31, 32,
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
+        31, 32,
     ];
     let hash = BlockHash::new(original);
 
@@ -98,7 +95,10 @@ fn block_hash_display_and_ordering() {
     assert!(display.ends_with("01"));
 
     let zero = BlockHash::new([0u8; 32]);
-    assert_eq!(zero.to_string(), "0000000000000000000000000000000000000000000000000000000000000000");
+    assert_eq!(
+        zero.to_string(),
+        "0000000000000000000000000000000000000000000000000000000000000000"
+    );
     assert!(zero < hash);
 }
 

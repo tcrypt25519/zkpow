@@ -92,7 +92,7 @@ unsafe fn compress_schedule(w: *mut u64, state: &mut [u64; 8]) {
 unsafe fn compress_schedule(w: *const u64, state: &mut [u64; 8]) {
     use sha2::{
         compress256,
-        digest::generic_array::{typenum::U64, GenericArray},
+        digest::generic_array::{GenericArray, typenum::U64},
     };
 
     let mut block = [0u8; 64];
@@ -201,12 +201,7 @@ pub fn of_public_values(state_bytes: &[u8], verifier_key: &[u8], return_code: u8
 /// Build the first SHA-256 block words for a Bitcoin header directly in the schedule buffer
 /// with previous blockhash in state words.
 #[inline(always)]
-fn header_first_block_words(
-    version: u32,
-    prev_blockhash: &[u64; 8],
-    merkle_root: &[u8; 32],
-    state: &mut [u64; 8],
-) {
+fn header_first_block_words(version: u32, prev_blockhash: &[u64; 8], merkle_root: &[u8; 32], state: &mut [u64; 8]) {
     let mut w = MaybeUninit::<[u64; 64]>::uninit();
     let ptr = w.as_mut_ptr().cast::<u64>();
     // SAFETY: words 0..16 are all written directly into w before compression.
@@ -225,12 +220,7 @@ fn header_first_block_words(
 /// Build the first SHA-256 block words for a Bitcoin header directly in the schedule buffer
 /// with previous blockhash in a 32-byte array.
 #[inline(always)]
-fn header_first_block(
-    version: u32,
-    prev_blockhash: &[u8; 32],
-    merkle_root: &[u8; 32],
-    state: &mut [u64; 8],
-) {
+fn header_first_block(version: u32, prev_blockhash: &[u8; 32], merkle_root: &[u8; 32], state: &mut [u64; 8]) {
     let mut w = MaybeUninit::<[u64; 64]>::uninit();
     let ptr = w.as_mut_ptr().cast::<u64>();
     // SAFETY: words 0..16 are all written directly into w before compression.
@@ -248,13 +238,7 @@ fn header_first_block(
 
 /// Build the second SHA-256 block words for a Bitcoin header directly in the schedule buffer.
 #[inline(always)]
-fn header_second_block(
-    merkle_root: &[u8; 32],
-    timestamp: u32,
-    compact_target: u32,
-    nonce: u32,
-    state: &mut [u64; 8],
-) {
+fn header_second_block(merkle_root: &[u8; 32], timestamp: u32, compact_target: u32, nonce: u32, state: &mut [u64; 8]) {
     let mut w = MaybeUninit::<[u64; 64]>::uninit();
     let ptr = w.as_mut_ptr().cast::<u64>();
     // SAFETY: words 0..16 are all written directly into w before compression.

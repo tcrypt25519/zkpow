@@ -1,5 +1,5 @@
-use alloc::vec;
-use alloc::vec::Vec;
+use alloc::{vec, vec::Vec};
+
 use zkvm_test::zkvm_test;
 
 use crate::{cast_slice, serialize_inputs, BlockTimestamp, HeaderInput};

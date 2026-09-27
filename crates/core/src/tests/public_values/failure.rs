@@ -1,9 +1,9 @@
 use alloc::{format, vec};
+
 use zkvm_test::zkvm_test;
 
-use crate::tests::*;
 use crate::{
-    ApplyError, BlockHash, ChainWork, ErrorCode, ParseError, PublicValues, ReportableError, ReturnCode,
+    tests::*, ApplyError, BlockHash, ChainWork, ErrorCode, ParseError, PublicValues, ReportableError, ReturnCode,
     State, VerifierKeyDigest,
 };
 

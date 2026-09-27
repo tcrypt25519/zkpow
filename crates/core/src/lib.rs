@@ -14,7 +14,12 @@ mod tests;
 extern crate alloc;
 extern crate self as zkpow_core;
 
-use zkpow_params::{Consensus, WINDOW_LARGE_HALF_SIZE, WINDOW_MAX_INDEX, WINDOW_SIZE};
+pub use zkpow_mtp::{
+    advance_ordered_timestamp_run, has_ordered_timestamp_window, ordered_median_timestamp_slot, ordered_timestamp_run,
+    requires_median_hint, timestamp_count, timestamp_slot, WINDOW_LARGE_HALF_SIZE, WINDOW_MAX_INDEX, WINDOW_SIZE,
+    WINDOW_SMALL_HALF_SIZE,
+};
+use zkpow_params::Consensus;
 pub use zkpow_types::{
     BlockHash, BlockTimestamp, BlockWork, ByteInfo, ChainWork, CompactTarget, Header, NonMaxU256, Target, u256,
 };
@@ -121,61 +126,6 @@ mod test_hash_mock {
             MOCK_HEADER_HASH.set(None);
         }
     }
-}
-
-#[must_use]
-pub const fn timestamp_slot(height: u32) -> usize {
-    height as usize % WINDOW_SIZE
-}
-
-#[must_use]
-pub const fn timestamp_count(height: u32) -> usize {
-    let count = height as usize + 1;
-    if count > WINDOW_SIZE {
-        WINDOW_SIZE
-    } else {
-        count
-    }
-}
-
-#[must_use]
-pub const fn has_ordered_timestamp_window(ordered_timestamp_run: u64) -> bool {
-    ordered_timestamp_run >= WINDOW_MAX_INDEX as u64
-}
-
-#[must_use]
-pub const fn advance_ordered_timestamp_run(ordered_timestamp_run: u64, previous_timestamp: u32, timestamp: u32) -> u64 {
-    if timestamp >= previous_timestamp {
-        ordered_timestamp_run.saturating_add(1)
-    } else {
-        0
-    }
-}
-
-#[must_use]
-pub fn ordered_timestamp_run(timestamps: &[BlockTimestamp; WINDOW_SIZE], height: u32) -> u64 {
-    let count = timestamp_count(height);
-    let mut run = 0;
-    let mut newer = timestamps[timestamp_slot(height)];
-    for offset in 1..count {
-        let older = timestamps[timestamp_slot(height + (WINDOW_SIZE - offset) as u32)];
-        if older > newer {
-            break;
-        }
-        run += 1;
-        newer = older;
-    }
-    run
-}
-
-#[must_use]
-pub const fn ordered_median_timestamp_slot(height: u32) -> usize {
-    timestamp_slot(height + WINDOW_LARGE_HALF_SIZE as u32)
-}
-
-#[must_use]
-pub const fn requires_median_hint(height: u64, previous_ordered_timestamp_run: u64) -> bool {
-    height >= WINDOW_SIZE as u64 && !has_ordered_timestamp_window(previous_ordered_timestamp_run)
 }
 
 #[sp1_cycle::tracked]
@@ -359,11 +309,7 @@ pub(crate) fn mul2_with_overflow(value: &mut u256) -> bool {
     overflow
 }
 
-pub(crate) fn uint256_mul_with_carry(
-    a: &[u64; 4],
-    b: &[u64; 4],
-    c: &[u64; 4],
-) -> ([u64; 4], [u64; 4]) {
+pub(crate) fn uint256_mul_with_carry(a: &[u64; 4], b: &[u64; 4], c: &[u64; 4]) -> ([u64; 4], [u64; 4]) {
     #[cfg(target_os = "zkvm")]
     unsafe {
         let mut lo = [0u64; 4];

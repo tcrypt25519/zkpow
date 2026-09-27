@@ -1,10 +1,8 @@
 use alloc::format;
+
 use zkvm_test::zkvm_test;
 
-use crate::tests::*;
-use crate::{
-    BlockHash, ChainWork, HeaderInput, PublicValues, ReturnCode, State, VerifierKeyDigest,
-};
+use crate::{tests::*, BlockHash, ChainWork, HeaderInput, PublicValues, ReturnCode, State, VerifierKeyDigest};
 
 fn sample_state() -> State {
     State {
@@ -70,8 +68,8 @@ fn success_prints_as_success_string() {
 
 #[zkvm_test(fixture = "headers_fixture.bin", max_cycles = 8_000_000)]
 fn public_values_matches_committed_in_vm_state() {
-    let fixture_str = zkvm_test::fixture_str();
-    let blocks = parse_fixture_blocks(&fixture_str);
+    let fixture_bytes = zkvm_test::fixture();
+    let blocks = parse_fixture_blocks(&fixture_bytes);
 
     let mut state = State {
         chain_work:      ChainWork::from_limbs(*TestConsensus::PARAMS.genesis_work.as_limbs()),

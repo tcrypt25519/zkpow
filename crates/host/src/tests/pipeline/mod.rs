@@ -10,8 +10,7 @@ mod artifacts;
 
 use crate::pipeline::{
     input::{
-        config_from_env, parse_bool_env, parse_u32_env, ENV_ZKPOW_BATCH_SIZE,
-        ENV_ZKPOW_EXECUTE_ONLY, ENV_ZKPOW_RUN_ID,
+        config_from_env, parse_bool_env, parse_u32_env, ENV_ZKPOW_BATCH_SIZE, ENV_ZKPOW_EXECUTE_ONLY, ENV_ZKPOW_RUN_ID,
     },
     is_header_exhaustion_error, run_batch_session, BoxError, ProverBackend,
 };

@@ -1,5 +1,6 @@
 extern crate alloc;
 use alloc::string::ToString;
+
 use bytemuck::PodCastError;
 use zkvm_test::test;
 
@@ -36,25 +37,15 @@ fn header_parse_rejects_invalid_slices() {
 
     // Truncated by 1 byte
     let short = &wire[..79];
-    assert!(matches!(
-        Header::parse(short),
-        Err(PodCastError::SizeMismatch)
-    ));
+    assert!(matches!(Header::parse(short), Err(PodCastError::SizeMismatch)));
 
     // Empty slice
-    assert!(matches!(
-        Header::parse(&[]),
-        Err(PodCastError::SizeMismatch)
-    ));
+    assert!(matches!(Header::parse(&[]), Err(PodCastError::SizeMismatch)));
 
     // Trailing slop (81 bytes)
     let mut slop = alloc::vec::Vec::from(wire);
     slop.push(0x00);
-    assert!(matches!(
-        Header::parse(&slop),
-        Err(PodCastError::SizeMismatch)
-    ));
-
+    assert!(matches!(Header::parse(&slop), Err(PodCastError::SizeMismatch)));
 }
 
 #[test]

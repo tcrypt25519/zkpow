@@ -1,10 +1,9 @@
-use alloc::vec;
-use alloc::vec::Vec;
+use alloc::{vec, vec::Vec};
+
 use zkvm_test::zkvm_test;
 
-use crate::tests::*;
 use crate::{
-    block_work_from_target, ApplyError, ChainWork, CompactTarget, ErrorCode, HeaderInput, State, WINDOW_SIZE,
+    block_work_from_target, tests::*, ApplyError, ChainWork, CompactTarget, ErrorCode, HeaderInput, State, WINDOW_SIZE,
 };
 
 #[zkvm_test]
@@ -20,13 +19,10 @@ fn cold_start_rejects_fewer_than_ten_headers() {
         9
     ];
     let err = state.apply_headers_from_genesis::<TestConsensus>(&headers, &[]).unwrap_err();
-    assert_eq!(
-        err,
-        ApplyError::InsufficientColdHeaders {
-            required: 10,
-            actual:   9,
-        }
-    );
+    assert_eq!(err, ApplyError::InsufficientColdHeaders {
+        required: 10,
+        actual:   9,
+    });
 }
 
 #[cfg(not(target_os = "zkvm"))]

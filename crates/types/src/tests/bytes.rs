@@ -1,8 +1,7 @@
 use zkvm_test::test;
 
 use crate::{
-    u256, BlockHash, BlockTimestamp, BlockWork, ByteInfo, ChainWork, CompactTarget, Header,
-    NonMaxU256, Target,
+    u256, BlockHash, BlockTimestamp, BlockWork, ByteInfo, ChainWork, CompactTarget, Header, NonMaxU256, Target,
 };
 
 #[test]

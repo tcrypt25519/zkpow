@@ -45,12 +45,8 @@ fn prepared_prover_store() -> &'static AsyncMutex<Option<(PreparedProverConfig, 
     PREPARED_PROVER.get_or_init(|| AsyncMutex::new(None))
 }
 
-pub(crate) async fn get_prepared_prover(
-    prover_backend: ProverBackend,
-) -> Result<PreparedProver, BoxError> {
-    let desired = PreparedProverConfig {
-        backend: prover_backend,
-    };
+pub(crate) async fn get_prepared_prover(prover_backend: ProverBackend) -> Result<PreparedProver, BoxError> {
+    let desired = PreparedProverConfig { backend: prover_backend };
 
     {
         let guard = prepared_prover_store().lock().await;

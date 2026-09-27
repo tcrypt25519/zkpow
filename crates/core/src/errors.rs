@@ -50,8 +50,8 @@ pub enum ApplyError {
     InsufficientColdHeaders { required: usize, actual: usize },
 }
 
-impl From<zkpow_mtp_typestate::InsufficientColdHeaders> for ApplyError {
-    fn from(error: zkpow_mtp_typestate::InsufficientColdHeaders) -> Self {
+impl From<zkpow_mtp::errors::InsufficientColdHeaders> for ApplyError {
+    fn from(error: zkpow_mtp::errors::InsufficientColdHeaders) -> Self {
         Self::InsufficientColdHeaders {
             required: error.required(),
             actual:   error.actual(),

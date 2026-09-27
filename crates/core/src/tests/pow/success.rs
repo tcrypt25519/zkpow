@@ -1,9 +1,9 @@
 use alloc::vec::Vec;
+
 use sp1_cycle::run_track;
 use zkvm_test::zkvm_test;
 
-use crate::tests::*;
-use crate::{check_proof_of_work, BlockHash, ChainWork, Header, HeaderInput, State};
+use crate::{check_proof_of_work, tests::*, BlockHash, ChainWork, Header, HeaderInput, State};
 
 #[zkvm_test(max_cycles = 150_000)]
 fn proof_of_work_accepts_exact_target_boundary() {
@@ -87,14 +87,15 @@ fn header_version_field_is_not_constrained_by_pow() {
     let _hash_guard = set_hash_success();
     headers10[0].version = 0xFFFF_FFFF;
     let hints = median_hints_for_headers(&state, &headers10);
-    state.apply_headers_from_genesis::<TestConsensus>(&headers10, &hints)
+    state
+        .apply_headers_from_genesis::<TestConsensus>(&headers10, &hints)
         .expect("unexpected failure due to version only");
 }
 
-#[zkvm_test(fixture = "headers_fixture.bin", max_cycles = 12_000_000)]
+#[zkvm_test(fixture = "headers_fixture.bin", max_cycles = 2_000_000)]
 fn unmocked_bitcoin_chain_verifies_first_50_blocks() {
-    let fixture_str = zkvm_test::fixture_str();
-    let blocks = parse_fixture_blocks(&fixture_str);
+    let fixture_bytes = zkvm_test::fixture();
+    let blocks = parse_fixture_blocks(&fixture_bytes);
     assert_eq!(blocks.len(), 50, "fixture must contain genesis + 49 blocks");
 
     let genesis = &blocks[0];
@@ -169,7 +170,6 @@ fn target_conversions_and_limb_rollover_edge_cases() {
     assert_eq!(alloc::format!("{branded:?}"), "42");
 }
 
-
 #[zkvm_test]
 fn mul2_with_overflow_doubles_and_reports_evicted_msb() {
     let cases: [([u64; 4], [u64; 4], bool); 5] = [
@@ -197,31 +197,33 @@ fn block_work_from_target_computes_exact_quotients() {
     // 2. Power of 2 divisors:
     // target = 1 => divisor = 2 => floor(2^256 / 2) = 2^255
     let target_1 = Target::from_limbs([1, 0, 0, 0]);
-    assert_eq!(
-        crate::block_work_from_target(target_1).into_inner().into_limbs(),
-        [0, 0, 0, 1 << 63]
-    );
+    assert_eq!(crate::block_work_from_target(target_1).into_inner().into_limbs(), [
+        0,
+        0,
+        0,
+        1 << 63
+    ]);
 
     // target = 3 => divisor = 4 => floor(2^256 / 4) = 2^254
     let target_3 = Target::from_limbs([3, 0, 0, 0]);
-    assert_eq!(
-        crate::block_work_from_target(target_3).into_inner().into_limbs(),
-        [0, 0, 0, 1 << 62]
-    );
+    assert_eq!(crate::block_work_from_target(target_3).into_inner().into_limbs(), [
+        0,
+        0,
+        0,
+        1 << 62
+    ]);
 
     // target = 2^64 - 1 => divisor = 2^64 => floor(2^256 / 2^64) = 2^192
     let target_2_64 = Target::from_limbs([u64::MAX, 0, 0, 0]);
-    assert_eq!(
-        crate::block_work_from_target(target_2_64).into_inner().into_limbs(),
-        [0, 0, 0, 1]
-    );
+    assert_eq!(crate::block_work_from_target(target_2_64).into_inner().into_limbs(), [
+        0, 0, 0, 1
+    ]);
 
     // target = 2^128 - 1 => divisor = 2^128 => floor(2^256 / 2^128) = 2^128
     let target_2_128 = Target::from_limbs([u64::MAX, u64::MAX, 0, 0]);
-    assert_eq!(
-        crate::block_work_from_target(target_2_128).into_inner().into_limbs(),
-        [0, 0, 1, 0]
-    );
+    assert_eq!(crate::block_work_from_target(target_2_128).into_inner().into_limbs(), [
+        0, 0, 1, 0
+    ]);
 
     // 3. Non-power of 2 divisors:
     // target = 2 => divisor = 3 => floor(2^256 / 3) = 0x5555...5555
@@ -250,6 +252,3 @@ fn test_uint256_mul_with_carry_precompile() {
     assert_eq!(lo_overflow, [u64::MAX - 1, u64::MAX, u64::MAX, u64::MAX]);
     assert_eq!(hi_overflow, [1, 0, 0, 0]);
 }
-
-
-

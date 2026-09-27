@@ -1,12 +1,9 @@
 use alloc::vec::Vec;
+
 use sp1_cycle::run_track;
 use zkvm_test::zkvm_test;
 
-use crate::tests::*;
-use crate::{
-    advance_ordered_timestamp_run, timestamp_slot,
-    CompactTarget, HeaderInput, State, WINDOW_SIZE,
-};
+use crate::{advance_ordered_timestamp_run, tests::*, timestamp_slot, CompactTarget, HeaderInput, State, WINDOW_SIZE};
 
 #[zkvm_test]
 fn ordered_window_median_accepts_strictly_increasing_timestamps() {

@@ -32,7 +32,6 @@ fn expect_success(pv: &[u8]) -> Result<util::State, String> {
     }
 }
 
-
 fn consensus_bits(bits: util::CompactTarget) -> u32 {
     bits.into_inner()
 }
@@ -211,10 +210,10 @@ async fn test_error_recursive_on_failed_proof() -> Result<(), String> {
             match PublicValues::parse(&pv_bytes) {
                 Ok(pv) if pv.is_success() => {
                     Err("expected guest to reject failed prior proof, but got a success state".to_string())
-                }
+                },
                 _ => Ok(()),
             }
-        }
+        },
     }
 }
 
@@ -245,10 +244,10 @@ async fn test_error_recursive_on_tampered_state_witness() -> Result<(), String> 
             match PublicValues::parse(&pv_bytes) {
                 Ok(pv) if pv.is_success() => {
                     Err("expected guest to reject tampered continuation state, but got success".to_string())
-                }
+                },
                 _ => Ok(()),
             }
-        }
+        },
     }
 }
 

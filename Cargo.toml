@@ -5,7 +5,6 @@ members = [
   "crates/guest",
   "crates/host",
   "crates/mtp",
-  "crates/mtp-typestate",
   "crates/sha256",
   "crates/store",
   "crates/sync-headers",
@@ -19,8 +18,12 @@ members = [
   "crates/worker",
   "crates/test_support",
 ]
-exclude = ["sp1", "memuse"]
+exclude = ["sp1", "sp1", "memuse"]
 resolver = "3"
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.82"
 
 [workspace.dependencies]
 zkpow-controller = { path = "crates/controller" }
@@ -31,7 +34,7 @@ zkpow-sync-headers = { path = "crates/sync-headers" }
 zkpow-params = { path = "crates/params" }
 zkpow-types = { path = "crates/types" }
 zkpow-worker = { path = "crates/worker" }
-zkpow-mtp-typestate = { path = "crates/mtp-typestate" }
+zkpow-mtp = { path = "crates/mtp" }
 
 derive-size = { path = "crates/derive-size" }
 sha256_const = { path = "crates/sha256_const" }
@@ -43,21 +46,21 @@ zkvm-test = { path = "../zkvm-test/crates/zkvm-test" }
 ##
 ## SP1
 ##
-sp1-build = { version = "6.8.0" }
-sp1-derive = { version = "6.8.0" }
-sp1-lib = { version = "6.8.0" }
-sp1-sdk = { version = "6.8.0" }
-sp1-zkvm = { version = "6.8.0", default-features = false, features = [
+sp1-build = { version = "6.8.1" }
+sp1-derive = { version = "6.8.1" }
+sp1-lib = { version = "6.8.1" }
+sp1-sdk = { version = "6.8.1" }
+sp1-zkvm = { version = "6.8.1", default-features = false, features = [
   "lib",
   "verify",
 ] }
-sp1-prover = { version = "6.8.0", default-features = false, features = [
+sp1-prover = { version = "6.8.1", default-features = false, features = [
   "bigint-rug",
   "debug",
 ] }
-sp1-core-executor = { version = "6.8.0" }
-sp1-core-executor-runner = { version = "6.8.0" }
-sp1-jit = { version = "6.8.0" }
+sp1-core-executor = { version = "6.8.1" }
+sp1-core-executor-runner = { version = "6.8.1" }
+sp1-jit = { version = "6.8.1" }
 
 memuse = { path = "./memuse" }
 

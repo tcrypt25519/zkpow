@@ -1,191 +1,107 @@
-//! Median time past over a fixed-size ring of block timestamps.
+//! Median time past over a ring of block timestamps.
 //!
-//! The window size lives here and nowhere else. Callers name [`Window`], never `11`, and reach
-//! anything derived from the size through a method on the ring.
+//! A [`Ring`] is [`Cold`] while it fills and [`Warm`] once every slot holds a timestamp. The warm
+//! ring reads its median off a compile-time slot table. Ordering is tracked at runtime, so
+//! [`Ring::median`] is `None` while the window holds a chronological decrease.
+//!
+//! ```
+//! use zkpow_mtp::Window;
+//!
+//! let mut ring = Window::new();
+//! for value in 0..11 {
+//!     ring.push(value);
+//! }
+//! let ring = ring.warm().unwrap();
+//! assert_eq!(ring.median(), Some(5));
+//! ```
 
 #![no_std]
+
+pub mod errors;
+mod ring;
+
+use errors::InsufficientColdHeaders;
+pub use ring::{Cold, Ring, Warm, Window};
+
+/// Number of previous block timestamps kept for median-time-past and ordered-window checks.
+pub const WINDOW_SIZE: usize = 11;
+
+/// Half the window, rounded down; the number of timestamps that may sit below the median.
+pub const WINDOW_SMALL_HALF_SIZE: usize = WINDOW_SIZE / 2;
+
+/// Half the window, rounded up; the number of timestamps that may sit above the median.
+pub const WINDOW_LARGE_HALF_SIZE: usize = (WINDOW_SIZE + 1) / 2;
+
+/// Maximum index in the sliding window.
+pub const WINDOW_MAX_INDEX: usize = WINDOW_SIZE - 1;
 
 #[cfg(test)]
 mod tests;
 
-use core::fmt;
-
-const WINDOW_SIZE: usize = 11;
-
-/// The consensus timestamp window.
-pub type Window = Ring<WINDOW_SIZE>;
-
-/// Why a claimed median is not the window's median.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NotMedian {
-    TooNew,
-    TooOld,
+/// Splits headers into the prefix that fills an empty consensus window and the warm remainder.
+pub fn split_off_cold_headers<T>(headers: &[T]) -> Result<(&[T], &[T]), InsufficientColdHeaders> {
+    let required = WINDOW_SIZE - 1;
+    if headers.len() < required {
+        return Err(InsufficientColdHeaders::new(headers.len()));
+    }
+    Ok(headers.split_at(required))
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InsufficientColdHeaders {
-    Required(usize),
-    Actual(usize),
+/// The window slot written by the block at `height`.
+#[must_use]
+pub const fn timestamp_slot(height: u32) -> usize {
+    height as usize % WINDOW_SIZE
 }
 
-impl fmt::Display for NotMedian {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::TooNew => "claimed median is newer than half of the known window",
-            Self::TooOld => "claimed median is older than half of the known window",
-        })
-    }
+/// Slots filled once the block at `height` is recorded: `height + 1`, capped at the window size.
+#[must_use]
+pub const fn timestamp_count(height: u32) -> usize {
+    let count = height as usize + 1;
+    if count > WINDOW_SIZE { WINDOW_SIZE } else { count }
 }
 
-/// The last `N` timestamps, oldest overwritten first, carrying the length of the nondecreasing
-/// run that ends at the newest value.
-///
-/// An unwritten slot is zero, so a ring that has not wrapped yet knows how many values it holds.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Ring<const N: usize> {
-    values: [u32; N],
-    counter: u32,
-    ordered_run: u32,
-    last_value: u32,
+/// Whether the run of nondecreasing links orders the entire window, pinning the median to a known slot.
+#[must_use]
+pub const fn has_ordered_timestamp_window(ordered_timestamp_run: u64) -> bool {
+    ordered_timestamp_run >= WINDOW_MAX_INDEX as u64
 }
 
-impl<const N: usize> Ring<N> {
-    const WINDOW_SMALL_HALF_SIZE: usize = N / 2;
-    /// Slot of the median of a full window, indexed by `counter`. `counter` is the oldest slot,
-    /// so the median sits `WINDOW_SMALL_HALF_SIZE` newer than it.
-    const NEXT_MEDIAN_INDEX: [usize; N] = {
-        let mut table = [0; N];
-        let mut i = 0;
-        while i < N {
-            table[i] = (i + Self::WINDOW_SMALL_HALF_SIZE) % N;
-            i += 1;
-        }
-        table
-    };
-
-    #[must_use]
-    pub const fn new() -> Self {
-        Self {
-            values: [0; N],
-            counter: 0,
-            ordered_run: 0,
-            last_value: 0,
-        }
-    }
-
-    /// Rebuild a ring from its slots and next write position. The ordered run is recomputed by
-    /// replaying the values oldest first.
-    #[must_use]
-    pub fn new_from_values(values: [u32; N], counter: u32) -> Self {
-        let counter = counter % N as u32;
-        let mut ring = Self::new();
-        for offset in 0..N {
-            let value = values[(counter as usize + offset) % N];
-            if value == 0 {
-                continue;
-            }
-            ring.push(value);
-        }
-
-        ring.values = values;
-        ring.counter = counter;
-        ring
-    }
-
-    pub fn push(&mut self, value: u32) {
-        if value >= self.last_value {
-            self.ordered_run = (self.ordered_run + 1).min(N as u32);
-        } else {
-            self.ordered_run = 1;
-        }
-        self.last_value = value;
-
-        self.values[self.counter as usize] = value;
-        self.counter += 1;
-        if self.counter as usize >= N {
-            self.counter = 0;
-        }
-    }
-
-    /// The median of the values held, valid only while [`Ring::is_ordered`].
-    #[must_use]
-    pub fn median(&self) -> u32 {
-        debug_assert!(self.len() > 0 && self.is_ordered());
-        self.values[self.median_index()]
-    }
-
-    /// Whether `claimed_median` is the median of the values held, by rank. This is the answer
-    /// [`Ring::median`] cannot give once the window is out of order.
-    pub fn is_value_median(&self, claimed_median: u32) -> Result<(), NotMedian> {
-        let (less_count, equal_count) = {
-            let mut counts: [usize; 3] = [0, 0, 0];
-            for value in self.values {
-                if value == 0 {
-                    continue;
-                }
-                counts[((value.cmp(&claimed_median) as i8) + 1) as usize] += 1;
-            }
-            (counts[0], counts[1])
-        };
-
-        let half = self.len() / 2;
-        if less_count > half {
-            return Err(NotMedian::TooNew);
-        }
-        if less_count + equal_count <= half {
-            return Err(NotMedian::TooOld);
-        }
-        Ok(())
-    }
-
-    /// Whether the values arrived in nondecreasing order, which is what lets [`Ring::median`]
-    /// read the median off a known slot instead of ranking the window.
-    #[must_use]
-    pub fn is_ordered(&self) -> bool {
-        self.ordered_run as usize >= self.len()
-    }
-
-    #[must_use]
-    pub fn is_full(&self) -> bool {
-        self.values[self.counter as usize] != 0
-    }
-
-    #[must_use]
-    pub const fn capacity() -> usize {
-        N
-    }
-
-    /// The slots and the next write position, for callers that persist a ring.
-    #[must_use]
-    pub fn parts(&self) -> (&[u32; N], u32) {
-        (&self.values, self.counter)
-    }
-
-    fn len(&self) -> usize {
-        if self.is_full() { N } else { self.counter as usize }
-    }
-
-    fn median_index(&self) -> usize {
-        if self.is_full() {
-            Self::NEXT_MEDIAN_INDEX[self.counter as usize]
-        } else {
-            self.counter as usize / 2
-        }
+/// Extend the run of nondecreasing links by one, or reset it to zero on a decrease.
+#[must_use]
+pub const fn advance_ordered_timestamp_run(ordered_timestamp_run: u64, previous_timestamp: u32, timestamp: u32) -> u64 {
+    if timestamp >= previous_timestamp {
+        ordered_timestamp_run.saturating_add(1)
+    } else {
+        0
     }
 }
 
-impl<const N: usize> Default for Ring<N> {
-    fn default() -> Self {
-        Self::new()
+/// Recount the nondecreasing links by walking the window backwards from the slot of `height`.
+#[must_use]
+pub fn ordered_timestamp_run<T: PartialOrd>(timestamps: &[T; WINDOW_SIZE], height: u32) -> u64 {
+    let count = timestamp_count(height);
+    let mut run = 0;
+    let mut newer = &timestamps[timestamp_slot(height)];
+    for offset in 1..count {
+        let older = &timestamps[timestamp_slot(height + (WINDOW_SIZE - offset) as u32)];
+        if older > newer {
+            break;
+        }
+        run += 1;
+        newer = older;
     }
+    run
 }
 
-// let Ok((cold, warm)) = mtp.split_off_cold_headers(headers)?;
-pub fn split_off_cold_headers(
-    headers: &[HeaderInput],
-) -> Result<(&[HeaderInput], &[HeaderInput]), InsufficientColdHeaders> {
-    if headers.len() < WINDOW_SIZE - 1 {
-        return Err(InsufficientColdHeaders::Required(WINDOW_SIZE - 1));
-    }
-    Ok(headers.split_at(WINDOW_SIZE - 1))
+/// The slot holding the median while the window ending at `height` is fully ordered.
+#[must_use]
+pub const fn ordered_median_timestamp_slot(height: u32) -> usize {
+    timestamp_slot(height + WINDOW_LARGE_HALF_SIZE as u32)
+}
+
+/// Whether the block at `height` needs a prover-supplied median: its window is full but not
+/// provably ordered.
+#[must_use]
+pub const fn requires_median_hint(height: u64, previous_ordered_timestamp_run: u64) -> bool {
+    height >= WINDOW_SIZE as u64 && !has_ordered_timestamp_window(previous_ordered_timestamp_run)
 }

@@ -22,15 +22,6 @@ fn parse_hex_32(s: &str) -> [u8; 32] {
     out
 }
 
-fn parse_u32(s: &str) -> u32 {
-    let mut val = 0u32;
-    for &b in s.as_bytes() {
-        assert!(b.is_ascii_digit(), "expected decimal digits for u32");
-        val = val * 10 + (b - b'0') as u32;
-    }
-    val
-}
-
 fn assert_public_values_hash(bytes: [u8; 185]) {
     let expected: [u8; 32] = Sha256::digest(bytes).into();
     let actual = of_public_values(&bytes[..152], &bytes[152..184], bytes[184]);
@@ -84,51 +75,40 @@ fn subroutine_cycle_profiling_demonstration() {
     });
 }
 
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct HeaderFixture {
+    pub expected_hash:  [u8; 32],
+    pub version:        u32,
+    pub prev_blockhash: [u8; 32],
+    pub merkle_root:    [u8; 32],
+    pub timestamp:      u32,
+    pub compact_target: u32,
+    pub nonce:          u32,
+}
+
 #[test(fixture = "headers_fixture.bin")]
 fn test_block_headers_fixture_verification() {
-    let fixture_str = zkvm_test::fixture_str();
-    let mut header_count = 0;
+    let fixture_bytes = zkvm_test::fixture();
+    let headers: &[HeaderFixture] = bytemuck::cast_slice(&fixture_bytes);
+    assert_eq!(headers.len(), 50, "fixture must contain 50 headers");
 
-    for line in fixture_str.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let mut parts = trimmed.split_whitespace();
-        let expected_hash_str = parts.next().expect("expected hash");
-        let version_str = parts.next().expect("expected version");
-        let prev_blockhash_str = parts.next().expect("expected prev_blockhash");
-        let merkle_root_str = parts.next().expect("expected merkle_root");
-        let timestamp_str = parts.next().expect("expected timestamp");
-        let compact_target_str = parts.next().expect("expected compact_target");
-        let nonce_str = parts.next().expect("expected nonce");
-
-        let expected_hash = parse_hex_32(expected_hash_str);
-        let version = parse_u32(version_str);
-        let prev_blockhash = parse_hex_32(prev_blockhash_str);
-        let merkle_root = parse_hex_32(merkle_root_str);
-        let timestamp = parse_u32(timestamp_str);
-        let compact_target = parse_u32(compact_target_str);
-        let nonce = parse_u32(nonce_str);
-
+    for h in headers {
         let actual_hash = of_header(
-            version,
-            &prev_blockhash,
-            &merkle_root,
-            timestamp,
-            compact_target,
-            nonce,
+            h.version,
+            &h.prev_blockhash,
+            &h.merkle_root,
+            h.timestamp,
+            h.compact_target,
+            h.nonce,
         );
 
         assert_eq!(
-            actual_hash, expected_hash,
+            actual_hash, h.expected_hash,
             "header hash mismatch for block with timestamp {}",
-            timestamp
+            h.timestamp
         );
-        header_count += 1;
     }
-
-    assert!(header_count > 0, "fixture contained no headers");
 }
 
 #[test(snapshot = "snapshots/genesis_header_hash.hex")]
@@ -140,14 +120,7 @@ fn test_genesis_header_hash_snapshot() {
     let compact_target = 0x1d00ffffu32;
     let nonce = 2083236893u32;
 
-    let hash = of_header(
-        version,
-        &prev_blockhash,
-        &merkle_root,
-        timestamp,
-        compact_target,
-        nonce,
-    );
+    let hash = of_header(version, &prev_blockhash, &merkle_root, timestamp, compact_target, nonce);
 
     zkvm_test::commit_slice(&hash);
 }
@@ -278,8 +251,8 @@ fn test_mainnet_headers_0_to_7_hash_vectors() {
     for (i, hex_str) in HEADERS_HEX.iter().enumerate() {
         let mut wire = [0u8; 80];
         for j in 0..80 {
-            wire[j] = (decode_hex_nibble(hex_str.as_bytes()[j * 2]) << 4)
-                | decode_hex_nibble(hex_str.as_bytes()[j * 2 + 1]);
+            wire[j] =
+                (decode_hex_nibble(hex_str.as_bytes()[j * 2]) << 4) | decode_hex_nibble(hex_str.as_bytes()[j * 2 + 1]);
         }
         let version = u32::from_le_bytes(wire[0..4].try_into().unwrap());
         let mut prev = [0u8; 32];
@@ -296,6 +269,3 @@ fn test_mainnet_headers_0_to_7_hash_vectors() {
     }
     zkvm_test::commit_slice(&committed_hashes);
 }
-
-
-
