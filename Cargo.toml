@@ -101,6 +101,9 @@ serde = { version = "1", default-features = false, features = [
 # ] }
 
 [patch.crates-io]
+# Route sha2 through SP1's accelerated fork so the sha256 compress runs on the precompile
+# instead of the soft path. Tag matches the sibling crypto patches SP1 6.x pins.
+sha2 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", tag = "patch-sha2-0.10.9-sp1-6.2.0", package = "sha2" }
 sp1-zkvm = { path = "sp1/crates/zkvm/entrypoint" }
 sp1-sdk = { path = "sp1/crates/sdk" }
 sp1-prover = { path = "sp1/crates/prover" }
