@@ -76,6 +76,7 @@ impl std::fmt::Display for ControllerError {
 impl std::error::Error for ControllerError {}
 
 impl Batch {
+    /// Check the payload lengths against the batch's height range.
     pub fn validate(&self) -> Result<(), String> {
         let header_count = self
             .end_height

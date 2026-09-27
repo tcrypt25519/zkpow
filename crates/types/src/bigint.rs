@@ -161,6 +161,10 @@ impl TryFrom<&[u8]> for u256 {
     }
 }
 
+/// A [`u256`] excluding the all-ones maximum.
+///
+/// Block work is `2^256 / (target + 1)`, so a target must survive `+ 1` without wrapping. Storing
+/// it as `NonMaxU256` makes that a type guarantee instead of a runtime check.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(transparent)]
 pub struct NonMaxU256(u256);
@@ -176,6 +180,7 @@ impl NonMaxU256 {
         }
     }
 
+    /// [`NonMaxU256::new`] from limbs. Panics when every limb is `u64::MAX`.
     #[must_use]
     pub const fn from_limbs(limbs: [u64; 4]) -> Self {
         Self::try_from_limbs(limbs).expect("should be given non-max limbs")

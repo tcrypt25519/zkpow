@@ -43,6 +43,7 @@ const MAINNET_PARAMS: ConsensusParams = ConsensusParams {
     min_epoch_under_div: 4,
 };
 
+/// Bitcoin mainnet.
 pub struct Mainnet;
 
 impl Consensus for Mainnet {

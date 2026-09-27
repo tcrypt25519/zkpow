@@ -1,3 +1,5 @@
+//! Proc-macro side of `sp1-cycle`: the [`tracked`] attribute.
+
 extern crate proc_macro;
 
 use proc_macro::TokenStream;

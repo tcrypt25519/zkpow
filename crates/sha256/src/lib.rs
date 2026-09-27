@@ -154,6 +154,7 @@ pub fn of_digest_words(prev_state: &[u64; 8]) -> [u64; 8] {
     state
 }
 
+/// [`of_digest_words`] unpacked to bytes.
 pub fn of_digest(prev_state: &[u64; 8]) -> [u8; 32] {
     let state = of_digest_words(prev_state);
     state_to_hash(&state)
@@ -161,7 +162,7 @@ pub fn of_digest(prev_state: &[u64; 8]) -> [u8; 32] {
 
 /// Compute SHA-256 of the complete 185 byte public values.
 ///
-/// Layout matches [`zkpow_core::PublicValues::to_bytes`]:
+/// Layout matches `zkpow_core::PublicValues::to_bytes`:
 /// - Block 1: state[0..64]
 /// - Block 2: state[64..128]
 /// - Block 3: state[128..152] || verifier_key (32) || return_code (1) + padding
@@ -275,7 +276,7 @@ pub fn of_header_words(
 ///
 /// This is byte-for-byte equivalent to hashing:
 /// version || prev_blockhash || merkle_root || timestamp || compact_target || nonce,
-/// but avoids materializing either a full [`zkpow_core::Header`] or `[u8; 80]`.
+/// but avoids materializing either a full `zkpow_core::Header` or `[u8; 80]`.
 pub fn of_header(
     version: u32,
     prev_blockhash: &[u8; 32],

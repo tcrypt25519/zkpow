@@ -6,6 +6,8 @@ use zkpow_params::{Consensus, WINDOW_SIZE};
 
 use crate::types::{expand_target, ConnectedHeader, Header, Tip};
 
+/// Validate and link `headers` onto `anchor`: linkage, PoW against the active target, and the
+/// timestamp-above-MTP rule. Stops at the first failure and returns the connected prefix.
 pub fn connect_headers<C: Consensus>(anchor: &Tip, headers: &[Header]) -> Vec<ConnectedHeader> {
     let mut connected = Vec::with_capacity(headers.len());
     let mut height = anchor.height;
@@ -80,6 +82,7 @@ pub fn connect_headers<C: Consensus>(anchor: &Tip, headers: &[Header]) -> Vec<Co
     connected
 }
 
+/// The tip after appending `connected` to `anchor`. Panics when `connected` is empty.
 pub fn tip_from_connected(anchor: &Tip, connected: &[ConnectedHeader]) -> Tip {
     let last = connected.last().expect("non-empty slice");
 

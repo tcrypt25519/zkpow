@@ -2,6 +2,8 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{Data, DeriveInput, parse_macro_input};
 
+/// Derive `ALIGN`, `SIZE`, `SIZE_NO_PAD` (sum of field sizes, ignoring padding) and
+/// `SIZE_NO_TAIL_PAD` (end of the furthest-reaching field) as associated consts on a struct.
 #[proc_macro_derive(Size)]
 pub fn derive_struct_sizes(input: TokenStream) -> TokenStream {
     let ast = parse_macro_input!(input as DeriveInput);

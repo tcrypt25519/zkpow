@@ -114,6 +114,7 @@ struct RuntimeInner<C: Consensus> {
     pull_timeout: Duration,
 }
 
+/// The controller handle. Clones share one core.
 pub struct ControllerRuntime<C: Consensus> {
     inner: Arc<RuntimeInner<C>>,
 }
@@ -164,6 +165,8 @@ impl<C: Consensus> ControllerRuntime<C> {
         }
     }
 
+    /// The next batch grant for `run_id`. At most one batch is outstanding per run, so this waits
+    /// (up to the pull timeout) while a previous grant is still unverified.
     pub async fn pull_batch(&self, run_id: &str) -> Result<Batch, ControllerError> {
         validate_run_id(run_id)?;
         let deadline = tokio::time::Instant::now() + self.inner.pull_timeout;
@@ -197,6 +200,8 @@ impl<C: Consensus> ControllerRuntime<C> {
         }
     }
 
+    /// Verify the pending batch's uploaded proof and persist the new verified height. A
+    /// verification failure halts the run.
     pub async fn complete(&self, run_id: &str) -> Result<(), ControllerError> {
         validate_run_id(run_id)?;
         let (end_height, proof_object, expected_public_values) = {

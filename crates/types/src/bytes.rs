@@ -1,3 +1,4 @@
+/// `size_of`/`align_of` as associated consts, so any sized type can be asked for them by name.
 pub trait ByteInfo {
     const SIZE: usize;
     const ALIGN: usize;

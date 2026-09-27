@@ -43,12 +43,14 @@ pub type BoxError = Box<dyn std::error::Error + Send + Sync + 'static>;
 
 pub const ELF: Elf = include_elf!("zkpow-guest");
 
+/// Which SP1 prover the host uses. `Mock` executes without real proving.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProverBackend {
     Mock,
     Cpu,
 }
 
+/// One proving session's settings, read from `ZKPOW_*` variables by [`input::config_from_env`].
 #[derive(Debug, Clone)]
 pub struct ProofGenerationConfig {
     /// The IVC chain this host extends; the controller tracks progress per
@@ -66,6 +68,8 @@ pub(crate) fn is_header_exhaustion_error(err: &BoxError) -> bool {
     err.to_string().starts_with(NO_HEADERS_REMAINING_PREFIX)
 }
 
+/// Prove controller-selected batches until `ZKPOW_BATCH_COUNT` is reached or the header database
+/// runs out, returning how many batches completed.
 pub async fn run_batch_session<C: Consensus>() -> Result<u32, BoxError> {
     let config = config_from_env::<C>()?;
     if config.batch_count == 0 {

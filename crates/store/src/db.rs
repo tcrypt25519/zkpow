@@ -89,6 +89,7 @@ pub struct HeaderStore {
 }
 
 impl HeaderStore {
+    /// Open the database, creating the schema when missing.
     pub fn open(db_path: impl AsRef<Path>) -> rusqlite::Result<Self> {
         let conn = Connection::open(db_path)?;
         conn.execute_batch(
@@ -326,6 +327,8 @@ impl HeaderStore {
         ordered_timestamp_run_from_db(height, raw)
     }
 
+    /// Load `count` headers from `start_height`, plus a sparse median hint for each header whose
+    /// window is full but not provably ordered (see [`requires_median_hint`]).
     pub fn load_header_batch_witness(&self, start_height: u64, count: u64) -> HeaderBatchWitness {
         const SQL: &str =
             "SELECT h.height, h.version, h.merkle_root, h.timestamp, h.nonce, h.median_time_past, h.ordered_timestamp_run \

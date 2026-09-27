@@ -1,3 +1,7 @@
+//! Cycle-count instrumentation for SP1 guests. [`track!`] wraps an expression and [`tracked`] a
+//! function in `cycle-tracker-report` spans; both compile away outside the zkVM or without the
+//! `cycle-tracking` feature.
+
 mod r#macro;
 
 pub use sp1_cycle_macros::tracked;

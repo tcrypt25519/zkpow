@@ -162,6 +162,7 @@ pub struct PeerConnection {
 }
 
 impl PeerConnection {
+    /// Open the TCP connection and complete the version handshake.
     pub fn connect(addr: SocketAddr, network: Network, start_height: i32) -> std::io::Result<Self> {
         let stream = TcpStream::connect(addr)?;
         stream.set_nodelay(true)?;
@@ -324,6 +325,7 @@ impl PeerConnection {
     }
 }
 
+/// First four bytes of SHA-256d: the P2P message checksum.
 #[must_use]
 pub fn create_checksum(data: &[u8]) -> [u8; 4] {
     use sha2::{Digest, Sha256};
@@ -344,7 +346,6 @@ fn bitcoin_to_core(bh: BitcoinHeader) -> CoreHeader {
     }
 }
 
-/// Simplified version message structure.
 fn io_error(e: encode::Error) -> std::io::Error {
     std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
 }

@@ -9,7 +9,7 @@ use crate::brand::{BlockHash, BlockTimestamp, CompactTarget};
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Pod, Zeroable, Size)]
 pub struct Header {
     /// TODO: Make a newtype for Version.
-    /// The maximally correct underlying type is a NonZero<i32>
+    /// The maximally correct underlying type is a `NonZero<i32>`
     pub version:        u32,
     pub prev_blockhash: BlockHash,
     pub merkle_root:    [u8; 32],

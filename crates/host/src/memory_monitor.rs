@@ -1,5 +1,6 @@
 use memuse::StageSample;
 
+/// Sample RSS and, with the `memory-diagnostics` allocator, live heap.
 pub fn sample() -> StageSample {
     #[cfg(feature = "memory-diagnostics")]
     {
@@ -63,6 +64,7 @@ fn peak_kb() -> u64 {
     0
 }
 
+/// True when the `memory-diagnostics` feature compiled memory logging in.
 #[cfg(feature = "memory-diagnostics")]
 pub fn logging_enabled() -> bool {
     true

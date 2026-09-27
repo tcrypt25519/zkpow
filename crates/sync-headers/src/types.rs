@@ -123,6 +123,7 @@ impl Header {
     }
 }
 
+/// A header linked onto the chain, with the chain values derived at its height.
 #[derive(Debug, Clone)]
 pub struct ConnectedHeader {
     pub header:                Header,

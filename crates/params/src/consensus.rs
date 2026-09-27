@@ -66,18 +66,22 @@ impl ConsensusParams {
         (self.expected_epoch_time() / self.min_epoch_under_div as u32) as i64
     }
 
+    /// The compact target the genesis header commits to.
     pub const fn compact_target(&self) -> CompactTarget {
         self.genesis.compact_target
     }
 
+    /// The target in force at genesis: the PoW limit.
     pub const fn target(&self) -> Target {
         self.genesis_target
     }
 
+    /// Work proven by one block at the genesis target.
     pub const fn block_work(&self) -> BlockWork {
         self.genesis_work
     }
 
+    /// [`ConsensusParams::genesis_work`] as the chain's cumulative work after genesis.
     pub const fn chain_work(&self) -> ChainWork {
         ChainWork::new(*self.genesis_work.as_inner())
     }

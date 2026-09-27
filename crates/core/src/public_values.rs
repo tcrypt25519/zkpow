@@ -243,6 +243,7 @@ impl PublicValues {
         Self::serialize(&self.state, &self.verifier_key, self.return_code)
     }
 
+    /// [`PublicValues::to_bytes`] from borrowed parts, without building a `PublicValues`.
     #[must_use]
     pub fn serialize(state: &State, verifier_key: &VerifierKeyDigest, return_code: ReturnCode) -> [u8; Self::SIZE] {
         let mut out = [0u8; Self::SIZE];

@@ -23,13 +23,16 @@ pub struct State {
     pub block_hash:   BlockHash,
     pub height:       u32,
 
+    /// The compact target in force for the current difficulty epoch.
     pub current_nbits:   CompactTarget,
+    /// Timestamp of the current epoch's first block; the next retarget measures from here.
     pub epoch_timestamp: BlockTimestamp,
+    /// The MTP window, slot `height % WINDOW_SIZE`.
     pub timestamps:      [BlockTimestamp; WINDOW_SIZE],
 }
 
 impl State {
-    /// Serialize to exactly [`STATE_SIZE`] bytes.
+    /// Serialize to exactly [`State::SIZE`] bytes.
     #[must_use]
     pub fn to_bytes(&self) -> [u8; Self::SIZE] {
         *bytemuck::bytes_of::<Self>(self)

@@ -62,6 +62,7 @@ fn parse_path_env(var_name: &'static str) -> Option<PathBuf> {
     std::env::var_os(var_name).map(PathBuf::from)
 }
 
+/// Read the session config from `ZKPOW_*` variables. Batch size defaults to one difficulty epoch.
 pub fn config_from_env<C: Consensus>() -> Result<ProofGenerationConfig, BoxError> {
     let execute_only = parse_bool_env(ENV_ZKPOW_EXECUTE_ONLY)?;
 

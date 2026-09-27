@@ -34,10 +34,12 @@ impl<Tag, T> Branded<Tag, T> {
 }
 
 impl<Tag: Pod + Zeroable, T: Pod + Zeroable> Branded<Tag, T> {
+    /// Cast `bytes` to a `&T`. Panics unless the length and alignment match `T` exactly.
     pub fn from_bytes(bytes: &[u8]) -> &T {
         bytemuck::from_bytes::<T>(bytes)
     }
 
+    /// The value's bytes. `N` must equal `size_of::<T>()` or this panics.
     // `&[u8; Self::SIZE]` isn't expressible on stable (generic associated const
     // as array length); N is checked against size_of::<T>() at runtime instead.
     pub fn to_bytes<const N: usize>(&self) -> &[u8; N] {

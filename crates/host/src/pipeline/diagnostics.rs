@@ -9,6 +9,7 @@ use crate::{memory_monitor, pipeline::BoxError};
 
 static PHASE_TIMINGS: OnceLock<Mutex<Vec<(String, Duration)>>> = OnceLock::new();
 
+/// One labelled phase's summed wall-clock time within a batch.
 #[derive(Debug, Clone)]
 pub struct PhaseTiming {
     pub label:               String,
@@ -58,6 +59,7 @@ pub(crate) fn collected_phase_timings() -> Vec<PhaseTiming> {
     out
 }
 
+/// Log a guest execution's instruction count, prover gas, and hottest cycle-tracker spans.
 pub fn log_execution_report(report: &ExecutionReport, total_proving_time_secs: f64) {
     tracing::info!("Execution report");
     tracing::info!("  total instructions: {}", report.total_instruction_count());

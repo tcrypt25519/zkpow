@@ -28,6 +28,7 @@ pub fn compute_final_state_warm<C: Consensus>(
     state
 }
 
+/// Strip stored records down to the prover-supplied header fields.
 pub fn records_to_new_headers(records: &[HeaderRecord]) -> Vec<HeaderInput> {
     records.iter().map(|record| header_to_input(&record.header)).collect()
 }
