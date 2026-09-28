@@ -165,9 +165,9 @@ fn target_conversions_and_limb_rollover_edge_cases() {
     let max_u256 = zkpow_types::u256::from_limbs([u64::MAX; 4]);
     assert!(zkpow_types::NonMaxU256::new(max_u256).is_none());
 
-    // 6. Branded and PublicValues formatting
-    let branded: zkpow_types::Branded<(), u32> = zkpow_types::Branded::new(42);
-    assert_eq!(alloc::format!("{branded:?}"), "42");
+    // 6. Consensus newtype formatting
+    let timestamp = zkpow_types::BlockTimestamp::new(42);
+    assert_eq!(alloc::format!("{timestamp:?}"), "42");
 }
 
 #[zkvm_test]

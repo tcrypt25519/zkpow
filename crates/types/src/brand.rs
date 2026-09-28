@@ -1,228 +1,269 @@
-use core::{fmt, marker::PhantomData};
+use core::fmt;
 
 use bytemuck::{Pod, Zeroable};
 
 use crate::bigint::{u256, NonMaxU256};
 
-/// Generic branded newtype wrapper providing type-safe distinction without runtime overhead.
-#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Pod, Zeroable)]
-#[repr(transparent)]
-pub struct Branded<Tag, T>(T, PhantomData<fn(Tag) -> Tag>);
+macro_rules! define_newtype {
+    (
+        $(#[$meta:meta])*
+        $vis:vis struct $name:ident($inner:ty);
+    ) => {
+        $(#[$meta])*
+        #[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
+        #[repr(transparent)]
+        $vis struct $name($inner);
 
-impl<Tag, T> Branded<Tag, T> {
-    pub const SIZE: usize = core::mem::size_of::<T>();
+        impl $name {
+            pub const SIZE: usize = core::mem::size_of::<$inner>();
 
-    #[must_use]
-    pub const fn new(inner: T) -> Self {
-        Self(inner, PhantomData)
-    }
+            #[must_use]
+            pub const fn new(inner: $inner) -> Self {
+                Self(inner)
+            }
 
-    #[must_use]
-    pub fn into_inner(self) -> T {
-        self.0
-    }
+            #[must_use]
+            pub fn into_inner(self) -> $inner {
+                self.0
+            }
 
-    #[must_use]
-    pub const fn as_inner(&self) -> &T {
-        &self.0
-    }
+            #[must_use]
+            pub const fn as_inner(&self) -> &$inner {
+                &self.0
+            }
 
-    #[must_use]
-    pub fn as_inner_mut(&mut self) -> &mut T {
-        &mut self.0
-    }
+            #[must_use]
+            pub fn as_inner_mut(&mut self) -> &mut $inner {
+                &mut self.0
+            }
+        }
+
+        impl core::ops::Deref for $name {
+            type Target = $inner;
+
+            #[inline]
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+
+        impl core::ops::DerefMut for $name {
+            #[inline]
+            fn deref_mut(&mut self) -> &mut Self::Target {
+                &mut self.0
+            }
+        }
+
+        impl core::fmt::Debug for $name {
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                self.0.fmt(f)
+            }
+        }
+    };
 }
 
-impl<Tag: Pod + Zeroable, T: Pod + Zeroable> Branded<Tag, T> {
-    /// Cast `bytes` to a `&T`. Panics unless the length and alignment match `T` exactly.
-    pub fn from_bytes(bytes: &[u8]) -> &T {
-        bytemuck::from_bytes::<T>(bytes)
-    }
+macro_rules! define_pod_newtype {
+    (
+        $(#[$meta:meta])*
+        $vis:vis struct $name:ident($inner:ty);
+    ) => {
+        define_newtype! {
+            #[derive(Pod, Zeroable)]
+            $(#[$meta])*
+            $vis struct $name($inner);
+        }
 
-    /// The value's bytes. `N` must equal `size_of::<T>()` or this panics.
-    // `&[u8; Self::SIZE]` isn't expressible on stable (generic associated const
-    // as array length); N is checked against size_of::<T>() at runtime instead.
-    pub fn to_bytes<const N: usize>(&self) -> &[u8; N] {
-        bytemuck::bytes_of(&self.0).as_array().expect("N must equal size_of::<T>()")
-    }
+        impl $name {
+            /// Cast `bytes` to the inner type. Panics unless the length and alignment match exactly.
+            pub fn from_bytes(bytes: &[u8]) -> &$inner {
+                bytemuck::from_bytes::<$inner>(bytes)
+            }
+
+            /// The value's bytes. `N` must equal the inner type's size or this panics.
+            pub fn to_bytes<const N: usize>(&self) -> &[u8; N] {
+                bytemuck::bytes_of(&self.0)
+                    .as_array()
+                    .expect("N must equal the inner type's size")
+            }
+        }
+    };
 }
 
-impl<Tag, T> core::ops::Deref for Branded<Tag, T> {
-    type Target = T;
+macro_rules! impl_add {
+    ($name:ident) => {
+        impl core::ops::Add for $name {
+            type Output = Self;
 
-    #[inline]
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
+            fn add(self, rhs: Self) -> Self::Output {
+                Self(self.0 + rhs.0)
+            }
+        }
+
+        impl core::ops::AddAssign for $name {
+            fn add_assign(&mut self, rhs: Self) {
+                self.0 = self.0 + rhs.0;
+            }
+        }
+    };
 }
 
-impl<Tag, T> core::ops::DerefMut for Branded<Tag, T> {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut T {
-        &mut self.0
-    }
+macro_rules! define_u32_newtype {
+    (
+        $(#[$meta:meta])*
+        $vis:vis struct $name:ident(u32);
+    ) => {
+        define_pod_newtype! {
+            $(#[$meta])*
+            $vis struct $name(u32);
+        }
+        impl_add!($name);
+
+        impl $name {
+            #[must_use]
+            pub fn from_le_bytes(bytes: [u8; 4]) -> Self {
+                Self::new(u32::from_le_bytes(bytes))
+            }
+
+            #[must_use]
+            pub fn to_le_bytes(&self) -> [u8; 4] {
+                self.0.to_le_bytes()
+            }
+
+            #[must_use]
+            pub fn to_le_bytes_slice(&self) -> &[u8] {
+                // Safety: u32 has no alignment padding, and the crate enforces a little-endian target.
+                unsafe { core::slice::from_raw_parts(&self.0 as *const u32 as *const u8, 4) }
+            }
+
+            #[must_use]
+            pub fn from_le_bytes_slice(slice: &[u8]) -> Self {
+                assert!(slice.len() == 4, "from_le_bytes_slice: expected 4 bytes, got {}", slice.len());
+                let bytes: [u8; 4] = slice.try_into().unwrap();
+                Self::from_le_bytes(bytes)
+            }
+        }
+    };
 }
 
-impl<Tag, T: core::fmt::Debug> core::fmt::Debug for Branded<Tag, T> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        self.0.fmt(f)
-    }
+macro_rules! define_bytes32_newtype {
+    (
+        $(#[$meta:meta])*
+        $vis:vis struct $name:ident([u8; 32]);
+    ) => {
+        define_pod_newtype! {
+            $(#[$meta])*
+            $vis struct $name([u8; 32]);
+        }
+
+        impl $name {
+            #[must_use]
+            pub fn from_le_bytes(bytes: [u8; 32]) -> Self {
+                Self::new(bytes)
+            }
+
+            #[must_use]
+            pub fn to_le_bytes(&self) -> [u8; 32] {
+                self.0
+            }
+
+            #[must_use]
+            pub fn to_le_bytes_slice(&self) -> &[u8] {
+                &self.0
+            }
+
+            #[must_use]
+            pub fn from_le_bytes_slice(slice: &[u8]) -> Self {
+                assert!(slice.len() == 32, "from_le_bytes_slice: expected 32 bytes, got {}", slice.len());
+                let bytes: [u8; 32] = slice.try_into().unwrap();
+                Self::new(bytes)
+            }
+        }
+    };
 }
 
-impl<Tag, T: core::ops::Add<Output = T>> core::ops::Add for Branded<Tag, T> {
-    type Output = Self;
+macro_rules! define_u256_newtype {
+    (
+        $(#[$meta:meta])*
+        $vis:vis struct $name:ident(u256);
+    ) => {
+        define_pod_newtype! {
+            $(#[$meta])*
+            $vis struct $name(u256);
+        }
+        impl_add!($name);
 
-    fn add(self, rhs: Self) -> Self::Output {
-        Self(self.0 + rhs.0, PhantomData)
-    }
+        impl $name {
+            #[must_use]
+            pub const fn from_limbs(limbs: [u64; 4]) -> Self {
+                Self::new(u256::from_limbs(limbs))
+            }
+
+            #[must_use]
+            pub fn from_le_bytes(bytes: [u8; 32]) -> Self {
+                Self::new(u256::from_le_bytes(bytes))
+            }
+
+            #[must_use]
+            pub fn to_le_bytes(&self) -> [u8; 32] {
+                self.0.to_le_bytes()
+            }
+
+            #[must_use]
+            pub fn to_le_bytes_slice(&self) -> &[u8] {
+                // Safety: u256 is transparent over [u64; 4], and the crate enforces a little-endian target.
+                unsafe { core::slice::from_raw_parts(&self.0 as *const u256 as *const u8, 32) }
+            }
+
+            #[must_use]
+            pub fn from_le_bytes_slice(slice: &[u8]) -> Self {
+                assert!(slice.len() == 32, "from_le_bytes_slice: expected 32 bytes, got {}", slice.len());
+                let bytes: [u8; 32] = slice.try_into().unwrap();
+                Self::from_le_bytes(bytes)
+            }
+
+            #[must_use]
+            pub fn as_limbs(&self) -> &[u64; 4] {
+                self.0.as_limbs()
+            }
+        }
+    };
 }
 
-impl<Tag, T: Copy + core::ops::Add<Output = T>> core::ops::AddAssign for Branded<Tag, T> {
-    fn add_assign(&mut self, rhs: Self) {
-        self.0 = self.0 + rhs.0;
-    }
+define_bytes32_newtype! {
+    /// A double-SHA-256 digest of a block header.
+    pub struct BlockHash([u8; 32]);
 }
 
-/// Blanket implementations for `Branded<Tag, u32>`.
-impl<Tag: Pod + Zeroable> Branded<Tag, u32> {
-    #[must_use]
-    pub fn from_le_bytes(bytes: [u8; 4]) -> Self {
-        Self::new(u32::from_le_bytes(bytes))
-    }
-
-    #[must_use]
-    pub fn to_le_bytes(&self) -> [u8; 4] {
-        self.0.to_le_bytes()
-    }
-
-    #[must_use]
-    pub fn to_le_bytes_slice(&self) -> &[u8] {
-        // Safety: u32 has no alignment padding, crate enforces LE target.
-        unsafe { core::slice::from_raw_parts(&self.0 as *const u32 as *const u8, 4) }
-    }
-
-    #[must_use]
-    pub fn from_le_bytes_slice(slice: &[u8]) -> Self {
-        assert!(slice.len() == 4, "from_le_bytes_slice: expected 4 bytes, got {}", slice.len());
-        let bytes: [u8; 4] = slice.try_into().unwrap();
-        Self::from_le_bytes(bytes)
-    }
+define_u32_newtype! {
+    /// A block's Unix timestamp.
+    pub struct BlockTimestamp(u32);
 }
 
-/// Blanket implementations for `Branded<Tag, [u8; 32]>`.
-impl<Tag: Pod + Zeroable> Branded<Tag, [u8; 32]> {
-    #[must_use]
-    pub fn from_le_bytes(bytes: [u8; 32]) -> Self {
-        Self::new(bytes)
-    }
-
-    #[must_use]
-    pub fn to_le_bytes(&self) -> [u8; 32] {
-        self.0
-    }
-
-    #[must_use]
-    pub fn to_le_bytes_slice(&self) -> &[u8] {
-        &self.0
-    }
-
-    #[must_use]
-    pub fn from_le_bytes_slice(slice: &[u8]) -> Self {
-        assert!(slice.len() == 32, "from_le_bytes_slice: expected 32 bytes, got {}", slice.len());
-        let bytes: [u8; 32] = slice.try_into().unwrap();
-        Self::new(bytes)
-    }
+define_u256_newtype! {
+    /// The amount of work proven by a single block.
+    pub struct BlockWork(u256);
 }
 
-/// Blanket implementations for `Branded<Tag, u256>`.
-impl<Tag: Pod + Zeroable> Branded<Tag, u256> {
-    #[must_use]
-    pub const fn from_limbs(limbs: [u64; 4]) -> Self {
-        Self::new(u256::from_limbs(limbs))
-    }
-
-    #[must_use]
-    pub fn from_le_bytes(bytes: [u8; 32]) -> Self {
-        Self::new(u256::from_le_bytes(bytes))
-    }
-
-    #[must_use]
-    pub fn to_le_bytes(&self) -> [u8; 32] {
-        self.0.to_le_bytes()
-    }
-
-    #[must_use]
-    pub fn to_le_bytes_slice(&self) -> &[u8] {
-        // Safety: u256 is repr(transparent) over [u64; 4] and crate enforces LE target.
-        unsafe { core::slice::from_raw_parts(&self.0 as *const u256 as *const u8, 32) }
-    }
-
-    #[must_use]
-    pub fn from_le_bytes_slice(slice: &[u8]) -> Self {
-        assert!(slice.len() == 32, "from_le_bytes_slice: expected 32 bytes, got {}", slice.len());
-        let bytes: [u8; 32] = slice.try_into().unwrap();
-        Self::from_le_bytes(bytes)
-    }
-
-    #[must_use]
-    pub fn as_limbs(&self) -> &[u64; 4] {
-        self.0.as_limbs()
-    }
+define_u256_newtype! {
+    /// The cumulative work of a chain of blocks.
+    pub struct ChainWork(u256);
 }
 
-// Define tags for domain-specific versions of primitive types
+define_newtype! {
+    /// The threshold which a valid [`BlockHash`] must not exceed.
+    pub struct Target(NonMaxU256);
+}
 
-#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Debug, Pod, Zeroable)]
-#[repr(transparent)]
-pub struct TargetTag;
-
-#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Debug, Pod, Zeroable)]
-#[repr(transparent)]
-pub struct CompactTargetTag;
-
-#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Debug, Pod, Zeroable)]
-#[repr(transparent)]
-pub struct BlockWorkTag;
-
-#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Debug, Pod, Zeroable)]
-#[repr(transparent)]
-pub struct ChainWorkTag;
-
-#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Debug, Pod, Zeroable)]
-#[repr(transparent)]
-pub struct BlockTimestampTag;
-
-#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Debug, Pod, Zeroable)]
-#[repr(transparent)]
-pub struct BlockHashTag;
-
-/// BlockHash is a sha256d digest of a block header
-pub type BlockHash = Branded<BlockHashTag, [u8; 32]>;
-
-/// BlockTimestamp is the timestamp of a block
-pub type BlockTimestamp = Branded<BlockTimestampTag, u32>;
+define_u32_newtype! {
+    /// The compact representation of a [`Target`].
+    pub struct CompactTarget(u32);
+}
 
 impl fmt::Display for BlockTimestamp {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.0)
     }
 }
-
-/// BlockWork is the amount of work proven by a single block
-pub type BlockWork = Branded<BlockWorkTag, u256>;
-
-/// ChainWork is the cumulative work of a chain of blocks
-pub type ChainWork = Branded<ChainWorkTag, u256>;
-
-/// Target is the target for a valid BlockHash to be below
-pub type Target = Branded<TargetTag, NonMaxU256>;
-
-/// CompactTarget is the compact representation of a target
-pub type CompactTarget = Branded<CompactTargetTag, u32>;
-
-// `ChainWork + ChainWork = ChainWork` and `ChainWork += ChainWork` come for free from the
-// blanket `Add`/`AddAssign` impls on `Branded<Tag, T>` in `brand.rs`, since both sides share the
-// `ChainWorkTag`. Only the cross-tag combinations need to be spelled out here.
 
 impl Target {
     /// Build a target from four little-endian 64-bit limbs.

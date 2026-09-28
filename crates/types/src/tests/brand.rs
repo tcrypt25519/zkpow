@@ -3,11 +3,11 @@ use alloc::string::ToString;
 
 use zkvm_test::test;
 
-use crate::{BlockHash, BlockHashTag, BlockTimestamp, BlockWork, Branded, ChainWork, CompactTarget, Target};
+use crate::{BlockHash, BlockTimestamp, BlockWork, ChainWork, CompactTarget, Target};
 
 #[test]
-fn branded_construction_and_accessors() {
-    let mut val = Branded::<BlockHashTag, u32>::new(42);
+fn newtype_construction_and_accessors() {
+    let mut val = BlockTimestamp::new(42);
     assert_eq!(*val.as_inner(), 42);
     assert_eq!(*val, 42);
 
@@ -18,7 +18,7 @@ fn branded_construction_and_accessors() {
 }
 
 #[test]
-fn branded_zero_copy_byte_conversions() {
+fn newtype_zero_copy_byte_conversions() {
     let original: [u8; 32] = [
         1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
         31, 32,
@@ -33,7 +33,7 @@ fn branded_zero_copy_byte_conversions() {
 }
 
 #[test]
-fn branded_u32_le_conversions() {
+fn newtype_u32_le_conversions() {
     let raw = 0x1122_3344u32;
     let ts = BlockTimestamp::new(raw);
 
@@ -47,7 +47,7 @@ fn branded_u32_le_conversions() {
 }
 
 #[test]
-fn branded_32byte_array_conversions() {
+fn newtype_32byte_array_conversions() {
     let raw = [0x5au8; 32];
     let hash = BlockHash::new(raw);
 
@@ -58,7 +58,7 @@ fn branded_32byte_array_conversions() {
 }
 
 #[test]
-fn branded_u256_conversions() {
+fn newtype_u256_conversions() {
     let limbs = [1u64, 2, 3, 4];
     let work = ChainWork::from_limbs(limbs);
 
@@ -71,7 +71,7 @@ fn branded_u256_conversions() {
 }
 
 #[test]
-fn branded_addition_with_carry_and_wrap() {
+fn newtype_addition_with_carry_and_wrap() {
     let a = ChainWork::from_limbs([u64::MAX, 0, 0, 0]);
     let b = ChainWork::from_limbs([1, 0, 0, 0]);
     let c = a + b;
