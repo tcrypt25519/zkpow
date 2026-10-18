@@ -94,6 +94,30 @@ fn apply_headers_flushes_deferred_chain_work_before_failure() {
 }
 
 #[zkvm_test]
+fn cold_batch_failure_flushes_chain_work_for_accepted_headers() {
+    let _hash_guard = set_hash_success();
+    let mut state = test_state();
+    let mut headers: Vec<HeaderInput> = (1..=10)
+        .map(|i| HeaderInput {
+            version:     1,
+            merkle_root: [i as u8; 32],
+            timestamp:   ts(i * 10),
+            nonce:       i,
+        })
+        .collect();
+    headers[4].timestamp = ts(0);
+
+    let hints = median_hints_for_headers(&state, &headers);
+    let failure = state
+        .apply_headers_from_genesis::<TestConsensus>(&headers, &hints)
+        .expect_err("5th header should fail timestamp validation");
+
+    assert_eq!(expect_error_code(failure), ErrorCode::TIMESTAMP_TOO_OLD);
+    assert_eq!(state.height, 4);
+    assert_eq!(state.chain_work, ChainWork::default() + TestConsensus::PARAMS.genesis_work * 4);
+}
+
+#[zkvm_test]
 fn apply_headers_failure_output_includes_flushed_chain_work() {
     let _hash_guard = set_hash_success();
     let mut state = test_state();

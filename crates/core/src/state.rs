@@ -96,6 +96,7 @@ impl State {
     // Applies the first headers of the chain, before the MTP window has been filled. This lets the
     // warm path assume it always has a full window.
     fn apply_cold_batch<C: Consensus>(&mut self, headers: &[HeaderInput]) -> Result<mtp::Window<Warm>, ApplyError> {
+        let start_height = self.height;
         let mut mtp = self.cold_mtp_ring();
         let mut prev_hash_words = zkpow_sha256::hash_to_state(self.block_hash.as_inner());
         for new_header in headers {
@@ -112,6 +113,7 @@ impl State {
             ) {
                 self.block_hash = BlockHash::new(zkpow_sha256::state_to_hash(&prev_hash_words));
                 self.store_timestamps(mtp.parts().0);
+                self.chain_work += C::PARAMS.genesis_work * (self.height - start_height);
                 return Err(e);
             }
             mtp.push(new_header.timestamp.into_inner());
