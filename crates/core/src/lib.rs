@@ -353,37 +353,16 @@ pub(crate) fn uint256_mul_with_carry(a: &[u64; 4], b: &[u64; 4], c: &[u64; 4]) -
 pub(crate) fn verify_block_work_witness(work: BlockWork, divisor: u256) {
     let w_limbs = work.into_inner().into_limbs();
     let d_limbs = divisor.into_limbs();
-    let zero = [0u64; 4];
 
-    // Check 1: work * (target + 1) <= 2^256
-    let (lo1, hi1) = uint256_mul_with_carry(&w_limbs, &d_limbs, &zero);
-    let le_2_256 = if hi1[1..4] != [0; 3] {
-        false
-    } else if hi1[0] > 1 {
-        false
-    } else if hi1[0] == 1 {
-        lo1 == [0; 4]
-    } else {
-        true
-    };
-    if !le_2_256 {
-        crate::invalid_hint!("block work product exceeds 2^256");
-    }
-
-    // Check 2: (work + 1) * (target + 1) > 2^256
-    let w1 = work.into_inner() + u256::from_limbs([1, 0, 0, 0]);
-    let (lo2, hi2) = uint256_mul_with_carry(&w1.into_limbs(), &d_limbs, &zero);
-    let gt_2_256 = if hi2[1..4] != [0; 3] {
-        true
-    } else if hi2[0] > 1 {
-        true
-    } else if hi2[0] == 1 {
-        lo2 != [0; 4]
-    } else {
-        false
-    };
-    if !gt_2_256 {
-        crate::invalid_hint!("(block work + 1) product does not exceed 2^256");
+    // work = floor(2^256 / divisor) exactly when:
+    //   2^256 < (work + 1) * divisor <= 2^256 + divisor
+    // Compute work * divisor + divisor in one mul-with-carry syscall.
+    let (lo, hi) = uint256_mul_with_carry(&w_limbs, &d_limbs, &d_limbs);
+    let upper_hi = hi[1] | hi[2] | hi[3];
+    let low_nonzero = lo[0] | lo[1] | lo[2] | lo[3];
+    let low = u256::from_limbs(lo);
+    if upper_hi != 0 || hi[0] != 1 || low_nonzero == 0 || low > divisor {
+        crate::invalid_hint!("block work witness is not the exact quotient");
     }
 }
 
@@ -433,9 +412,8 @@ pub fn compute_block_work_division(target: Target) -> BlockWork {
 /// Compute one-block cumulative-work units from the expanded target.
 ///
 /// In the zkVM, the quotient `floor(2^256 / (target + 1))` is supplied as a prover hint
-/// and verified in ~70 cycles using two `syscall_uint256_mul_with_carry` calls:
-/// 1. `work * (target + 1) <= 2^256`
-/// 2. `(work + 1) * (target + 1) > 2^256`
+/// and verified with one `syscall_uint256_mul_with_carry` call. For divisor `d` and hinted
+/// quotient `q`, `q` is exact if and only if `2^256 < (q + 1)d <= 2^256 + d`.
 #[sp1_cycle::tracked]
 pub fn block_work_from_target(target: Target) -> BlockWork {
     let divisor = increment_target(target.into_inner());
