@@ -3,7 +3,6 @@ compile_error!("zkpow wire types require a little-endian target");
 
 use bytemuck::{Pod, Zeroable};
 use derive_size::Size;
-use sp1_cycle::tracked;
 use zkpow_mtp::{self as mtp, errors::NotMedian, timestamp_count, timestamp_slot, Cold, Warm, WINDOW_SIZE};
 use zkpow_params::Consensus;
 
@@ -42,7 +41,6 @@ impl State {
 
     /// Called when the State reflects the final block of epoch N
     /// to compute the difficulty values that are active in epoch N+1.
-    #[tracked]
     fn prepare_next_epoch<C: Consensus>(
         &self,
         current_timestamp: BlockTimestamp,
@@ -76,7 +74,6 @@ impl State {
     /// headers, isolating any logic dealing with an incomplete MTP window so that the main path can always assume
     /// it has a full window. It fails if fewer than `window_size - 1` headers are provided. If more headers than
     /// necessary are given, they're passed to on to [`State::apply_headers`] automatically.
-    #[tracked]
     pub fn apply_headers_from_genesis<C: Consensus>(
         &mut self,
         headers: &[HeaderInput],
@@ -102,7 +99,7 @@ impl State {
         for new_header in headers {
             let median = mtp
                 .median()
-                .or_else(|| sp1_cycle::track!(mtp.median_by_sort()))
+                .or_else(|| mtp.median_by_sort())
                 .expect("the cold batch starts from a genesis timestamp");
             if let Err(e) = self.seal_header::<C>(
                 C::PARAMS.compact_target(),
@@ -135,7 +132,7 @@ impl State {
         headers: &[HeaderInput],
         median_hints: &[BlockTimestamp],
     ) -> Result<(), ApplyError> {
-        let mtp = sp1_cycle::track!({ self.warm_mtp_ring() });
+        let mtp = self.warm_mtp_ring();
         self.apply_warm_batch::<C>(headers, median_hints, mtp)
     }
 
@@ -167,7 +164,7 @@ impl State {
                         let Some(claimed_median) = hint_iter.next() else {
                             crate::invalid_hint!("median_hint not available for application");
                         };
-                        match sp1_cycle::track!(mtp.is_value_median(claimed_median.into_inner())) {
+                        match mtp.is_value_median(claimed_median.into_inner()) {
                             Ok(()) => {},
                             Err(NotMedian::TooNew) => {
                                 crate::invalid_hint!(
@@ -262,7 +259,6 @@ impl State {
         Ok(())
     }
 
-    #[tracked]
     fn advance_state<C: Consensus>(&mut self, timestamp: BlockTimestamp) {
         self.height += 1;
         if self.height.is_multiple_of(C::PARAMS.epoch_length) {

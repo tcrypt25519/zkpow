@@ -1,6 +1,5 @@
 use bytemuck::{Pod, PodCastError, Zeroable};
 use derive_size::Size;
-use sp1_cycle_macros::tracked;
 
 use crate::{BlockHash, BlockTimestamp, CompactTarget, Header};
 
@@ -19,7 +18,6 @@ pub struct HeaderInput {
 
 impl HeaderInput {
     /// Parse a [`HeaderInput`] from exactly [`HeaderInput::SIZE`] bytes.
-    #[tracked]
     pub fn from_bytes(bytes: &[u8]) -> Result<&Self, PodCastError> {
         bytemuck::try_from_bytes::<Self>(bytes)
     }

@@ -23,7 +23,6 @@ zkpow-worker = { workspace = true }
 console-subscriber = "0.4.1"
 sp1-sdk = { workspace = true }
 sp1-prover = { workspace = true }
-memuse = { workspace = true }
 postcard = { workspace = true, features = ["alloc"] }
 hex = { workspace = true }
 tokio = { workspace = true }

@@ -17,5 +17,4 @@ sp1-zkvm = { workspace = true }
 [dev-dependencies]
 bytemuck = { workspace = true }
 zkvm-test = { workspace = true }
-sp1-cycle = { workspace = true }
 

@@ -9,8 +9,6 @@ members = [
   "crates/store",
   "crates/sync-headers",
   "crates/cli",
-  "crates/sp1-cycle",
-  "crates/sp1-cycle-macros",
   "crates/derive-size",
   "crates/params",
   "crates/types",
@@ -18,7 +16,7 @@ members = [
   "crates/worker",
   "crates/test_support",
 ]
-exclude = ["sp1", "sp1", "memuse"]
+exclude = ["sp1"]
 resolver = "3"
 
 [workspace.package]
@@ -38,8 +36,6 @@ zkpow-mtp = { path = "crates/mtp" }
 
 derive-size = { path = "crates/derive-size" }
 sha256_const = { path = "crates/sha256_const" }
-sp1-cycle = { path = "crates/sp1-cycle" }
-sp1-cycle-macros = { path = "crates/sp1-cycle-macros" }
 test-support = { path = "crates/test_support" }
 zkvm-test = { path = "../zkvm-test/crates/zkvm-test" }
 
@@ -61,8 +57,6 @@ sp1-prover = { version = "6.8.1", default-features = false, features = [
 sp1-core-executor = { version = "6.8.1" }
 sp1-core-executor-runner = { version = "6.8.1" }
 sp1-jit = { version = "6.8.1" }
-
-memuse = { path = "./memuse" }
 
 sha2 = { version = "0.10.8" }
 bitcoin = { version = "0.32", features = ["serde"] }
@@ -104,17 +98,17 @@ serde = { version = "1", default-features = false, features = [
 # Route sha2 through SP1's accelerated fork so the sha256 compress runs on the precompile
 # instead of the soft path. Tag matches the sibling crypto patches SP1 6.x pins.
 sha2 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", tag = "patch-sha2-0.10.9-sp1-6.2.0", package = "sha2" }
-sp1-zkvm = { path = "sp1/crates/zkvm/entrypoint" }
-sp1-sdk = { path = "sp1/crates/sdk" }
-sp1-prover = { path = "sp1/crates/prover" }
-sp1-core-executor = { path = "sp1/crates/core/executor" }
-sp1-core-machine = { path = "sp1/crates/core/machine" }
-sp1-build = { path = "sp1/crates/build" }
-sp1-lib = { path = "sp1/crates/zkvm/lib" }
-sp1-primitives = { path = "sp1/crates/primitives" }
-sp1-jit = { path = "sp1/crates/core/jit" }
-sp1-core-executor-runner = { path = "sp1/crates/core/runner" }
-sp1-core-executor-runner-binary = { path = "sp1/crates/core/runner-binary" }
+# sp1-zkvm = { path = "../../succinctlabs/sp1/crates/zkvm/entrypoint" }
+# sp1-sdk = { path = "../../succinctlabs/sp1/crates/sdk" }
+# sp1-prover = { path = "../../succinctlabs/sp1/crates/prover" }
+# sp1-core-executor = { path = "../../succinctlabs/sp1/crates/core/executor" }
+# sp1-core-machine = { path = "../../succinctlabs/sp1/crates/core/machine" }
+# sp1-build = { path = "../../succinctlabs/sp1/crates/build" }
+# sp1-lib = { path = "../../succinctlabs/sp1/crates/zkvm/lib" }
+# sp1-primitives = { path = "../../succinctlabs/sp1/crates/primitives" }
+# sp1-jit = { path = "../../succinctlabs/sp1/crates/core/jit" }
+# sp1-core-executor-runner = { path = "../../succinctlabs/sp1/crates/core/runner" }
+# sp1-core-executor-runner-binary = { path = "../../succinctlabs/sp1/crates/core/runner-binary" }
 zkvm-test = { path = "../zkvm-test/crates/zkvm-test" }
 zkvm-test-macros = { path = "../zkvm-test/crates/zkvm-test-macros" }
 

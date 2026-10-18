@@ -17,7 +17,6 @@
 
 use std::path::PathBuf;
 
-use memuse::{StageHistory, StageMetric};
 use zkpow_host::{
     memory_monitor, observability,
     pipeline::input::{ENV_ZKPOW_BATCH_SIZE, ENV_ZKPOW_EXECUTE_ONLY},
@@ -64,7 +63,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     memory_monitor::log_point("stress_session_start", "Stress session memory snapshot");
 
     let mut baseline_rss_kb: Option<u64> = None;
-    let mut history = StageHistory::new(["Stage 0 (Start)", "Stage 1 (End)", "Stage 2 (Drop)"]);
 
     for i in 1..=iterations {
         // Sample directly: this binary's whole purpose is memory numbers,
@@ -113,14 +111,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             );
         }
 
-        history.push_iteration([start_mem, end_mem, end_mem])?;
         tracing::info!(iteration = i, elapsed_secs = iter_elapsed.as_secs_f64(), "Iteration done");
     }
 
     if memory_monitor::logging_enabled() {
-        println!("\n{}", history.render_table(StageMetric::RssKb, "SP1 STRESS RSS MATRIX (KB)"));
-        println!("\n{}", history.render_table(StageMetric::LiveKb, "SP1 STRESS LIVE MATRIX (KB)"));
-
         memory_monitor::log_point("stress_session_end", "Stress session memory snapshot");
     }
 

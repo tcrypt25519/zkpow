@@ -63,7 +63,6 @@ impl From<PodCastError> for ProgramError {
     }
 }
 
-#[sp1_cycle::tracked]
 fn inner_main() -> Result<(), ProgramError> {
     /*
     ## Data flow
@@ -94,12 +93,12 @@ fn inner_main() -> Result<(), ProgramError> {
     let apply_result = if state.height == 0 {
         state.apply_headers_from_genesis::<Mainnet>(headers, medians)
     } else {
-        let actual_pv_hash = sp1_cycle::track!(zkpow_sha256::of_public_values(
+        let actual_pv_hash = zkpow_sha256::of_public_values(
             bytemuck::bytes_of(state),
             verifier_key.to_le_bytes_slice(),
             ReturnCode::SUCCESS.into_u8(),
-        ));
-        sp1_cycle::track!(sp1_zkvm::lib::verify::verify_sp1_proof(verifier_key.as_raw(), &actual_pv_hash));
+        );
+        sp1_zkvm::lib::verify::verify_sp1_proof(verifier_key.as_raw(), &actual_pv_hash);
 
         state.apply_headers::<Mainnet>(headers, medians)
     };

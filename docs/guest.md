@@ -38,7 +38,6 @@ safe.
 | `zkpow-mtp` | both | the 11-slot timestamp ring and the median rank check |
 | `zkpow-params` | both | `Consensus` trait and the `Mainnet` constants |
 | `zkpow-types` | both | `u256`, `NonMaxU256`, the branded newtypes, `Header` |
-| `sp1-cycle` | both | `#[tracked]` and `track!`, cycle-tracker spans that compile away off-target |
 | `sha256_const` | both | `const fn` SHA-256, only for the genesis hash at compile time |
 
 "Both" means the crate is `#![no_std]` and compiles for the host too. Everything that touches a
@@ -463,21 +462,10 @@ doesn't.
 
 ## Cycle accounting
 
-`#[sp1_cycle::tracked]` on a function and `sp1_cycle::track!(expr)` on an expression wrap the
-body in `cycle-tracker-report-start/end` writes to fd 1. SP1's executor sums them into the
-execution report by label, and the label is `module_path/function_name` or
-`module_path:line`. Both macros expand to the bare body unless the crate is built for the zkVM
-*and* the `cycle-tracking` feature is on.
-
-Turn it on with `GUEST_PROFILING=1` when building the host. The host's `build.rs` forwards
-that as the guest's `profiling` feature, which enables `zkpow-core/profiling` and
-`sp1-cycle/cycle-tracking`. Then `ZKPOW_EXECUTE_ONLY=1` runs the guest without proving and
-prints the report.
-
-Annotating a function costs two syscall writes per call, so don't track anything in the
-per-header path when measuring a per-header change. The spans currently there are on
-`seal_header`'s callees and the per-segment functions, which is coarse enough not to distort
-the per-header number much.
+Cycle profiling is handled non-intrusively by `zkvm-test`: function-level execution
+costs and call trees are isolated from ELF symbols and DWARF debug information without
+requiring manual in-guest macros or runtime syscall overhead. Run `cargo zkvm test --profile`
+to generate a cycle breakdown.
 
 `crates/guest/Cargo.toml` also declares a `dummy-pow` feature. Nothing reads it. Don't rely on
 it.

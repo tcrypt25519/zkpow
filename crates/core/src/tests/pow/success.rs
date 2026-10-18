@@ -1,6 +1,5 @@
 use alloc::vec::Vec;
 
-use sp1_cycle::run_track;
 use zkvm_test::zkvm_test;
 
 use crate::{check_proof_of_work, tests::*, BlockHash, ChainWork, Header, HeaderInput, State};
@@ -127,11 +126,9 @@ fn unmocked_bitcoin_chain_verifies_first_50_blocks() {
 
     let hints = median_hints_for_headers(&state, &header_inputs);
 
-    run_track("unmocked_bitcoin_chain_49_headers", || {
-        state
-            .apply_headers_from_genesis::<TestConsensus>(&header_inputs, &hints)
-            .expect("all 49 real Bitcoin headers must validate without mocks");
-    });
+    state
+        .apply_headers_from_genesis::<TestConsensus>(&header_inputs, &hints)
+        .expect("all 49 real Bitcoin headers must validate without mocks");
 
     assert_eq!(state.height, 49);
     assert_eq!(state.block_hash, blocks[49].expected_hash);

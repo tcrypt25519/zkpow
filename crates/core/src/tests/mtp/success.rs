@@ -1,6 +1,5 @@
 use alloc::vec::Vec;
 
-use sp1_cycle::run_track;
 use zkvm_test::zkvm_test;
 
 use crate::{advance_ordered_timestamp_run, tests::*, timestamp_slot, CompactTarget, HeaderInput, State, WINDOW_SIZE};
@@ -61,9 +60,7 @@ fn ring_buffer_slot_overwrites_only_next_slot() {
         nonce:       7,
     };
     let median_hints = median_hints_for_headers(&state, &[header]);
-    run_track("ring_buffer_slot_advance", || {
-        state.apply_headers::<TestConsensus>(&[header], &median_hints).unwrap();
-    });
+    state.apply_headers::<TestConsensus>(&[header], &median_hints).unwrap();
 
     let mut expected = original;
     expected[1] = ts(999);

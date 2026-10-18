@@ -43,7 +43,6 @@ pub use input::{cast_slice, serialize_inputs};
 /// Hashing lives on [`Header`]; this wrapper exists only so tests can substitute a hash without
 /// mining one. It must stay in this crate: `cfg(test)` is per-compilation-unit, so a mock in
 /// `zkpow-types` would not be compiled when `zkpow-core`'s tests run.
-#[sp1_cycle::tracked]
 fn hash_header(header: &Header) -> BlockHash {
     #[cfg(test)]
     if let Some(hash) = test_hash_mock::get() {
@@ -52,7 +51,6 @@ fn hash_header(header: &Header) -> BlockHash {
     BlockHash::from(header)
 }
 
-#[sp1_cycle::tracked]
 fn hash_header_input(input: &HeaderInput, prev_blockhash_words: &[u64; 8], compact_target: CompactTarget) -> [u64; 8] {
     #[cfg(target_os = "zkvm")]
     {
@@ -128,7 +126,6 @@ mod test_hash_mock {
     }
 }
 
-#[sp1_cycle::tracked]
 pub(crate) fn check_exact_len(bytes: &[u8], expected: usize) -> Result<(), ParseError> {
     if bytes.len() != expected {
         return Err(ParseError::InvalidLength {
@@ -141,7 +138,6 @@ pub(crate) fn check_exact_len(bytes: &[u8], expected: usize) -> Result<(), Parse
 
 /// Convert a full 256-bit target into compact `bits` encoding.
 #[must_use]
-//#[sp1_cycle::tracked]
 pub fn target_to_bits(target: Target) -> CompactTarget {
     let bytes = target.to_le_bytes();
     let mut nbytes = 32usize;
@@ -172,7 +168,6 @@ pub fn target_to_bits(target: Target) -> CompactTarget {
 
 /// Expand compact Bitcoin `bits` into a normalized full 256-bit target.
 #[must_use]
-#[sp1_cycle::tracked]
 pub fn target_from_bits(compact_target: CompactTarget) -> Target {
     let bits = compact_target.into_inner();
     let size = (bits >> 24) as usize;
@@ -202,14 +197,12 @@ pub fn target_from_bits(compact_target: CompactTarget) -> Target {
 
 /// Check whether a header hash satisfies a target.
 #[must_use]
-#[sp1_cycle::tracked]
 pub fn check_proof_of_work(hash: BlockHash, target: &Target) -> bool {
     u256::from_le_bytes(*hash.as_inner()) <= *target.as_inner().as_inner()
 }
 
 /// Check whether a header hash in SHA state words satisfies a target.
 #[must_use]
-#[sp1_cycle::tracked]
 fn check_pow_words(words: &[u64; 8], target: &Target) -> bool {
     u256::from_words(words) <= *target.as_inner().as_inner()
 }
@@ -261,7 +254,6 @@ fn sub_assign(lhs: &mut u256, rhs: u256) -> bool {
 ///
 /// We can iterate until we find a limb < max u64, add 1 to it, and we're done. As long as we find max u64 limbs we
 /// just set them to 0 and move forward. [`NonMaxU256`] guarantees that the carry cannot escape the final limb.
-#[sp1_cycle::tracked]
 pub(crate) fn increment_target(target: NonMaxU256) -> u256 {
     let mut target = target.into_inner();
     for (i, limb) in target.as_limbs_mut().iter_mut().enumerate() {
@@ -414,7 +406,6 @@ pub fn compute_block_work_division(target: Target) -> BlockWork {
 /// In the zkVM, the quotient `floor(2^256 / (target + 1))` is supplied as a prover hint
 /// and verified with one `syscall_uint256_mul_with_carry` call. For divisor `d` and hinted
 /// quotient `q`, `q` is exact if and only if `2^256 < (q + 1)d <= 2^256 + d`.
-#[sp1_cycle::tracked]
 pub fn block_work_from_target(target: Target) -> BlockWork {
     let divisor = increment_target(target.into_inner());
 

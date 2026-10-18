@@ -23,7 +23,6 @@ use diagnostics::{clear_phase_timings, collected_phase_timings, timed_sync};
 pub use diagnostics::{log_execution_report, PhaseTiming};
 use execution::execute_batch;
 use input::{build_stdin, config_from_env};
-use memuse::{StageHistory, StageMetric, StageSample};
 use proof::{compressed::generate_compressed_proof, get_prepared_prover, PreparedProver};
 use sp1_sdk::{prelude::*, ProverClient, SP1ProofWithPublicValues};
 pub use zkpow_controller::NO_HEADERS_REMAINING_PREFIX;
@@ -151,8 +150,6 @@ async fn run_batch_session_with<C: Consensus>(
     config: ProofGenerationConfig,
     prepared: PreparedProver,
 ) -> Result<u32, BoxError> {
-    let mut memory_history =
-        memory_monitor::logging_enabled().then(|| StageHistory::new(["Batch start", "Before prove", "Batch end"]));
     memory_monitor::log_point("session_memory_start", "Session memory snapshot before batches");
 
     tracing::info!(
@@ -165,15 +162,12 @@ async fn run_batch_session_with<C: Consensus>(
     let mut batch = classify_pull(runtime.pull_batch(&config.run_id).await.map_err(Into::into), completed)?;
 
     while let Some(current_batch) = batch {
-        let start_memory = memory_monitor::log_point("batch_memory_start", "Batch memory snapshot before batch work");
-        let (completion, before_prove_memory) = process_batch(&prepared, completed + 1, current_batch).await?;
+        memory_monitor::log_point("batch_memory_start", "Batch memory snapshot before batch work");
+        let (completion, _) = process_batch(&prepared, completed + 1, current_batch).await?;
         complete_batch(&runtime, &config.run_id, completion).await?;
         completed += 1;
 
-        let end_memory = memory_monitor::log_point("batch_memory_end", "Batch memory snapshot after completing batch");
-        if let Some(history) = &mut memory_history {
-            history.push_iteration([start_memory, before_prove_memory, end_memory])?;
-        }
+        memory_monitor::log_point("batch_memory_end", "Batch memory snapshot after completing batch");
 
         batch = if completed >= config.batch_count {
             None
@@ -186,11 +180,7 @@ async fn run_batch_session_with<C: Consensus>(
         tracing::info!("Reached ZKPOW_BATCH_COUNT={}; stopping continuous prover", config.batch_count);
     }
 
-    if let Some(history) = memory_history {
-        println!("\n{}", history.render_table(StageMetric::RssKb, "BATCH RSS MATRIX (KB)"));
-        println!("\n{}", history.render_table(StageMetric::LiveKb, "BATCH LIVE HEAP MATRIX (KB)"));
-        memory_monitor::log_point("session_memory_end", "Session memory snapshot after batches");
-    }
+    memory_monitor::log_point("session_memory_end", "Session memory snapshot after batches");
 
     Ok(completed)
 }
@@ -199,7 +189,7 @@ async fn process_batch(
     prepared: &PreparedProver,
     batch_number: u32,
     batch: Batch,
-) -> Result<(BatchCompletion, StageSample), BoxError> {
+) -> Result<(BatchCompletion, memory_monitor::StageSample), BoxError> {
     let Batch {
         first_new_height,
         end_height,

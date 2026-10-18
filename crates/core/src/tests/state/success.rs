@@ -1,7 +1,6 @@
 use alloc::vec::Vec;
 use core::mem::{align_of, size_of};
 
-use sp1_cycle::run_track;
 use zkvm_test::zkvm_test;
 
 use crate::{block_work_from_target, tests::*, BlockHash, BlockWork, ChainWork, CompactTarget, HeaderInput, State};
@@ -78,11 +77,9 @@ fn apply_headers_flushes_deferred_chain_work_on_success() {
         .collect();
 
     let hints = median_hints_for_headers(&state, &headers);
-    run_track("cold_start_10_headers", || {
-        state
-            .apply_headers_from_genesis::<TestConsensus>(&headers, &hints)
-            .expect("headers should validate");
-    });
+    state
+        .apply_headers_from_genesis::<TestConsensus>(&headers, &hints)
+        .expect("headers should validate");
 
     let block_work = block_work_from_target(GENESIS_TARGET);
     let mut new_chain_work = block_work * 10u32;

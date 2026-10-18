@@ -14,13 +14,12 @@ zkpow-params = { workspace = true }
 zkpow-sha256 = { workspace = true }
 sp1-zkvm = { workspace = true, features = ["lib", "verify"] }
 sp1-derive = { workspace = true }
-sp1-cycle = { workspace = true }
 bytemuck = "1.15.2"
 thiserror = { workspace = true }
 
 [features]
 default = []
-profiling = ["zkpow-core/profiling", "sp1-cycle/cycle-tracking"]
+profiling = ["zkpow-core/profiling"]
 # Use a dummy PoW verifier (always returns true) for testing post-PoW validation
 
 # without grinding real block headers. WARNING: this does NOT validate proof-of-work.
