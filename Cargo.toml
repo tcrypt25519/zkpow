@@ -120,9 +120,14 @@ zkvm-test-macros = { path = "../zkvm-test/crates/zkvm-test-macros" }
 
 [profile.release]
 incremental = false
+strip = "none"
 
 [profile.release.package."*"]
 incremental = false
+strip = "none"
+
+[profile.release.build-override]
+strip = "none"
 
 [profile.dev]
 incremental = false
