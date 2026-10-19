@@ -21,7 +21,7 @@ pub use zkpow_mtp::{
 };
 use zkpow_params::Consensus;
 pub use zkpow_types::{
-    BlockHash, BlockTimestamp, BlockWork, ByteInfo, ChainWork, CompactTarget, Header, NonMaxU256, Target, u256,
+    u256, BlockHash, BlockTimestamp, BlockWork, ChainWork, CompactTarget, Header, NonMaxU256, Target, WireBytes,
 };
 
 mod header;

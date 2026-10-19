@@ -10,6 +10,7 @@ members = [
   "crates/sync-headers",
   "crates/cli",
   "crates/derive-size",
+  "crates/wire_type",
   "crates/params",
   "crates/types",
   "crates/sha256_const",
@@ -35,6 +36,7 @@ zkpow-worker = { path = "crates/worker" }
 zkpow-mtp = { path = "crates/mtp" }
 
 derive-size = { path = "crates/derive-size" }
+wire_type = { path = "crates/wire_type" }
 sha256_const = { path = "crates/sha256_const" }
 test-support = { path = "crates/test_support" }
 zkvm-test = { path = "../zkvm-test/crates/zkvm-test" }

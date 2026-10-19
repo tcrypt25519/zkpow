@@ -7,7 +7,7 @@ use std::path::Path;
 use rusqlite::{params, Connection, OptionalExtension};
 use sync_headers::{ConnectedHeader, Tip};
 use zkpow_core::{
-    requires_median_hint, BlockHash, BlockTimestamp, ByteInfo, ChainWork, CompactTarget, Header, HeaderInput, State,
+    requires_median_hint, BlockHash, BlockTimestamp, ChainWork, CompactTarget, Header, HeaderInput, State,
     VerifierKeyDigest,
 };
 use zkpow_params::{Consensus, WINDOW_SIZE};
@@ -421,11 +421,11 @@ impl HeaderStore {
                 "SELECT verifier_key, verified_height, proof_object FROM runs WHERE run_id = ?1",
                 [run_id],
                 |row| {
-                    let verifier_key: [u8; VerifierKeyDigest::SIZE] =
+                    let verifier_key: [u8; size_of::<VerifierKeyDigest>()] =
                         row.get::<_, Vec<u8>>(0)?.try_into().map_err(|_| {
                             rusqlite::Error::InvalidColumnType(
                                 0,
-                                format!("verifier_key must be {} bytes", VerifierKeyDigest::SIZE),
+                                format!("verifier_key must be {} bytes", size_of::<VerifierKeyDigest>()),
                                 rusqlite::types::Type::Blob,
                             )
                         })?;

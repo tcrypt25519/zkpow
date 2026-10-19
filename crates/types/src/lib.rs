@@ -17,5 +17,5 @@ mod tests;
 
 pub use bigint::{u256, NonMaxU256};
 pub use brand::{BlockHash, BlockTimestamp, BlockWork, ChainWork, CompactTarget, Target};
-pub use bytes::ByteInfo;
+pub use bytes::{as_wire_bytes, WireBytes};
 pub use header::Header;
