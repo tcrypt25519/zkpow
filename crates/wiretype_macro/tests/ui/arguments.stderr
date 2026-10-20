@@ -1,0 +1,5 @@
+error: wiretype takes no arguments
+ --> tests/ui/arguments.rs:3:13
+  |
+3 | #[wiretype(foo)]
+  |             ^^^

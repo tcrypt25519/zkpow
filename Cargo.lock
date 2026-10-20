@@ -5197,14 +5197,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "test-support"
-version = "0.0.0"
-dependencies = [
- "zkpow-core",
- "zkpow-params",
-]
-
-[[package]]
 name = "thiserror"
 version = "1.0.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6208,7 +6200,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "wire_type"
+name = "wiretype"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+ "wiretype_macro",
+]
+
+[[package]]
+name = "wiretype_macro"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
@@ -6216,7 +6219,6 @@ dependencies = [
  "quote",
  "syn 2.0.119",
  "trybuild",
- "zkpow-types",
 ]
 
 [[package]]
@@ -6363,7 +6365,6 @@ version = "0.1.0"
 dependencies = [
  "hex",
  "sha2",
- "test-support",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -6381,6 +6382,7 @@ dependencies = [
  "rkyv",
  "sp1-lib",
  "thiserror 2.0.21",
+ "wiretype",
  "zkpow-mtp",
  "zkpow-params",
  "zkpow-sha256",
@@ -6478,6 +6480,7 @@ dependencies = [
  "derive-size",
  "rkyv",
  "sha2",
+ "wiretype",
  "zkpow-sha256",
  "zkvm-test",
 ]

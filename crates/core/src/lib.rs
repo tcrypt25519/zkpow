@@ -21,7 +21,7 @@ pub use zkpow_mtp::{
 };
 use zkpow_params::Consensus;
 pub use zkpow_types::{
-    u256, BlockHash, BlockTimestamp, BlockWork, ChainWork, CompactTarget, Header, NonMaxU256, Target, WireBytes,
+    u256, BlockHash, BlockTimestamp, BlockWork, ChainWork, CompactTarget, Header, NonMaxU256, Target,
 };
 
 mod header;
@@ -43,6 +43,7 @@ pub use input::{cast_slice, serialize_inputs};
 /// Hashing lives on [`Header`]; this wrapper exists only so tests can substitute a hash without
 /// mining one. It must stay in this crate: `cfg(test)` is per-compilation-unit, so a mock in
 /// `zkpow-types` would not be compiled when `zkpow-core`'s tests run.
+#[cfg(test)]
 fn hash_header(header: &Header) -> BlockHash {
     #[cfg(test)]
     if let Some(hash) = test_hash_mock::get() {

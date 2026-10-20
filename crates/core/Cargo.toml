@@ -25,6 +25,7 @@ zkpow-sha256 = { workspace = true }
 rkyv = { workspace = true }
 #bytes = { workspace = true }
 derive-size = { workspace = true }
+wiretype = { workspace = true }
 
 [dev-dependencies]
 zkpow-params = { workspace = true, features = ["test-networks"] }

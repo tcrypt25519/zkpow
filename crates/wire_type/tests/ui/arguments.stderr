@@ -1,5 +1,0 @@
-error: wire_type takes no arguments
- --> tests/ui/arguments.rs:3:13
-  |
-3 | #[wire_type(foo)]
-  |             ^^^

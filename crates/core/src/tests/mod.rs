@@ -171,7 +171,7 @@ pub(crate) fn apply_sequentially(state: &mut State, headers: &[HeaderInput]) -> 
 }
 
 #[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ParsedBlock {
     pub(crate) expected_hash:  BlockHash,
     pub(crate) version:        u32,

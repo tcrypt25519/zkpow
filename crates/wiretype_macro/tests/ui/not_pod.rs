@@ -1,6 +1,6 @@
-use wire_type::wire_type;
+use wiretype::wiretype;
 
-#[wire_type]
+#[wiretype]
 #[derive(Clone, Copy)]
 struct NotReprC {
     a: u32,

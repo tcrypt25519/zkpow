@@ -14,7 +14,7 @@ fn main() {
     } else {
         Vec::new()
     };
-    sp1_build::build_program_with_args(GUEST_CRATE_PATH, sp1_build::BuildArgs {
+    sp1_build::build_program_with_args(GUEST_CRATE_PATH, sp1_build::Bu2ildArgs {
         docker: use_docker,
         features,
         ignore_rust_version: true,

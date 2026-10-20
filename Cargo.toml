@@ -10,12 +10,13 @@ members = [
   "crates/sync-headers",
   "crates/cli",
   "crates/derive-size",
-  "crates/wire_type",
+  "crates/wiretype",
   "crates/params",
   "crates/types",
   "crates/sha256_const",
   "crates/worker",
-  "crates/test_support",
+  "crates/wiretype",
+  "crates/wiretype_macro",
 ]
 exclude = ["sp1"]
 resolver = "3"
@@ -36,9 +37,9 @@ zkpow-worker = { path = "crates/worker" }
 zkpow-mtp = { path = "crates/mtp" }
 
 derive-size = { path = "crates/derive-size" }
-wire_type = { path = "crates/wire_type" }
+wiretype = { path = "crates/wiretype" }
+wiretype_macro = { path = "crates/wiretype_macro" }
 sha256_const = { path = "crates/sha256_const" }
-test-support = { path = "crates/test_support" }
 zkvm-test = { path = "../zkvm-test/crates/zkvm-test" }
 
 ##
@@ -81,6 +82,11 @@ rkyv = { version = "0.8.18", default-features = false, features = [
   "little_endian",
   "aligned",
 ] }
+
+proc-macro2 = { version = "1.0.96" }
+syn = { version = "2.0.72" }
+quote = { version = "1.0.47" }
+trybuild = { version = "1.0.22" }
 
 ##
 ## To remove

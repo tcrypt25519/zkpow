@@ -1,12 +1,9 @@
-use bytemuck::{Pod, PodCastError, Zeroable};
-use derive_size::Size;
-
 use crate::brand::{BlockHash, BlockTimestamp, CompactTarget};
 
-/// A Bitcoin block header. `repr(C)` with no padding, so the in-memory layout *is* the wire
-/// format and [`Header::as_bytes`] is a cast rather than a copy.
+/// A Bitcoin block header
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[wiretype::wiretype]
 #[repr(C)]
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Pod, Zeroable, Size)]
 pub struct Header {
     /// TODO: Make a newtype for Version.
     /// The maximally correct underlying type is a `NonZero<i32>`
@@ -19,25 +16,10 @@ pub struct Header {
 }
 
 impl Header {
-    /// The header's wire bytes. Zero-copy; this is what everything but const evaluation should use.
+    /// Only for const evaluation. `zkpow-params` derives a network's genesis hash at compile
+    /// time. At runtime this copies for no reason; use [`Header::as_bytes`].
     #[must_use]
-    pub fn as_bytes(&self) -> &[u8] {
-        bytemuck::bytes_of(self)
-    }
-
-    /// Parse from exactly [`Header::SIZE`] bytes.
-    pub fn parse(bytes: &[u8]) -> Result<&Self, PodCastError> {
-        bytemuck::try_from_bytes::<Self>(bytes)
-    }
-
-    /// The same bytes as [`Header::as_bytes`], spelled out field by field because `bytemuck` casts
-    /// are not const.
-    ///
-    /// Only for const evaluation — `zkpow-params` derives a network's genesis hash at compile
-    /// time. At runtime this copies for no reason; use [`Header::as_bytes`]. `header_serializations_agree`
-    /// pins the two together.
-    #[must_use]
-    pub const fn to_bytes_const(&self) -> [u8; Header::SIZE] {
+    pub const fn to_bytes_const(&self) -> [u8; Self::SIZE] {
         let mut bytes = [0u8; Header::SIZE];
 
         let version = self.version.to_le_bytes();

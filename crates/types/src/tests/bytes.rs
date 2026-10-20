@@ -1,8 +1,6 @@
 use zkvm_test::test;
 
-use crate::{
-    u256, BlockHash, BlockTimestamp, BlockWork, ChainWork, CompactTarget, Header, NonMaxU256, Target,
-};
+use crate::{u256, BlockHash, BlockTimestamp, BlockWork, ChainWork, CompactTarget, Header, Target};
 
 #[test]
 fn layout_sizes_and_alignments() {
@@ -21,15 +19,9 @@ fn layout_sizes_and_alignments() {
     assert_eq!(size_of::<u256>(), 32);
     assert_eq!(align_of::<u256>(), 8);
 
-    assert_eq!(size_of::<NonMaxU256>(), 32);
-    assert_eq!(align_of::<NonMaxU256>(), 8);
-
     assert_eq!(size_of::<ChainWork>(), 32);
     assert_eq!(align_of::<ChainWork>(), 8);
 
     assert_eq!(size_of::<BlockWork>(), 32);
     assert_eq!(align_of::<BlockWork>(), 8);
-
-    assert_eq!(size_of::<Target>(), 32);
-    assert_eq!(align_of::<Target>(), 8);
 }

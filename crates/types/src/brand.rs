@@ -1,6 +1,6 @@
 use core::fmt;
 
-use bytemuck::{Pod, Zeroable};
+use wiretype::wiretype;
 
 use crate::bigint::{u256, NonMaxU256};
 
@@ -10,13 +10,12 @@ macro_rules! define_newtype {
         $vis:vis struct $name:ident($inner:ty);
     ) => {
         $(#[$meta])*
-        #[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
-        #[repr(transparent)]
+        #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+        #[repr(C)]
+        #[wiretype]
         $vis struct $name($inner);
 
         impl $name {
-            pub const SIZE: usize = core::mem::size_of::<$inner>();
-
             #[must_use]
             pub const fn new(inner: $inner) -> Self {
                 Self(inner)
@@ -68,7 +67,7 @@ macro_rules! define_pod_newtype {
         $vis:vis struct $name:ident($inner:ty);
     ) => {
         define_newtype! {
-            #[derive(Pod, Zeroable)]
+            // #[derive(Pod, Zeroable)]
             $(#[$meta])*
             $vis struct $name($inner);
         }
@@ -79,12 +78,12 @@ macro_rules! define_pod_newtype {
                 bytemuck::from_bytes::<$inner>(bytes)
             }
 
-            /// The value's bytes. `N` must equal the inner type's size or this panics.
-            pub fn to_bytes<const N: usize>(&self) -> &[u8; N] {
-                bytemuck::bytes_of(&self.0)
-                    .as_array()
-                    .expect("N must equal the inner type's size")
-            }
+            // The value's bytes. `N` must equal the inner type's size or this panics.
+            // pub fn to_bytes<const N: usize>(&self) -> &[u8; N] {
+            //     bytemuck::bytes_of(&self.0)
+            //         .as_array()
+            //         .expect("N must equal the inner type's size")
+            // }
         }
     };
 }

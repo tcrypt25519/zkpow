@@ -1,11 +1,10 @@
 use core::ops::Deref;
 
-use bytemuck::{Pod, Zeroable};
-
 /// A 256-bit unsigned integer stored as four little-endian u64 limbs.
 #[allow(non_camel_case_types)]
+#[wiretype::wiretype]
 #[repr(transparent)]
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Pod, Zeroable)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(
     not(target_os = "zkvm"),
     derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
@@ -165,7 +164,8 @@ impl TryFrom<&[u8]> for u256 {
 ///
 /// Block work is `2^256 / (target + 1)`, so a target must survive `+ 1` without wrapping. Storing
 /// it as `NonMaxU256` makes that a type guarantee instead of a runtime check.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[wiretype::wiretype]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(transparent)]
 pub struct NonMaxU256(u256);
 

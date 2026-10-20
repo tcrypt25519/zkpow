@@ -11,7 +11,6 @@ path = "src/lib.rs"
 zkpow-core = { workspace = true }
 zkpow-store = { workspace = true }
 zkpow-params = { workspace = true }
-test-support = { workspace = true }
 
 sha2 = { workspace = true }
 hex = { workspace = true }

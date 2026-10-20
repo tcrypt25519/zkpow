@@ -1,8 +1,6 @@
 #[cfg(not(target_endian = "little"))]
 compile_error!("zkpow wire types require a little-endian target");
 
-use bytemuck::{Pod, Zeroable};
-use derive_size::Size;
 use zkpow_mtp::{self as mtp, errors::NotMedian, timestamp_count, timestamp_slot, Cold, Warm, WINDOW_SIZE};
 use zkpow_params::Consensus;
 
@@ -11,11 +9,12 @@ use crate::{
     target_from_bits, ApplyError, BlockHash, BlockTimestamp, BlockWork, ChainWork, CompactTarget, HeaderInput, Target,
 };
 
-/// Complete authenticated validation state, serialized between recursive iterations.
-/// This is the state of the *last* block header processed.
-/// When appending blocks, this is the state of the parent block of the block being appended.
+/// The canonical chain state the prover attests to and each batch of transitions starts
+/// from. While a batch is being applied it still describes the last committed header; it
+/// reflects the updated chain only after the batch commits.
+#[wiretype::wiretype]
 #[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Pod, Zeroable, Size)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct State {
     pub chain_work:   ChainWork,
     pub genesis_hash: BlockHash,
@@ -32,12 +31,12 @@ pub struct State {
 
 impl State {
     /// Serialize to exactly [`State::SIZE`] bytes.
-    #[must_use]
-    pub fn to_bytes(&self) -> [u8; Self::SIZE] {
-        *bytemuck::bytes_of::<Self>(self)
-            .as_array()
-            .expect("bytes_of(State)'s len should equal State::SIZE")
-    }
+    // #[must_use]
+    // pub fn to_bytes(&self) -> [u8; Self::SIZE] {
+    //     *bytemuck::bytes_of::<Self>(self)
+    //         .as_array()
+    //         .expect("bytes_of(State)'s len should equal State::SIZE")
+    // }
 
     /// Called when the State reflects the final block of epoch N
     /// to compute the difficulty values that are active in epoch N+1.
@@ -263,20 +262,6 @@ impl State {
         self.height += 1;
         if self.height.is_multiple_of(C::PARAMS.epoch_length) {
             self.epoch_timestamp = timestamp;
-        }
-    }
-}
-
-impl Default for State {
-    fn default() -> Self {
-        Self {
-            block_hash:      BlockHash::default(),
-            genesis_hash:    BlockHash::default(),
-            current_nbits:   CompactTarget::default(),
-            height:          0,
-            chain_work:      ChainWork::default(),
-            epoch_timestamp: BlockTimestamp::default(),
-            timestamps:      [BlockTimestamp::default(); WINDOW_SIZE],
         }
     }
 }

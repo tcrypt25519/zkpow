@@ -1,12 +1,11 @@
 use core::num::NonZeroU8;
 
-use bytemuck::{Pod, Zeroable};
-
 use crate::{check_exact_len, ParseError, State};
 
 /// Digest of a program verifier key.
-#[repr(transparent)]
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Pod, Zeroable)]
+#[wiretype::wiretype]
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[repr(C)]
 #[cfg_attr(
     not(target_os = "zkvm"),
     derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
@@ -33,11 +32,6 @@ impl VerifierKeyDigest {
     #[must_use]
     pub const fn into_raw(self) -> [u32; 8] {
         self.0
-    }
-
-    #[must_use]
-    pub fn to_bytes(self) -> [u8; 32] {
-        bytemuck::cast::<VerifierKeyDigest, [u8; 32]>(self)
     }
 
     #[must_use]

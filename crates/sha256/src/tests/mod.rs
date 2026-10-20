@@ -69,8 +69,9 @@ fn subroutine_cycle_profiling_demonstration() {
     assert_public_values_hash([20u8; 185]);
 }
 
+#[wiretype::wiretype]
 #[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HeaderFixture {
     pub expected_hash:  [u8; 32],
     pub version:        u32,

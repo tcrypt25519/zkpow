@@ -1,6 +1,6 @@
-use wire_type::wire_type;
+use wiretype::wiretype;
 
-#[wire_type(foo)]
+#[wiretype(foo)]
 #[repr(C)]
 struct Pair {
     a: u32,
