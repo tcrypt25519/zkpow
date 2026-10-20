@@ -16,6 +16,7 @@ pub fn wiretype(attr: TokenStream, item: TokenStream) -> TokenStream {
     let name = &ast.ident;
     quote! {
         #[derive(::bytemuck::Pod, ::bytemuck::Zeroable, Clone, Copy, Debug, Default, Eq, PartialEq)]
+        #[repr(C)]
         #ast
 
         impl #name {

@@ -11,7 +11,6 @@ macro_rules! define_newtype {
     ) => {
         $(#[$meta])*
         #[derive(PartialOrd, Ord)]
-        #[repr(C)]
         #[wiretype]
         $vis struct $name($inner);
 

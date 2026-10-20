@@ -4,7 +4,6 @@ use crate::{check_exact_len, ParseError, State};
 
 /// Digest of a program verifier key.
 #[wiretype::wiretype]
-#[repr(C)]
 #[cfg_attr(
     not(target_os = "zkvm"),
     derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)

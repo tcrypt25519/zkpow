@@ -2,7 +2,6 @@ use crate::brand::{BlockHash, BlockTimestamp, CompactTarget};
 
 /// A Bitcoin block header
 #[wiretype::wiretype]
-#[repr(C)]
 pub struct Header {
     /// TODO: Make a newtype for Version.
     /// The maximally correct underlying type is a `NonZero<i32>`

@@ -3,7 +3,6 @@ use core::ops::Deref;
 /// A 256-bit unsigned integer stored as four little-endian u64 limbs.
 #[allow(non_camel_case_types)]
 #[wiretype::wiretype]
-#[repr(transparent)]
 #[cfg_attr(
     not(target_os = "zkvm"),
     derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
@@ -165,7 +164,6 @@ impl TryFrom<&[u8]> for u256 {
 /// it as `NonMaxU256` makes that a type guarantee instead of a runtime check.
 #[wiretype::wiretype]
 #[derive(PartialOrd, Ord)]
-#[repr(transparent)]
 pub struct NonMaxU256(u256);
 
 impl NonMaxU256 {
