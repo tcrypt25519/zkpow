@@ -1,4 +1,4 @@
-use wiretype::wiretype;
+use wiretype_macro::wiretype;
 
 #[wiretype(foo)]
 #[repr(C)]

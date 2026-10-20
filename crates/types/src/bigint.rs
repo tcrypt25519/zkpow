@@ -4,7 +4,6 @@ use core::ops::Deref;
 #[allow(non_camel_case_types)]
 #[wiretype::wiretype]
 #[repr(transparent)]
-#[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(
     not(target_os = "zkvm"),
     derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
@@ -165,7 +164,7 @@ impl TryFrom<&[u8]> for u256 {
 /// Block work is `2^256 / (target + 1)`, so a target must survive `+ 1` without wrapping. Storing
 /// it as `NonMaxU256` makes that a type guarantee instead of a runtime check.
 #[wiretype::wiretype]
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(PartialOrd, Ord)]
 #[repr(transparent)]
 pub struct NonMaxU256(u256);
 

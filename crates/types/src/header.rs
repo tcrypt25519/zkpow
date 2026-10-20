@@ -1,7 +1,6 @@
 use crate::brand::{BlockHash, BlockTimestamp, CompactTarget};
 
 /// A Bitcoin block header
-#[derive(Clone, Debug, PartialEq, Eq)]
 #[wiretype::wiretype]
 #[repr(C)]
 pub struct Header {

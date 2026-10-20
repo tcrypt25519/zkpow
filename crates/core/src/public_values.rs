@@ -4,7 +4,6 @@ use crate::{check_exact_len, ParseError, State};
 
 /// Digest of a program verifier key.
 #[wiretype::wiretype]
-#[derive(Debug, Clone, PartialEq, Eq)]
 #[repr(C)]
 #[cfg_attr(
     not(target_os = "zkvm"),
@@ -253,7 +252,7 @@ impl PublicValues {
         let state = bytemuck::pod_read_unaligned::<State>(&bytes[0..State::SIZE]);
         let mut verifier_key_bytes = [0; 32];
         verifier_key_bytes.copy_from_slice(&bytes[State::SIZE..State::SIZE + 32]);
-        let verifier_key = VerifierKeyDigest::from_bytes(verifier_key_bytes);
+        let verifier_key = VerifierKeyDigest::parse(verifier_key_bytes.as_slice());
         let return_code = ReturnCode::from(bytes[Self::SIZE - 1]);
         Ok(Self {
             state,

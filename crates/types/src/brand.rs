@@ -10,7 +10,7 @@ macro_rules! define_newtype {
         $vis:vis struct $name:ident($inner:ty);
     ) => {
         $(#[$meta])*
-        #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+        #[derive(PartialOrd, Ord)]
         #[repr(C)]
         #[wiretype]
         $vis struct $name($inner);
@@ -52,12 +52,6 @@ macro_rules! define_newtype {
                 &mut self.0
             }
         }
-
-        impl core::fmt::Debug for $name {
-            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-                self.0.fmt(f)
-            }
-        }
     };
 }
 
@@ -67,23 +61,8 @@ macro_rules! define_pod_newtype {
         $vis:vis struct $name:ident($inner:ty);
     ) => {
         define_newtype! {
-            // #[derive(Pod, Zeroable)]
             $(#[$meta])*
             $vis struct $name($inner);
-        }
-
-        impl $name {
-            /// Cast `bytes` to the inner type. Panics unless the length and alignment match exactly.
-            pub fn from_bytes(bytes: &[u8]) -> &$inner {
-                bytemuck::from_bytes::<$inner>(bytes)
-            }
-
-            // The value's bytes. `N` must equal the inner type's size or this panics.
-            // pub fn to_bytes<const N: usize>(&self) -> &[u8; N] {
-            //     bytemuck::bytes_of(&self.0)
-            //         .as_array()
-            //         .expect("N must equal the inner type's size")
-            // }
         }
     };
 }

@@ -14,7 +14,6 @@ use crate::{
 /// reflects the updated chain only after the batch commits.
 #[wiretype::wiretype]
 #[repr(C)]
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct State {
     pub chain_work:   ChainWork,
     pub genesis_hash: BlockHash,

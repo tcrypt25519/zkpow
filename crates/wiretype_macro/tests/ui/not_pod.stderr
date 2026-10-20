@@ -1,16 +1,16 @@
-error: Pod requires the type to be #[repr(C)] or #[repr(transparent)]
+serror: Pod requires the type to be #[repr(C)] or #[repr(transparent)]
  --> tests/ui/not_pod.rs:3:1
   |
 3 | #[wiretype]
-  | ^^^^^^^^^^^^
+  | ^^^^^^^^^^^
   |
   = note: this error originates in the derive macro `::bytemuck::Pod` (in Nightly builds, run with -Z macro-backtrace for more info)
 
-error[E0277]: the trait bound `NotReprC: Pod` is not satisfied
- --> tests/ui/not_pod.rs:5:8
+error[E0277]: the trait bound `NotReprC: NoUninit` is not satisfied
+ --> tests/ui/not_pod.rs:3:1
   |
-5 | struct NotReprC {
-  |        ^^^^^^^^ unsatisfied trait bound
+3 | #[wiretype]
+  | ^^^^^^^^^^^ unsatisfied trait bound
   |
 help: the trait `Pod` is not implemented for `NotReprC`
  --> tests/ui/not_pod.rs:5:1
@@ -19,16 +19,47 @@ help: the trait `Pod` is not implemented for `NotReprC`
   | ^^^^^^^^^^^^^^^
   = help: the following other types implement trait `Pod`:
             ()
-            BlockHash
-            BlockTimestamp
-            BlockWork
-            ChainWork
-            CompactTarget
-            Header
             ManuallyDrop<T>
+            Option<T>
+            PhantomData<T>
+            PhantomPinned
+            Wrapping<T>
+            [T; 0]
+            [T; 1024]
           and $N others
-note: required by a bound in `WireBytes`
- --> $WORKSPACE/crates/types/src/bytes.rs
+  = note: required for `NotReprC` to implement `NoUninit`
+note: required by a bound in `bytes_of`
+ --> $CARGO/bytemuck-$VERSION/src/lib.rs
   |
-  | pub trait WireBytes: Pod {
-  |                      ^^^ required by this bound in `WireBytes`
+  | pub fn bytes_of<T: NoUninit>(t: &T) -> &[u8] {
+  |                    ^^^^^^^^ required by this bound in `bytes_of`
+  = note: this error originates in the attribute macro `wiretype` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the trait bound `NotReprC: AnyBitPattern` is not satisfied
+ --> tests/ui/not_pod.rs:3:1
+  |
+3 | #[wiretype]
+  | ^^^^^^^^^^^ unsatisfied trait bound
+  |
+help: the trait `Pod` is not implemented for `NotReprC`
+ --> tests/ui/not_pod.rs:5:1
+  |
+5 | struct NotReprC {
+  | ^^^^^^^^^^^^^^^
+  = help: the following other types implement trait `Pod`:
+            ()
+            ManuallyDrop<T>
+            Option<T>
+            PhantomData<T>
+            PhantomPinned
+            Wrapping<T>
+            [T; 0]
+            [T; 1024]
+          and $N others
+  = note: required for `NotReprC` to implement `AnyBitPattern`
+note: required by a bound in `bytemuck::try_from_bytes`
+ --> $CARGO/bytemuck-$VERSION/src/lib.rs
+  |
+  | pub fn try_from_bytes<T: AnyBitPattern>(s: &[u8]) -> Result<&T, PodCastError> {
+  |                          ^^^^^^^^^^^^^ required by this bound in `try_from_bytes`
+  = note: this error originates in the attribute macro `wiretype` (in Nightly builds, run with -Z macro-backtrace for more info)

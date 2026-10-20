@@ -43,7 +43,7 @@ pub use input::{cast_slice, serialize_inputs};
 /// Hashing lives on [`Header`]; this wrapper exists only so tests can substitute a hash without
 /// mining one. It must stay in this crate: `cfg(test)` is per-compilation-unit, so a mock in
 /// `zkpow-types` would not be compiled when `zkpow-core`'s tests run.
-#[cfg(test)]
+#[cfg(any(test, not(target_os = "zkvm")))]
 fn hash_header(header: &Header) -> BlockHash {
     #[cfg(test)]
     if let Some(hash) = test_hash_mock::get() {

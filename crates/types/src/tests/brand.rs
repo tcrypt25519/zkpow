@@ -28,7 +28,7 @@ fn newtype_zero_copy_byte_conversions() {
     let bytes: &[u8; 32] = hash.to_bytes::<32>();
     assert_eq!(bytes, &original);
 
-    let borrowed = BlockHash::from_bytes(&original);
+    let borrowed = BlockHash::parse(&original);
     assert_eq!(borrowed, &original);
 }
 
