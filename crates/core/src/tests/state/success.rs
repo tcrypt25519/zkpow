@@ -35,7 +35,7 @@ fn state_and_header_input_layout_and_offsets() {
     };
     let bytes = state.to_bytes();
     assert_eq!(bytes.len(), 152);
-    let parsed: &State = bytemuck::parse(&bytes);
+    let parsed: &State = bytemuck::from_bytes(&bytes);
     assert_eq!(*parsed, state);
 }
 

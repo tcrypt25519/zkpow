@@ -9,6 +9,8 @@ path = "src/lib.rs"
 
 [features]
 profiling = []
+# Long real-header VM profile; excluded from ordinary test builds.
+epoch-profile = []
 # The reproducible fake header chain in `chain.rs`, for other crates' tests.
 test-support = []
 

@@ -20,7 +20,7 @@ fn header_and_new_header_round_trip_exact_wire_bytes() {
     header_bytes[72..76].copy_from_slice(&0x1d00_ffffu32.to_le_bytes());
     header_bytes[76..80].copy_from_slice(&0xbbcc_ddeeu32.to_le_bytes());
 
-    let header = Header::parse(&header_bytes).unwrap();
+    let header: &Header = bytemuck::from_bytes(&header_bytes);
     assert_eq!(header.version, 0x1122_3344);
     assert_eq!(header.prev_blockhash, BlockHash::new([0x55; 32]));
     assert_eq!(header.merkle_root, [0x66; 32]);
@@ -35,7 +35,7 @@ fn header_and_new_header_round_trip_exact_wire_bytes() {
     new_header_bytes[36..40].copy_from_slice(&0x7788_99aau32.to_le_bytes());
     new_header_bytes[40..44].copy_from_slice(&0xbbcc_ddeeu32.to_le_bytes());
 
-    let new_header = HeaderInput::parse(&new_header_bytes).unwrap();
+    let new_header = HeaderInput::from_bytes(&new_header_bytes).unwrap();
     assert_eq!(new_header.version, 0x1122_3344);
     assert_eq!(new_header.merkle_root, [0x66; 32]);
     assert_eq!(new_header.timestamp, BlockTimestamp::new(0x7788_99aa));
@@ -164,7 +164,7 @@ fn target_conversions_and_limb_rollover_edge_cases() {
 
     // 6. Consensus newtype formatting
     let timestamp = zkpow_types::BlockTimestamp::new(42);
-    assert_eq!(alloc::format!("{timestamp:?}"), "42");
+    assert_eq!(alloc::format!("{timestamp}"), "42");
 }
 
 #[zkvm_test]

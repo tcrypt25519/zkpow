@@ -69,7 +69,6 @@ fn subroutine_cycle_profiling_demonstration() {
     assert_public_values_hash([20u8; 185]);
 }
 
-#[wiretype::wiretype]
 #[repr(C)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HeaderFixture {
