@@ -10,8 +10,6 @@
 //!
 //! No loops, no branching on block count. The padding and block layout
 //! are hardcoded for each size.
-use core::mem::MaybeUninit;
-
 #[cfg(target_os = "zkvm")]
 use sp1_zkvm::syscalls::{syscall_sha256_compress, syscall_sha256_extend};
 
@@ -119,10 +117,11 @@ unsafe fn compress_schedule(w: *const u64, state: &mut [u64; 8]) {
 /// buffer, extend into the 64-word schedule, and compress into `state`.
 #[inline(always)]
 fn of_block(low16: &[u64; 16], state: &mut [u64; 8]) {
-    let mut w = MaybeUninit::<[u64; 64]>::uninit();
-    let ptr = w.as_mut_ptr().cast::<u64>();
-    // SAFETY: copy_nonoverlapping initializes w[0..16], compress_schedule derives
-    // w[16..64] and compresses into state.
+    // The precompile's memory records include the full schedule. Give every word
+    // a defined initial value before it writes w[16..64].
+    let mut w = [0u64; 64];
+    let ptr = w.as_mut_ptr();
+    // SAFETY: low16 contains the first 16 words; compress_schedule derives the rest.
     unsafe {
         core::ptr::copy_nonoverlapping(low16.as_ptr(), ptr, 16);
         compress_schedule(ptr, state);
@@ -137,9 +136,10 @@ fn of_block(low16: &[u64; 16], state: &mut [u64; 8]) {
 #[inline(always)]
 pub fn of_digest_words(prev_state: &[u64; 8]) -> [u64; 8] {
     let mut state = SHA256_IV;
-    let mut w = MaybeUninit::<[u64; 64]>::uninit();
-    let ptr = w.as_mut_ptr().cast::<u64>();
-    // SAFETY: words 0..16 are all written directly into w before compression.
+    // Initialize the whole schedule for the precompile's memory records.
+    let mut w = [0u64; 64];
+    let ptr = w.as_mut_ptr();
+    // SAFETY: words 0..16 are written before compression.
     unsafe {
         for i in 0..8 {
             ptr.add(i).write(prev_state[i] & 0xFFFF_FFFF);
@@ -203,9 +203,9 @@ pub fn of_public_values(state_bytes: &[u8], verifier_key: &[u8], return_code: u8
 /// with previous blockhash in state words.
 #[inline(always)]
 fn header_first_block_words(version: u32, prev_blockhash: &[u64; 8], merkle_root: &[u8; 32], state: &mut [u64; 8]) {
-    let mut w = MaybeUninit::<[u64; 64]>::uninit();
-    let ptr = w.as_mut_ptr().cast::<u64>();
-    // SAFETY: words 0..16 are all written directly into w before compression.
+    let mut w = [0u64; 64];
+    let ptr = w.as_mut_ptr();
+    // SAFETY: words 0..16 are written before compression.
     unsafe {
         ptr.add(0).write(word_from_le_u32(version));
         for i in 0..8 {
@@ -222,9 +222,9 @@ fn header_first_block_words(version: u32, prev_blockhash: &[u64; 8], merkle_root
 /// with previous blockhash in a 32-byte array.
 #[inline(always)]
 fn header_first_block(version: u32, prev_blockhash: &[u8; 32], merkle_root: &[u8; 32], state: &mut [u64; 8]) {
-    let mut w = MaybeUninit::<[u64; 64]>::uninit();
-    let ptr = w.as_mut_ptr().cast::<u64>();
-    // SAFETY: words 0..16 are all written directly into w before compression.
+    let mut w = [0u64; 64];
+    let ptr = w.as_mut_ptr();
+    // SAFETY: words 0..16 are written before compression.
     unsafe {
         ptr.add(0).write(word_from_le_u32(version));
         for i in 0..8 {
@@ -240,9 +240,9 @@ fn header_first_block(version: u32, prev_blockhash: &[u8; 32], merkle_root: &[u8
 /// Build the second SHA-256 block words for a Bitcoin header directly in the schedule buffer.
 #[inline(always)]
 fn header_second_block(merkle_root: &[u8; 32], timestamp: u32, compact_target: u32, nonce: u32, state: &mut [u64; 8]) {
-    let mut w = MaybeUninit::<[u64; 64]>::uninit();
-    let ptr = w.as_mut_ptr().cast::<u64>();
-    // SAFETY: words 0..16 are all written directly into w before compression.
+    let mut w = [0u64; 64];
+    let ptr = w.as_mut_ptr();
+    // SAFETY: words 0..16 are written before compression.
     unsafe {
         ptr.add(0).write(word_from_bytes(merkle_root, 7));
         ptr.add(1).write(word_from_le_u32(timestamp));
