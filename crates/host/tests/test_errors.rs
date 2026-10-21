@@ -291,7 +291,7 @@ async fn test_pv_public_values_format() -> Result<(), String> {
 }
 
 #[tokio::test]
-#[ignore = "generates full SP1 compressed proof (~30s)"]
+#[ignore = "generates two full SP1 compressed proofs"]
 async fn test_recursive_chain_success() -> Result<(), String> {
     let client = ProverClient::from_env().await;
     let pk = client.setup(ELF).await.map_err(|e| format!("setup: {}", e))?;
@@ -314,6 +314,9 @@ async fn test_recursive_chain_success() -> Result<(), String> {
         .compressed()
         .await
         .map_err(|e| format!("Run 1 proof generation failed: {}", e))?;
+    client
+        .verify(&proof1, vk, None)
+        .map_err(|e| format!("Run 1 proof verification failed: {}", e))?;
     let pv1_bytes = proof1.public_values.to_vec();
 
     let state1 = expect_success(&pv1_bytes)?;
@@ -337,10 +340,17 @@ async fn test_recursive_chain_success() -> Result<(), String> {
     };
     stdin2.write_proof(inner_proof.as_ref().clone(), vk.vk.clone());
 
-    let (pv2, _) = client
-        .execute(ELF, stdin2)
+    let proof2 = client
+        .prove(&pk, stdin2)
+        .compressed()
         .await
-        .map_err(|e| format!("Run 2 execution failed: {}", e))?;
-    let pv2 = pv2.to_vec();
-    expect_success(&pv2).map(|_| ())
+        .map_err(|e| format!("Run 2 proof generation failed: {}", e))?;
+    client
+        .verify(&proof2, vk, None)
+        .map_err(|e| format!("Run 2 proof verification failed: {}", e))?;
+    let state2 = expect_success(&proof2.public_values.to_vec())?;
+    if state2.height != 20 {
+        return Err(format!("Run 2: expected height 20, got {}", state2.height));
+    }
+    Ok(())
 }

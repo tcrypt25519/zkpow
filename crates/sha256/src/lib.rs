@@ -88,10 +88,7 @@ unsafe fn compress_schedule(w: *mut u64, state: &mut [u64; 8]) {
 #[allow(deprecated)]
 #[inline(always)]
 unsafe fn compress_schedule(w: *const u64, state: &mut [u64; 8]) {
-    use sha2::{
-        compress256,
-        digest::generic_array::{GenericArray, typenum::U64},
-    };
+    use sha2::block_api::compress256;
 
     let mut block = [0u8; 64];
     for i in 0..16 {
@@ -106,7 +103,7 @@ unsafe fn compress_schedule(w: *const u64, state: &mut [u64; 8]) {
     for i in 0..8 {
         state_u32[i] = state[i] as u32;
     }
-    let block = GenericArray::<u8, U64>::clone_from_slice(&block);
+
     compress256(&mut state_u32, &[block]);
     for i in 0..8 {
         state[i] = state_u32[i] as u64;

@@ -11,10 +11,10 @@ path = "src/lib.rs"
 host = []
 
 [dependencies]
-sha2 = { workspace = true, features = ["compress"] }
+sha2 = { workspace = true }
 sp1-zkvm = { workspace = true }
 
 [dev-dependencies]
 bytemuck = { workspace = true }
 zkvm-test = { workspace = true }
-
+wiretype = { workspace = true }

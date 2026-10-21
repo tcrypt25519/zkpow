@@ -45,35 +45,35 @@ zkvm-test = { path = "../zkvm-test/crates/zkvm-test" }
 ##
 ## SP1
 ##
-sp1-build = { version = "6.8.1" }
-sp1-derive = { version = "6.8.1" }
-sp1-lib = { version = "6.8.1" }
-sp1-sdk = { version = "6.8.1" }
-sp1-zkvm = { version = "6.8.1", default-features = false, features = [
+sp1-build = { version = "6.9.0" }
+sp1-derive = { version = "6.9.0" }
+sp1-lib = { version = "6.9.0" }
+sp1-sdk = { version = "6.9.0" }
+sp1-zkvm = { version = "6.9.0", default-features = false, features = [
   "lib",
   "verify",
 ] }
-sp1-prover = { version = "6.8.1", default-features = false, features = [
+sp1-prover = { version = "6.9.0", default-features = false, features = [
   "bigint-rug",
   "debug",
 ] }
-sp1-core-executor = { version = "6.8.1" }
-sp1-core-executor-runner = { version = "6.8.1" }
+sp1-core-executor = { version = "6.9.0" }
+sp1-core-executor-runner = { version = "6.9.0" }
 sp1-jit = { version = "6.8.1" }
 
-sha2 = { version = "0.10.8" }
+sha2 = { version = "0.11.1" }
 bitcoin = { version = "0.32", features = ["serde"] }
 
 tracing = { version = "0.1.44" }
 tracing-subscriber = { version = "0.3.23" }
 
-tokio = { version = "1.53.1", features = ["full"] }
+tokio = { version = "1.54.0", features = ["full"] }
 hex = "0.4.3"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 num-bigint = "0.5.1"
 clap = { version = "4.6.6", features = ["derive"] }
-thiserror = "2.0.20"
-rand = "0.10.2"
+thiserror = "2.0.21"
+rand = "0.10.3"
 
 bytemuck = { version = "1.25.2", features = ["derive"] }
 rkyv = { version = "0.8.18", default-features = false, features = [
@@ -98,27 +98,24 @@ serde = { version = "1", default-features = false, features = [
   "alloc",
 ] }
 
-# const-gen = { version = "1.6.9", default-features = false, features = [
-#   "derive",
-# ] }
-
 [patch.crates-io]
 # Route sha2 through SP1's accelerated fork so the sha256 compress runs on the precompile
 # instead of the soft path. Tag matches the sibling crypto patches SP1 6.x pins.
-sha2 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", tag = "patch-sha2-0.10.9-sp1-6.2.0", package = "sha2" }
+sha2 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", tag = "patch-sha2-0.11.0-sp1-6.2.0", package = "sha2" }
+zkvm-test = { path = "../zkvm-test/crates/zkvm-test" }
+zkvm-test-macros = { path = "../zkvm-test/crates/zkvm-test-macros" }
+
 # sp1-zkvm = { path = "../../succinctlabs/sp1/crates/zkvm/entrypoint" }
 # sp1-sdk = { path = "../../succinctlabs/sp1/crates/sdk" }
 # sp1-prover = { path = "../../succinctlabs/sp1/crates/prover" }
 # sp1-core-executor = { path = "../../succinctlabs/sp1/crates/core/executor" }
 # sp1-core-machine = { path = "../../succinctlabs/sp1/crates/core/machine" }
-# sp1-build = { path = "../../succinctlabs/sp1/crates/build" }
+# sp1-build = { path = "../../succinctlabs/sp1/crates/build" }cxss
 # sp1-lib = { path = "../../succinctlabs/sp1/crates/zkvm/lib" }
 # sp1-primitives = { path = "../../succinctlabs/sp1/crates/primitives" }
 # sp1-jit = { path = "../../succinctlabs/sp1/crates/core/jit" }
 # sp1-core-executor-runner = { path = "../../succinctlabs/sp1/crates/core/runner" }
 # sp1-core-executor-runner-binary = { path = "../../succinctlabs/sp1/crates/core/runner-binary" }
-zkvm-test = { path = "../zkvm-test/crates/zkvm-test" }
-zkvm-test-macros = { path = "../zkvm-test/crates/zkvm-test-macros" }
 
 [profile.release]
 incremental = false

@@ -16,25 +16,25 @@ path = "src/bin/sp1-stress.rs"
 path = "src/lib.rs"
 
 [dependencies]
+sha2 = { workspace = true }
+
 zkpow-core = { workspace = true }
 zkpow-controller = { workspace = true }
 zkpow-params = { workspace = true }
 zkpow-worker = { workspace = true }
-console-subscriber = "0.4.1"
+console-subscriber = "0.5.0"
 sp1-sdk = { workspace = true }
 sp1-prover = { workspace = true }
 postcard = { workspace = true, features = ["alloc"] }
 hex = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
-tracing-subscriber = { version = "0.3", features = [
+tracing-subscriber = { version = "0.3.23", features = [
   "env-filter",
   "fmt",
   "json",
 ] }
 tracing-appender = "0.2"
-sha2 = { workspace = true, features = ["std"] }
-
 [build-dependencies]
 sp1-build = { workspace = true }
 
