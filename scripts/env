@@ -1,40 +1,38 @@
-#!/usr/bin/env sh
+#!/usr/bin/env zsh
 
 # Set root directory if not already set
-if [ -z "${ZKPOW_ROOT}" ]; then
-  ZKPOW_ROOT="$(cd "$(dirname "$0")/.." >/dev/null 2>&1 && pwd)"
-fi
+ZKPOW_ROOT="${ZKPOW_ROOT:-${0:A:h:h}}"
 export ZKPOW_ROOT
 
-# Load environment variables from .env file if it exists
-if [ -f "${ENV_FILE:=$ZKPOW_ROOT/.env}" ]; then
-  # shellcheck source=../.env
-  . "$ENV_FILE"
+# Load environment variables from .env file if it exists and doesn't point to this file
+OVERRIDE_ENV_FILE="${OVERRIDE_ENV_FILE:-$ZKPOW_ROOT/.env}"
+if [[ -n "${OVERRIDE_ENV_FILE}" ]] && [[ "${OVERRIDE_ENV_FILE}" != "${0:A}" ]] && [[ -f "${OVERRIDE_ENV_FILE}" ]]; then
+  source "$OVERRIDE_ENV_FILE"
 fi
 
 # Set batch parameters from command line arguments if present, falling back to
 # pre-set env vars, and then default value if nothing else.
-if [ -n "$1" ]; then
-  ZKPOW_BATCH_SIZE="${1:-}"
-
-  if [ -n "$2" ]; then
-    ZKPOW_BATCH_COUNT="${2:-}"
-  fi
-fi
-export ZKPOW_BATCH_SIZE="${ZKPOW_BATCH_SIZE:-2016}"
-export ZKPOW_BATCH_COUNT="${ZKPOW_BATCH_COUNT:-1000}"
+export ZKPOW_BATCH_SIZE="${ZKPOW_BATCH_SIZE:-${1:-2016}}"
+export ZKPOW_BATCH_COUNT="${ZKPOW_BATCH_COUNT:-${2:-500}}"
 
 # Build
 export ZKPOW_BUILD="${ZKPOW_BUILD:-true}"
+export ZKPOW_BUILD_PROFILE="${ZKPOW_BUILD_PROFILE:-release}"
+
 # Inputs and output
-TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
-export ZKPOW_LOG_DIR="${ZKPOW_LOG_DIR:-$ZKPOW_ROOT/logs}"
-export ZKPOW_OUT_DIR="${ZKPOW_OUT_DIR:-$ZKPOW_ROOT/profiling/runs/$TIMESTAMP}"
+timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+export ZKPOW_RUN_ID="${ZKPOW_RUN_ID:-chain-${timestamp}}"
 export ZKPOW_DB_PATH="${ZKPOW_DB_PATH:-$ZKPOW_ROOT/headers.db}"
+
+export ZKPOW_OUT_DIR="${ZKPOW_OUT_DIR:-$ZKPOW_ROOT/profiling/runs/${timestamp}}"
+export ZKPOW_LOG_DIR="${ZKPOW_LOG_DIR:-$ZKPOW_OUT_DIR/logs}"
+# Stable root, not a per-invocation one: the run ledger in the header database
+# remembers each run id's proofs, and LocalArtifactStore keys them by run id.
+export ZKPOW_PROOF_STORE_DIR="${ZKPOW_PROOF_STORE_DIR:-$ZKPOW_ROOT/proof_store}"
 
 # Rust
 export RUST_LOG="${RUST_LOG:-info}"
-export RUST_LOGGER=flat
+export RUST_LOGGER="${RUST_LOGGER:-flat}"
 export RUST_BACKTRACE="${RUST_BACKTRACE:-full}"
 
 # SP1
