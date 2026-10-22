@@ -1,6 +1,9 @@
+use crate::check_exact_len;
+use crate::ParseError;
+use crate::State;
+use core::fmt::{Debug, Display};
+//use core::mem::SizedTypeProperties;
 use core::num::NonZeroU8;
-
-use crate::{check_exact_len, ParseError, State};
 
 /// Digest of a program verifier key.
 #[wiretype::wiretype]
@@ -56,13 +59,9 @@ impl From<VerifierKeyDigest> for [u32; 8] {
 
 /// The non-zero exit status the guest commits when validation fails.
 ///
-/// This is not an error type. It is the wire encoding of a failure, laid out like a Unix exit
-/// status: `0` is success, so an `ErrorCode` is always non-zero. It carries a byte and nothing
-/// else, which makes it useless for diagnosing a failure and means it belongs only at the point
-/// where the guest commits its public values.
-///
-/// Errors are ordinary enums that carry the context of what went wrong;
-/// [`ReportableError`](crate::ReportableError) is how one is reduced to the byte committed here.
+/// Wire-encoded like a Unix exit status: `0` is success, so an `ErrorCode` is always
+/// non-zero. only provides the untyped integer code; [`ReportableError`](crate::ReportableError)
+/// maps codes to typed values with contextual information.
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ErrorCode(NonZeroU8);
@@ -193,7 +192,7 @@ impl core::fmt::Display for ReturnCode {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self.0 {
             None => f.write_str("Success"),
-            Some(code) => code.fmt(f),
+            Some(code) => Display::fmt(&code, f),
         }
     }
 }
@@ -209,11 +208,12 @@ impl core::fmt::Display for ReturnCode {
 ///
 /// Serialized manually to avoid struct padding; use [`PublicValues::to_bytes`]
 /// and [`PublicValues::parse`] rather than transmuting.
+//#[wiretype::wiretype]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PublicValues {
-    pub state:        State,
+    pub state: State,
     pub verifier_key: VerifierKeyDigest,
-    pub return_code:  ReturnCode,
+    pub return_code: ReturnCode,
 }
 
 impl PublicValues {
@@ -226,9 +226,10 @@ impl PublicValues {
             state,
             verifier_key,
             return_code,
+            //_pad1: 0,
+            //_pad2: 0,
         }
     }
-
     /// Serialize to exactly [`PublicValues::SIZE`] bytes (no padding).
     #[must_use]
     pub fn to_bytes(&self) -> [u8; Self::SIZE] {
@@ -251,7 +252,7 @@ impl PublicValues {
         let state = bytemuck::pod_read_unaligned::<State>(&bytes[0..State::SIZE]);
         let mut verifier_key_bytes = [0; 32];
         verifier_key_bytes.copy_from_slice(&bytes[State::SIZE..State::SIZE + 32]);
-        let verifier_key = VerifierKeyDigest::parse(verifier_key_bytes.as_slice());
+        let verifier_key = VerifierKeyDigest::parse(verifier_key_bytes.as_slice())?.clone();
         let return_code = ReturnCode::from(bytes[Self::SIZE - 1]);
         Ok(Self {
             state,
@@ -259,7 +260,6 @@ impl PublicValues {
             return_code,
         })
     }
-
     /// Return `true` if the public values report success.
     #[must_use]
     pub fn is_success(&self) -> bool {

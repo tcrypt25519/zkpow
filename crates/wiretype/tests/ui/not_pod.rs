@@ -1,4 +1,4 @@
-use wiretype_macro::wiretype;
+use wiretype::wiretype;
 
 #[wiretype]
 #[derive(Clone)]

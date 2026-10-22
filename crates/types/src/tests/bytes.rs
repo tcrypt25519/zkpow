@@ -1,6 +1,6 @@
 use zkvm_test::test;
 
-use crate::{u256, BlockHash, BlockTimestamp, BlockWork, ChainWork, CompactTarget, Header, Target};
+use crate::{u256, BlockHash, BlockTimestamp, BlockWork, ChainWork, CompactTarget, Header};
 
 #[test]
 fn layout_sizes_and_alignments() {

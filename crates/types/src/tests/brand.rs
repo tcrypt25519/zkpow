@@ -25,11 +25,11 @@ fn newtype_zero_copy_byte_conversions() {
     ];
     let hash = BlockHash::new(original);
 
-    let bytes: &[u8; 32] = hash.to_bytes::<32>();
-    assert_eq!(bytes, &original);
+    let bytes: [u8; 32] = hash.to_bytes();
+    assert_eq!(bytes, original);
 
-    let borrowed = BlockHash::parse(&original);
-    assert_eq!(borrowed, &original);
+    let borrowed = *BlockHash::parse(&original).expect("Shouldn't fail to parse");
+    assert_eq!(*borrowed.as_inner(), original);
 }
 
 #[test]

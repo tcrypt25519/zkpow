@@ -19,6 +19,7 @@ pub use zkpow_mtp::{
     requires_median_hint, timestamp_count, timestamp_slot, WINDOW_LARGE_HALF_SIZE, WINDOW_MAX_INDEX, WINDOW_SIZE,
     WINDOW_SMALL_HALF_SIZE,
 };
+
 use zkpow_params::Consensus;
 pub use zkpow_types::{
     u256, BlockHash, BlockTimestamp, BlockWork, ChainWork, CompactTarget, Header, NonMaxU256, Target,

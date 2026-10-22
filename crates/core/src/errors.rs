@@ -1,4 +1,5 @@
 use crate::{BlockHash, BlockTimestamp, CompactTarget, ErrorCode, ReturnCode};
+use bytemuck::PodCastError;
 
 /// An error that can end the guest program. Transforms typed errors into [`ErrorCode`]s.
 pub trait ReportableError {
@@ -25,6 +26,14 @@ pub enum ParseError {
         needed: usize,
         actual: usize,
     },
+    #[error("error")]
+    PodCastError(bytemuck::PodCastError),
+}
+
+impl From<::bytemuck::PodCastError> for ParseError {
+    fn from(value: PodCastError) -> Self {
+        ParseError::PodCastError(value)
+    }
 }
 
 /// Applying headers to a [`State`](crate::State).
@@ -36,15 +45,15 @@ pub enum ParseError {
 pub enum ApplyError {
     #[error("header {height} timestamp {timestamp} is not greater than the median {median}")]
     TimestampTooOld {
-        height:    u32,
+        height: u32,
         timestamp: BlockTimestamp,
-        median:    BlockTimestamp,
+        median: BlockTimestamp,
     },
     #[error("header {height} hash {hash} does not meet the target for nbits {:#010x}", nbits.as_inner())]
     PowInsufficient {
         height: u32,
-        hash:   BlockHash,
-        nbits:  CompactTarget,
+        hash: BlockHash,
+        nbits: CompactTarget,
     },
     #[error("a cold start needs at least {required} headers, got {actual}")]
     InsufficientColdHeaders { required: usize, actual: usize },
@@ -54,7 +63,7 @@ impl From<zkpow_mtp::errors::InsufficientColdHeaders> for ApplyError {
     fn from(error: zkpow_mtp::errors::InsufficientColdHeaders) -> Self {
         Self::InsufficientColdHeaders {
             required: error.required(),
-            actual:   error.actual(),
+            actual: error.actual(),
         }
     }
 }

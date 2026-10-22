@@ -14,17 +14,17 @@ use crate::{
 /// reflects the updated chain only after the batch commits.
 #[wiretype::wiretype]
 pub struct State {
-    pub chain_work:   ChainWork,
+    pub chain_work: ChainWork,
     pub genesis_hash: BlockHash,
-    pub block_hash:   BlockHash,
-    pub height:       u32,
+    pub block_hash: BlockHash,
+    pub height: u32,
 
     /// The compact target in force for the current difficulty epoch.
-    pub current_nbits:   CompactTarget,
+    pub current_nbits: CompactTarget,
     /// Timestamp of the current epoch's first block; the next retarget measures from here.
     pub epoch_timestamp: BlockTimestamp,
     /// The MTP window, slot `height % WINDOW_SIZE`.
-    pub timestamps:      [BlockTimestamp; WINDOW_SIZE],
+    pub timestamps: [BlockTimestamp; WINDOW_SIZE],
 }
 
 impl State {
@@ -224,9 +224,9 @@ impl State {
         // Check that the incoming timestamp is > `known_median`
         if new_header.timestamp <= known_median {
             return Err(ApplyError::TimestampTooOld {
-                height:    self.height + 1,
+                height: self.height + 1,
                 timestamp: new_header.timestamp,
-                median:    known_median,
+                median: known_median,
             });
         }
 
@@ -257,11 +257,11 @@ impl State {
 }
 
 struct EpochManager<'a> {
-    state:             &'a mut State,
-    start_height:      u32,
+    state: &'a mut State,
+    start_height: u32,
     active_block_work: BlockWork,
-    active_nbits:      CompactTarget,
-    active_target:     Target,
+    active_nbits: CompactTarget,
+    active_target: Target,
 }
 
 impl<'a> EpochManager<'a> {

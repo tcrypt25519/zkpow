@@ -10,13 +10,11 @@ members = [
   "crates/sync-headers",
   "crates/cli",
   "crates/derive-size",
-  "crates/wiretype",
   "crates/params",
   "crates/types",
   "crates/sha256_const",
   "crates/worker",
   "crates/wiretype",
-  "crates/wiretype_macro",
 ]
 exclude = ["sp1"]
 resolver = "3"
@@ -38,7 +36,6 @@ zkpow-mtp = { path = "crates/mtp" }
 
 derive-size = { path = "crates/derive-size" }
 wiretype = { path = "crates/wiretype" }
-wiretype_macro = { path = "crates/wiretype_macro" }
 sha256_const = { path = "crates/sha256_const" }
 zkvm-test = { path = "../zkvm-test/crates/zkvm-test" }
 
@@ -61,7 +58,7 @@ sp1-core-executor = { version = "6.9.0" }
 sp1-core-executor-runner = { version = "6.9.0" }
 sp1-jit = { version = "6.8.1" }
 
-sha2 = { version = "0.11.1" }
+sha2 = { version = "0.11.0" }
 bitcoin = { version = "0.32", features = ["serde"] }
 
 tracing = { version = "0.1.44" }

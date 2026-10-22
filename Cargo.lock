@@ -6389,17 +6389,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
- "wiretype_macro",
-]
-
-[[package]]
-name = "wiretype_macro"
-version = "0.1.0"
-dependencies = [
- "bytemuck",
- "proc-macro2",
- "quote",
- "syn 2.0.119",
  "trybuild",
 ]
 
