@@ -1,9 +1,3 @@
-//! Controller-owned local artifact storage.
-//!
-//! The controller decides where proof artifacts live and hands the host a
-//! filesystem path to write to (and read from, when resuming). Objects are
-//! laid out per run: `<prefix>/<run_id>/<object>`.
-
 use std::path::PathBuf;
 
 use crate::BoxError;
@@ -17,8 +11,6 @@ pub trait ArtifactStore: Send + Sync {
     fn fetch(&self, run_id: &str, object: &str) -> Result<Vec<u8>, BoxError>;
 }
 
-/// Filesystem-backed store. Host and controller share a filesystem — this is
-/// always true in this single-process local setup.
 pub struct LocalArtifactStore {
     root: PathBuf,
 }
@@ -41,7 +33,11 @@ impl ArtifactStore for LocalArtifactStore {
     }
 
     fn get_target(&self, run_id: &str, object: &str) -> Result<String, BoxError> {
-        Ok(self.object_path(run_id, object).to_string_lossy().into_owned())
+        let path = self.object_path(run_id, object);
+        if !path.exists() {
+            return Err(format!("run {run_id} has no {object} under {}", self.root.display()).into());
+        }
+        Ok(path.to_string_lossy().into_owned())
     }
 
     fn fetch(&self, run_id: &str, object: &str) -> Result<Vec<u8>, BoxError> {

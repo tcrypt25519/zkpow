@@ -17,11 +17,6 @@ use crate::{
     verify::ProofVerifier,
 };
 
-/// A wall-clock nonce alone can collide between tests that construct a
-/// `Harness`/temp path microseconds apart under parallel test execution
-/// (observed: one test's `Harness::drop` removing another's still-live temp
-/// dir). Mixed into every nonce below to guarantee uniqueness regardless of
-/// clock resolution.
 static NEXT_TEST_ID: AtomicU64 = AtomicU64::new(0);
 
 fn unique_nonce() -> u128 {
@@ -157,4 +152,62 @@ async fn only_one_batch_may_be_outstanding() {
 
     let second = harness.runtime.pull_batch(&run).await.unwrap();
     assert_eq!(second.first_new_height, first.end_height + 1);
+}
+
+#[tokio::test]
+async fn resuming_into_a_different_artifact_root_names_the_missing_proof() {
+    let harness = Harness::new();
+    let run = harness.run("moved-store");
+    let batch = harness.runtime.pull_batch(&run).await.unwrap();
+    harness.upload_expected(&run, &batch);
+    harness.runtime.complete(&run).await.unwrap();
+
+    let elsewhere = std::env::temp_dir().join(format!("zkpow-runtime-elsewhere-{}", unique_nonce()));
+    let moved = ControllerRuntime::<Mainnet>::new(
+        HeaderStore::open(db_path()).unwrap(),
+        Box::new(LocalArtifactStore::new(&elsewhere)),
+        Box::new(BytesArePublicValues(VerifierKeyDigest::from_raw([7; 8]))),
+        ControllerConfig::new(harness.genesis_hash(), 2),
+    );
+    let error = moved.pull_batch(&run).await.unwrap_err();
+    assert_eq!(error.kind, crate::protocol::ErrorKind::Internal);
+    assert!(error.message.contains(&run), "error should name the run: {}", error.message);
+    assert!(
+        error.message.contains("proof_2.bin"),
+        "error should name the proof: {}",
+        error.message
+    );
+
+    std::fs::remove_dir_all(&elsewhere).ok();
+}
+
+#[tokio::test]
+async fn an_empty_header_database_is_not_reported_as_a_run_problem() {
+    let nonce = unique_nonce();
+    let root = std::env::temp_dir().join(format!("zkpow-runtime-emptydb-{nonce}"));
+    std::fs::create_dir_all(&root).unwrap();
+    let genesis_hash = {
+        let store = HeaderStore::open(db_path()).unwrap();
+        BlockHash::from(&store.load_header_record(0).header)
+    };
+    let empty = ControllerRuntime::<Mainnet>::new(
+        HeaderStore::open(root.join("empty.db")).unwrap(),
+        Box::new(LocalArtifactStore::new(&root)),
+        Box::new(BytesArePublicValues(VerifierKeyDigest::from_raw([7; 8]))),
+        ControllerConfig::new(genesis_hash, 2),
+    );
+
+    let error = empty.pull_batch("any-run").await.unwrap_err();
+    assert!(
+        error.message.contains("header database"),
+        "error should name the database: {}",
+        error.message
+    );
+    assert!(
+        !error.message.contains("any-run"),
+        "error should not blame the run id: {}",
+        error.message
+    );
+
+    std::fs::remove_dir_all(&root).ok();
 }

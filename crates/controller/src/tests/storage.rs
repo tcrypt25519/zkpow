@@ -34,3 +34,15 @@ fn local_store_segments_by_run_id() {
 
     std::fs::remove_dir_all(&root).ok();
 }
+
+#[test]
+fn local_store_refuses_a_target_it_never_stored() {
+    let root = temp_root("missing");
+    let store = LocalArtifactStore::new(&root);
+
+    let error = store.get_target("run-c", "proof_2016.bin").unwrap_err().to_string();
+    assert!(error.contains("run-c"), "error should name the run: {error}");
+    assert!(error.contains("proof_2016.bin"), "error should name the object: {error}");
+
+    std::fs::remove_dir_all(&root).ok();
+}

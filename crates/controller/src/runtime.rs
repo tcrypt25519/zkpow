@@ -319,6 +319,17 @@ impl<C: Consensus> ControllerCore<C> {
         if self.runs.contains_key(run_id) {
             return Ok(());
         }
+
+        // Check that the header database is not empty before creating a new run.
+        let header_count = self
+            .store
+            .header_count()
+            .map_err(|err| ControllerError::internal(format!("failed to read header count: {err}")))?;
+        if header_count == 0 {
+            return Err(ControllerError::internal(
+                "header database is empty; sync headers before proving".to_string(),
+            ));
+        }
         let record = self
             .store
             .load_run(run_id)
@@ -339,10 +350,6 @@ impl<C: Consensus> ControllerCore<C> {
             Some(record) => record,
             None => self.create_run_record(run_id)?,
         };
-        let header_count = self
-            .store
-            .header_count()
-            .map_err(|err| ControllerError::internal(format!("failed to read header count for run {run_id}: {err}")))?;
         if record.verified_height as u64 >= header_count {
             return Err(ControllerError::internal(format!(
                 "run {run_id} has verified progress up to height {}, but the database only contains {} headers",
