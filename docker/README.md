@@ -7,18 +7,18 @@ which runs `zkpow-host` (restarts on crash) and a 30s `aws s3 sync` loop of
 
 ## Build
 
-Requires buildx for cross-platform builds. `zkvm-test` is a dev-dependency
-(zkVM unit tests only) — the builder stubs its manifests, no sibling repo or
-build context needed.
+Requires buildx. The workspace path-deps on the sibling repo `../zkvm-test`,
+passed as a named build context.
 
 ```bash
 # production (amd64 + CUDA)
 docker buildx build --platform linux/amd64 -f docker/Dockerfile.vast-cuda \
-  -t <registry>/zkpow-prover:latest --push .
+  --build-context zkvm-test=../zkvm-test -t <registry>/zkpow-prover:latest --push .
 
 # local test on arm64 Mac (no CUDA)
 docker buildx build --platform linux/arm64 -f docker/Dockerfile.vast-cuda \
-  --build-arg ZKPOW_FEATURES="" -t zkpow-prover:test --load .
+  --build-context zkvm-test=../zkvm-test --build-arg ZKPOW_FEATURES="" \
+  -t zkpow-prover:test --load .
 ```
 
 ## Deploy (Vast.ai)
