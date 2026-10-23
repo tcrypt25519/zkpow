@@ -68,3 +68,23 @@ $(CARGO_LOCK): $(CARGO_TOML) $(CRATE_CARGOS)
 
 var-%:
 	@echo "$* = ${$*}"
+
+##
+## Docker image
+##
+
+DOCKER_IMAGE    ?= zkpow-prover:latest
+DOCKER_PLATFORM ?= linux/amd64
+DOCKER_FEATURES ?= cuda
+DOCKER_STAMP    := .docker-image.stamp
+DOCKER_DEPS     := docker/Dockerfile.vast-cuda docker/entrypoint.sh docker/supervisord.conf \
+                   $(CARGO_TOML) $(CARGO_LOCK) \
+                   $(shell find $(CRATES_DIR) -type f \( -name '*.rs' -o -name 'Cargo.toml' \))
+
+.PHONY: docker
+docker: $(DOCKER_STAMP)
+
+$(DOCKER_STAMP): $(DOCKER_DEPS)
+	docker buildx build --platform $(DOCKER_PLATFORM) -f docker/Dockerfile.vast-cuda \
+		--build-arg ZKPOW_FEATURES="$(DOCKER_FEATURES)" -t $(DOCKER_IMAGE) --load .
+	touch $@

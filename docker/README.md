@@ -7,18 +7,16 @@ which runs `zkpow-host` (restarts on crash) and a 30s `aws s3 sync` loop of
 
 ## Build
 
-Requires buildx. The workspace path-deps on the sibling repo `../zkvm-test`,
-passed as a named build context.
+Requires buildx. `make docker` builds the image and records a git-ignored
+`.docker-image.stamp`; it rebuilds only when the Dockerfile, entrypoint,
+supervisord config, manifests, or crate sources change.
 
 ```bash
 # production (amd64 + CUDA)
-docker buildx build --platform linux/amd64 -f docker/Dockerfile.vast-cuda \
-  --build-context zkvm-test=../zkvm-test -t <registry>/zkpow-prover:latest --push .
+make docker
 
 # local test on arm64 Mac (no CUDA)
-docker buildx build --platform linux/arm64 -f docker/Dockerfile.vast-cuda \
-  --build-context zkvm-test=../zkvm-test --build-arg ZKPOW_FEATURES="" \
-  -t zkpow-prover:test --load .
+make docker DOCKER_PLATFORM=linux/arm64 DOCKER_FEATURES= DOCKER_IMAGE=zkpow-prover:test
 ```
 
 ## Deploy (Vast.ai)

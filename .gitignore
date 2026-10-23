@@ -42,3 +42,4 @@ zkpow-host
 scripts/vast/env.vast
 !scripts/vast/env.vast.example
 
+.docker-image.stamp

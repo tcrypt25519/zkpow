@@ -36,9 +36,6 @@ WORKDIR /workspace
 
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
-COPY scripts ./scripts
-COPY --from=zkvm-test Cargo.toml Cargo.lock /zkvm-test/
-COPY --from=zkvm-test crates /zkvm-test/crates/
 
 RUN if [ -n "${ZKPOW_FEATURES}" ]; then \
         cargo build --release -p zkpow-host --bin zkpow-host --features "${ZKPOW_FEATURES}"; \
