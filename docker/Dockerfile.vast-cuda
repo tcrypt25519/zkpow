@@ -37,8 +37,16 @@ WORKDIR /workspace
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY scripts ./scripts
-COPY --from=zkvm-test Cargo.toml Cargo.lock /zkvm-test/
-COPY --from=zkvm-test crates /zkvm-test/crates/
+
+# zkvm-test is only a dev-dependency (zkVM unit tests); stub its manifests so
+# cargo can resolve the workspace without the sibling repo. Never compiled.
+RUN mkdir -p /zkvm-test/crates/zkvm-test/src /zkvm-test/crates/zkvm-test-macros/src \
+    && printf '[package]\nname = "zkvm-test"\nversion = "0.1.0"\nedition = "2021"\n' \
+        > /zkvm-test/crates/zkvm-test/Cargo.toml \
+    && touch /zkvm-test/crates/zkvm-test/src/lib.rs \
+    && printf '[package]\nname = "zkvm-test-macros"\nversion = "0.1.0"\nedition = "2021"\n[lib]\nproc-macro = true\n' \
+        > /zkvm-test/crates/zkvm-test-macros/Cargo.toml \
+    && touch /zkvm-test/crates/zkvm-test-macros/src/lib.rs
 
 RUN if [ -n "${ZKPOW_FEATURES}" ]; then \
         cargo build --release -p zkpow-host --bin zkpow-host --features "${ZKPOW_FEATURES}"; \
