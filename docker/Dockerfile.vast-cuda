@@ -37,7 +37,8 @@ WORKDIR /workspace
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY scripts ./scripts
-COPY --from=zkvm-test . /zkvm-test
+COPY --from=zkvm-test Cargo.toml Cargo.lock /zkvm-test/
+COPY --from=zkvm-test crates /zkvm-test/crates/
 
 RUN if [ -n "${ZKPOW_FEATURES}" ]; then \
         cargo build --release -p zkpow-host --bin zkpow-host --features "${ZKPOW_FEATURES}"; \
@@ -66,15 +67,11 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /workspace/target/docker-linux-cuda/release/zkpow-host /usr/local/bin/zkpow-host
-COPY scripts/vast/sync-proofs.sh /opt/zkpow/scripts/vast/sync-proofs.sh
-COPY docker/entrypoint.sh docker/run-prover.sh docker/sync-loop.sh /opt/zkpow/docker/
+COPY docker/entrypoint.sh /entrypoint.sh
 COPY docker/supervisord.conf /etc/supervisor/supervisord.conf
-COPY docker/vast-cuda-check /usr/local/bin/vast-cuda-check
 
-RUN chmod +x /usr/local/bin/zkpow-host /usr/local/bin/vast-cuda-check \
-    /opt/zkpow/docker/*.sh /opt/zkpow/scripts/vast/sync-proofs.sh \
-    && mkdir -p /data /var/log/supervisor
+RUN chmod +x /usr/local/bin/zkpow-host /entrypoint.sh && mkdir -p /data
 
 VOLUME ["/data"]
 
-ENTRYPOINT ["/opt/zkpow/docker/entrypoint.sh"]
+ENTRYPOINT ["/entrypoint.sh"]
