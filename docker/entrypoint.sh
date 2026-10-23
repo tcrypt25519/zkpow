@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DATA_DIR="${ZKPOW_DATA_DIR:-/data}"
-DB_PATH="${ZKPOW_DB_PATH:-${DATA_DIR}/headers.db}"
-DB_ZST_PATH="${DATA_DIR}/headers.db.tar.zst"
+export ZKPOW_DATA_DIR="${ZKPOW_DATA_DIR:-/data}"
+export ZKPOW_DB_PATH="${ZKPOW_DB_PATH:-${ZKPOW_DATA_DIR}/headers.db}"
+export ZKPOW_PROOF_STORE_DIR="${ZKPOW_PROOF_STORE_DIR:-${ZKPOW_DATA_DIR}/proof_store}"
+
+DB_PATH="${ZKPOW_DB_PATH}"
+DB_ZST_PATH="${ZKPOW_DATA_DIR}/headers.db.tar.zst"
 DB_S3_URI="${ZKPOW_DB_S3_URI:-${S3_DEST:+$S3_DEST/headers.db.tar.zst}}"
 
-mkdir -p "${DATA_DIR}" "${ZKPOW_PROOF_STORE_DIR:-${DATA_DIR}/proof_store}"
+mkdir -p "${ZKPOW_DATA_DIR}" "${ZKPOW_PROOF_STORE_DIR}"
 
 /usr/local/bin/vast-cuda-check || true
 
@@ -21,14 +24,14 @@ fi
 
 if [ ! -f "${DB_PATH}" ] && [ -f "${DB_ZST_PATH}" ]; then
     echo "==> Decompressing headers.db..."
-    zstd -d -c "${DB_ZST_PATH}" | tar -xf - -C "${DATA_DIR}"
+    zstd -d -c "${DB_ZST_PATH}" | tar -xf - -C "${ZKPOW_DATA_DIR}"
     echo "[+] Extracted $(du -h "${DB_PATH}" | cut -f1) to ${DB_PATH}"
 fi
 
 if [ ! -f "${DB_PATH}" ]; then
     echo "[-] FATAL: headers.db not found at ${DB_PATH} and no source available." >&2
     echo "    Set ZKPOW_DB_S3_URI (or S3_DEST) to an S3 URI containing headers.db.tar.zst," >&2
-    echo "    or mount a volume with headers.db at ${DATA_DIR}." >&2
+    echo "    or mount a volume with headers.db at ${ZKPOW_DATA_DIR}." >&2
     exit 1
 fi
 

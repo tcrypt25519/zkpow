@@ -57,16 +57,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     LC_ALL=C.UTF-8 \
     CUDA_HOME=/usr/local/cuda \
     PATH=/usr/local/cuda/bin:$PATH \
-    LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH:-} \
-    ZKPOW_DATA_DIR=/data \
-    ZKPOW_DB_PATH=/data/headers.db \
-    ZKPOW_PROOF_STORE_DIR=/data/proof_store \
-    ZKPOW_PROVER_BACKEND=cuda \
-    ZKPOW_BATCH_SIZE=2016 \
-    ZKPOW_BATCH_COUNT=500 \
-    ZKPOW_MEMORY_LOGGING=1 \
-    RUST_LOG=info \
-    RUST_BACKTRACE=1
+    LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH:-}
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \

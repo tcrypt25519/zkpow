@@ -50,3 +50,7 @@ docker-compose*.yml
 # Test artifacts
 test_data/
 **/tests/fixtures/
+
+# Vast deploy secrets (never ship in image)
+scripts/vast/env.vast
+**/env.vast

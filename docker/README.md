@@ -66,6 +66,20 @@ docker buildx build --platform linux/arm64 \
 
 ## Run
 
+The image carries no credentials or workload config. Two channels supply env
+vars at launch:
+
+- **Sensitive vars** (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
+  `AWS_ENDPOINT_URL`, `AWS_DEFAULT_REGION`, `S3_DEST`, `ZKPOW_DB_S3_URI`,
+  `SSH_DEST`) — stored as Vast.ai account env vars by
+  `scripts/vast/launch-instance.sh` (`vastai create/update env-var`); Vast.ai
+  injects them into the instance automatically. Never bake them into the
+  image; `scripts/vast/env.vast` is dockerignored.
+- **Non-sensitive vars** (`ZKPOW_*`, `RUST_LOG`, …) — passed in the instance's
+  docker settings (`vastai create instance --env '-e K=V ...'`).
+
+For a plain `docker run` (local test, other clouds), pass everything with `-e`:
+
 ```bash
 docker run --gpus all --shm-size=16g \
   -e S3_DEST=s3://zkpow-proofs/mainnet \
