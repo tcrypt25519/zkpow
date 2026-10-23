@@ -102,5 +102,14 @@ pub fn log_delta(
 }
 
 pub fn logging_enabled() -> bool {
-    false
+    #[cfg(feature = "memory-diagnostics")]
+    {
+        return true;
+    }
+    #[cfg(not(feature = "memory-diagnostics"))]
+    {
+        std::env::var_os("ZKPOW_MEMORY_LOGGING")
+            .map(|val| val == "1" || val == "true" || val == "on")
+            .unwrap_or(false)
+    }
 }

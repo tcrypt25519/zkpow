@@ -40,5 +40,6 @@ sp1-build = { workspace = true }
 
 [features]
 default = []
+cuda = ["sp1-sdk/cuda"]
 memory-diagnostics = []
 slow-tests = []

@@ -13,7 +13,9 @@ lcov.info
 # Development
 logs/
 profiling/
+proof_store/
 docs/plans/
+/vastai
 zkpow-host
 *.bin
 !fixtures/**
@@ -34,3 +36,9 @@ zkpow-host
 .DS_Store
 .todos/
 .venv
+
+# Secrets & Environment Files
+*.env
+scripts/vast/env.vast
+!scripts/vast/env.vast.example
+

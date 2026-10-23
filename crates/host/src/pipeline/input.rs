@@ -18,6 +18,8 @@ pub const ENV_ZKPOW_PROOF_STORE_DIR: &str = "ZKPOW_PROOF_STORE_DIR";
 pub const ENV_ZKPOW_SHOW_COMPRESSED_PROOF_SPANS: &str = "ZKPOW_SHOW_COMPRESSED_PROOF_SPANS";
 
 pub const ENV_ZKPOW_EXECUTE_ONLY: &str = "ZKPOW_EXECUTE_ONLY";
+pub const ENV_ZKPOW_PROVER_BACKEND: &str = "ZKPOW_PROVER_BACKEND";
+pub const ENV_ZKPOW_USE_CUDA: &str = "ZKPOW_USE_CUDA";
 
 const DEFAULT_RUN_ID: &str = "dev";
 const DEFAULT_PROOF_STORE_DIR: &str = "proof_store";
@@ -62,6 +64,29 @@ fn parse_path_env(var_name: &'static str) -> Option<PathBuf> {
     std::env::var_os(var_name).map(PathBuf::from)
 }
 
+fn resolve_prover_backend(execute_only: bool) -> Result<ProverBackend, BoxError> {
+    if execute_only {
+        return Ok(ProverBackend::Mock);
+    }
+    if let Ok(backend_str) = std::env::var(ENV_ZKPOW_PROVER_BACKEND) {
+        match backend_str.to_ascii_lowercase().as_str() {
+            "cuda" | "gpu" => return Ok(ProverBackend::Cuda),
+            "cpu" => return Ok(ProverBackend::Cpu),
+            "mock" => return Ok(ProverBackend::Mock),
+            other => {
+                return Err(format!(
+                    "unknown {ENV_ZKPOW_PROVER_BACKEND}: `{other}`; expected 'cuda', 'cpu', or 'mock'"
+                )
+                .into())
+            },
+        }
+    }
+    if parse_bool_env(ENV_ZKPOW_USE_CUDA)? {
+        return Ok(ProverBackend::Cuda);
+    }
+    Ok(ProverBackend::Cpu)
+}
+
 /// Read the session config from `ZKPOW_*` variables. Batch size defaults to one difficulty epoch.
 pub fn config_from_env<C: Consensus>() -> Result<ProofGenerationConfig, BoxError> {
     let execute_only = parse_bool_env(ENV_ZKPOW_EXECUTE_ONLY)?;
@@ -70,11 +95,7 @@ pub fn config_from_env<C: Consensus>() -> Result<ProofGenerationConfig, BoxError
     let local_batch_size = parse_u32_env_or(ENV_ZKPOW_BATCH_SIZE, C::PARAMS.epoch_length)?;
     let batch_count = parse_u32_env_or(ENV_ZKPOW_BATCH_COUNT, DEFAULT_BATCH_COUNT)?;
 
-    let prover_backend = if execute_only {
-        ProverBackend::Mock
-    } else {
-        ProverBackend::Cpu
-    };
+    let prover_backend = resolve_prover_backend(execute_only)?;
 
     Ok(ProofGenerationConfig {
         run_id: std::env::var(ENV_ZKPOW_RUN_ID).unwrap_or_else(|_| DEFAULT_RUN_ID.to_string()),
@@ -91,8 +112,8 @@ pub fn proof_store_dir_from_env() -> PathBuf {
 }
 
 /// Assemble the guest's stdin. Header and median-hint bytes come straight
-/// from the batch grant and the previous proof is moved in, not cloned —
-/// the host pipes witness data through without reinterpreting it.
+/// from the batch grant and the previous proof is moved in, not cloned.
+/// The host pipes witness data through without reinterpreting it.
 pub fn build_stdin(
     verifier_key: VerifierKeyDigest,
     state: &util::State,

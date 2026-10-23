@@ -3,7 +3,7 @@
 //! The host is a stateless I/O driver between the controller and the guest:
 //! it pulls a batch from the controller, pipes it into the SP1 zkVM, uploads
 //! the resulting artifact, and reports completion, one batch at a time. It
-//! validates nothing itself — resume points, batch expectations, and result
+//! validates nothing itself. Resume points, batch expectations, and result
 //! verification all live in the controller.
 //!
 //! The host and controller run in the same process: a full controller
@@ -47,6 +47,7 @@ pub const ELF: Elf = include_elf!("zkpow-guest");
 pub enum ProverBackend {
     Mock,
     Cpu,
+    Cuda,
 }
 
 /// One proving session's settings, read from `ZKPOW_*` variables by [`input::config_from_env`].
@@ -57,7 +58,7 @@ pub struct ProofGenerationConfig {
     pub run_id:           String,
     pub local_batch_size: u32,
     pub batch_count:      u32,
-    /// The SQLite header database — run ledger and header content.
+    /// The SQLite header database holding the run ledger and header content.
     pub db_path:          std::path::PathBuf,
     pub execute_only:     bool,
     pub prover_backend:   ProverBackend,
@@ -162,12 +163,20 @@ async fn run_batch_session_with<C: Consensus>(
     let mut batch = classify_pull(runtime.pull_batch(&config.run_id).await.map_err(Into::into), completed)?;
 
     while let Some(current_batch) = batch {
-        memory_monitor::log_point("batch_memory_start", "Batch memory snapshot before batch work");
-        let (completion, _) = process_batch(&prepared, completed + 1, current_batch).await?;
+        let batch_start = Instant::now();
+        let start_sample = memory_monitor::log_point("batch_memory_start", "Batch memory snapshot before batch work");
+        let (completion, _before_prove_sample) = process_batch(&prepared, completed + 1, current_batch).await?;
         complete_batch(&runtime, &config.run_id, completion).await?;
         completed += 1;
 
-        memory_monitor::log_point("batch_memory_end", "Batch memory snapshot after completing batch");
+        let end_sample = memory_monitor::log_point("batch_memory_end", "Batch memory snapshot after completing batch");
+        memory_monitor::log_delta(
+            "batch_memory_delta",
+            start_sample,
+            end_sample,
+            batch_start.elapsed(),
+            "Batch execution memory and duration summary",
+        );
 
         batch = if completed >= config.batch_count {
             None
@@ -280,6 +289,8 @@ async fn run_batch(prepared: &PreparedProver, stdin: SP1Stdin) -> Result<SP1Proo
     match prepared {
         PreparedProver::Mock { prover, proving_key } => prove_batch(prover, proving_key, stdin).await,
         PreparedProver::Cpu { prover, proving_key } => prove_batch(prover, proving_key, stdin).await,
+        #[cfg(feature = "cuda")]
+        PreparedProver::Cuda { prover, proving_key } => prove_batch(prover, proving_key, stdin).await,
     }
 }
 
@@ -347,5 +358,6 @@ fn log_prover_backend_selection(prover_backend: ProverBackend) {
     match prover_backend {
         ProverBackend::Mock => tracing::info!("Using the Mock prover for instant execution"),
         ProverBackend::Cpu => tracing::info!("Using the CPU prover"),
+        ProverBackend::Cuda => tracing::info!("Using the CUDA GPU prover"),
     }
 }

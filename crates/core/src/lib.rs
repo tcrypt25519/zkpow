@@ -39,6 +39,7 @@ pub use errors::{ApplyError, ParseError, ReportableError};
 
 pub mod halt;
 mod input;
+
 pub use input::{cast_slice, serialize_inputs};
 
 /// Hashing lives on [`Header`]; this wrapper exists only so tests can substitute a hash without
@@ -254,8 +255,8 @@ fn sub_assign(lhs: &mut u256, rhs: u256) -> bool {
 ///   - A carry can only continue if the next limb is a max u64
 ///   - A max u64 with a carry-over of 1 becomes 0
 ///
-/// We can iterate until we find a limb < max u64, add 1 to it, and we're done. As long as we find max u64 limbs we
-/// just set them to 0 and move forward. [`NonMaxU256`] guarantees that the carry cannot escape the final limb.
+/// Iterate limbs: saturated limbs roll to 0 and the first non-saturated limb absorbs the 1.
+/// [`NonMaxU256`] guarantees that the carry cannot escape the final limb.
 pub(crate) fn increment_target(target: NonMaxU256) -> u256 {
     let mut target = target.into_inner();
     for (i, limb) in target.as_limbs_mut().iter_mut().enumerate() {

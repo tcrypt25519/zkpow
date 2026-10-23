@@ -2,7 +2,6 @@ use crate::check_exact_len;
 use crate::ParseError;
 use crate::State;
 use core::fmt::{Debug, Display};
-//use core::mem::SizedTypeProperties;
 use core::num::NonZeroU8;
 
 /// Digest of a program verifier key.

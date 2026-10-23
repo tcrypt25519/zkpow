@@ -24,6 +24,11 @@ pub(crate) enum PreparedProver {
         prover:      CpuProver,
         proving_key: SP1ProvingKey,
     },
+    #[cfg(feature = "cuda")]
+    Cuda {
+        prover:      sp1_sdk::CudaProver,
+        proving_key: <sp1_sdk::CudaProver as Prover>::ProvingKey,
+    },
 }
 
 impl PreparedProver {
@@ -32,6 +37,8 @@ impl PreparedProver {
         match self {
             PreparedProver::Mock { proving_key, .. } => proving_key.verifying_key(),
             PreparedProver::Cpu { proving_key, .. } => proving_key.verifying_key(),
+            #[cfg(feature = "cuda")]
+            PreparedProver::Cuda { proving_key, .. } => proving_key.verifying_key(),
         }
     }
 
@@ -88,6 +95,21 @@ pub(crate) async fn get_prepared_prover(prover_backend: ProverBackend) -> Result
             .await?;
             let proving_key = timed_async("setup_vkey", || async { prover.setup(ELF).await }).await?;
             PreparedProver::Cpu { prover, proving_key }
+        },
+        ProverBackend::Cuda => {
+            #[cfg(feature = "cuda")]
+            {
+                let prover = timed_async("build_cuda_prover", || async {
+                    Ok::<_, BoxError>(ProverClient::builder().cuda().build().await)
+                })
+                .await?;
+                let proving_key = timed_async("setup_vkey", || async { prover.setup(ELF).await }).await?;
+                PreparedProver::Cuda { prover, proving_key }
+            }
+            #[cfg(not(feature = "cuda"))]
+            {
+                return Err("CUDA prover backend requested, but zkpow-host was compiled without the `cuda` feature".into());
+            }
         },
     };
 
