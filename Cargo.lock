@@ -4020,9 +4020,8 @@ dependencies = [
 
 [[package]]
 name = "sha2"
-version = "0.11.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "47d7069beb7d6ac7b9acd1039986e73443f24234f41074da099d6f994ac9ad19"
+version = "0.11.0"
+source = "git+https://github.com/sp1-patches/RustCrypto-hashes?tag=patch-sha2-0.11.0-sp1-6.2.0#8993e08b9f7c47cd4a056decbf85d2d7ab3fe77c"
 dependencies = [
  "cfg-if",
  "cpufeatures 0.3.1",
@@ -4674,6 +4673,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "sp1-cuda"
+version = "6.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fc49422996ab1a34e245b1c47131521881be5c853b5c8d49919ce4ba8d4b7192"
+dependencies = [
+ "bincode",
+ "bytes",
+ "reqwest",
+ "serde",
+ "sp1-core-executor",
+ "sp1-core-machine",
+ "sp1-hypercube",
+ "sp1-primitives",
+ "sp1-prover",
+ "sp1-prover-types",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "sp1-curves"
 version = "6.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5040,6 +5060,7 @@ dependencies = [
  "sp1-core-executor",
  "sp1-core-executor-runner",
  "sp1-core-machine",
+ "sp1-cuda",
  "sp1-hypercube",
  "sp1-primitives",
  "sp1-prover",
@@ -6535,7 +6556,7 @@ name = "zkpow-controller"
 version = "0.1.0"
 dependencies = [
  "hex",
- "sha2 0.11.1",
+ "sha2 0.11.0",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -6549,7 +6570,6 @@ name = "zkpow-core"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
- "derive-size",
  "rkyv",
  "sp1-lib",
  "thiserror 2.0.21",
@@ -6581,7 +6601,7 @@ dependencies = [
  "console-subscriber",
  "hex",
  "postcard",
- "sha2 0.11.1",
+ "sha2 0.11.0",
  "sp1-build",
  "sp1-prover",
  "sp1-sdk",
@@ -6613,7 +6633,7 @@ name = "zkpow-sha256"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
- "sha2 0.11.1",
+ "sha2 0.11.0",
  "sp1-zkvm",
  "wiretype",
  "zkvm-test",
@@ -6637,7 +6657,7 @@ version = "0.1.0"
 dependencies = [
  "bitcoin",
  "rand 0.10.3",
- "sha2 0.11.1",
+ "sha2 0.11.0",
  "thiserror 2.0.21",
  "tracing",
  "zkpow-core",
@@ -6649,9 +6669,8 @@ name = "zkpow-types"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
- "derive-size",
  "rkyv",
- "sha2 0.11.1",
+ "sha2 0.11.0",
  "wiretype",
  "zkpow-sha256",
  "zkvm-test",
@@ -6694,8 +6713,3 @@ name = "zmij"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
-
-[[patch.unused]]
-name = "sha2"
-version = "0.11.0"
-source = "git+https://github.com/sp1-patches/RustCrypto-hashes?tag=patch-sha2-0.11.0-sp1-6.2.0#8993e08b9f7c47cd4a056decbf85d2d7ab3fe77c"

@@ -171,7 +171,7 @@ fn error_without_a_code_reports_unknown_error() {
 }
 
 #[zkvm_test]
-fn apply_error_messages_carry_the_compared_values() {
+fn apply_error_messages_include_the_compared_values() {
     let [timestamp_too_old, pow_insufficient, insufficient_cold_headers] = sample_apply_errors();
 
     assert_eq!(
@@ -192,7 +192,7 @@ fn apply_error_messages_carry_the_compared_values() {
 }
 
 #[zkvm_test]
-fn parse_error_messages_carry_offending_lengths() {
+fn parse_error_messages_include_offending_lengths() {
     assert_eq!(
         format!(
             "{}",

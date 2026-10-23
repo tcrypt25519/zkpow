@@ -25,8 +25,7 @@ zkpow-params = { workspace = true }
 zkpow-types = { workspace = true }
 zkpow-sha256 = { workspace = true }
 rkyv = { workspace = true }
-#bytes = { workspace = true }
-derive-size = { workspace = true }
+
 wiretype = { workspace = true }
 
 [dev-dependencies]

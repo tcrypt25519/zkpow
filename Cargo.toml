@@ -34,10 +34,10 @@ zkpow-types = { path = "crates/types" }
 zkpow-worker = { path = "crates/worker" }
 zkpow-mtp = { path = "crates/mtp" }
 
-derive-size = { path = "crates/derive-size" }
+zkvm-test = { path = "../zkvm-test/crates/zkvm-test" }
+
 wiretype = { path = "crates/wiretype" }
 sha256_const = { path = "crates/sha256_const" }
-zkvm-test = { path = "../zkvm-test/crates/zkvm-test" }
 
 ##
 ## SP1
@@ -113,6 +113,7 @@ zkvm-test-macros = { path = "../zkvm-test/crates/zkvm-test-macros" }
 # sp1-jit = { path = "../../succinctlabs/sp1/crates/core/jit" }
 # sp1-core-executor-runner = { path = "../../succinctlabs/sp1/crates/core/runner" }
 # sp1-core-executor-runner-binary = { path = "../../succinctlabs/sp1/crates/core/runner-binary" }
+
 
 [profile.release]
 incremental = false
