@@ -1,8 +1,9 @@
-use crate::check_exact_len;
-use crate::ParseError;
-use crate::State;
-use core::fmt::{Debug, Display};
-use core::num::NonZeroU8;
+use core::{
+    fmt::{Debug, Display},
+    num::NonZeroU8,
+};
+
+use crate::{check_exact_len, ParseError, State};
 
 /// Digest of a program verifier key.
 #[wiretype::wiretype]
@@ -13,12 +14,6 @@ use core::num::NonZeroU8;
 pub struct VerifierKeyDigest([u32; 8]);
 
 impl VerifierKeyDigest {
-    /// The raw wire bytes. Zero-copy; the in-memory layout is already the wire format.
-    #[must_use]
-    pub fn to_le_bytes_slice(&self) -> &[u8] {
-        bytemuck::bytes_of(self)
-    }
-
     #[must_use]
     pub const fn from_raw(raw: [u32; 8]) -> Self {
         Self(raw)
@@ -207,12 +202,11 @@ impl core::fmt::Display for ReturnCode {
 ///
 /// Serialized manually to avoid struct padding; use [`PublicValues::to_bytes`]
 /// and [`PublicValues::parse`] rather than transmuting.
-//#[wiretype::wiretype]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PublicValues {
-    pub state: State,
+    pub state:        State,
     pub verifier_key: VerifierKeyDigest,
-    pub return_code: ReturnCode,
+    pub return_code:  ReturnCode,
 }
 
 impl PublicValues {
@@ -225,8 +219,6 @@ impl PublicValues {
             state,
             verifier_key,
             return_code,
-            //_pad1: 0,
-            //_pad2: 0,
         }
     }
     /// Serialize to exactly [`PublicValues::SIZE`] bytes (no padding).
@@ -240,7 +232,7 @@ impl PublicValues {
     pub fn serialize(state: &State, verifier_key: &VerifierKeyDigest, return_code: ReturnCode) -> [u8; Self::SIZE] {
         let mut out = [0u8; Self::SIZE];
         out[0..State::SIZE].copy_from_slice(bytemuck::bytes_of(state));
-        out[State::SIZE..State::SIZE + 32].copy_from_slice(verifier_key.to_le_bytes_slice());
+        out[State::SIZE..State::SIZE + 32].copy_from_slice(verifier_key.as_bytes());
         out[Self::SIZE - 1] = return_code.into_u8();
         out
     }
