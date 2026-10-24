@@ -108,7 +108,9 @@ pub(crate) async fn get_prepared_prover(prover_backend: ProverBackend) -> Result
             }
             #[cfg(not(feature = "cuda"))]
             {
-                return Err("CUDA prover backend requested, but zkpow-host was compiled without the `cuda` feature".into());
+                return Err(
+                    "CUDA prover backend requested, but zkpow-host was compiled without the `cuda` feature".into(),
+                );
             }
         },
     };
