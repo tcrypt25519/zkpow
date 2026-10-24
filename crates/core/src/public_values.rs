@@ -61,10 +61,8 @@ impl From<VerifierKeyDigest> for [u32; 8] {
 pub struct ErrorCode(NonZeroU8);
 
 impl ErrorCode {
-    pub const HEADER_PAYLOAD_LENGTH_INVALID: Self = unsafe { Self(NonZeroU8::new_unchecked(1)) };
     pub const POW_INSUFFICIENT: Self = unsafe { Self(NonZeroU8::new_unchecked(2)) };
     pub const TIMESTAMP_TOO_OLD: Self = unsafe { Self(NonZeroU8::new_unchecked(3)) };
-    pub const GENESIS_HASH_MISMATCH: Self = unsafe { Self(NonZeroU8::new_unchecked(4)) };
     pub const INSUFFICIENT_COLD_HEADERS: Self = unsafe { Self(NonZeroU8::new_unchecked(5)) };
     pub const UNKNOWN_ERROR: Self = unsafe { Self(NonZeroU8::new_unchecked(255)) };
 
@@ -88,10 +86,8 @@ impl ErrorCode {
     #[must_use]
     pub const fn name(self) -> Option<&'static str> {
         Some(match self.get() {
-            1 => "Header payload length invalid",
             2 => "PoW insufficient",
             3 => "Timestamp too old",
-            4 => "Genesis hash mismatch",
             5 => "Insufficient cold headers",
             255 => "Unknown error",
             _ => return None,
@@ -127,10 +123,8 @@ impl ReturnCode {
     pub const SUCCESS: Self = Self(None);
 
     /// Known named error codes.
-    pub const HEADER_PAYLOAD_LENGTH_INVALID: Self = Self(Some(ErrorCode::HEADER_PAYLOAD_LENGTH_INVALID));
     pub const POW_INSUFFICIENT: Self = Self(Some(ErrorCode::POW_INSUFFICIENT));
     pub const TIMESTAMP_TOO_OLD: Self = Self(Some(ErrorCode::TIMESTAMP_TOO_OLD));
-    pub const GENESIS_HASH_MISMATCH: Self = Self(Some(ErrorCode::GENESIS_HASH_MISMATCH));
     pub const INSUFFICIENT_COLD_HEADERS: Self = Self(Some(ErrorCode::INSUFFICIENT_COLD_HEADERS));
     pub const UNKNOWN_ERROR: Self = Self(Some(ErrorCode::UNKNOWN_ERROR));
 

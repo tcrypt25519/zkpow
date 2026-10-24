@@ -211,8 +211,6 @@ rejected for reason X."
 | 3 | timestamp not above median time past |
 | 5 | first batch had fewer than 10 headers |
 
-Codes 1 and 4 are defined in the table but nothing in the current state machine emits them.
-
 A failure proof is useful as evidence that a prover was fed bad data. It's a dead end for the
 chain: the recursion check above refuses to extend it. In practice the host notices the nonzero
 code and errors out before uploading anything, and the controller would reject the mismatched

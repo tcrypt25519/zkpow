@@ -435,8 +435,6 @@ one trait that reduces an error to its byte.
 | 5    | `InsufficientColdHeaders` | first batch shorter than 10                              |
 | 255  |                           | an error with no code of its own. Nothing emits it today |
 
-Codes 1 and 4 have names in `ErrorCode` but no producer.
-
 A consensus failure is a normal halt. The guest commits the state as of the last accepted
 header with the nonzero code and exits 0 from SP1's point of view. The proof is valid and says
 "valid chain up to `height`, header at `height + 1` rejected for this reason." The recursion

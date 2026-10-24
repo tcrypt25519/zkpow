@@ -9,7 +9,6 @@ members = [
   "crates/store",
   "crates/sync-headers",
   "crates/cli",
-  "crates/derive-size",
   "crates/params",
   "crates/types",
   "crates/sha256_const",

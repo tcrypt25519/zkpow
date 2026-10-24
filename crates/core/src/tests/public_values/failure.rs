@@ -40,10 +40,8 @@ fn sample_apply_errors() -> [ApplyError; 3] {
 #[zkvm_test]
 fn public_values_failure_round_trips() {
     let codes = [
-        ErrorCode::HEADER_PAYLOAD_LENGTH_INVALID,
         ErrorCode::POW_INSUFFICIENT,
         ErrorCode::TIMESTAMP_TOO_OLD,
-        ErrorCode::GENESIS_HASH_MISMATCH,
         ErrorCode::INSUFFICIENT_COLD_HEADERS,
         ErrorCode::UNKNOWN_ERROR,
     ];
@@ -103,10 +101,8 @@ fn return_code_is_represented_as_single_byte() {
 #[zkvm_test]
 fn every_defined_error_code_has_a_descriptive_name() {
     let named = [
-        (ErrorCode::HEADER_PAYLOAD_LENGTH_INVALID, "Header payload length invalid"),
         (ErrorCode::POW_INSUFFICIENT, "PoW insufficient"),
         (ErrorCode::TIMESTAMP_TOO_OLD, "Timestamp too old"),
-        (ErrorCode::GENESIS_HASH_MISMATCH, "Genesis hash mismatch"),
         (ErrorCode::INSUFFICIENT_COLD_HEADERS, "Insufficient cold headers"),
         (ErrorCode::UNKNOWN_ERROR, "Unknown error"),
     ];
