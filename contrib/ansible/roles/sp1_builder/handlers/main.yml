@@ -1,9 +1,0 @@
----
-- name: Remount /dev/shm
-  become: true
-  ansible.posix.mount:
-    path: /dev/shm
-    src: tmpfs
-    fstype: tmpfs
-    opts: "defaults,size={{ shm_size }}"
-    state: remounted
