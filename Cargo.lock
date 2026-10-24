@@ -6519,6 +6519,7 @@ dependencies = [
 [[package]]
 name = "zkvm-test"
 version = "0.1.0"
+source = "git+ssh://git@github.com/tcrypt25519/zkvm-test?branch=main#0c7ec267b99cba769b7c1a5645c3597fd9f4582f"
 dependencies = [
  "sp1-zkvm",
  "thiserror 2.0.21",
@@ -6528,6 +6529,7 @@ dependencies = [
 [[package]]
 name = "zkvm-test-macros"
 version = "0.1.0"
+source = "git+ssh://git@github.com/tcrypt25519/zkvm-test?branch=main#0c7ec267b99cba769b7c1a5645c3597fd9f4582f"
 dependencies = [
  "proc-macro2",
  "quote",

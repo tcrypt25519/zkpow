@@ -33,11 +33,10 @@ zkpow-params = { path = "crates/params" }
 zkpow-types = { path = "crates/types" }
 zkpow-worker = { path = "crates/worker" }
 zkpow-mtp = { path = "crates/mtp" }
-
-zkvm-test = { path = "../zkvm-test/crates/zkvm-test" }
-
 wiretype = { path = "crates/wiretype" }
 sha256_const = { path = "crates/sha256_const" }
+
+zkvm-test = { git = "ssh://git@github.com/tcrypt25519/zkvm-test", branch = "main" }
 
 ##
 ## SP1
@@ -99,8 +98,8 @@ serde = { version = "1", default-features = false, features = [
 # Route sha2 through SP1's accelerated fork so the sha256 compress runs on the precompile
 # instead of the soft path. Tag matches the sibling crypto patches SP1 6.x pins.
 sha2 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", tag = "patch-sha2-0.11.0-sp1-6.2.0", package = "sha2" }
-zkvm-test = { path = "../zkvm-test/crates/zkvm-test" }
-zkvm-test-macros = { path = "../zkvm-test/crates/zkvm-test-macros" }
+# zkvm-test = { path = "../zkvm-test/crates/zkvm-test" }
+# zkvm-test-macros = { path = "../zkvm-test/crates/zkvm-test-macros" }
 
 # sp1-zkvm = { path = "../../succinctlabs/sp1/crates/zkvm/entrypoint" }
 # sp1-sdk = { path = "../../succinctlabs/sp1/crates/sdk" }
