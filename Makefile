@@ -23,15 +23,14 @@ BINS ?=
 
 # Workspace layout and build configuration
 CRATES_DIR  ?= crates
-PROFILE     ?= release
 TARGET_DIR  ?= target
+PROFILE     ?= $(if $(filter dev,$(MAKECMDGOALS)),dev,release)
 PROFILE_DIR ?= $(if $(filter dev test,$(PROFILE)),debug,$(if $(filter release bench,$(PROFILE)),release,$(PROFILE)))
 BUILD_DIR   := $(CURDIR)/$(TARGET_DIR)/$(PROFILE_DIR)
 
 # Cargo metadata
-CARGO_TOML    := Cargo.toml
-CARGO_LOCK    := Cargo.lock
-CRATE_CARGOS  := $(wildcard $(CRATES_DIR)/*/$(CARGO_TOML))
+CARGO_LOCK  := Cargo.lock
+MANIFESTS   := $(wildcard Cargo.toml Cargo.lock */Cargo.toml $(CRATES_DIR)/**/Cargo.toml)
 
 # Binary names and paths
 BIN_NAMES  := $(if $(BINS),$(BINS),$(shell awk '/^\[/ { in_pkg = ($$0 == "\[\[bin\]\]") } in_pkg && /^name[ \t]*=/ { split($$0, a, "\""); print a[2] }' $(CRATES_DIR)/**/Cargo.toml))
@@ -49,12 +48,15 @@ $(info BIN_DEPS = $(BIN_DEPS))
 
 all: build
 
-build: $(CARGO_LOCK) $(BIN_BUILDS)
+build: $(MANIFESTS) $(BIN_BUILDS)
 
-clean:
+clean: deployment-clean
 	cargo clean --target-dir $(TARGET_DIR)
 
+ifneq (,$(wildcard $(BIN_BUILDS)/*.d))
+$(info Including $$(BIN_DEPS))
 include $(BIN_DEPS)
+endif
 
 ##
 ## Actual build rules
@@ -63,28 +65,17 @@ $(BUILD_DIR)/%:
 	@echo "Building $(*:.d=)"
 	cargo build --bin $(*:.d=) --profile $(PROFILE) --target-dir $(TARGET_DIR)
 
-$(CARGO_LOCK): $(CARGO_TOML) $(CRATE_CARGOS)
+$(CARGO_LOCK): $(filter-out $(CARGO_LOCK),$(MANIFESTS))
 	cargo generate-lockfile
 
 var-%:
 	@echo "$* = ${$*}"
 
 ##
-## Docker image
+## Include Deploy Make targets
 ##
 
-DOCKER_IMAGE    ?= zkpow-prover:latest
-DOCKER_PLATFORM ?= linux/amd64
-DOCKER_FEATURES ?= cuda
-DOCKER_STAMP    := .docker-image.stamp
-DOCKER_DEPS     := docker/Dockerfile.vast-cuda docker/entrypoint.sh docker/supervisord.conf \
-                   $(CARGO_TOML) $(CARGO_LOCK) \
-                   $(shell find $(CRATES_DIR) -type f \( -name '*.rs' -o -name 'Cargo.toml' \))
+THIS_MAKEFILE := $(realpath $(lastword $(MAKEFILE_LIST)))
+START_MAKEFILE ?= $(realpath $(firstword $(MAKEFILE_LIST)))
 
-.PHONY: docker
-docker: $(DOCKER_STAMP)
-
-$(DOCKER_STAMP): $(DOCKER_DEPS)
-	docker buildx build --platform $(DOCKER_PLATFORM) -f docker/Dockerfile.vast-cuda \
-		--build-arg ZKPOW_FEATURES="$(DOCKER_FEATURES)" -t $(DOCKER_IMAGE) --load .
-	touch $@
+-include docker/Makefile

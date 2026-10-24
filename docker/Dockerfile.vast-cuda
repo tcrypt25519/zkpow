@@ -7,7 +7,7 @@
 # and supervisord runs the prover plus a background proof-sync loop.
 # =============================================================================
 
-FROM nvidia/cuda:12.4.1-devel-ubuntu22.04 AS builder
+FROM nvidia/cuda:12.4.1-devel-ubuntu22.04 AS platform
 
 ARG RUST_VERSION=1.97.1
 ARG ZKPOW_FEATURES=cuda
@@ -25,17 +25,19 @@ RUN apt-get update \
     build-essential ca-certificates clang cmake curl file git libprotobuf-dev \
     libsqlite3-dev libssl-dev lld m4 pkg-config protobuf-compiler zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
-
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain ${RUST_VERSION} --profile minimal
-
 RUN curl -L https://sp1.succinct.xyz | bash && \
     /root/.sp1/bin/sp1up && \
     cargo prove --version
+
+FROM platform AS builder
 
 WORKDIR /workspace
 
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
+COPY --from=zkvm-test Cargo.toml Cargo.lock /zkvm-test/
+COPY --from=zkvm-test crates /zkvm-test/crates/
 
 RUN if [ -n "${ZKPOW_FEATURES}" ]; then \
         cargo build --release -p zkpow-host --bin zkpow-host --features "${ZKPOW_FEATURES}"; \
@@ -67,7 +69,8 @@ COPY --from=builder /workspace/target/docker-linux-cuda/release/zkpow-host /usr/
 COPY docker/entrypoint.sh /entrypoint.sh
 COPY docker/supervisord.conf /etc/supervisor/supervisord.conf
 
-RUN chmod +x /usr/local/bin/zkpow-host /entrypoint.sh && mkdir -p /data
+RUN chmod +x /usr/local/bin/zkpow-host /entrypoint.sh \
+	&& mkdir -p /data
 
 VOLUME ["/data"]
 
