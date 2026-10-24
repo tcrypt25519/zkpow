@@ -14,6 +14,7 @@ mod tests;
 extern crate alloc;
 extern crate self as zkpow_core;
 
+
 pub use zkpow_mtp::{
     advance_ordered_timestamp_run, has_ordered_timestamp_window, ordered_median_timestamp_slot, ordered_timestamp_run,
     requires_median_hint, timestamp_count, timestamp_slot, WINDOW_LARGE_HALF_SIZE, WINDOW_MAX_INDEX, WINDOW_SIZE,
@@ -436,9 +437,11 @@ pub fn block_work_from_target(target: Target) -> BlockWork {
     }
 }
 
-/// Compute the compact and normalized full target required at a difficulty boundary.
+/// Compute the work and corresponding target required at a difficulty boundary.
+/// Returns the tripplet of forms that express work so their calculation is
+/// centralized to ensure they all come from exactly the same value.
 #[must_use]
-pub fn calculate_next_target_required<C: Consensus>(
+pub fn calculate_next_work_required<C: Consensus>(
     old_target: Target,
     epoch_start_timestamp: BlockTimestamp,
     previous_timestamp: BlockTimestamp,

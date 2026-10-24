@@ -5,7 +5,7 @@ use zkpow_mtp::{self as mtp, errors::NotMedian, timestamp_count, timestamp_slot,
 use zkpow_params::Consensus;
 
 use crate::{
-    block_work_from_target, calculate_next_target_required, check_proof_of_work_words, hash_header_input,
+    block_work_from_target, calculate_next_work_required, check_proof_of_work_words, hash_header_input,
     target_from_bits, ApplyError, BlockHash, BlockTimestamp, BlockWork, ChainWork, CompactTarget, HeaderInput, Target,
 };
 
@@ -35,7 +35,7 @@ impl State {
         current_timestamp: BlockTimestamp,
     ) -> (CompactTarget, Target, BlockWork) {
         let current_target = target_from_bits(self.current_nbits);
-        calculate_next_target_required::<C>(current_target, self.epoch_timestamp, current_timestamp)
+        calculate_next_work_required::<C>(current_target, self.epoch_timestamp, current_timestamp)
     }
 
     fn new_epoch_manager<'a, C: Consensus>(&'_ mut self, current_timestamp: BlockTimestamp) -> EpochManager<'_> {

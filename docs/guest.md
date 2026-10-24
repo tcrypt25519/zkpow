@@ -15,8 +15,8 @@ Every instruction the guest executes costs prover time, and the guest runs once 
 2016 headers. So the design pushes as much as it can out of the proven program and into two
 places that cost nothing to prove:
 
-- The host, which precomputes anything the guest can *check* more cheaply than it can
-  *compute*. Those are the hints: median timestamps and block work quotients.
+- The host, which precomputes anything the guest can *check* more cheaply than it can *compute*. Those are the hints:
+  median timestamps and block work quotients.
 - The type layer, which makes the wire formats plain-old-data so that reading input is a cast
   rather than a parse.
 
@@ -30,15 +30,15 @@ safe.
 
 ## Crate map
 
-| Crate | Target | Role |
-| --- | --- | --- |
-| `zkpow-guest` | zkVM only | the `main`. Reads inputs, verifies the prior proof, applies headers, commits |
-| `zkpow-core` | both | `State`, `HeaderInput`, `PublicValues`, the consensus math, the hint halt macros |
-| `zkpow-sha256` | both | SHA-256 over exactly two message layouts, on the precompile in the VM |
-| `zkpow-mtp` | both | the 11-slot timestamp ring and the median rank check |
-| `zkpow-params` | both | `Consensus` trait and the `Mainnet` constants |
-| `zkpow-types` | both | `u256`, `NonMaxU256`, the branded newtypes, `Header` |
-| `sha256_const` | both | `const fn` SHA-256, only for the genesis hash at compile time |
+| Crate          | Target    | Role                                                                             |
+|----------------|-----------|----------------------------------------------------------------------------------|
+| `zkpow-guest`  | zkVM only | the `main`. Reads inputs, verifies the prior proof, applies headers, commits     |
+| `zkpow-core`   | both      | `State`, `HeaderInput`, `PublicValues`, the consensus math, the hint halt macros |
+| `zkpow-sha256` | both      | SHA-256 over exactly two message layouts, on the precompile in the VM            |
+| `zkpow-mtp`    | both      | the 11-slot timestamp ring and the median rank check                             |
+| `zkpow-params` | both      | `Consensus` trait and the `Mainnet` constants                                    |
+| `zkpow-types`  | both      | `u256`, `NonMaxU256`, the branded newtypes, `Header`                             |
+| `sha256_const` | both      | `const fn` SHA-256, only for the genesis hash at compile time                    |
 
 "Both" means the crate is `#![no_std]` and compiles for the host too. Everything that touches a
 syscall has a `cfg(target_os = "zkvm")` branch and a plain Rust fallback. That's not a
@@ -50,13 +50,13 @@ other is a bug even if every test passes on the host.
 
 The host writes four buffers and optionally one proof. The guest reads them in the same order:
 
-| # | Written by host | Read in guest as | Size |
-| --- | --- | --- | --- |
-| 1 | verifier key digest, 32 bytes | `&VerifierKeyDigest` (`[u32; 8]`) | 32 |
-| 2 | `State::to_bytes()` | `&mut State` | 152 |
-| 3 | header inputs, concatenated | `&[HeaderInput]` | 44 × n |
-| 4 | median hints, concatenated | `&[BlockTimestamp]` | 4 × m |
-| 5 | previous compressed proof, if `height > 0` | never read directly | |
+| # | Written by host                            | Read in guest as                  | Size   |
+|---|--------------------------------------------|-----------------------------------|--------|
+| 1 | verifier key digest, 32 bytes              | `&VerifierKeyDigest` (`[u32; 8]`) | 32     |
+| 2 | `State::to_bytes()`                        | `&mut State`                      | 152    |
+| 3 | header inputs, concatenated                | `&[HeaderInput]`                  | 44 × n |
+| 4 | median hints, concatenated                 | `&[BlockTimestamp]`               | 4 × m  |
+| 5 | previous compressed proof, if `height > 0` | never read directly               |        |
 
 Buffers 1 through 4 go through `read_vec_raw`, which hands back a pointer into SP1's reserved
 input region. The guest never copies them. `read_fixed_size_input` and
@@ -87,10 +87,10 @@ A Bitcoin header is 80 bytes. The guest gets 44:
 ```rust
 #[repr(C)]
 pub struct HeaderInput {
-    pub version:     u32,       // 0..4
-    pub merkle_root: [u8; 32],  // 4..36
-    pub timestamp:   BlockTimestamp, // 36..40
-    pub nonce:       u32,       // 40..44
+  pub version: u32,       // 0..4
+  pub merkle_root: [u8; 32],  // 4..36
+  pub timestamp: BlockTimestamp, // 36..40
+  pub nonce: u32,       // 40..44
 }
 ```
 
@@ -104,28 +104,28 @@ the linkage check.
 ## What `main` does
 
 ```rust
-let verifier_key: &VerifierKeyDigest = read_fixed_size_input()?;
-let state: &mut State = read_fixed_size_input_mut()?;
-let headers: &[HeaderInput] = read_slice_of_fixed_size_len()?;
-let medians: &[BlockTimestamp] = read_slice_of_fixed_size_len()?;
+let verifier_key: & VerifierKeyDigest = read_fixed_size_input() ?;
+let state: & mut State = read_fixed_size_input_mut() ?;
+let headers: & [HeaderInput] = read_slice_of_fixed_size_len() ?;
+let medians: & [BlockTimestamp] = read_slice_of_fixed_size_len() ?;
 
 let apply_result = if state.height == 0 {
-    state.apply_headers_from_genesis::<Mainnet>(headers, medians)
+state.apply_headers_from_genesis::< Mainnet > (headers, medians)
 } else {
-    let actual_pv_hash = zkpow_sha256::of_public_values(
-        bytemuck::bytes_of(state),
-        verifier_key.to_le_bytes_slice(),
-        ReturnCode::SUCCESS.into_u8(),
-    );
-    verify_sp1_proof(verifier_key.as_raw(), &actual_pv_hash);
-    state.apply_headers::<Mainnet>(headers, medians)
+let actual_pv_hash = zkpow_sha256::of_public_values(
+bytemuck::bytes_of(state),
+verifier_key.to_le_bytes_slice(),
+ReturnCode::SUCCESS.into_u8(),
+);
+verify_sp1_proof(verifier_key.as_raw(), & actual_pv_hash);
+state.apply_headers::< Mainnet > (headers, medians)
 };
 
 let return_code = match apply_result {
-    Ok(()) => ReturnCode::SUCCESS,
-    Err(err) => err.return_code(),
+Ok(()) => ReturnCode::SUCCESS,
+Err(err) => err.return_code(),
 };
-commit_public_values(&state, verifier_key, return_code);
+commit_public_values( & state, verifier_key, return_code);
 ```
 
 That's the whole program. Four reads, a branch on whether this is the first batch, the
@@ -200,15 +200,15 @@ for each header, which is the only function that rejects one.
 ### `seal_header`
 
 ```rust
-if new_header.timestamp <= known_median {
-    return Err(ApplyError::TimestampTooOld { .. });
+if new_header.timestamp < = known_median {
+return Err(ApplyError::TimestampTooOld { .. });
 }
 let next_hash_words = hash_header_input(new_header, hash_words, active_nbits);
-if !check_proof_of_work_words(&next_hash_words, active_target) {
-    return Err(ApplyError::PowInsufficient { .. });
+if ! check_proof_of_work_words( & next_hash_words, active_target) {
+return Err(ApplyError::PowInsufficient { .. });
 }
-self.advance_state::<C>(new_header.timestamp);
-*hash_words = next_hash_words;
+self .advance_state::<C>(new_header.timestamp);
+* hash_words = next_hash_words;
 ```
 
 The timestamp check comes first because it's a single compare and skips the hash when it
@@ -234,6 +234,7 @@ splits the batch at 10 headers. The first 10 go through `apply_cold_batch`, whic
   whatever headers remain.
 
 Fewer than 10 headers in the first batch is `ApplyError::InsufficientColdHeaders`, error code
+
 5. The sort is fine here because it runs at most 10 times in the life of a chain.
 
 ### Warm batches and epoch segments
@@ -255,12 +256,12 @@ verification are the expensive parts and they run once per 2016 headers, not onc
 
 ```rust
 fn flush(&mut self) {
-    let processed = self.state.height - self.start_height;
-    if processed == 0 {
-        return;
-    }
-    self.state.chain_work += self.active_block_work * processed;
-    self.state.current_nbits = self.active_nbits;
+  let processed = self.state.height - self.start_height;
+  if processed == 0 {
+    return;
+  }
+  self.state.chain_work += self.active_block_work * processed;
+  self.state.current_nbits = self.active_nbits;
 }
 ```
 
@@ -271,7 +272,7 @@ so a failure proof's `chain_work` covers every header accepted before the reject
 
 ### Retarget
 
-`calculate_next_target_required` is Bitcoin's rule:
+`calculate_next_work_required` is Bitcoin's rule:
 
 - `timespan = previous_timestamp - epoch_start_timestamp`, as `i64` because clocks go
   backwards.
@@ -341,7 +342,7 @@ offset from the oldest slot:
 ```rust
 const MEDIAN_SLOT: [usize; N] = /* (i + N/2) % N for each i */;
 pub fn median(&self) -> Option<u32> {
-    (self.ordered_run >= N).then(|| self.values[Self::MEDIAN_SLOT[self.next]])
+  (self.ordered_run >= N).then(|| self.values[Self::MEDIAN_SLOT[self.next]])
 }
 ```
 
@@ -354,10 +355,10 @@ next value from the `medians` input and checks it by rank:
 
 ```rust
 fn rank_median(values: &[u32], half: usize, claimed: u32) -> Result<(), NotMedian> {
-    // count less and equal
-    if less > half { return Err(NotMedian::TooNew); }
-    if less + equal <= half { return Err(NotMedian::TooOld); }
-    Ok(())
+  // count less and equal
+  if less > half { return Err(NotMedian::TooNew); }
+  if less + equal <= half { return Err(NotMedian::TooOld); }
+  Ok(())
 }
 ```
 
@@ -387,10 +388,10 @@ The state is `[u64; 8]` with each 32-bit word in the low bits. That's what the R
 syscalls expect. `hash_to_state` and `state_to_hash` convert to and from 32 bytes, big-endian
 per word.
 
-| Function | Message | Blocks | Padding |
-| --- | --- | --- | --- |
-| `of_header_words` | 80-byte header, then SHA-256d | 2 + 1 | `0x80` at byte 80, length `0x280` |
-| `of_public_values` | 185-byte public values | 4 | `0x80` after the return code, length `0x5C8` |
+| Function           | Message                       | Blocks | Padding                                      |
+|--------------------|-------------------------------|--------|----------------------------------------------|
+| `of_header_words`  | 80-byte header, then SHA-256d | 2 + 1  | `0x80` at byte 80, length `0x280`            |
+| `of_public_values` | 185-byte public values        | 4      | `0x80` after the return code, length `0x5C8` |
 
 The header hash writes the 16 message words straight into the schedule buffer: `version`
 byte-swapped, the previous hash as 8 state words, 7 words of merkle root. Second block: the
@@ -426,13 +427,13 @@ no context, so it only exists at the point of commit. The errors that happen in 
 are ordinary enums (`ApplyError`) with heights and hashes in them, and `ReportableError` is the
 one trait that reduces an error to its byte.
 
-| Code | `ApplyError` variant | When |
-| --- | --- | --- |
-| 0 | | every header accepted |
-| 2 | `PowInsufficient` | hash above the active target |
-| 3 | `TimestampTooOld` | timestamp not above the median |
-| 5 | `InsufficientColdHeaders` | first batch shorter than 10 |
-| 255 | | an error with no code of its own. Nothing emits it today |
+| Code | `ApplyError` variant      | When                                                     |
+|------|---------------------------|----------------------------------------------------------|
+| 0    |                           | every header accepted                                    |
+| 2    | `PowInsufficient`         | hash above the active target                             |
+| 3    | `TimestampTooOld`         | timestamp not above the median                           |
+| 5    | `InsufficientColdHeaders` | first batch shorter than 10                              |
+| 255  |                           | an error with no code of its own. Nothing emits it today |
 
 Codes 1 and 4 have names in `ErrorCode` but no producer.
 
@@ -443,11 +444,11 @@ check refuses to extend it because of the hardcoded success byte.
 
 There are three distinct ways the guest can stop and they mean different things:
 
-| SP1 exit code | Cause | Public values |
-| --- | --- | --- |
-| 0 | `commit_public_values`, success or consensus failure | 185 bytes committed |
-| 1 | a Rust panic: input cast failure, `expect`, `unreachable!` | none |
-| 3 | `invalid_hint!`: bad or missing hint, or a wrong block work quotient | none |
+| SP1 exit code | Cause                                                                | Public values       |
+|---------------|----------------------------------------------------------------------|---------------------|
+| 0             | `commit_public_values`, success or consensus failure                 | 185 bytes committed |
+| 1             | a Rust panic: input cast failure, `expect`, `unreachable!`           | none                |
+| 3             | `invalid_hint!`: bad or missing hint, or a wrong block work quotient | none                |
 
 The 3 vs 1 split is a security property. A malicious prover can trigger a panic trivially by
 withholding input. It must not be able to make a bad hint look like an ordinary program bug,
@@ -509,7 +510,7 @@ state after acceptance.
 - **Hint checks.** Every value read from the hint stream needs a check that fails with
   `invalid_hint!`, never with `return Err`. An `ApplyError` becomes a valid failure proof. A
   hint problem must not.
-- **The round-trip.** `calculate_next_target_required` must end with `target_to_bits` then
+- **The round-trip.** `calculate_next_work_required` must end with `target_to_bits` then
   `target_from_bits`. See the retarget section for why.
 - **Wire layouts.** `State`, `HeaderInput` and `PublicValues` are byte-for-byte contracts with
   the controller and with every proof already on disk. A field reorder changes the verifier

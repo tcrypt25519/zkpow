@@ -2,7 +2,7 @@ use zkpow_params::ShortEpoch;
 use zkvm_test::zkvm_test;
 
 use crate::{
-    calculate_next_target_required, target_from_bits, target_to_bits, tests::*, CompactTarget, Consensus, HeaderInput,
+    calculate_next_work_required, target_from_bits, target_to_bits, tests::*, CompactTarget, Consensus, HeaderInput,
     Target,
 };
 
@@ -44,7 +44,7 @@ fn retarget_timespan_cases_adjust_target_direction() {
 
     for (name, timespan, expected) in cases {
         let old = GENESIS_TARGET;
-        let (bits, new, _) = calculate_next_target_required::<TestConsensus>(old, ts(0), ts(timespan));
+        let (bits, new, _) = calculate_next_work_required::<TestConsensus>(old, ts(0), ts(timespan));
 
         match expected {
             ExpectedDirection::Equal => {
@@ -67,23 +67,23 @@ fn retargeting_clamping_bounds_match_fourfold_limits() {
 
     // 100 days vs 56 days (clamped upper bound: 4x expected timespan)
     let (_, target_100_days, work_100_days) =
-        calculate_next_target_required::<TestConsensus>(old_target, ts(0), ts(100 * 86400));
+        calculate_next_work_required::<TestConsensus>(old_target, ts(0), ts(100 * 86400));
     let (_, target_56_days, work_56_days) =
-        calculate_next_target_required::<TestConsensus>(old_target, ts(0), ts(56 * 86400));
+        calculate_next_work_required::<TestConsensus>(old_target, ts(0), ts(56 * 86400));
     assert_eq!(target_100_days, target_56_days, "timespan > 4x must clamp to 4x");
     assert_eq!(work_100_days, work_56_days);
 
     // 1 day vs 3.5 days (clamped lower bound: 0.25x expected timespan)
-    let (_, target_1_day, work_1_day) = calculate_next_target_required::<TestConsensus>(old_target, ts(0), ts(86400));
+    let (_, target_1_day, work_1_day) = calculate_next_work_required::<TestConsensus>(old_target, ts(0), ts(86400));
     let (_, target_quarter, work_quarter) =
-        calculate_next_target_required::<TestConsensus>(old_target, ts(0), ts(302400));
+        calculate_next_work_required::<TestConsensus>(old_target, ts(0), ts(302400));
     assert_eq!(target_1_day, target_quarter, "timespan < 0.25x must clamp to 0.25x");
     assert_eq!(work_1_day, work_quarter);
 
     // Excessively slow retarget clamped to genesis pow_limit
     let slow_target = Target::from_limbs([0, 0, 0, 0x0000_0000_FFFF_0000]);
     let (nbits_clamped, target_clamped, _) =
-        calculate_next_target_required::<TestConsensus>(slow_target, ts(0), ts(56 * 86400));
+        calculate_next_work_required::<TestConsensus>(slow_target, ts(0), ts(56 * 86400));
     assert_eq!(nbits_clamped, CompactTarget::new(GENESIS_NBITS));
     assert_eq!(target_clamped, GENESIS_TARGET);
 }
@@ -103,7 +103,7 @@ fn assert_boundary_retargets_once<C: Consensus>() {
     state.epoch_timestamp = ts(1_000_000);
     state.timestamps = [ts(1_000_600); WINDOW_SIZE];
 
-    let (expected_nbits, ..) = calculate_next_target_required::<C>(
+    let (expected_nbits, ..) = calculate_next_work_required::<C>(
         target_from_bits(state.current_nbits),
         state.epoch_timestamp,
         state.timestamps[timestamp_slot(state.height)],
@@ -114,10 +114,10 @@ fn assert_boundary_retargets_once<C: Consensus>() {
     );
 
     let header = HeaderInput {
-        version:     1,
+        version: 1,
         merkle_root: [0x22; 32],
-        timestamp:   ts(1_000_700),
-        nonce:       7,
+        timestamp: ts(1_000_700),
+        nonce: 7,
     };
     state.apply_headers::<C>(&[header], &[]).expect("boundary header should apply");
 
@@ -138,10 +138,10 @@ fn epoch_boundary_is_read_from_consensus_parameters() {
     let starting_nbits = state.current_nbits;
 
     let header = HeaderInput {
-        version:     1,
+        version: 1,
         merkle_root: [0x22; 32],
-        timestamp:   ts(1_000_700),
-        nonce:       7,
+        timestamp: ts(1_000_700),
+        nonce: 7,
     };
 
     let mut short = state;
