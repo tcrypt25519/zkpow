@@ -11,7 +11,6 @@ macro_rules! define_newtype {
     ) => {
         $(#[$meta])*
         #[derive(PartialOrd, Ord)]
-        #[wiretype]
         $vis struct $name($inner);
 
         impl $name {
@@ -61,6 +60,7 @@ macro_rules! define_pod_newtype {
     ) => {
         define_newtype! {
             $(#[$meta])*
+            #[wiretype]
             $vis struct $name($inner);
         }
     };
@@ -228,6 +228,7 @@ define_u256_newtype! {
 
 define_newtype! {
     /// The threshold which a valid [`BlockHash`] must not exceed.
+    #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
     pub struct Target(NonMaxU256);
 }
 

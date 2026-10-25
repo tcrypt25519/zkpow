@@ -162,8 +162,7 @@ impl TryFrom<&[u8]> for u256 {
 ///
 /// Block work is `2^256 / (target + 1)`, so a target must survive `+ 1` without wrapping. Storing
 /// it as `NonMaxU256` makes that a type guarantee instead of a runtime check.
-#[wiretype::wiretype]
-#[derive(PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, PartialOrd, Ord)]
 pub struct NonMaxU256(u256);
 
 impl NonMaxU256 {
