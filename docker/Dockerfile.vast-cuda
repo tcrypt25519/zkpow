@@ -12,20 +12,30 @@ FROM nvidia/cuda:12.4.1-devel-ubuntu22.04 AS platform
 ARG RUST_VERSION=1.97.1
 ARG ZKPOW_FEATURES=cuda
 
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
 ENV DEBIAN_FRONTEND=noninteractive \
     RUSTUP_HOME=/usr/local/rustup \
     CARGO_HOME=/usr/local/cargo \
     SP1_HOME=/root/.sp1 \
     CUDA_HOME=/usr/local/cuda \
     PATH=/usr/local/cargo/bin:/root/.sp1/bin:/usr/local/cuda/bin:$PATH \
-    CARGO_TARGET_DIR=/workspace/target/docker-linux-cuda
+    CARGO_TARGET_DIR=/workspace/target/docker-linux-cuda \
+    CURL_HOME=/etc/curl
+
+COPY --chmod=0644 <<EOF ${CURL_HOME}/.curlrc
+--retry-connrefused
+--connect-timeout 15
+--retry 5
+--max-time 300
+EOF
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
     build-essential ca-certificates clang cmake curl file git libprotobuf-dev \
     libsqlite3-dev libssl-dev lld m4 pkg-config protobuf-compiler zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain ${RUST_VERSION} --profile minimal
+RUN curl --proto '=https' --tlsv1.2 --location -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain ${RUST_VERSION} --profile minimal
 RUN curl -L https://sp1.succinct.xyz | bash && \
     /root/.sp1/bin/sp1up && \
     cargo prove --version
@@ -39,11 +49,15 @@ COPY crates ./crates
 COPY --from=zkvm-test Cargo.toml Cargo.lock /zkvm-test/
 COPY --from=zkvm-test crates /zkvm-test/crates/
 
-RUN if [ -n "${ZKPOW_FEATURES}" ]; then \
+RUN --mount=type=cache,target=/workspace/target,id=cargo-target \\
+--mount=type=cache,target=/usr/local/cargo/git/db,id=cargo-git \
+--mount=type=cache,target=/usr/local/cargo/registry,id=cargo-registry \
+if [ -n "${ZKPOW_FEATURES}" ]; then \
         cargo build --release -p zkpow-host --bin zkpow-host --features "${ZKPOW_FEATURES}"; \
     else \
         cargo build --release -p zkpow-host --bin zkpow-host; \
-    fi
+    fi \
+    && cp /workspace/target/docker-linux-cuda/release/zkpow-host /usr/local/bin/zkpow-host
 
 # =============================================================================
 
@@ -51,6 +65,8 @@ FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
 
 LABEL maintainer="tcrypt"
 LABEL description="Self-contained ZKPOW CUDA prover node (Vast.ai)"
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
@@ -65,7 +81,7 @@ RUN apt-get update \
     supervisor zstd \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /workspace/target/docker-linux-cuda/release/zkpow-host /usr/local/bin/zkpow-host
+COPY --from=builder /usr/local/bin/zkpow-host /usr/local/bin/zkpow-host
 COPY docker/entrypoint.sh /entrypoint.sh
 COPY docker/supervisord.conf /etc/supervisor/supervisord.conf
 

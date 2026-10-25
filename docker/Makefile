@@ -19,6 +19,7 @@ HEADER_DB_ZST_PATH := $(DEPLOY_BUILD_DIR)/$(HEADER_DB_FILE).zst
 DOCKER_IMAGE     ?= zkpow-prover
 DOCKER_TAG       ?= latest
 DOCKER_PLATFORM  ?= linux/amd64
+DOCKER_CACHE_ARGS ?=
 DOCKER_TARGET    := $(if $(filter mac,$(MAKECMDGOALS)),mac,linux)
 DOCKER_FEATURES  := $(if $(filter linux,$(DOCKER_TARGET)),cuda,)
 
@@ -47,7 +48,7 @@ ifneq ($(wildcard $(DOCKER_DEPS_RS_SRC)),)
 DOCKER_DEPS_SCRIPTS=
 -include $(DOCKER_DEPS_FILE)
 $(DOCKER_DEPS_FILE): $(DOCKER_DEPS_RS_SRC) | $(DEPLOY_BUILD_DIR)
-	@sed -E 's/(.*): (.*)$$/$(DOCKER_BUILD_MARKER): \2/g' $< > $@
+	@sed -E 's|(.*): (.*)$$|$(DOCKER_BUILD_MARKER): \2|g' $< > $@
 endif
 
 ##
@@ -70,6 +71,7 @@ $(DOCKER_BUILD_MARKER): $(DOCKER_DEPS_SCRIPTS) | $(DEPLOY_BUILD_DIR)
 		-f $(THIS_DIR)/Dockerfile.vast-cuda \
 		--build-context zkvm-test=$(ROOT_DIR)/../zkvm-test \
 		--build-arg ZKPOW_FEATURES="$(DOCKER_FEATURES)" \
+		$(DOCKER_CACHE_ARGS) \
 		--platform $(DOCKER_PLATFORM) \
 		-t $(DOCKER_IMAGE):$(DOCKER_TAG) \
 		--load .)
@@ -98,6 +100,4 @@ ALL_VARS := $(shell grep -E '^[[:space:]]*([A-Z_]+)[[:space:]]+[?:=]' $(THIS_MAK
 deployment-vars:
 	@$(foreach v,$(filter-out ALL_VARS,$(ALL_VARS)),$(info $v = $($v)))
 	@:
-
-
 

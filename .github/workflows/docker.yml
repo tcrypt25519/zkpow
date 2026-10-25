@@ -19,12 +19,16 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
-      - run: make docker DOCKER_IMAGE=tcrypt/zkpow-prover
-        working-directory: zkpow/docker
-
       - uses: docker/login-action@v3
         with:
           username: tylersmith
           password: ${{ secrets.DOCKER_HUB_TOKEN }}
+
+      - run: make docker DOCKER_IMAGE=tcrypt/zkpow-prover
+        working-directory: zkpow/docker
+        env:
+          DOCKER_CACHE_ARGS: >-
+            --cache-from type=registry,ref=tcrypt/zkpow-prover:buildcache
+            --cache-to type=registry,ref=tcrypt/zkpow-prover:buildcache,mode=max,image-manifest=true,oci-mediatypes=true
 
       - run: docker push tcrypt/zkpow-prover:latest
