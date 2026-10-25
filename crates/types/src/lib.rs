@@ -10,6 +10,7 @@
 mod bigint;
 mod brand;
 mod header;
+mod target_triplet;
 
 #[cfg(test)]
 mod tests;
@@ -17,4 +18,5 @@ mod tests;
 pub use bigint::{u256, NonMaxU256};
 pub use brand::{BlockHash, BlockTimestamp, BlockWork, ChainWork, CompactTarget, Target};
 pub use header::Header;
+pub use target_triplet::TargetTriplet;
 pub use wiretype::wiretype;

@@ -14,16 +14,14 @@ mod tests;
 extern crate alloc;
 extern crate self as zkpow_core;
 
-
 pub use zkpow_mtp::{
     advance_ordered_timestamp_run, has_ordered_timestamp_window, ordered_median_timestamp_slot, ordered_timestamp_run,
     requires_median_hint, timestamp_count, timestamp_slot, WINDOW_LARGE_HALF_SIZE, WINDOW_MAX_INDEX, WINDOW_SIZE,
     WINDOW_SMALL_HALF_SIZE,
 };
-
 use zkpow_params::Consensus;
 pub use zkpow_types::{
-    u256, BlockHash, BlockTimestamp, BlockWork, ChainWork, CompactTarget, Header, NonMaxU256, Target,
+    u256, BlockHash, BlockTimestamp, BlockWork, ChainWork, CompactTarget, Header, NonMaxU256, Target, TargetTriplet,
 };
 
 mod header;
@@ -438,14 +436,14 @@ pub fn block_work_from_target(target: Target) -> BlockWork {
 }
 
 /// Compute the work and corresponding target required at a difficulty boundary.
-/// Returns the tripplet of forms that express work so their calculation is
+/// Returns the triplet of forms that express work so their calculation is
 /// centralized to ensure they all come from exactly the same value.
 #[must_use]
 pub fn calculate_next_work_required<C: Consensus>(
     old_target: Target,
     epoch_start_timestamp: BlockTimestamp,
     previous_timestamp: BlockTimestamp,
-) -> (CompactTarget, Target, BlockWork) {
+) -> TargetTriplet {
     // Normalize the timespan to ensure it's within the min/max bounds allowed.
     let actual_timespan = i64::from(*previous_timestamp) - i64::from(*epoch_start_timestamp);
     let clamped_timespan = actual_timespan.clamp(C::PARAMS.min_epoch_timespan(), C::PARAMS.max_epoch_timespan()) as u32;
@@ -472,5 +470,5 @@ pub fn calculate_next_work_required<C: Consensus>(
     let block_work = block_work_from_target(normalized_target);
 
     // The target is capped above and truncated below; return it and the compact form we calculated along the way.
-    (compact_target, normalized_target, block_work)
+    TargetTriplet::new(compact_target, normalized_target, block_work)
 }

@@ -135,14 +135,14 @@ fn connect_headers_only_re_derives_target_at_epoch_boundary() {
     let mut anchor = synthetic_anchor(epoch_len - 1, TRIVIAL_NBITS_A);
     anchor.epoch_timestamp = 2_000_000_000 - (TrivialConsensus::PARAMS.expected_epoch_time() / 2);
 
-    let (expected_nbits, target_b, work_b) = calculate_next_work_required::<TrivialConsensus>(
+    let target: TargetTriplet = calculate_next_work_required::<TrivialConsensus>(
         anchor.current_target,
         BlockTimestamp::new(anchor.epoch_timestamp),
         BlockTimestamp::new(2_000_000_000),
     );
-    assert_eq!(expected_nbits, CompactTarget::new(TRIVIAL_NBITS_B));
+    assert_eq!(target.into(), CompactTarget::new(TRIVIAL_NBITS_B));
 
-    let wrong_boundary = mine_header_against(anchor.hash, TRIVIAL_NBITS_A, target_b, 2_000_010_000);
+    let wrong_boundary = mine_header_against(anchor.hash, TRIVIAL_NBITS_A, target.into(), 2_000_010_000);
     assert!(
         connect_headers::<TrivialConsensus>(&anchor, std::slice::from_ref(&wrong_boundary)).is_empty(),
         "boundary header with un-retargeted nbits must be rejected"
@@ -153,7 +153,7 @@ fn connect_headers_only_re_derives_target_at_epoch_boundary() {
     assert_eq!(connected.len(), 1, "boundary header should validate under retargeted bits");
     assert_eq!(
         connected[0].chainwork,
-        anchor.chainwork + work_b,
+        anchor.chainwork + target.into(),
         "chainwork must accumulate the new epoch's work"
     );
 

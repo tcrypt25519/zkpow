@@ -6,7 +6,8 @@ use zkpow_params::Consensus;
 
 use crate::{
     block_work_from_target, calculate_next_work_required, check_proof_of_work_words, hash_header_input,
-    target_from_bits, ApplyError, BlockHash, BlockTimestamp, BlockWork, ChainWork, CompactTarget, HeaderInput, Target,
+    target_from_bits, ApplyError, BlockHash, BlockTimestamp, ChainWork, CompactTarget, HeaderInput, Target,
+    TargetTriplet,
 };
 
 /// The canonical chain state the prover attests to and each batch of transitions starts
@@ -14,48 +15,40 @@ use crate::{
 /// reflects the updated chain only after the batch commits.
 #[wiretype::wiretype]
 pub struct State {
-    pub chain_work: ChainWork,
+    pub chain_work:   ChainWork,
     pub genesis_hash: BlockHash,
-    pub block_hash: BlockHash,
-    pub height: u32,
+    pub block_hash:   BlockHash,
+    pub height:       u32,
 
     /// The compact target in force for the current difficulty epoch.
-    pub current_nbits: CompactTarget,
+    pub current_nbits:   CompactTarget,
     /// Timestamp of the current epoch's first block; the next retarget measures from here.
     pub epoch_timestamp: BlockTimestamp,
     /// The MTP window, slot `height % WINDOW_SIZE`.
-    pub timestamps: [BlockTimestamp; WINDOW_SIZE],
+    pub timestamps:      [BlockTimestamp; WINDOW_SIZE],
 }
 
 impl State {
     /// Called when the State reflects the final block of epoch N
     /// to compute the difficulty values that are active in epoch N+1.
-    fn prepare_next_epoch<C: Consensus>(
-        &self,
-        current_timestamp: BlockTimestamp,
-    ) -> (CompactTarget, Target, BlockWork) {
-        let current_target = target_from_bits(self.current_nbits);
-        calculate_next_work_required::<C>(current_target, self.epoch_timestamp, current_timestamp)
+    fn prepare_next_epoch<C: Consensus>(&self, target: Target, timestamp: BlockTimestamp) -> TargetTriplet {
+        calculate_next_work_required::<C>(target, self.epoch_timestamp, timestamp)
     }
 
     fn new_epoch_manager<'a, C: Consensus>(&'_ mut self, current_timestamp: BlockTimestamp) -> EpochManager<'_> {
-        let (active_nbits, active_target, active_block_work) =
-            if (self.height + 1).is_multiple_of(C::PARAMS.epoch_length) {
-                self.prepare_next_epoch::<C>(current_timestamp)
-            } else {
-                let active_nbits = self.current_nbits;
-                let active_target = target_from_bits(active_nbits);
-                let active_block_work = block_work_from_target(active_target);
-                (active_nbits, active_target, active_block_work)
-            };
+        let current_target = target_from_bits(self.current_nbits);
+        let target_triplet = if (self.height + 1).is_multiple_of(C::PARAMS.epoch_length) {
+            self.prepare_next_epoch::<C>(current_target, current_timestamp)
+        } else {
+            let block_work = block_work_from_target(current_target);
+            TargetTriplet::new(self.current_nbits, current_target, block_work)
+        };
 
         let start_height = self.height;
         EpochManager {
             state: self,
             start_height,
-            active_block_work,
-            active_nbits,
-            active_target,
+            target_triplet,
         }
     }
 
@@ -133,14 +126,13 @@ impl State {
 
         while header_iter.len() > 0 {
             let epoch_start_height = self.height;
-            let mut context = self.new_epoch_manager::<C>(BlockTimestamp::new(mtp.newest()));
+            let mut context: EpochManager<'_> = self.new_epoch_manager::<C>(BlockTimestamp::new(mtp.newest()));
             let epoch_len_remaining =
                 (C::PARAMS.epoch_length - ((epoch_start_height + 1) % C::PARAMS.epoch_length)) as usize;
 
             for new_header in header_iter.by_ref().take(epoch_len_remaining) {
                 let state = &mut context.state;
-                let active_nbits = context.active_nbits;
-                let active_target = context.active_target;
+                let (active_nbits, active_target, _) = context.target_triplet.components();
 
                 let claimed_median = match mtp.median() {
                     Some(median) => BlockTimestamp::new(median),
@@ -219,9 +211,9 @@ impl State {
         // Check that the incoming timestamp is > `known_median`
         if new_header.timestamp <= known_median {
             return Err(ApplyError::TimestampTooOld {
-                height: self.height + 1,
+                height:    self.height + 1,
                 timestamp: new_header.timestamp,
-                median: known_median,
+                median:    known_median,
             });
         }
 
@@ -252,11 +244,9 @@ impl State {
 }
 
 struct EpochManager<'a> {
-    state: &'a mut State,
-    start_height: u32,
-    active_block_work: BlockWork,
-    active_nbits: CompactTarget,
-    active_target: Target,
+    state:          &'a mut State,
+    start_height:   u32,
+    target_triplet: TargetTriplet,
 }
 
 impl<'a> EpochManager<'a> {
@@ -268,10 +258,10 @@ impl<'a> EpochManager<'a> {
             return;
         }
 
-        self.state.chain_work += self.active_block_work * processed;
+        self.state.chain_work += self.target_triplet.block_work() * processed;
 
         // TODO: This only needs to happen after re-calculating difficulty
-        self.state.current_nbits = self.active_nbits;
+        self.state.current_nbits = self.target_triplet.compact_target();
     }
 }
 

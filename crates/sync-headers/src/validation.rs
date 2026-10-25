@@ -39,7 +39,8 @@ pub fn connect_headers<C: Consensus>(anchor: &Tip, headers: &[Header]) -> Vec<Co
                 active_target,
                 BlockTimestamp::new(epoch_timestamp),
                 BlockTimestamp::new(previous_timestamp),
-            );
+            )
+            .components();
         }
 
         if header.inner.compact_target != active_nbits {
