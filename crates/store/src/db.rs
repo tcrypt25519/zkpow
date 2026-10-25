@@ -130,7 +130,7 @@ impl HeaderStore {
         Ok(Self { conn })
     }
 
-    pub fn get_best_tip(&self) -> rusqlite::Result<Option<Tip>> {
+    pub fn get_best_tip<C: Consensus>(&self) -> rusqlite::Result<Option<Tip>> {
         struct BestTipRow {
             hash_bytes:            Vec<u8>,
             height:                u32,
@@ -161,6 +161,12 @@ impl HeaderStore {
                 let hash = hash_from_bytes(&row.hash_bytes)?;
                 let chainwork = work_from_bytes(&row.chainwork_bytes)?;
                 let ordered_timestamp_run = ordered_timestamp_run_from_db(row.height as u64, row.ordered_timestamp_run);
+                let epoch_start_height = (row.height / C::PARAMS.epoch_length) * C::PARAMS.epoch_length;
+                let epoch_timestamp: u32 = self.conn.query_row(
+                    "SELECT timestamp FROM headers WHERE height = ?1",
+                    params![epoch_start_height as i64],
+                    |row| row.get(0),
+                )?;
                 let (current_nbits, current_target, current_work) =
                     sync_headers::expand_target(CompactTarget::new(row.n_bits as u32));
 
@@ -184,6 +190,7 @@ impl HeaderStore {
                     chainwork,
                     timestamps,
                     ordered_timestamp_run,
+                    epoch_timestamp,
                     current_nbits,
                     current_target,
                     current_work,

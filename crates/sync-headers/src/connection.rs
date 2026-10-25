@@ -3,6 +3,7 @@
 use std::{
     io::{Read, Write},
     net::{SocketAddr, TcpStream},
+    time::Duration,
 };
 
 use bitcoin::{
@@ -28,6 +29,13 @@ const USER_AGENT: &str = "/zkpow-cli:0.1.0/";
 
 /// Size of the command field in a Bitcoin P2P message frame.
 const COMMAND_SIZE: usize = 12;
+
+pub const MAX_HEADERS_PER_MSG: usize = 2000;
+const MAX_MESSAGE_BYTES: usize = 4_000_000;
+const MAX_USER_AGENT_BYTES: u64 = 256;
+const MAX_SKIPPED_MESSAGES: usize = 64;
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const IO_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// A Bitcoin P2P network message command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -132,6 +140,9 @@ impl Decodable for VersionMessage {
         let nonce = Decodable::consensus_decode(d)?;
 
         let ua_len: encode::VarInt = Decodable::consensus_decode(d)?;
+        if ua_len.0 > MAX_USER_AGENT_BYTES {
+            return Err(encode::Error::ParseFailed("user agent exceeds maximum length"));
+        }
         let mut ua_buf = vec![0u8; ua_len.0 as usize];
         BitcoinRead::read_exact(d, &mut ua_buf)?;
         let user_agent = String::from_utf8_lossy(&ua_buf).to_string();
@@ -164,8 +175,10 @@ pub struct PeerConnection {
 impl PeerConnection {
     /// Open the TCP connection and complete the version handshake.
     pub fn connect(addr: SocketAddr, network: Network, start_height: i32) -> std::io::Result<Self> {
-        let stream = TcpStream::connect(addr)?;
+        let stream = TcpStream::connect_timeout(&addr, CONNECT_TIMEOUT)?;
         stream.set_nodelay(true)?;
+        stream.set_read_timeout(Some(IO_TIMEOUT))?;
+        stream.set_write_timeout(Some(IO_TIMEOUT))?;
 
         let network_magic = match network {
             Network::Mainnet => MAINNET_MAGIC,
@@ -255,6 +268,12 @@ impl PeerConnection {
         let payload = self.read_message_of_type(Command::Headers)?;
         let mut cursor = std::io::Cursor::new(payload);
         let count: encode::VarInt = Decodable::consensus_decode(&mut cursor).map_err(io_error)?;
+        if count.0 > MAX_HEADERS_PER_MSG as u64 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("headers count {} exceeds {MAX_HEADERS_PER_MSG}", count.0),
+            ));
+        }
 
         let mut headers = Vec::with_capacity(count.0 as usize);
         for _ in 0..count.0 {
@@ -279,13 +298,20 @@ impl PeerConnection {
     }
 
     fn read_message_of_type(&mut self, expected: Command) -> std::io::Result<Vec<u8>> {
-        loop {
+        for _ in 0..=MAX_SKIPPED_MESSAGES {
             let (command, payload) = self.read_message()?;
             if command == expected {
                 return Ok(payload);
             }
+            if command == Command::Ping && payload.len() == 8 {
+                self.write_message(Command::Pong, &payload)?;
+            }
             tracing::debug!(?command, ?expected, "Skipping unsolicited message");
         }
+        Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "too many unsolicited messages",
+        ))
     }
 
     fn read_message(&mut self) -> std::io::Result<(Command, Vec<u8>)> {
@@ -305,6 +331,12 @@ impl PeerConnection {
         let mut len_buf = [0u8; 4];
         self.stream.read_exact(&mut len_buf)?;
         let payload_len = u32::from_le_bytes(len_buf) as usize;
+        if payload_len > MAX_MESSAGE_BYTES {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("payload length {payload_len} exceeds {MAX_MESSAGE_BYTES}"),
+            ));
+        }
 
         let mut checksum_buf = [0u8; 4];
         self.stream.read_exact(&mut checksum_buf)?;

@@ -63,11 +63,14 @@ fn sync_p2p<C: Consensus>(args: &SyncArgs) -> Result<(), Box<dyn std::error::Err
     let Some(network) = Network::parse(&args.p2p_network) else {
         return Err("network not found".into());
     };
+    if network != Network::Mainnet {
+        return Err(format!("unsupported network: {}", network.name()).into());
+    }
     tracing::info!(?network, db = %args.db, "Starting P2P sync");
 
     let mut store = HeaderStore::open(&args.db)?;
 
-    let anchor = match store.get_best_tip()? {
+    let anchor = match store.get_best_tip::<C>()? {
         Some(tip) => {
             tracing::info!(height = tip.height, hash = %tip.hash, "Resuming from existing tip");
             tip
@@ -83,7 +86,7 @@ fn sync_p2p<C: Consensus>(args: &SyncArgs) -> Result<(), Box<dyn std::error::Err
     let mut peer_store = if let Some(addr_str) = &args.p2p_peer {
         let addr = addr_str.parse()?;
         let mut ps = PeerStore::default();
-        ps.mark_connected(&addr);
+        ps.add_peer(addr);
         tracing::info!(peer = %addr, "Using explicit peer address");
         ps
     } else {
@@ -99,9 +102,9 @@ fn sync_p2p<C: Consensus>(args: &SyncArgs) -> Result<(), Box<dyn std::error::Err
         |raw_headers, tip| -> Result<Tip, String> {
             let connected = connect_headers::<C>(tip, raw_headers);
             if connected.is_empty() {
-                return Err("no headers could be connected to the tip".into());
+                return Ok(tip.clone());
             }
-            let new_tip = tip_from_connected(tip, &connected);
+            let new_tip = tip_from_connected::<C>(tip, &connected);
             store.bulk_insert(&connected).map_err(|e| e.to_string())?;
             Ok(new_tip)
         },
@@ -123,4 +126,22 @@ fn genesis_connected_header<C: Consensus>() -> ConnectedHeader {
     let block_hash = header.block_hash();
     let chainwork = ChainWork::from_limbs(C::PARAMS.genesis_work.into_inner().into_limbs());
     ConnectedHeader::new(header, block_hash, 0, chainwork, 0, 0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_unknown_and_unsupported_networks() {
+        for network in ["invalid", "testnet", "regtest"] {
+            let args = SyncArgs {
+                db:          ":memory:".to_string(),
+                max_headers: 1,
+                p2p_peer:    None,
+                p2p_network: network.to_string(),
+            };
+            assert!(sync_p2p_for_network(&args).is_err(), "{network} must fail");
+        }
+    }
 }

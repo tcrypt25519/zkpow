@@ -12,7 +12,7 @@ use zkpow_core::BlockHash;
 use zkpow_params::Consensus;
 
 use crate::{
-    connection::PeerConnection,
+    connection::{PeerConnection, MAX_HEADERS_PER_MSG},
     error::SyncHeadersError,
     peers::PeerStore,
     types::{Header, Network, Tip},
@@ -188,7 +188,14 @@ where
         *batch += 1;
         tracing::info!(batch, received = raw_headers.len(), "Received headers from peer");
 
-        let new_tip = match on_headers(&raw_headers, current_tip) {
+        let batch_headers = if max_headers > 0 {
+            let remaining = (max_headers - *total_synced) as usize;
+            &raw_headers[..raw_headers.len().min(remaining)]
+        } else {
+            &raw_headers[..]
+        };
+
+        let new_tip = match on_headers(batch_headers, current_tip) {
             Ok(tip) => tip,
             Err(e) => {
                 return Err(SyncHeadersError::Callback {
@@ -212,7 +219,18 @@ where
 
         *current_tip = new_tip;
 
-        if valid_count < 2000 {
+        if valid_count < batch_headers.len() as u32 {
+            return Err(SyncHeadersError::Peer {
+                source:     Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "peer sent invalid headers",
+                )),
+                latest_tip: Box::new(current_tip.clone()),
+                synced:     *total_synced,
+            });
+        }
+
+        if raw_headers.len() < MAX_HEADERS_PER_MSG {
             tracing::info!("Received partial batch, peer is caught up");
             break;
         }

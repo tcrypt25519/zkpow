@@ -120,23 +120,13 @@ impl PeerStore {
             .map(|(i, _)| i)
             .collect();
 
-        if candidates.is_empty() {
-            let fallback: Vec<usize> = self
-                .entries
-                .iter()
-                .enumerate()
-                .filter(|(_, e)| matches!(e.status, PeerStatus::Unreachable | PeerStatus::TooSlow))
-                .map(|(i, _)| i)
-                .collect();
+        let idx = *candidates.choose(rng)?;
+        Some(self.entries[idx].addr)
+    }
 
-            if fallback.is_empty() {
-                return None;
-            }
-            let idx = *fallback.choose(rng)?;
-            Some(self.entries[idx].addr)
-        } else {
-            let idx = *candidates.choose(rng)?;
-            Some(self.entries[idx].addr)
+    pub fn add_peer(&mut self, addr: SocketAddr) {
+        if self.find_mut(&addr).is_none() {
+            self.entries.push(PeerEntry::new(addr));
         }
     }
 

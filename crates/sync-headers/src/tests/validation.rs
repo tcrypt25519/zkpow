@@ -1,17 +1,42 @@
-use zkpow_core::{
-    check_proof_of_work, target_from_bits, BlockHash, BlockTimestamp, CompactTarget, Header as CoreHeader, Target,
+use std::{
+    io::{Read, Write},
+    net::TcpListener,
+    thread,
 };
-use zkpow_params::{Consensus, Mainnet, WINDOW_MAX_INDEX, WINDOW_SIZE};
 
-const EPOCH_LENGTH: u32 = Mainnet::PARAMS.epoch_length;
+use bitcoin::consensus::{encode, Decodable, Encodable};
+use zkpow_core::{
+    calculate_next_work_required, check_proof_of_work, target_from_bits, BlockHash, BlockTimestamp, BlockWork,
+    CompactTarget, Header as CoreHeader, Target,
+};
+use zkpow_params::{Consensus, ConsensusParams, Mainnet, WINDOW_MAX_INDEX, WINDOW_SIZE};
 
 use super::*;
+use crate::connection::{create_checksum, VersionMessage, MAX_HEADERS_PER_MSG};
 
-// The 23-bit mantissa caps the expressible target just under 2^256, so a
-// random hash almost always passes. A and B differ only in the mantissa to
-// exercise retarget cache invalidation.
-const TRIVIAL_NBITS_A: u32 = 0x227FFFFF;
-const TRIVIAL_NBITS_B: u32 = 0x227FFFFE;
+const TRIVIAL_NBITS_A: u32 = 0x2007FFFF;
+const TRIVIAL_NBITS_B: u32 = 0x2003FFFF;
+
+struct TrivialConsensus;
+
+impl Consensus for TrivialConsensus {
+    const PARAMS: ConsensusParams = ConsensusParams {
+        genesis:             CoreHeader {
+            version:        1,
+            prev_blockhash: BlockHash::new([0u8; 32]),
+            merkle_root:    [0u8; 32],
+            timestamp:      BlockTimestamp::new(2_000_000_000),
+            compact_target: CompactTarget::new(TRIVIAL_NBITS_A),
+            nonce:          0,
+        },
+        genesis_target:      Target::from_limbs([0, 0, 0, 0x07FF_FF00_0000_0000]),
+        genesis_work:        BlockWork::from_limbs([32, 0, 0, 0]),
+        block_time:          1,
+        epoch_length:        4,
+        max_epoch_over_mul:  4,
+        min_epoch_under_div: 4,
+    };
+}
 
 fn make_header(prev: BlockHash, nbits: u32, timestamp: u32, nonce: u32) -> Header {
     Header::new(CoreHeader {
@@ -58,7 +83,7 @@ fn build_chain(anchor: &Tip, count: u32, nbits_at: impl Fn(u32) -> u32) -> Vec<H
 /// that far without mining `height` real headers.
 fn synthetic_anchor(height: u32, nbits: u32) -> Tip {
     let (current_nbits, current_target, current_block_work) = expand_target(CompactTarget::new(nbits));
-    let chainwork = current_block_work * ((height + 1) as u32);
+    let chainwork = current_block_work * (height + 1);
     let ordered_run = (height as u64).min(WINDOW_MAX_INDEX as u64);
     Tip::new(
         BlockHash::new([0xAB; 32]),
@@ -66,6 +91,7 @@ fn synthetic_anchor(height: u32, nbits: u32) -> Tip {
         chainwork,
         [2_000_000_000u32; WINDOW_SIZE],
         ordered_run,
+        2_000_000_000,
         current_nbits,
         current_target,
         current_block_work,
@@ -90,53 +116,70 @@ fn connect_headers_wraps_the_timestamp_window_across_batches() {
     // actually exercises the ring-buffer hand-off between calls.
     let split = 7usize;
     let first_batch = connect_headers::<Mainnet>(&anchor, &headers[..split]);
-    let mid_tip = tip_from_connected(&anchor, &first_batch);
+    let mid_tip = tip_from_connected::<Mainnet>(&anchor, &first_batch);
     let second_batch = connect_headers::<Mainnet>(&mid_tip, &headers[split..]);
     assert_eq!(first_batch.len() + second_batch.len(), connected.len());
 
-    let final_tip = tip_from_connected(&mid_tip, &second_batch);
-    let one_shot_tip = tip_from_connected(&anchor, &connected);
+    let final_tip = tip_from_connected::<Mainnet>(&mid_tip, &second_batch);
+    let one_shot_tip = tip_from_connected::<Mainnet>(&anchor, &connected);
     assert_eq!(final_tip.hash, one_shot_tip.hash);
     assert_eq!(final_tip.height, one_shot_tip.height);
     assert_eq!(final_tip.chainwork, one_shot_tip.chainwork);
     assert_eq!(final_tip.timestamps, one_shot_tip.timestamps);
+    assert_eq!(final_tip.epoch_timestamp, one_shot_tip.epoch_timestamp);
 }
 
 #[test]
 fn connect_headers_only_re_derives_target_at_epoch_boundary() {
-    // One header below a retarget boundary, cached on nbits A.
-    let anchor = synthetic_anchor(EPOCH_LENGTH - 1, TRIVIAL_NBITS_A);
-    assert_ne!(TRIVIAL_NBITS_A, TRIVIAL_NBITS_B);
+    let epoch_len = TrivialConsensus::PARAMS.epoch_length;
+    let mut anchor = synthetic_anchor(epoch_len - 1, TRIVIAL_NBITS_A);
+    anchor.epoch_timestamp = 2_000_000_000 - (TrivialConsensus::PARAMS.expected_epoch_time() / 2);
 
-    // The boundary header (candidate_height == EPOCH_LENGTH) claims a
-    // *different* difficulty, B. This must be picked up, since this is
-    // exactly the `height % EPOCH_LENGTH == 0` case.
+    let (expected_nbits, target_b, work_b) = calculate_next_work_required::<TrivialConsensus>(
+        anchor.current_target,
+        BlockTimestamp::new(anchor.epoch_timestamp),
+        BlockTimestamp::new(2_000_000_000),
+    );
+    assert_eq!(expected_nbits, CompactTarget::new(TRIVIAL_NBITS_B));
+
+    let wrong_boundary = mine_header_against(anchor.hash, TRIVIAL_NBITS_A, target_b, 2_000_010_000);
+    assert!(
+        connect_headers::<TrivialConsensus>(&anchor, std::slice::from_ref(&wrong_boundary)).is_empty(),
+        "boundary header with un-retargeted nbits must be rejected"
+    );
+
     let boundary_header = mine_header(anchor.hash, TRIVIAL_NBITS_B, 2_000_010_000);
-    let connected = connect_headers::<Mainnet>(&anchor, std::slice::from_ref(&boundary_header));
-    assert_eq!(connected.len(), 1, "boundary header should validate under its own (new) bits");
-
-    let (_, target_b, work_b) = expand_target(CompactTarget::new(TRIVIAL_NBITS_B));
+    let connected = connect_headers::<TrivialConsensus>(&anchor, std::slice::from_ref(&boundary_header));
+    assert_eq!(connected.len(), 1, "boundary header should validate under retargeted bits");
     assert_eq!(
         connected[0].chainwork,
         anchor.chainwork + work_b,
-        "chainwork must accumulate the *new* epoch's work, not the cached (stale) one"
+        "chainwork must accumulate the new epoch's work"
     );
 
-    let tip = tip_from_connected(&anchor, &connected);
+    let tip = tip_from_connected::<TrivialConsensus>(&anchor, &connected);
     assert_eq!(tip.current_nbits, CompactTarget::new(TRIVIAL_NBITS_B));
+    assert_eq!(tip.epoch_timestamp, 2_000_010_000);
 
-    // Mid-epoch again: the header claims A but the cached value (B, from
-    // the boundary header) must govern until the next boundary. The header
-    // is mined against B's target, so the assertion below passes only if
-    // validation reads the cache rather than the header's own bits.
-    let mid_epoch_header = mine_header_against(tip.hash, TRIVIAL_NBITS_A, target_b, 2_000_020_000);
-    let connected_mid = connect_headers::<Mainnet>(&tip, std::slice::from_ref(&mid_epoch_header));
-    assert_eq!(connected_mid.len(), 1);
-    assert_eq!(
-        connected_mid[0].chainwork,
-        tip.chainwork + work_b,
-        "mid-epoch header must accumulate the cached epoch's work regardless of its own claimed bits"
+    let mismatched_mid = mine_header_against(tip.hash, TRIVIAL_NBITS_A, target_b, 2_000_020_000);
+    assert!(
+        connect_headers::<TrivialConsensus>(&tip, std::slice::from_ref(&mismatched_mid)).is_empty(),
+        "mid-epoch header claiming wrong nbits must be rejected"
     );
+
+    let valid_mid = mine_header(tip.hash, TRIVIAL_NBITS_B, 2_000_020_000);
+    let connected_mid = connect_headers::<TrivialConsensus>(&tip, std::slice::from_ref(&valid_mid));
+    assert_eq!(connected_mid.len(), 1);
+    assert_eq!(connected_mid[0].chainwork, tip.chainwork + work_b);
+
+    let two_step_tip = tip_from_connected::<TrivialConsensus>(&tip, &connected_mid);
+    let both = [boundary_header, valid_mid];
+    let one_shot = connect_headers::<TrivialConsensus>(&anchor, &both);
+    let one_shot_tip = tip_from_connected::<TrivialConsensus>(&anchor, &one_shot);
+    assert_eq!(two_step_tip.hash, one_shot_tip.hash);
+    assert_eq!(two_step_tip.chainwork, one_shot_tip.chainwork);
+    assert_eq!(two_step_tip.epoch_timestamp, one_shot_tip.epoch_timestamp);
+    assert_eq!(two_step_tip.current_nbits, one_shot_tip.current_nbits);
 }
 
 /// An anchor at height 0 with one known timestamp (`base`), followed by
@@ -157,6 +200,7 @@ fn median_time_past_matches_hand_computed_values_through_a_wrap() {
         chainwork,
         timestamps,
         0,
+        base,
         current_nbits,
         current_target,
         current_block_work,
@@ -229,6 +273,7 @@ fn connect_headers_resets_ordered_timestamp_run_on_timestamp_regression() {
             base + 10,
         ],
         10,
+        base,
         current_nbits,
         current_target,
         current_block_work,
@@ -265,6 +310,7 @@ fn ordered_window_uses_ring_median_without_changing_result() {
             base + 10,
         ],
         10,
+        base,
         current_nbits,
         current_target,
         current_block_work,
@@ -274,4 +320,197 @@ fn ordered_window_uses_ring_median_without_changing_result() {
     let connected = connect_headers::<Mainnet>(&anchor, std::slice::from_ref(&header));
     assert_eq!(connected.len(), 1);
     assert_eq!(connected[0].median_time_past, base + 5);
+}
+
+#[test]
+fn version_message_rejects_oversized_user_agent() {
+    let mut payload = Vec::new();
+    payload.extend_from_slice(&70015i32.to_le_bytes());
+    payload.extend_from_slice(&0u64.to_le_bytes());
+    payload.extend_from_slice(&0i64.to_le_bytes());
+    payload.extend_from_slice(&0u64.to_le_bytes());
+    payload.extend_from_slice(&[0u8; 18]);
+    payload.extend_from_slice(&0u64.to_le_bytes());
+    payload.extend_from_slice(&[0u8; 18]);
+    payload.extend_from_slice(&0u64.to_le_bytes());
+    encode::VarInt(257).consensus_encode(&mut payload).unwrap();
+    payload.extend(std::iter::repeat_n(b'a', 257));
+    payload.extend_from_slice(&0i32.to_le_bytes());
+
+    let mut cursor = bitcoin::io::Cursor::new(&payload);
+    assert!(VersionMessage::consensus_decode(&mut cursor).is_err());
+}
+
+#[test]
+fn peer_store_adds_peer_and_exhausts_unreachable_candidates() {
+    let addr: std::net::SocketAddr = "127.0.0.1:8333".parse().unwrap();
+    let mut store = PeerStore::default();
+    store.add_peer(addr);
+    store.add_peer(addr);
+    assert_eq!(store.len(), 1);
+
+    let mut rng = rand::rng();
+    assert_eq!(store.pick_candidate(&mut rng), Some(addr));
+    store.mark_unreachable(&addr);
+    assert_eq!(store.pick_candidate(&mut rng), None);
+}
+
+fn write_p2p_frame(stream: &mut std::net::TcpStream, cmd: &[u8], payload: &[u8]) {
+    let mut cmd_buf = [0u8; 12];
+    cmd_buf[..cmd.len()].copy_from_slice(cmd);
+    let mut frame = Vec::with_capacity(24 + payload.len());
+    frame.extend_from_slice(&[0xF9, 0xBE, 0xB4, 0xD9]);
+    frame.extend_from_slice(&cmd_buf);
+    frame.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+    frame.extend_from_slice(&create_checksum(payload));
+    frame.extend_from_slice(payload);
+    stream.write_all(&frame).unwrap();
+}
+
+fn read_p2p_frame(stream: &mut std::net::TcpStream) -> ([u8; 12], Vec<u8>) {
+    let mut hdr = [0u8; 24];
+    stream.read_exact(&mut hdr).unwrap();
+    let mut cmd = [0u8; 12];
+    cmd.copy_from_slice(&hdr[4..16]);
+    let len = u32::from_le_bytes(hdr[16..20].try_into().unwrap()) as usize;
+    let mut payload = vec![0u8; len];
+    if len > 0 {
+        stream.read_exact(&mut payload).unwrap();
+    }
+    (cmd, payload)
+}
+
+fn accept_handshake(listener: &TcpListener) -> std::net::TcpStream {
+    let (mut stream, _) = listener.accept().unwrap();
+    let _ = read_p2p_frame(&mut stream);
+    let mut ver = Vec::new();
+    ver.extend_from_slice(&70015i32.to_le_bytes());
+    ver.extend_from_slice(&0u64.to_le_bytes());
+    ver.extend_from_slice(&0i64.to_le_bytes());
+    ver.extend_from_slice(&0u64.to_le_bytes());
+    ver.extend_from_slice(&[0u8; 18]);
+    ver.extend_from_slice(&0u64.to_le_bytes());
+    ver.extend_from_slice(&[0u8; 18]);
+    ver.extend_from_slice(&0u64.to_le_bytes());
+    ver.push(0);
+    ver.extend_from_slice(&0i32.to_le_bytes());
+    ver.push(0);
+    write_p2p_frame(&mut stream, b"version", &ver);
+    let _ = read_p2p_frame(&mut stream);
+    write_p2p_frame(&mut stream, b"verack", &[]);
+    let _ = read_p2p_frame(&mut stream);
+    stream
+}
+
+fn encode_headers_payload(headers: &[Header]) -> Vec<u8> {
+    let mut payload = Vec::new();
+    encode::VarInt(headers.len() as u64).consensus_encode(&mut payload).unwrap();
+    for h in headers {
+        payload.extend_from_slice(h.inner.as_bytes());
+        payload.push(0);
+    }
+    payload
+}
+
+#[test]
+fn peer_connection_rejects_oversized_frame_and_header_count() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let mut stream = accept_handshake(&listener);
+        let mut frame = Vec::new();
+        frame.extend_from_slice(&[0xF9, 0xBE, 0xB4, 0xD9]);
+        frame.extend_from_slice(b"headers\0\0\0\0\0");
+        frame.extend_from_slice(&(4_000_001u32).to_le_bytes());
+        frame.extend_from_slice(&[0u8; 4]);
+        stream.write_all(&frame).unwrap();
+    });
+    let mut conn = PeerConnection::connect(addr, Network::Mainnet, 0).unwrap();
+    let err = conn.read_headers().unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    server.join().unwrap();
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let mut stream = accept_handshake(&listener);
+        write_p2p_frame(&mut stream, b"ping", &[1, 2, 3, 4, 5, 6, 7, 8]);
+        let (cmd, pong) = read_p2p_frame(&mut stream);
+        assert_eq!(&cmd[..4], b"pong");
+        assert_eq!(pong, vec![1, 2, 3, 4, 5, 6, 7, 8]);
+        let mut bad_headers = Vec::new();
+        encode::VarInt((MAX_HEADERS_PER_MSG + 1) as u64)
+            .consensus_encode(&mut bad_headers)
+            .unwrap();
+        write_p2p_frame(&mut stream, b"headers", &bad_headers);
+    });
+    let mut conn = PeerConnection::connect(addr, Network::Mainnet, 0).unwrap();
+    let err = conn.read_headers().unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    server.join().unwrap();
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let mut stream = accept_handshake(&listener);
+        for _ in 0..=64 {
+            write_p2p_frame(&mut stream, b"sendaddrv2", &[]);
+        }
+    });
+    let mut conn = PeerConnection::connect(addr, Network::Mainnet, 0).unwrap();
+    let err = conn.read_headers().unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    server.join().unwrap();
+}
+
+#[test]
+fn p2p_sync_enforces_max_headers_and_fails_over_on_invalid_header() {
+    let anchor = synthetic_anchor(0, TRIVIAL_NBITS_A);
+    let chain = build_chain(&anchor, 5, |_| TRIVIAL_NBITS_A);
+
+    let bad_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let bad_addr = bad_listener.local_addr().unwrap();
+    let mut bad_batch = chain[..2].to_vec();
+    bad_batch.push(make_header(BlockHash::new([0xFF; 32]), TRIVIAL_NBITS_A, 2_000_099_000, 0));
+
+    let good_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let good_addr = good_listener.local_addr().unwrap();
+    let remaining_chain = chain[2..].to_vec();
+
+    let bad_server = thread::spawn(move || {
+        let mut stream = accept_handshake(&bad_listener);
+        let _ = read_p2p_frame(&mut stream);
+        write_p2p_frame(&mut stream, b"headers", &encode_headers_payload(&bad_batch));
+    });
+
+    let good_server = thread::spawn(move || {
+        let mut stream = accept_handshake(&good_listener);
+        let _ = read_p2p_frame(&mut stream);
+        write_p2p_frame(&mut stream, b"headers", &encode_headers_payload(&remaining_chain));
+    });
+
+    let mut store = PeerStore::default();
+    store.add_peer(bad_addr);
+
+    let err = p2p::sync::<TrivialConsensus, _, String>(Network::Mainnet, &anchor, 4, &mut store, |headers, tip| {
+        let connected = connect_headers::<TrivialConsensus>(tip, headers);
+        if connected.is_empty() {
+            return Ok(tip.clone());
+        }
+        Ok(tip_from_connected::<TrivialConsensus>(tip, &connected))
+    })
+    .unwrap_err();
+    assert_eq!(err.latest_tip().height, 2);
+    bad_server.join().unwrap();
+
+    store.add_peer(good_addr);
+    let final_tip =
+        p2p::sync::<TrivialConsensus, _, String>(Network::Mainnet, err.latest_tip(), 2, &mut store, |headers, tip| {
+            let connected = connect_headers::<TrivialConsensus>(tip, headers);
+            Ok(tip_from_connected::<TrivialConsensus>(tip, &connected))
+        })
+        .unwrap();
+    assert_eq!(final_tip.height, 4);
+    assert_eq!(final_tip.hash, chain[3].block_hash());
+    good_server.join().unwrap();
 }

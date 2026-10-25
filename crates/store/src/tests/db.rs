@@ -145,7 +145,7 @@ fn insert_genesis_stores_decomposed_header_fields() {
     assert_eq!(row.10, 0);
 
     assert_eq!(store.header_count().unwrap(), 1);
-    assert_eq!(store.get_best_tip().unwrap().unwrap().hash, genesis.block_hash());
+    assert_eq!(store.get_best_tip::<Mainnet>().unwrap().unwrap().hash, genesis.block_hash());
 
     drop(store);
     remove_db_files(&path);

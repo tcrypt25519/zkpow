@@ -44,6 +44,7 @@ pub struct Tip {
     /// Count of consecutive nondecreasing timestamp links ending at this tip.
     /// Genesis has no predecessor, so its run is 0.
     pub ordered_timestamp_run: u64,
+    pub epoch_timestamp:       u32,
 
     /// Difficulty bits/target/block work active at `height`, cached by the sync path.
     /// Updated only at a retarget boundary (`height % EPOCH_LENGTH == 0`) and
@@ -62,6 +63,7 @@ impl Tip {
         chainwork: ChainWork,
         timestamps: [u32; WINDOW_SIZE],
         ordered_timestamp_run: u64,
+        epoch_timestamp: u32,
         current_nbits: CompactTarget,
         current_target: Target,
         current_block_work: BlockWork,
@@ -72,6 +74,7 @@ impl Tip {
             chainwork,
             timestamps,
             ordered_timestamp_run,
+            epoch_timestamp,
             current_nbits,
             current_target,
             current_block_work,
@@ -80,8 +83,9 @@ impl Tip {
 
     pub fn genesis<C: Consensus>(hash: BlockHash) -> Self {
         let genesis = C::PARAMS.genesis;
+        let epoch_timestamp = genesis.timestamp.into_inner();
         let mut timestamps = [0u32; WINDOW_SIZE];
-        timestamps[0] = genesis.timestamp.into_inner();
+        timestamps[0] = epoch_timestamp;
         let (_, target, block_work) = expand_target(genesis.compact_target);
         Self {
             hash,
@@ -89,6 +93,7 @@ impl Tip {
             chainwork: ChainWork::new(block_work.into_inner()),
             timestamps,
             ordered_timestamp_run: 0,
+            epoch_timestamp,
             current_nbits: genesis.compact_target,
             current_target: target,
             current_block_work: block_work,

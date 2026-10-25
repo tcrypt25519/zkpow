@@ -35,7 +35,7 @@ pub(crate) fn seeded_store(test_name: &str) -> (HeaderStore, PathBuf, BlockHash)
     let genesis = ConnectedHeader::new(genesis_header, genesis_hash, 0, genesis_chain_work, 0, 0);
     store.insert_genesis(&genesis).unwrap();
 
-    let tip = store.get_best_tip().unwrap().unwrap();
+    let tip = store.get_best_tip::<Mainnet>().unwrap().unwrap();
     let mut headers = Vec::new();
     let mut prev_hash = genesis_hash;
     let mut cumulative_work = genesis.chainwork;
