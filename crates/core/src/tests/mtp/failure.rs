@@ -225,6 +225,14 @@ fn hint_validation_rejects_leftover_trailing_median_hints_zkvm() {
     state.apply_headers::<TestConsensus>(&headers, &[ts(6), ts(99)]).unwrap();
 }
 
+#[zkvm_test(should_panic(expected = "halt: invalid hint (3)"), exit_code = 3)]
+fn cold_batch_rejects_leftover_median_hints() {
+    let _hash_guard = set_hash_success();
+    let mut state = test_state();
+    let headers = headers_from_timestamps(&(1..=10).map(|i| i * 10).collect::<Vec<_>>());
+    state.apply_headers_from_genesis::<TestConsensus>(&headers, &[ts(99)]).unwrap();
+}
+
 #[zkvm_test(fixture = "headers_fixture.bin", max_cycles = 1_000_000)]
 fn unmocked_chain_rejects_timestamp_too_old_at_height_12() {
     let fixture_bytes = zkvm_test::fixture();

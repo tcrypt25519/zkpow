@@ -71,12 +71,7 @@ impl State {
         // Requires at least `window_size - 1` headers.
         let (cold_headers, warm_headers) = mtp::split_off_cold_headers(headers)?;
         let mtp = self.apply_cold_batch::<C>(cold_headers)?;
-
-        if !warm_headers.is_empty() {
-            self.apply_warm_batch::<C>(warm_headers, median_hints, mtp)?
-        }
-
-        Ok(())
+        self.apply_warm_batch::<C>(warm_headers, median_hints, mtp)
     }
 
     // Applies the first headers of the chain, before the MTP window has been filled. This lets the
