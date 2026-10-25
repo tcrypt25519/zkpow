@@ -7,6 +7,7 @@ use zkpow_controller::{db_path, HeaderStore, NO_HEADERS_REMAINING_PREFIX};
 use zkpow_params::Mainnet;
 
 mod artifacts;
+mod diagnostics;
 
 use crate::pipeline::{
     input::{

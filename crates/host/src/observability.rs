@@ -3,7 +3,7 @@ use std::sync::Once;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{fmt::format::FmtSpan, prelude::*, EnvFilter};
 
-use crate::pipeline::input::ENV_ZKPOW_SHOW_COMPRESSED_PROOF_SPANS;
+use crate::pipeline::{diagnostics::ShardAreas, input::ENV_ZKPOW_SHOW_COMPRESSED_PROOF_SPANS};
 
 static INIT: Once = Once::new();
 
@@ -21,8 +21,7 @@ fn env_truthy(name: &str) -> bool {
 ///
 /// Two layers are registered:
 /// - **stderr**: compact human-readable output, filtered by `RUST_LOG` (default: off).
-/// - **`logs/run.jsonl`**: newline-delimited JSON, always written at `info` level and above. Agents can query this
-///   file directly; see the Debugging section in AGENTS.md.
+/// - **`logs/run.jsonl`**: newline-delimited JSON, always written at `info` level and above.
 pub fn init() {
     INIT.call_once(|| {
         let show_detailed_spans = env_truthy(ENV_ZKPOW_SHOW_COMPRESSED_PROOF_SPANS);
@@ -32,7 +31,7 @@ pub fn init() {
             FmtSpan::NONE
         };
 
-        // --- stderr layer (human-readable, respects RUST_LOG) ---
+        // stderr layer
         let fmt_filter = EnvFilter::try_from_default_env()
             .unwrap_or_else(|_| EnvFilter::new("off"))
             .add_directive("hyper=off".parse().unwrap())
@@ -51,7 +50,7 @@ pub fn init() {
             .with_span_events(span_events.clone())
             .with_filter(fmt_filter);
 
-        // --- JSON file layer (always on at info+, written to logs/run.jsonl) ---
+        // JSON file layer
         std::fs::create_dir_all("logs").expect("failed to create logs/ directory");
         let file_appender = tracing_appender::rolling::never("logs", "run.jsonl");
         let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
@@ -76,11 +75,16 @@ pub fn init() {
             .with_span_events(span_events)
             .with_filter(json_filter);
 
+        // shard area layer
+        let shard_layer = ShardAreas
+            .with_filter(EnvFilter::new("off").add_directive("sp1_hypercube::prover::shard=debug".parse().unwrap()));
+
         let enable_console = env_truthy("SP1_ENABLE_TOKIO_CONSOLE");
         tracing_subscriber::registry()
             .with(enable_console.then(console_subscriber::spawn))
             .with(stderr_layer)
             .with(json_layer)
+            .with(shard_layer)
             .init();
 
         if enable_console {

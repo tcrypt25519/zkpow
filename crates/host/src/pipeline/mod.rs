@@ -19,7 +19,7 @@ pub mod verify;
 
 use std::time::Instant;
 
-use diagnostics::{clear_phase_timings, collected_phase_timings, timed_sync};
+use diagnostics::{clear_phase_timings, clear_shard_areas, collected_phase_timings, log_shard_areas, timed_sync};
 pub use diagnostics::{log_execution_report, PhaseTiming};
 use execution::execute_batch;
 use input::{build_stdin, config_from_env};
@@ -231,9 +231,13 @@ async fn process_batch(
     };
 
     clear_phase_timings();
+    clear_shard_areas();
     let stdin = timed_sync("serialize_input", || {
         build_stdin(verifier_key, &current_state, header_bytes, median_hint_bytes, previous)
     })?;
+    if let Err(err) = prepared.log_batch_shape(stdin.clone()).await {
+        tracing::warn!(%err, "execution report skipped");
+    }
     let before_prove_memory =
         memory_monitor::log_point("batch_memory_before_prove", "Batch memory snapshot before proving");
     let compressed_proof = run_batch(prepared, stdin).await?;
@@ -325,6 +329,7 @@ fn validate_previous_proof(
 }
 
 fn log_batch_completion(total_duration_secs: f64) {
+    log_shard_areas();
     tracing::info!("========================================");
     tracing::info!("TOTAL PROVING TIME: {total_duration_secs:.2} seconds");
     tracing::info!("========================================");
