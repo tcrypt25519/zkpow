@@ -16,7 +16,7 @@ fn db_median_time_hints_match_genesis_seeded_state() {
     let db = open_db();
     let genesis = db.load_header_record(0);
     let genesis_hash = BlockHash::from(&genesis.header);
-    let genesis_state = genesis_state_from_record(genesis, genesis_hash);
+    let genesis_state = genesis_state_from_record::<Mainnet>(genesis, genesis_hash);
     let witness = db.load_header_batch_witness(1, 13);
 
     compute_final_state_cold::<Mainnet>(&genesis_state, &witness.headers, &witness.median_time_past_hints);
@@ -37,7 +37,7 @@ fn compute_final_state_with_hints_reaches_expected_height() {
     let db = open_db();
     let genesis = db.load_header_record(0);
     let genesis_hash = BlockHash::from(&genesis.header);
-    let genesis_state = genesis_state_from_record(genesis, genesis_hash);
+    let genesis_state = genesis_state_from_record::<Mainnet>(genesis, genesis_hash);
     let witness = db.load_header_batch_witness(1, 128);
     let final_state =
         compute_final_state_cold::<Mainnet>(&genesis_state, &witness.headers, &witness.median_time_past_hints);
@@ -50,7 +50,7 @@ fn applying_headers_one_at_a_time_matches_db_claims() {
     let db = open_db();
     let genesis = db.load_header_record(0);
     let genesis_hash = BlockHash::from(&genesis.header);
-    let mut state = genesis_state_from_record(genesis.clone(), genesis_hash);
+    let mut state = genesis_state_from_record::<Mainnet>(genesis.clone(), genesis_hash);
     let records = db.load_header_records(1, 64);
 
     let (initial_records, remaining_records) = records.split_at(10);
@@ -92,7 +92,7 @@ fn db_retarget_schedule_matches_height_40320() {
     let db = open_db();
     let genesis = db.load_header_record(0);
     let genesis_hash = BlockHash::from(&genesis.header);
-    let genesis_state = genesis_state_from_record(genesis, genesis_hash);
+    let genesis_state = genesis_state_from_record::<Mainnet>(genesis, genesis_hash);
     let witness_1 = db.load_header_batch_witness(1, 40319);
     let state =
         compute_final_state_cold::<Mainnet>(&genesis_state, &witness_1.headers, &witness_1.median_time_past_hints);
@@ -128,7 +128,7 @@ fn db_chainwork_matches_simulated_batches() {
     for (name, source, record_start, record_count, expected_height) in cases {
         let is_genesis = matches!(source, InitialState::Genesis);
         let initial_state = match source {
-            InitialState::Genesis => genesis_state_from_record(genesis.clone(), genesis_hash),
+            InitialState::Genesis => genesis_state_from_record::<Mainnet>(genesis.clone(), genesis_hash),
             InitialState::DbHeight(height) => db.state_at_height::<Mainnet>(height, genesis_hash),
         };
         let witness = db.load_header_batch_witness(record_start, record_count);

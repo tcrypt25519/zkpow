@@ -91,6 +91,7 @@ fn inner_main() -> Result<(), ProgramError> {
     let medians: &[BlockTimestamp] = read_slice_of_fixed_size_len::<BlockTimestamp>()?;
 
     let apply_result = if state.height == 0 {
+        *state = State::anchor::<Mainnet>();
         state.apply_headers_from_genesis::<Mainnet>(headers, medians)
     } else {
         let actual_pv_hash =

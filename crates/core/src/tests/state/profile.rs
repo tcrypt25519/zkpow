@@ -8,7 +8,7 @@ use core::mem::size_of;
 
 use zkvm_test::zkvm_test;
 
-use crate::{tests::*, BlockTimestamp, ChainWork, HeaderInput, State};
+use crate::{tests::*, BlockTimestamp, HeaderInput, State};
 
 /// Change this to profile more complete epochs (up to the fixture's capacity).
 const PROFILE_EPOCHS: usize = 1;
@@ -35,19 +35,7 @@ fn run_mainnet_prefix(header_count: usize) {
     let headers = &all_headers[..header_count];
     let hints = &all_hints[..hint_offsets[header_count] as usize];
 
-    let mut state = State {
-        chain_work:      ChainWork::from_limbs(*TestConsensus::PARAMS.genesis_work.as_limbs()),
-        genesis_hash:    TestConsensus::GENESIS_HASH,
-        block_hash:      TestConsensus::GENESIS_HASH,
-        height:          0,
-        current_nbits:   TestConsensus::PARAMS.genesis.compact_target,
-        epoch_timestamp: TestConsensus::PARAMS.genesis.timestamp,
-        timestamps:      {
-            let mut values = [BlockTimestamp::new(0); WINDOW_SIZE];
-            values[0] = TestConsensus::PARAMS.genesis.timestamp;
-            values
-        },
-    };
+    let mut state = State::anchor::<TestConsensus>();
 
     state.apply_headers_from_genesis::<TestConsensus>(headers, hints).unwrap();
     assert_eq!(state.height as usize, header_count);

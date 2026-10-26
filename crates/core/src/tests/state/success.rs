@@ -3,7 +3,10 @@ use core::mem::{align_of, size_of};
 
 use zkvm_test::zkvm_test;
 
-use crate::{block_work_from_target, tests::*, BlockHash, BlockWork, ChainWork, CompactTarget, HeaderInput, State};
+use crate::{
+    block_work_from_target, target_from_bits, tests::*, BlockHash, BlockWork, ChainWork, CompactTarget, HeaderInput,
+    State,
+};
 
 #[zkvm_test(max_cycles = 100_000)]
 fn state_and_header_fixed_sizes_match_protocol() {
@@ -37,6 +40,55 @@ fn state_and_header_input_layout_and_offsets() {
     assert_eq!(bytes.len(), 152);
     let parsed: &State = bytemuck::from_bytes(&bytes);
     assert_eq!(*parsed, state);
+}
+
+#[zkvm_test]
+fn anchor_state_derives_every_field_from_the_anchor_header() {
+    let anchor = TestConsensus::PARAMS.genesis;
+    let state = State::anchor::<TestConsensus>();
+
+    assert_eq!(state.height, 0);
+    assert_eq!(state.genesis_hash, TestConsensus::GENESIS_HASH);
+    assert_eq!(state.block_hash, TestConsensus::GENESIS_HASH);
+    assert_eq!(state.current_nbits, anchor.compact_target);
+    assert_eq!(state.epoch_timestamp, anchor.timestamp);
+    assert_eq!(state.timestamps[0], anchor.timestamp);
+    assert_eq!(state.timestamps[1..], [ts(0); WINDOW_MAX_INDEX]);
+    assert_eq!(
+        state.chain_work,
+        ChainWork::new(block_work_from_target(target_from_bits(anchor.compact_target)).into_inner())
+    );
+}
+
+/// The anchor's target and work are also written out as parameters, which the cold path reads as
+/// compile-time constants. They are only sound while they equal what its bits expand to.
+#[zkvm_test]
+fn anchor_parameters_equal_what_the_anchor_bits_expand_to() {
+    let bits = TestConsensus::PARAMS.genesis.compact_target;
+
+    assert_eq!(target_from_bits(bits), TestConsensus::PARAMS.genesis_target);
+    assert_eq!(
+        block_work_from_target(TestConsensus::PARAMS.genesis_target),
+        TestConsensus::PARAMS.genesis_work
+    );
+    assert_eq!(State::anchor::<TestConsensus>().chain_work, TestConsensus::PARAMS.chain_work());
+}
+
+#[zkvm_test(max_cycles = 1_200_000)]
+fn anchor_state_starts_a_cold_batch_without_a_median_hint() {
+    let _hash_guard = set_hash_success();
+    let mut state = State::anchor::<TestConsensus>();
+    let base = state.epoch_timestamp.into_inner();
+    let timestamps: Vec<u32> = (1..=10).map(|step| base + step * 600).collect();
+    let headers = headers_from_timestamps(&timestamps);
+
+    state
+        .apply_headers_from_genesis::<TestConsensus>(&headers, &[])
+        .expect("the derived anchor window needs no hint for its first ten headers");
+
+    assert_eq!(state.height, 10);
+    assert_eq!(state.genesis_hash, TestConsensus::GENESIS_HASH);
+    assert_eq!(state.chain_work, TestConsensus::PARAMS.genesis_work * 11);
 }
 
 #[zkvm_test]

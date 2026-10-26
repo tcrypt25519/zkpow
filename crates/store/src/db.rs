@@ -393,7 +393,7 @@ impl HeaderStore {
     /// Reconstruct full consensus state at an arbitrary height.
     pub fn state_at_height<C: Consensus>(&self, height: u32, genesis_hash: BlockHash) -> State {
         if height == 0 {
-            return genesis_state_from_record(self.load_header_record(0), genesis_hash);
+            return genesis_state_from_record::<C>(self.load_header_record(0), genesis_hash);
         }
 
         let epoch_length = C::PARAMS.epoch_length;
@@ -520,21 +520,10 @@ pub struct HeaderBatchWitness {
     pub median_time_past_hints: Vec<BlockTimestamp>,
 }
 
-/// Reconstruct the genesis state from its stored record.
-pub fn genesis_state_from_record(genesis: HeaderRecord, genesis_hash: BlockHash) -> State {
-    let block_hash = BlockHash::from(&genesis.header);
-    assert_eq!(block_hash, genesis_hash, "genesis hash mismatch");
+/// The anchor state, after checking that the stored record is the record of that anchor.
+pub fn genesis_state_from_record<C: Consensus>(genesis: HeaderRecord, genesis_hash: BlockHash) -> State {
+    assert_eq!(genesis.header, C::PARAMS.genesis, "stored genesis is not the network anchor");
+    assert_eq!(genesis_hash, C::GENESIS_HASH, "genesis hash is not the network anchor's");
 
-    let mut timestamps = [BlockTimestamp::default(); WINDOW_SIZE];
-    timestamps[0] = genesis.header.timestamp;
-
-    State {
-        block_hash,
-        genesis_hash,
-        current_nbits: genesis.header.compact_target,
-        height: genesis.height as u32,
-        chain_work: genesis.chain_work,
-        epoch_timestamp: genesis.header.timestamp,
-        timestamps,
-    }
+    State::anchor::<C>()
 }

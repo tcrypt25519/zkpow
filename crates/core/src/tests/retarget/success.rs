@@ -44,7 +44,7 @@ fn retarget_timespan_cases_adjust_target_direction() {
 
     for (name, timespan, expected) in cases {
         let old = GENESIS_TARGET;
-        let (bits, new, _) = calculate_next_work_required::<TestConsensus>(old, ts(0), ts(timespan));
+        let (bits, new, _) = calculate_next_work_required::<TestConsensus>(old, ts(0), ts(timespan)).components();
 
         match expected {
             ExpectedDirection::Equal => {
@@ -67,23 +67,24 @@ fn retargeting_clamping_bounds_match_fourfold_limits() {
 
     // 100 days vs 56 days (clamped upper bound: 4x expected timespan)
     let (_, target_100_days, work_100_days) =
-        calculate_next_work_required::<TestConsensus>(old_target, ts(0), ts(100 * 86400));
+        calculate_next_work_required::<TestConsensus>(old_target, ts(0), ts(100 * 86400)).components();
     let (_, target_56_days, work_56_days) =
-        calculate_next_work_required::<TestConsensus>(old_target, ts(0), ts(56 * 86400));
+        calculate_next_work_required::<TestConsensus>(old_target, ts(0), ts(56 * 86400)).components();
     assert_eq!(target_100_days, target_56_days, "timespan > 4x must clamp to 4x");
     assert_eq!(work_100_days, work_56_days);
 
     // 1 day vs 3.5 days (clamped lower bound: 0.25x expected timespan)
-    let (_, target_1_day, work_1_day) = calculate_next_work_required::<TestConsensus>(old_target, ts(0), ts(86400));
+    let (_, target_1_day, work_1_day) =
+        calculate_next_work_required::<TestConsensus>(old_target, ts(0), ts(86400)).components();
     let (_, target_quarter, work_quarter) =
-        calculate_next_work_required::<TestConsensus>(old_target, ts(0), ts(302400));
+        calculate_next_work_required::<TestConsensus>(old_target, ts(0), ts(302400)).components();
     assert_eq!(target_1_day, target_quarter, "timespan < 0.25x must clamp to 0.25x");
     assert_eq!(work_1_day, work_quarter);
 
     // Excessively slow retarget clamped to genesis pow_limit
     let slow_target = Target::from_limbs([0, 0, 0, 0x0000_0000_FFFF_0000]);
     let (nbits_clamped, target_clamped, _) =
-        calculate_next_work_required::<TestConsensus>(slow_target, ts(0), ts(56 * 86400));
+        calculate_next_work_required::<TestConsensus>(slow_target, ts(0), ts(56 * 86400)).components();
     assert_eq!(nbits_clamped, CompactTarget::new(GENESIS_NBITS));
     assert_eq!(target_clamped, GENESIS_TARGET);
 }
@@ -107,7 +108,8 @@ fn assert_boundary_retargets_once<C: Consensus>() {
         target_from_bits(state.current_nbits),
         state.epoch_timestamp,
         state.timestamps[timestamp_slot(state.height)],
-    );
+    )
+    .components();
     assert_ne!(
         expected_nbits, state.current_nbits,
         "test needs a boundary that actually changes nbits"

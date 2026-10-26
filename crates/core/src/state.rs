@@ -29,6 +29,26 @@ pub struct State {
 }
 
 impl State {
+    /// The state that follows the network's anchor header, derived from that header's own
+    /// fields. The anchor hash commits to all of them, so none of this is an independent input.
+    #[must_use]
+    pub fn anchor<C: Consensus>() -> Self {
+        let anchor = C::PARAMS.genesis;
+        let mut timestamps = [BlockTimestamp::new(0); WINDOW_SIZE];
+        timestamps[0] = anchor.timestamp;
+        let block_work = block_work_from_target(target_from_bits(anchor.compact_target));
+
+        State {
+            chain_work:      ChainWork::new(block_work.into_inner()),
+            genesis_hash:    C::GENESIS_HASH,
+            block_hash:      C::GENESIS_HASH,
+            height:          0,
+            current_nbits:   anchor.compact_target,
+            epoch_timestamp: anchor.timestamp,
+            timestamps,
+        }
+    }
+
     /// Called when the State reflects the final block of epoch N
     /// to compute the difficulty values that are active in epoch N+1.
     fn prepare_next_epoch<C: Consensus>(&self, target: Target, timestamp: BlockTimestamp) -> TargetTriplet {

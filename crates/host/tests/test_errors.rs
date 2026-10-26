@@ -43,7 +43,7 @@ fn open_db() -> zkpow_controller::HeaderStore {
 fn mainnet_genesis_state() -> util::State {
     let db = open_db();
     let genesis = db.load_header_record(0);
-    zkpow_controller::genesis_state_from_record(genesis, Mainnet::GENESIS_HASH)
+    zkpow_controller::genesis_state_from_record::<Mainnet>(genesis, Mainnet::GENESIS_HASH)
 }
 
 fn build_stdin(
@@ -249,6 +249,52 @@ async fn test_error_recursive_on_tampered_state_witness() -> Result<(), String> 
             }
         },
     }
+}
+
+/// The guest derives the height-zero state from the anchor header the program itself carries, so
+/// a prover supplying any other initial state proves exactly the same chain.
+#[tokio::test]
+async fn test_tampered_anchor_state_is_derived_away() -> Result<(), String> {
+    let witness = open_db().load_header_batch_witness(1, 10);
+    let run = |state: util::State| {
+        let stdin = build_stdin(
+            VerifierKeyDigest::default(),
+            &state,
+            &witness.headers,
+            &witness.median_time_past_hints,
+        );
+        run_and_get_pv(stdin)
+    };
+
+    let canonical = run(mainnet_genesis_state()).await?;
+    expect_success(&canonical)?;
+
+    let anchor = mainnet_genesis_state();
+    let mutations: [(&str, fn(&mut util::State)); 6] = [
+        ("chain_work", |s| s.chain_work = util::ChainWork::from_limbs([1_000_000, 0, 0, 0])),
+        ("block_hash", |s| s.block_hash = util::BlockHash::new([0x11; 32])),
+        ("genesis_hash", |s| s.genesis_hash = util::BlockHash::new([0x22; 32])),
+        ("current_nbits", |s| s.current_nbits = util::CompactTarget::new(0x1d00_fffe)),
+        ("epoch_timestamp", |s| s.epoch_timestamp = util::BlockTimestamp::default()),
+        ("anchor timestamp slot", |s| s.timestamps[0] = util::BlockTimestamp::new(1)),
+    ];
+
+    let mut leaked = Vec::new();
+    for (name, mutate) in mutations {
+        let mut state = anchor;
+        mutate(&mut state);
+        assert_ne!(state, anchor, "the {name} case tampers with nothing");
+
+        if run(state).await? != canonical {
+            leaked.push(name);
+        }
+    }
+
+    if !leaked.is_empty() {
+        return Err(format!("the witness still reaches the proven chain through {leaked:?}"));
+    }
+
+    Ok(())
 }
 
 #[tokio::test]
