@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::BoxError;
+use crate::{BoxError, RunId};
 
 pub trait ArtifactStore: Send + Sync {
     /// Target the host should upload `object` to.
@@ -20,20 +20,22 @@ impl LocalArtifactStore {
         Self { root: root.into() }
     }
 
-    fn object_path(&self, run_id: &str, object: &str) -> PathBuf {
-        self.root.join(run_id).join(object)
+    fn object_path(&self, run_id: &str, object: &str) -> Result<PathBuf, BoxError> {
+        let run_id = RunId::from_str(run_id)?;
+        Ok(self.root.join(run_id.as_str()).join(object))
     }
 }
 
 impl ArtifactStore for LocalArtifactStore {
     fn put_target(&self, run_id: &str, object: &str) -> Result<String, BoxError> {
+        let path = self.object_path(run_id, object)?;
         let dir = self.root.join(run_id);
         std::fs::create_dir_all(&dir)?;
-        Ok(self.object_path(run_id, object).to_string_lossy().into_owned())
+        Ok(path.to_string_lossy().into_owned())
     }
 
     fn get_target(&self, run_id: &str, object: &str) -> Result<String, BoxError> {
-        let path = self.object_path(run_id, object);
+        let path = self.object_path(run_id, object)?;
         if !path.exists() {
             return Err(format!("run {run_id} has no {object} under {}", self.root.display()).into());
         }
@@ -41,6 +43,7 @@ impl ArtifactStore for LocalArtifactStore {
     }
 
     fn fetch(&self, run_id: &str, object: &str) -> Result<Vec<u8>, BoxError> {
-        Ok(std::fs::read(self.object_path(run_id, object))?)
+        let path = self.object_path(run_id, object)?;
+        Ok(std::fs::read(path)?)
     }
 }

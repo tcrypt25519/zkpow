@@ -21,6 +21,7 @@ use crate::{
     storage::ArtifactStore,
     verify::ProofVerifier,
     NO_HEADERS_REMAINING_PREFIX,
+    RunId,
 };
 
 const DEFAULT_PULL_TIMEOUT: Duration = Duration::from_secs(600);
@@ -131,11 +132,8 @@ fn lock_core<C: Consensus>(core: &Mutex<ControllerCore<C>>) -> MutexGuard<'_, Co
     core.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-fn validate_run_id(run_id: &str) -> Result<(), ControllerError> {
-    if run_id.is_empty() {
-        return Err(ControllerError::bad_request("run id must not be empty"));
-    }
-    Ok(())
+pub fn validate_run_id(run_id: &str) -> Result<RunId, ControllerError> {
+    RunId::from_str(run_id).map_err(|err| ControllerError::bad_request(err.to_string()))
 }
 
 impl<C: Consensus> ControllerRuntime<C> {
@@ -178,7 +176,14 @@ impl<C: Consensus> ControllerRuntime<C> {
             let pull = lock_core(&self.inner.core).pull(run_id)?;
             match pull {
                 Pull::Ready(ready) => {
-                    let batch = self.attach_storage(run_id, *ready)?;
+                    let batch = match self.attach_storage(run_id, *ready) {
+                        Ok(batch) => batch,
+                        Err(err) => {
+                            lock_core(&self.inner.core).rollback_pull(run_id);
+                            self.inner.progress.notify_waiters();
+                            return Err(err);
+                        },
+                    };
                     tracing::info!(
                         run_id,
                         first_new_height = batch.first_new_height,
@@ -392,6 +397,12 @@ impl<C: Consensus> ControllerCore<C> {
             proof_object,
             previous_proof_object,
         })))
+    }
+
+    fn rollback_pull(&mut self, run_id: &str) {
+        if let Ok(session) = self.session_mut(run_id) {
+            session.pending = None;
+        }
     }
 
     fn fetch_batch(&self, current_state: State) -> Result<FetchedBatch, ControllerError> {

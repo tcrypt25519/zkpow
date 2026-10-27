@@ -24,7 +24,7 @@ pub mod verify;
 mod validation;
 
 pub use validation::{compute_final_state_cold, compute_final_state_warm, records_to_new_headers};
-pub use zkpow_core::{requires_median_hint, BlockHash, BlockTimestamp, HeaderInput, State};
+pub use zkpow_core::{requires_median_hint, BlockHash, BlockTimestamp, HeaderInput, RunId, RunIdError, State};
 pub use zkpow_store::{db_path, genesis_state_from_record, HeaderBatchWitness, HeaderRecord, HeaderStore, RunRecord};
 
 pub type BoxError = Box<dyn std::error::Error + Send + Sync + 'static>;

@@ -1,7 +1,7 @@
 use std::{
     sync::{
-        atomic::{AtomicU64, Ordering},
-        Mutex,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc, Mutex,
     },
     time::Duration,
 };
@@ -13,9 +13,35 @@ use super::*;
 use crate::{
     protocol::Batch,
     runtime::{ControllerConfig, ControllerRuntime},
-    storage::LocalArtifactStore,
+    storage::{ArtifactStore, LocalArtifactStore},
     verify::ProofVerifier,
 };
+
+struct ControllableStore {
+    inner: LocalArtifactStore,
+    fail_put: Arc<AtomicBool>,
+    fail_get: Arc<AtomicBool>,
+}
+
+impl ArtifactStore for ControllableStore {
+    fn put_target(&self, run_id: &str, object: &str) -> Result<String, crate::BoxError> {
+        if self.fail_put.load(Ordering::SeqCst) {
+            return Err("simulated PUT target failure".into());
+        }
+        self.inner.put_target(run_id, object)
+    }
+
+    fn get_target(&self, run_id: &str, object: &str) -> Result<String, crate::BoxError> {
+        if self.fail_get.load(Ordering::SeqCst) {
+            return Err("simulated GET target failure".into());
+        }
+        self.inner.get_target(run_id, object)
+    }
+
+    fn fetch(&self, run_id: &str, object: &str) -> Result<Vec<u8>, crate::BoxError> {
+        self.inner.fetch(run_id, object)
+    }
+}
 
 static NEXT_TEST_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -46,11 +72,17 @@ struct Harness {
     runtime: ControllerRuntime<Mainnet>,
     root:    std::path::PathBuf,
     run_ids: Mutex<Vec<String>>,
-    nonce:   u128,
 }
 
 impl Harness {
     fn new() -> Self {
+        Self::with_faulty_storage(
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(false)),
+        )
+    }
+
+    fn with_faulty_storage(fail_put: Arc<AtomicBool>, fail_get: Arc<AtomicBool>) -> Self {
         let nonce = unique_nonce();
         let root = std::env::temp_dir().join(format!("zkpow-runtime-{nonce}"));
         let genesis_hash = {
@@ -60,9 +92,14 @@ impl Harness {
         let store = HeaderStore::open(db_path()).unwrap();
         let mut config = ControllerConfig::new(genesis_hash, 2);
         config.pull_timeout = Duration::from_millis(100);
+        let storage = ControllableStore {
+            inner: LocalArtifactStore::new(&root),
+            fail_put,
+            fail_get,
+        };
         let runtime = ControllerRuntime::new(
             store,
-            Box::new(LocalArtifactStore::new(&root)),
+            Box::new(storage),
             Box::new(BytesArePublicValues(VerifierKeyDigest::from_raw([7; 8]))),
             config,
         );
@@ -70,12 +107,12 @@ impl Harness {
             runtime,
             root,
             run_ids: Mutex::new(Vec::new()),
-            nonce,
         }
     }
 
-    fn run(&self, name: &str) -> String {
-        let run = format!("test-{}-{name}", self.nonce);
+    fn run(&self, _name: &str) -> String {
+        let counter = NEXT_TEST_ID.fetch_add(1, Ordering::Relaxed);
+        let run = format!("r{:07x}", counter & 0x0fffffff);
         self.run_ids.lock().unwrap().push(run.clone());
         run
     }
@@ -197,17 +234,156 @@ async fn an_empty_header_database_is_not_reported_as_a_run_problem() {
         ControllerConfig::new(genesis_hash, 2),
     );
 
-    let error = empty.pull_batch("any-run").await.unwrap_err();
+    let error = empty.pull_batch("anyrun01").await.unwrap_err();
     assert!(
         error.message.contains("header database"),
         "error should name the database: {}",
         error.message
     );
     assert!(
-        !error.message.contains("any-run"),
+        !error.message.contains("anyrun01"),
         "error should not blame the run id: {}",
         error.message
     );
 
     std::fs::remove_dir_all(&root).ok();
+}
+
+#[tokio::test]
+async fn put_target_failure_rolls_back_pending_and_retry_succeeds() {
+    let fail_put = Arc::new(AtomicBool::new(false));
+    let fail_get = Arc::new(AtomicBool::new(false));
+    let harness = Harness::with_faulty_storage(fail_put.clone(), fail_get.clone());
+    let run = harness.run("put-failure");
+
+    // Enable PUT target failure
+    fail_put.store(true, Ordering::SeqCst);
+    let err = harness.runtime.pull_batch(&run).await.unwrap_err();
+    assert!(err.message.contains("storage PUT target failed"));
+
+    // Retry should succeed immediately rather than waiting for timeout.
+    fail_put.store(false, Ordering::SeqCst);
+    let batch = harness
+        .runtime
+        .pull_batch(&run)
+        .await
+        .expect("retry after PUT failure should succeed");
+    assert_eq!(batch.first_new_height, 1);
+    assert_eq!(batch.end_height, 2);
+}
+
+#[tokio::test]
+async fn get_target_failure_rolls_back_pending_and_retry_succeeds() {
+    let fail_put = Arc::new(AtomicBool::new(false));
+    let fail_get = Arc::new(AtomicBool::new(false));
+    let harness = Harness::with_faulty_storage(fail_put.clone(), fail_get.clone());
+    let run = harness.run("get-failure");
+
+    // Complete the first batch so there is a previous proof.
+    let first = harness.runtime.pull_batch(&run).await.unwrap();
+    harness.upload_expected(&run, &first);
+    harness.runtime.complete(&run).await.unwrap();
+
+    // Pulling the next batch requires a GET target for the previous proof.
+    fail_get.store(true, Ordering::SeqCst);
+    let err = harness.runtime.pull_batch(&run).await.unwrap_err();
+    assert!(err.message.contains("storage GET target failed"));
+
+    // Retry should succeed immediately once failure is cleared.
+    fail_get.store(false, Ordering::SeqCst);
+    let second = harness
+        .runtime
+        .pull_batch(&run)
+        .await
+        .expect("retry after GET failure should succeed");
+    assert_eq!(second.first_new_height, 3);
+    assert_eq!(second.end_height, 4);
+    assert!(second.previous_proof.is_some());
+}
+
+#[test]
+fn run_id_validation_rejects_empty_absolute_parent_and_separators() {
+    use crate::runtime::validate_run_id;
+
+    assert_eq!(
+        validate_run_id("").unwrap_err().kind,
+        crate::protocol::ErrorKind::BadRequest
+    );
+    assert_eq!(
+        validate_run_id("..").unwrap_err().kind,
+        crate::protocol::ErrorKind::BadRequest
+    );
+    assert_eq!(
+        validate_run_id(".").unwrap_err().kind,
+        crate::protocol::ErrorKind::BadRequest
+    );
+    assert_eq!(
+        validate_run_id("/abs/path").unwrap_err().kind,
+        crate::protocol::ErrorKind::BadRequest
+    );
+    assert_eq!(
+        validate_run_id("../escape").unwrap_err().kind,
+        crate::protocol::ErrorKind::BadRequest
+    );
+    assert_eq!(
+        validate_run_id("nested/run").unwrap_err().kind,
+        crate::protocol::ErrorKind::BadRequest
+    );
+    assert_eq!(
+        validate_run_id("nested\\run").unwrap_err().kind,
+        crate::protocol::ErrorKind::BadRequest
+    );
+    assert_eq!(
+        validate_run_id("run\0id").unwrap_err().kind,
+        crate::protocol::ErrorKind::BadRequest
+    );
+    assert_eq!(
+        validate_run_id("run-0001").unwrap_err().kind,
+        crate::protocol::ErrorKind::BadRequest
+    );
+    assert_eq!(
+        validate_run_id("short").unwrap_err().kind,
+        crate::protocol::ErrorKind::BadRequest
+    );
+    assert_eq!(
+        validate_run_id("toolongrunid").unwrap_err().kind,
+        crate::protocol::ErrorKind::BadRequest
+    );
+
+    assert!(validate_run_id("run00001").is_ok());
+    assert!(validate_run_id("RUN12345").is_ok());
+}
+
+#[tokio::test]
+async fn runtime_pull_batch_and_complete_reject_unsafe_run_ids() {
+    let harness = Harness::new();
+
+    let unsafe_ids = [
+        "",
+        "..",
+        ".",
+        "/absolute/escape",
+        "../escape",
+        "nested/run",
+        "nested\\run",
+        "run-0001",
+        "short",
+        "toolongrunid",
+    ];
+
+    for unsafe_id in unsafe_ids {
+        let pull_err = harness.runtime.pull_batch(unsafe_id).await.unwrap_err();
+        assert_eq!(
+            pull_err.kind,
+            crate::protocol::ErrorKind::BadRequest,
+            "pull_batch should reject {unsafe_id:?} with BadRequest"
+        );
+
+        let complete_err = harness.runtime.complete(unsafe_id).await.unwrap_err();
+        assert_eq!(
+            complete_err.kind,
+            crate::protocol::ErrorKind::BadRequest,
+            "complete should reject {unsafe_id:?} with BadRequest"
+        );
+    }
 }
