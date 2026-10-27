@@ -35,7 +35,7 @@ MANIFESTS   := $(wildcard Cargo.toml Cargo.lock */Cargo.toml $(CRATES_DIR)/**/Ca
 # Binary names and paths
 BIN_NAMES  := $(if $(BINS),$(BINS),$(shell awk '/^\[/ { in_pkg = ($$0 == "\[\[bin\]\]") } in_pkg && /^name[ \t]*=/ { split($$0, a, "\""); print a[2] }' $(CRATES_DIR)/**/Cargo.toml))
 BIN_BUILDS := $(addprefix $(BUILD_DIR)/,$(BIN_NAMES))
-BIN_DEPS   := $(addsuffix .d, $(BIN_BUILDS))
+BIN_DEPS   := $(foreach b,$(BIN_BUILDS),$(addsuffix .d, $(b)))
 
 ifneq ($(VERBOSE),)
 $(info BIN_NAMES = $(BIN_NAMES))
@@ -55,8 +55,12 @@ build: $(MANIFESTS) $(BIN_BUILDS)
 
 clean: deployment-clean
 	cargo clean --target-dir $(TARGET_DIR)
+dev:
+	@:
 
-ifneq ($(wildcard $(BIN_BUILDS)/*.d),)
+$(info check for deps in $(BUILD_DIR)/*.d)
+
+ifneq ($(wildcard $(BIN_DEPS)),)
 $(info Including $$(BIN_DEPS))
 include $(BIN_DEPS)
 endif
