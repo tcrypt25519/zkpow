@@ -155,7 +155,7 @@ fn target_conversions_and_limb_rollover_edge_cases() {
 
     // 4. block_work_from_target with saturated limb 0 rolling over to limb 1
     let rollover_target = Target::from_limbs([u64::MAX, 1, 0, 0]);
-    let work = crate::block_work_from_target(rollover_target);
+    let work = crate::block_work_from_target(&rollover_target);
     assert!(work.into_inner() > zkpow_types::u256::from_limbs([0; 4]));
 
     // 5. NonMaxU256 returns None on u256::MAX
@@ -188,13 +188,13 @@ fn block_work_from_target_computes_exact_quotients() {
     use zkpow_types::Target;
 
     // 1. Genesis target work matches known constant:
-    let genesis_work = crate::block_work_from_target(zkpow_params::Mainnet::PARAMS.genesis_target);
+    let genesis_work = crate::block_work_from_target(&zkpow_params::Mainnet::PARAMS.genesis_target);
     assert_eq!(genesis_work.into_inner().into_limbs(), [0x100010001, 0, 0, 0]);
 
     // 2. Power of 2 divisors:
     // target = 1 => divisor = 2 => floor(2^256 / 2) = 2^255
     let target_1 = Target::from_limbs([1, 0, 0, 0]);
-    assert_eq!(crate::block_work_from_target(target_1).into_inner().into_limbs(), [
+    assert_eq!(crate::block_work_from_target(&target_1).into_inner().into_limbs(), [
         0,
         0,
         0,
@@ -203,7 +203,7 @@ fn block_work_from_target_computes_exact_quotients() {
 
     // target = 3 => divisor = 4 => floor(2^256 / 4) = 2^254
     let target_3 = Target::from_limbs([3, 0, 0, 0]);
-    assert_eq!(crate::block_work_from_target(target_3).into_inner().into_limbs(), [
+    assert_eq!(crate::block_work_from_target(&target_3).into_inner().into_limbs(), [
         0,
         0,
         0,
@@ -212,13 +212,13 @@ fn block_work_from_target_computes_exact_quotients() {
 
     // target = 2^64 - 1 => divisor = 2^64 => floor(2^256 / 2^64) = 2^192
     let target_2_64 = Target::from_limbs([u64::MAX, 0, 0, 0]);
-    assert_eq!(crate::block_work_from_target(target_2_64).into_inner().into_limbs(), [
+    assert_eq!(crate::block_work_from_target(&target_2_64).into_inner().into_limbs(), [
         0, 0, 0, 1
     ]);
 
     // target = 2^128 - 1 => divisor = 2^128 => floor(2^256 / 2^128) = 2^128
     let target_2_128 = Target::from_limbs([u64::MAX, u64::MAX, 0, 0]);
-    assert_eq!(crate::block_work_from_target(target_2_128).into_inner().into_limbs(), [
+    assert_eq!(crate::block_work_from_target(&target_2_128).into_inner().into_limbs(), [
         0, 0, 1, 0
     ]);
 
@@ -226,7 +226,7 @@ fn block_work_from_target_computes_exact_quotients() {
     // target = 2 => divisor = 3 => floor(2^256 / 3) = 0x5555...5555
     let target_2 = Target::from_limbs([2, 0, 0, 0]);
     assert_eq!(
-        crate::block_work_from_target(target_2).into_inner().into_limbs(),
+        crate::block_work_from_target(&target_2).into_inner().into_limbs(),
         [0x5555555555555555; 4]
     );
 }

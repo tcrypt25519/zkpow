@@ -54,10 +54,8 @@ fn anchor_state_derives_every_field_from_the_anchor_header() {
     assert_eq!(state.epoch_timestamp, anchor.timestamp);
     assert_eq!(state.timestamps[0], anchor.timestamp);
     assert_eq!(state.timestamps[1..], [ts(0); WINDOW_MAX_INDEX]);
-    assert_eq!(
-        state.chain_work,
-        ChainWork::new(block_work_from_target(target_from_bits(anchor.compact_target)).into_inner())
-    );
+    let target = target_from_bits(anchor.compact_target);
+    assert_eq!(state.chain_work, ChainWork::new(block_work_from_target(&target).into_inner()));
 }
 
 /// The anchor's target and work are also written out as parameters, which the cold path reads as
@@ -65,12 +63,10 @@ fn anchor_state_derives_every_field_from_the_anchor_header() {
 #[zkvm_test]
 fn anchor_parameters_equal_what_the_anchor_bits_expand_to() {
     let bits = TestConsensus::PARAMS.genesis.compact_target;
+    let target = target_from_bits(bits);
 
-    assert_eq!(target_from_bits(bits), TestConsensus::PARAMS.genesis_target);
-    assert_eq!(
-        block_work_from_target(TestConsensus::PARAMS.genesis_target),
-        TestConsensus::PARAMS.genesis_work
-    );
+    assert_eq!(target, TestConsensus::PARAMS.genesis_target);
+    assert_eq!(block_work_from_target(&target), TestConsensus::PARAMS.genesis_work);
     assert_eq!(State::anchor::<TestConsensus>().chain_work, TestConsensus::PARAMS.chain_work());
 }
 
@@ -133,7 +129,7 @@ fn apply_headers_flushes_deferred_chain_work_on_success() {
         .apply_headers_from_genesis::<TestConsensus>(&headers, &hints)
         .expect("headers should validate");
 
-    let block_work = block_work_from_target(GENESIS_TARGET);
+    let block_work = block_work_from_target(&GENESIS_TARGET);
     let mut new_chain_work = block_work * 10u32;
     new_chain_work += BlockWork::default();
     let expected = ChainWork::default() + new_chain_work;
@@ -158,7 +154,7 @@ fn apply_headers_flushes_deferred_chain_work_for_longer_run() {
         .apply_headers_from_genesis::<TestConsensus>(&headers, &hints)
         .expect("validation should succeed");
 
-    let block_work = block_work_from_target(GENESIS_TARGET);
+    let block_work = block_work_from_target(&GENESIS_TARGET);
     let expected = block_work * 12;
     let expected = ChainWork::default() + expected;
     assert_eq!(state.chain_work, expected);

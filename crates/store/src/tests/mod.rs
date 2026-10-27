@@ -52,7 +52,8 @@ pub(crate) fn seeded_store(test_name: &str) -> (HeaderStore, PathBuf, BlockHash)
         let mtp = tmp_win[tmp_win.len() / 2];
 
         let header = SyncHeader::new(inner);
-        let work = block_work_from_target(target_from_bits(inner.compact_target));
+        let target = target_from_bits(inner.compact_target);
+        let work = block_work_from_target(&target);
         cumulative_work += work;
         let block_hash = header.block_hash();
         let ch = ConnectedHeader::new(header, block_hash, i.into(), cumulative_work, mtp, u64::from(i));

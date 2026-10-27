@@ -62,10 +62,7 @@ impl RunId {
         if bytes.len() != 8 {
             return Err(RunIdError::InvalidLength);
         }
-        let arr: [u8; 8] = [
-            bytes[0], bytes[1], bytes[2], bytes[3],
-            bytes[4], bytes[5], bytes[6], bytes[7],
-        ];
+        let arr: [u8; 8] = [bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7]];
         Self::from_bytes(arr)
     }
 

@@ -88,7 +88,7 @@ where
                     SyncHeadersError::Peer { source, synced, .. } => {
                         tracing::warn!(error = %source, synced, "Peer error during sync, trying different peer");
                     },
-                    SyncHeadersError::Callback { source: _, synced: _, .. } => {
+                    SyncHeadersError::Callback { .. } => {
                         return Err(e);
                     },
                     SyncHeadersError::NoCandidates { .. } => {

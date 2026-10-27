@@ -104,7 +104,7 @@ impl Tip {
 /// Expand `bits` into the `(nbits, target, block_work)` triple a `Tip` caches.
 pub fn expand_target(bits: CompactTarget) -> (CompactTarget, Target, BlockWork) {
     let target = target_from_bits(bits);
-    let work = block_work_from_target(target);
+    let work = block_work_from_target(&target);
     (bits, target, work)
 }
 

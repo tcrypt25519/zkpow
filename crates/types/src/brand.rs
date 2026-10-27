@@ -249,6 +249,21 @@ impl Target {
     pub const fn from_limbs(limbs: [u64; 4]) -> Self {
         Self::new(NonMaxU256::from_limbs(limbs))
     }
+
+    #[must_use]
+    pub fn as_inner_u256(&self) -> &u256 {
+        self.0.as_inner()
+    }
+
+    #[must_use]
+    pub fn as_inner_u256_mut(&mut self) -> &mut u256 {
+        self.0.as_inner_mut()
+    }
+
+    #[must_use]
+    pub fn into_inner_u256(&self) -> u256 {
+        self.0.into_inner()
+    }
 }
 
 impl core::ops::Add<BlockWork> for ChainWork {

@@ -21,7 +21,6 @@ use bytemuck::{self, Pod, PodCastError};
 use sp1_zkvm::lib::read_vec_raw;
 use zkpow_core::{BlockTimestamp, HeaderInput, PublicValues, ReportableError, ReturnCode, State, VerifierKeyDigest};
 use zkpow_params::Mainnet;
-use zkpow_sha256;
 
 /// Commit the public values and halt.
 fn commit_public_values(state: &State, verifier_key: &VerifierKeyDigest, return_code: ReturnCode) -> ! {
@@ -105,7 +104,7 @@ fn inner_main() -> Result<(), ProgramError> {
         Ok(()) => ReturnCode::SUCCESS,
         Err(err) => err.return_code(),
     };
-    commit_public_values(&state, verifier_key, return_code);
+    commit_public_values(state, verifier_key, return_code);
 }
 
 pub fn main() {

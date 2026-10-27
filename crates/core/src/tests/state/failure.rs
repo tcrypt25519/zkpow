@@ -88,7 +88,7 @@ fn apply_headers_flushes_deferred_chain_work_before_failure() {
         .apply_headers_from_genesis::<TestConsensus>(&headers, &hints)
         .expect_err("12th header should fail timestamp validation");
 
-    let work = block_work_from_target(GENESIS_TARGET);
+    let work = block_work_from_target(&GENESIS_TARGET);
     assert_eq!(state.chain_work, ChainWork::default() + work * 11);
     assert_eq!(state.height + 1, 12);
 }

@@ -61,10 +61,10 @@ impl From<VerifierKeyDigest> for [u32; 8] {
 pub struct ErrorCode(NonZeroU8);
 
 impl ErrorCode {
-    pub const POW_INSUFFICIENT: Self = unsafe { Self(NonZeroU8::new_unchecked(2)) };
-    pub const TIMESTAMP_TOO_OLD: Self = unsafe { Self(NonZeroU8::new_unchecked(3)) };
-    pub const INSUFFICIENT_COLD_HEADERS: Self = unsafe { Self(NonZeroU8::new_unchecked(5)) };
-    pub const UNKNOWN_ERROR: Self = unsafe { Self(NonZeroU8::new_unchecked(255)) };
+    pub const POW_INSUFFICIENT: Self = Self(NonZeroU8::new(2).expect("2 is not zero"));
+    pub const TIMESTAMP_TOO_OLD: Self = Self(NonZeroU8::new(3).expect("3 is not zero"));
+    pub const INSUFFICIENT_COLD_HEADERS: Self = Self(NonZeroU8::new(5).expect("5 is not zero"));
+    pub const UNKNOWN_ERROR: Self = Self(NonZeroU8::new(255).expect("255 is not zero"));
 
     /// Create an `ErrorCode` from a raw byte, returning `None` for `0`.
     pub const fn new(value: u8) -> Option<Self> {
@@ -237,7 +237,7 @@ impl PublicValues {
         let state = bytemuck::pod_read_unaligned::<State>(&bytes[0..State::SIZE]);
         let mut verifier_key_bytes = [0; 32];
         verifier_key_bytes.copy_from_slice(&bytes[State::SIZE..State::SIZE + 32]);
-        let verifier_key = VerifierKeyDigest::parse(verifier_key_bytes.as_slice())?.clone();
+        let verifier_key = *VerifierKeyDigest::parse(verifier_key_bytes.as_slice())?;
         let return_code = ReturnCode::from(bytes[Self::SIZE - 1]);
         Ok(Self {
             state,

@@ -249,32 +249,47 @@ fn sub_assign(lhs: &mut u256, rhs: u256) -> bool {
 
 /// Add one to a target, modifying the limbs in place.
 ///
-/// A valid target can not be a max u256, so:
-///   - It can't carry over into a 5th limb
-///   - A carry can only start if the first limb is max u64
-///   - A carry can only continue if the next limb is a max u64
-///   - A max u64 with a carry-over of 1 becomes 0
+/// Invariants:
+/// - A limb can only carry if it's saturated
+/// - The first non-saturated limb stops the carry
+/// - A `Target` is guaranteed to be not saturated (enforced by `NonMaxU256`)
+/// - If carry gets to the last limb then it can't carry
 ///
-/// Iterate limbs: saturated limbs roll to 0 and the first non-saturated limb absorbs the 1.
-/// [`NonMaxU256`] guarantees that the carry cannot escape the final limb.
-pub(crate) fn increment_target(target: NonMaxU256) -> u256 {
-    let mut target = target.into_inner();
-    for (i, limb) in target.as_limbs_mut().iter_mut().enumerate() {
-        // This limb isn't saturated so it can't carry; add 1 and we're done.
-        if *limb < u64::MAX {
+/// Algorithm:
+/// 1. Set carried flag to true
+/// 2. Iterate limbs from least to second-most significant.
+///    3. If limb is not saturated: set limb+=1, carried=false, and break
+///    4. If limb is saturated: set limb=0 and continue
+/// 5. If carried is still true then every limb carried; increment the last limb
+///
+/// We don't modify target directly, and we return an owned u256, but we take in
+/// a reference to target so that callers don't have to take ownership of target
+/// if they don't have it and don't need it.
+pub(crate) fn increment_target(target: &Target) -> u256 {
+    let mut target_u256 = target.into_inner_u256();
+    let limbs = target_u256.as_limbs_mut();
+    let mut carried: bool = true;
+
+    // Iterate the lower 3 limbs
+    for limb in limbs.iter_mut().take(3) {
+        // if this limb is max, it's saturated and will carry
+        carried = *limb == u64::MAX;
+        if !carried {
             *limb += 1;
             break;
         }
 
-        // This is unreachable because NonMaxU256 excludes the only value that could carry out.
-        if i == 3 {
-            unreachable!("NonMaxU256 invariant violated");
-        }
-
-        // This limb is saturated but not the final limb, so roll it over to 0 and proceed with the carry
+        // This limb is saturated, so wrap it to 0 and proceed with the carry
         *limb = 0;
     }
-    target
+
+    // If every limb carried, increment the last limb
+    // target is guaranteed to be < u256::MAX, so this is at most u256::MAX
+    if carried {
+        limbs[3] += 1;
+    }
+
+    target_u256
 }
 
 /// Double `value` in place modulo 2^256, returning whether the true product overflowed.
@@ -375,8 +390,8 @@ fn mul2_shift(value: &mut u256) -> bool {
 
 /// Compute one-block cumulative-work units from the expanded target using binary long division.
 #[must_use]
-pub fn compute_block_work_division(target: Target) -> BlockWork {
-    let divisor = increment_target(target.into_inner());
+pub fn compute_block_work_division(target: &Target) -> (u256, BlockWork) {
+    let divisor = increment_target(target);
     let n = divisor.bits();
 
     let mut quotient = [0u64; 4];
@@ -401,7 +416,7 @@ pub fn compute_block_work_division(target: Target) -> BlockWork {
         }
     }
 
-    BlockWork::from_limbs(quotient)
+    (divisor, BlockWork::from_limbs(quotient))
 }
 
 /// Compute one-block cumulative-work units from the expanded target.
@@ -409,14 +424,12 @@ pub fn compute_block_work_division(target: Target) -> BlockWork {
 /// In the zkVM, the quotient `floor(2^256 / (target + 1))` is supplied as a prover hint
 /// and verified with one `syscall_uint256_mul_with_carry` call. For divisor `d` and hinted
 /// quotient `q`, `q` is exact if and only if `2^256 < (q + 1)d <= 2^256 + d`.
-pub fn block_work_from_target(target: Target) -> BlockWork {
-    let divisor = increment_target(target.into_inner());
-
+pub fn block_work_from_target(target: &Target) -> BlockWork {
     #[cfg(target_os = "zkvm")]
     {
         sp1_lib::unconstrained!({
-            let work = compute_block_work_division(target);
-            sp1_lib::io::hint_slice(bytemuck::bytes_of(&work.into_inner().into_limbs()));
+            let (_divisor, work) = compute_block_work_division(target);
+            sp1_lib::io::hint_slice(work.into_inner().as_bytes());
         });
         let read_res = unsafe { sp1_lib::read_vec_raw() };
         if read_res.ptr.is_null() || read_res.len != 32 {
@@ -424,13 +437,14 @@ pub fn block_work_from_target(target: Target) -> BlockWork {
         }
         let limbs: [u64; 4] = unsafe { *(read_res.ptr as *const [u64; 4]) };
         let work = BlockWork::from_limbs(limbs);
+        let divisor = increment_target(target);
         verify_block_work_witness(work, divisor);
         work
     }
 
     #[cfg(not(target_os = "zkvm"))]
     {
-        let work = compute_block_work_division(target);
+        let (divisor, work) = compute_block_work_division(target);
         verify_block_work_witness(work, divisor);
         work
     }
@@ -468,7 +482,7 @@ pub fn calculate_next_work_required<C: Consensus>(
     let compact_target = target_to_bits(clamped_target);
     let normalized_target = target_from_bits(compact_target);
 
-    let block_work = block_work_from_target(normalized_target);
+    let block_work = block_work_from_target(&normalized_target);
 
     // The target is capped above and truncated below; return it and the compact form we calculated along the way.
     TargetTriplet::new(compact_target, normalized_target, block_work)

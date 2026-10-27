@@ -55,20 +55,20 @@ impl From<(CompactTarget, Target, BlockWork)> for TargetTriplet {
     }
 }
 
-impl Into<Target> for TargetTriplet {
-    fn into(self) -> Target {
-        self.target
+impl From<TargetTriplet> for CompactTarget {
+    fn from(value: TargetTriplet) -> Self {
+        value.compact_target
     }
 }
 
-impl Into<BlockWork> for TargetTriplet {
-    fn into(self) -> BlockWork {
-        self.block_work
+impl From<TargetTriplet> for Target {
+    fn from(value: TargetTriplet) -> Self {
+        value.target
     }
 }
 
-impl Into<CompactTarget> for TargetTriplet {
-    fn into(self) -> CompactTarget {
-        self.compact_target
+impl From<TargetTriplet> for BlockWork {
+    fn from(value: TargetTriplet) -> Self {
+        value.block_work
     }
 }

@@ -36,14 +36,15 @@ impl State {
         let anchor = C::PARAMS.genesis;
         let mut timestamps = [BlockTimestamp::new(0); WINDOW_SIZE];
         timestamps[0] = anchor.timestamp;
-        let block_work = block_work_from_target(target_from_bits(anchor.compact_target));
+        let target = target_from_bits(anchor.compact_target);
+        let block_work = block_work_from_target(&target);
 
         State {
-            chain_work:      ChainWork::new(block_work.into_inner()),
-            genesis_hash:    C::GENESIS_HASH,
-            block_hash:      C::GENESIS_HASH,
-            height:          0,
-            current_nbits:   anchor.compact_target,
+            chain_work: ChainWork::new(block_work.into_inner()),
+            genesis_hash: C::GENESIS_HASH,
+            block_hash: C::GENESIS_HASH,
+            height: 0,
+            current_nbits: anchor.compact_target,
             epoch_timestamp: anchor.timestamp,
             timestamps,
         }
@@ -55,12 +56,12 @@ impl State {
         calculate_next_work_required::<C>(target, self.epoch_timestamp, timestamp)
     }
 
-    fn new_epoch_manager<'a, C: Consensus>(&'_ mut self, current_timestamp: BlockTimestamp) -> EpochManager<'_> {
+    fn new_epoch_manager<C: Consensus>(&'_ mut self, current_timestamp: BlockTimestamp) -> EpochManager<'_> {
         let current_target = target_from_bits(self.current_nbits);
         let target_triplet = if (self.height + 1).is_multiple_of(C::PARAMS.epoch_length) {
             self.prepare_next_epoch::<C>(current_target, current_timestamp)
         } else {
-            let block_work = block_work_from_target(current_target);
+            let block_work = block_work_from_target(&current_target);
             TargetTriplet::new(self.current_nbits, current_target, block_work)
         };
 

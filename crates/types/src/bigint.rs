@@ -176,6 +176,16 @@ impl NonMaxU256 {
         }
     }
 
+    const MAX_HIGH_LIMB: u64 = 0x0000_0000_FFFF_0000;
+    pub const fn check(value: u256) -> bool {
+        let limbs = value.as_limbs();
+
+        if limbs[3] != Self::MAX_HIGH_LIMB {
+            limbs[3] < Self::MAX_HIGH_LIMB
+        } else {
+            limbs[0] == 0 && limbs[1] == 0 && limbs[2] == 0
+        }
+    }
     /// [`NonMaxU256::new`] from limbs. Panics when every limb is `u64::MAX`.
     #[must_use]
     pub const fn from_limbs(limbs: [u64; 4]) -> Self {
@@ -194,6 +204,11 @@ impl NonMaxU256 {
     #[must_use]
     pub const fn as_inner(&self) -> &u256 {
         &self.0
+    }
+
+    #[must_use]
+    pub fn as_inner_mut(&mut self) -> &mut u256 {
+        &mut self.0
     }
 }
 
