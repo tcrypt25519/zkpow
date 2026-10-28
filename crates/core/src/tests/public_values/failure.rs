@@ -24,16 +24,19 @@ fn sample_verifier_key() -> VerifierKeyDigest {
 fn sample_apply_errors() -> [ApplyError; 3] {
     [
         ApplyError::TimestampTooOld {
-            height: 12,
+            height:    12,
             timestamp: ts(1_700_000_000),
-            median: ts(1_700_000_600),
+            median:    ts(1_700_000_600),
         },
         ApplyError::PowInsufficient {
             height: 7,
-            hash: BlockHash::new([0xFF; 32]),
-            nbits: CompactTarget::new(0x1d00_ffff),
+            hash:   BlockHash::new([0xFF; 32]),
+            nbits:  CompactTarget::new(0x1d00_ffff),
         },
-        ApplyError::InsufficientColdHeaders { required: 10, actual: 3 },
+        ApplyError::InsufficientColdHeaders {
+            required: 10,
+            actual:   3,
+        },
     ]
 }
 
@@ -69,11 +72,11 @@ fn public_values_parse_rejects_truncated_and_excess_lengths() {
     let too_long = vec![0u8; PublicValues::SIZE + 1];
 
     assert!(matches!(
-        PublicValues::parse(&too_short).unwrap_err().into(),
+        PublicValues::parse(&too_short).unwrap_err(),
         ParseError::InvalidLength { .. }
     ));
     assert!(matches!(
-        PublicValues::parse(&too_long).unwrap_err().into(),
+        PublicValues::parse(&too_long).unwrap_err(),
         ParseError::InvalidLength { .. }
     ));
 }
@@ -190,13 +193,10 @@ fn apply_error_messages_include_the_compared_values() {
 #[zkvm_test]
 fn parse_error_messages_include_offending_lengths() {
     assert_eq!(
-        format!(
-            "{}",
-            ParseError::InvalidLength {
-                expected: 185,
-                actual: 184,
-            }
-        ),
+        format!("{}", ParseError::InvalidLength {
+            expected: 185,
+            actual:   184,
+        }),
         "invalid length: expected 185, got 184"
     );
     assert_eq!(
@@ -204,14 +204,11 @@ fn parse_error_messages_include_offending_lengths() {
         "misaligned input requires 4-byte alignment"
     );
     assert_eq!(
-        format!(
-            "{}",
-            ParseError::Truncated {
-                offset: 8,
-                needed: 32,
-                actual: 12,
-            }
-        ),
+        format!("{}", ParseError::Truncated {
+            offset: 8,
+            needed: 32,
+            actual: 12,
+        }),
         "truncated input at offset 8: need 32 bytes, got 12"
     );
 }

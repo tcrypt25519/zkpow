@@ -187,21 +187,42 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
 
 #[tokio::test]
 async fn test_error_recursive_on_failed_proof() -> Result<(), String> {
+    let client = ProverClient::builder().mock().build().await;
+    let pk = client.setup(ELF).await.map_err(|e| format!("setup: {e}"))?;
+    let vk = pk.verifying_key();
+    let verifier_key = VerifierKeyDigest::from_raw(vk.hash_u32());
+
     let genesis_state = mainnet_genesis_state();
-    let witness = open_db().load_header_batch_witness(1, 10);
-
-    let state_at_10 =
-        compute_final_state_with_sparse_hints(&genesis_state, &witness.headers, &witness.median_time_past_hints);
-
-    let stdin = build_stdin(
-        VerifierKeyDigest::from_raw([0u32; 8]),
-        &state_at_10,
-        &witness.headers,
-        &witness.median_time_past_hints,
+    let witness1 = open_db().load_header_batch_witness(1, 10);
+    let stdin1 = build_stdin(
+        verifier_key,
+        &genesis_state,
+        &witness1.headers,
+        &witness1.median_time_past_hints,
     );
 
-    let client = ProverClient::builder().mock().build().await;
-    let result = client.execute(ELF, stdin).await;
+    let proof1 = client
+        .prove(&pk, stdin1)
+        .compressed()
+        .await
+        .map_err(|e| format!("Run 1 proof generation failed: {e}"))?;
+
+    let state_at_10 =
+        compute_final_state_with_sparse_hints(&genesis_state, &witness1.headers, &witness1.median_time_past_hints);
+
+    let witness2 = open_db().load_header_batch_witness(11, 10);
+    let mut stdin2 = build_stdin(verifier_key, &state_at_10, &witness2.headers, &witness2.median_time_past_hints);
+
+    let sp1_sdk::SP1Proof::Compressed(inner_proof) = &proof1.proof else {
+        return Err("Run 1 proof is not compressed".to_string());
+    };
+
+    // Invalidate the recursion VK so proof verification itself is rejected.
+    let mut bad_vk = vk.vk.clone();
+    bad_vk.pc_start = Default::default();
+    stdin2.write_proof(inner_proof.as_ref().clone(), bad_vk);
+
+    let result = client.execute(ELF, stdin2).await;
 
     match result {
         Err(_) => Ok(()),
@@ -218,24 +239,47 @@ async fn test_error_recursive_on_failed_proof() -> Result<(), String> {
 }
 
 #[tokio::test]
-#[ignore = "requires full SP1 proof to verify continuation binding"]
 async fn test_error_recursive_on_tampered_state_witness() -> Result<(), String> {
-    let genesis_state = mainnet_genesis_state();
-    let witness = open_db().load_header_batch_witness(1, 10);
-    let state_at_10 =
-        compute_final_state_with_sparse_hints(&genesis_state, &witness.headers, &witness.median_time_past_hints);
+    let client = ProverClient::builder().mock().build().await;
+    let pk = client.setup(ELF).await.map_err(|e| format!("setup: {e}"))?;
+    let vk = pk.verifying_key();
+    let verifier_key = VerifierKeyDigest::from_raw(vk.hash_u32());
 
-    let verifier_key = VerifierKeyDigest::from_raw([0u32; 8]);
+    let genesis_state = mainnet_genesis_state();
+    let witness1 = open_db().load_header_batch_witness(1, 10);
+    let stdin1 = build_stdin(
+        verifier_key,
+        &genesis_state,
+        &witness1.headers,
+        &witness1.median_time_past_hints,
+    );
+
+    let proof1 = client
+        .prove(&pk, stdin1)
+        .compressed()
+        .await
+        .map_err(|e| format!("Run 1 proof generation failed: {e}"))?;
+
+    let state_at_10 =
+        compute_final_state_with_sparse_hints(&genesis_state, &witness1.headers, &witness1.median_time_past_hints);
 
     let mut tampered_state = state_at_10;
     tampered_state.epoch_timestamp = util::BlockTimestamp::default();
 
-    let empty_headers = [];
-    let empty_hints = Vec::new();
-    let stdin = build_stdin(verifier_key, &tampered_state, &empty_headers, &empty_hints);
+    let witness2 = open_db().load_header_batch_witness(11, 10);
+    let mut stdin2 = build_stdin(
+        verifier_key,
+        &tampered_state,
+        &witness2.headers,
+        &witness2.median_time_past_hints,
+    );
 
-    let client = ProverClient::builder().mock().build().await;
-    let result = client.execute(ELF, stdin).await;
+    let sp1_sdk::SP1Proof::Compressed(inner_proof) = &proof1.proof else {
+        return Err("Run 1 proof is not compressed".to_string());
+    };
+    stdin2.write_proof(inner_proof.as_ref().clone(), vk.vk.clone());
+
+    let result = client.execute(ELF, stdin2).await;
 
     match result {
         Err(_) => Ok(()),
@@ -269,9 +313,12 @@ async fn test_tampered_anchor_state_is_derived_away() -> Result<(), String> {
     let canonical = run(mainnet_genesis_state()).await?;
     expect_success(&canonical)?;
 
+    type StateMutation = (&'static str, fn(&mut util::State));
     let anchor = mainnet_genesis_state();
-    let mutations: [(&str, fn(&mut util::State)); 6] = [
-        ("chain_work", |s| s.chain_work = util::ChainWork::from_limbs([1_000_000, 0, 0, 0])),
+    let mutations: [StateMutation; 6] = [
+        ("chain_work", |s| {
+            s.chain_work = util::ChainWork::from_limbs([1_000_000, 0, 0, 0])
+        }),
         ("block_hash", |s| s.block_hash = util::BlockHash::new([0x11; 32])),
         ("genesis_hash", |s| s.genesis_hash = util::BlockHash::new([0x22; 32])),
         ("current_nbits", |s| s.current_nbits = util::CompactTarget::new(0x1d00_fffe)),

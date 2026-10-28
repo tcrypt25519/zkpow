@@ -14,7 +14,7 @@ impl fmt::Display for RunIdError {
         match self {
             Self::InvalidLength => write!(f, "run ID must be exactly 8 ASCII alphanumeric characters"),
             Self::InvalidCharacter(b) => {
-                write!(f, "run ID byte {b:#02x} is not ASCII alphanumeric (0-9, a-z, A-Z)")
+                write!(f, "run ID byte 0x{b:02x} is not ASCII alphanumeric (0-9, a-z, A-Z)")
             },
         }
     }
@@ -57,13 +57,9 @@ impl RunId {
     /// Validates and constructs a [`RunId`] from a string slice.
     ///
     /// Rejects strings that are not exactly 8 bytes or contain non-ASCII-alphanumeric characters.
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Result<Self, RunIdError> {
-        let bytes = s.as_bytes();
-        if bytes.len() != 8 {
-            return Err(RunIdError::InvalidLength);
-        }
-        let arr: [u8; 8] = [bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7]];
-        Self::from_bytes(arr)
+        core::str::FromStr::from_str(s)
     }
 
     /// Returns the underlying 8-byte array.
@@ -142,6 +138,11 @@ impl core::str::FromStr for RunId {
     type Err = RunIdError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Self::from_str(s)
+        let bytes = s.as_bytes();
+        if bytes.len() != 8 {
+            return Err(RunIdError::InvalidLength);
+        }
+        let arr: [u8; 8] = [bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7]];
+        Self::from_bytes(arr)
     }
 }

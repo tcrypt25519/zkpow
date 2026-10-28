@@ -165,7 +165,9 @@ where
             return;
         }
         let Some(cells) = shard_area(&message) else { return };
-        let Some(kind) = span.extensions().get::<ShardChips>().map(ShardChips::kind) else { return };
+        let Some(kind) = span.extensions().get::<ShardChips>().map(ShardChips::kind) else {
+            return;
+        };
         if let Ok(mut areas) = SHARD_AREAS.lock() {
             areas.push(ShardArea { cells, kind });
         }
@@ -183,7 +185,10 @@ pub(crate) fn clear_shard_areas() {
 
 /// Chip names that put a shard on both machines at once, since the last clear.
 pub(crate) fn conflicting_chips() -> Vec<String> {
-    CONFLICTING_CHIPS.lock().map(|chips| chips.iter().cloned().collect()).unwrap_or_default()
+    CONFLICTING_CHIPS
+        .lock()
+        .map(|chips| chips.iter().cloned().collect())
+        .unwrap_or_default()
 }
 
 /// Every shard proved since the last clear, fullest first.

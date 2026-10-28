@@ -3,6 +3,9 @@ mod tests;
 
 pub mod db;
 
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_utils;
+
 pub use db::{genesis_state_from_record, HeaderBatchWitness, HeaderRecord, HeaderStore, RunRecord};
 
 /// Resolve the SQLite header database path: `ZKPOW_DB_PATH` if set, otherwise

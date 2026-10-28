@@ -20,8 +20,7 @@ use crate::{
     protocol::{Batch, ControllerError},
     storage::ArtifactStore,
     verify::ProofVerifier,
-    NO_HEADERS_REMAINING_PREFIX,
-    RunId,
+    RunId, NO_HEADERS_REMAINING_PREFIX,
 };
 
 const DEFAULT_PULL_TIMEOUT: Duration = Duration::from_secs(600);

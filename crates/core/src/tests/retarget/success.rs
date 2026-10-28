@@ -116,10 +116,10 @@ fn assert_boundary_retargets_once<C: Consensus>() {
     );
 
     let header = HeaderInput {
-        version: 1,
+        version:     1,
         merkle_root: [0x22; 32],
-        timestamp: ts(1_000_700),
-        nonce: 7,
+        timestamp:   ts(1_000_700),
+        nonce:       7,
     };
     state.apply_headers::<C>(&[header], &[]).expect("boundary header should apply");
 
@@ -140,10 +140,10 @@ fn epoch_boundary_is_read_from_consensus_parameters() {
     let starting_nbits = state.current_nbits;
 
     let header = HeaderInput {
-        version: 1,
+        version:     1,
         merkle_root: [0x22; 32],
-        timestamp: ts(1_000_700),
-        nonce: 7,
+        timestamp:   ts(1_000_700),
+        nonce:       7,
     };
 
     let mut short = state;

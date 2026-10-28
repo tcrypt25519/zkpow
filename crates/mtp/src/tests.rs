@@ -196,7 +196,7 @@ fn window_constants_match_expected() {
     assert_eq!(WINDOW_MAX_INDEX, 10);
     assert_eq!(WINDOW_MAX_INDEX, WINDOW_SIZE - 1);
     assert_eq!(WINDOW_SMALL_HALF_SIZE, WINDOW_SIZE / 2);
-    assert_eq!(WINDOW_LARGE_HALF_SIZE, (WINDOW_SIZE + 1) / 2);
+    assert_eq!(WINDOW_LARGE_HALF_SIZE, WINDOW_SIZE.div_ceil(2));
 }
 
 #[test]

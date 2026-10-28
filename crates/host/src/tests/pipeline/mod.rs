@@ -134,6 +134,7 @@ impl Drop for SessionEnv {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[allow(clippy::await_holding_lock)]
 async fn stops_after_reaching_configured_batch_count() {
     let _guard = _env_test_mutex().lock().unwrap();
     let env = SessionEnv::new("batch-count");
@@ -146,22 +147,26 @@ async fn stops_after_reaching_configured_batch_count() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[allow(clippy::await_holding_lock)]
 async fn stops_after_exhausting_headers_in_database() {
     let _guard = _env_test_mutex().lock().unwrap();
-    let _env = SessionEnv::new("exhausted");
+    let env = SessionEnv::new("exhausted");
+    let db_path = env.dir.join("headers.sqlite");
+    zkpow_store::test_utils::create_real_seeded_store(&db_path, 10);
     set_env("ZKPOW_BATCH_COUNT", "5");
-    set_env(ENV_ZKPOW_BATCH_SIZE, "0");
-    set_env("ZKPOW_DB_PATH", concat!(env!("CARGO_MANIFEST_DIR"), "/../../headers.db"));
+    set_env(ENV_ZKPOW_BATCH_SIZE, "10");
+    set_env("ZKPOW_DB_PATH", db_path.to_str().unwrap());
 
     let completed = run_batch_session::<Mainnet>()
         .await
         .expect("session should stop on exhaustion without error");
-    assert_eq!(completed, 0);
+    assert_eq!(completed, 1);
 }
 
 /// Execute-only is deliberately a repeatable local diagnostic. It does
 /// not create or advance a production run.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[allow(clippy::await_holding_lock)]
 async fn execute_only_session_is_separate_from_run_progress() {
     let _guard = _env_test_mutex().lock().unwrap();
     let env = SessionEnv::new("advance-resume");

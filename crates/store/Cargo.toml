@@ -12,3 +12,6 @@ rusqlite.workspace = true
 thiserror.workspace = true
 num-bigint.workspace = true
 
+[features]
+default = []
+test-utils = []

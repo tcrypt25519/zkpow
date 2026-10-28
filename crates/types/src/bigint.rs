@@ -94,10 +94,10 @@ impl core::ops::Add for u256 {
     fn add(self, rhs: Self) -> Self::Output {
         let mut result = [0u64; 4];
         let mut carry = 0u64;
-        for i in 0..4 {
+        for (i, slot) in result.iter_mut().enumerate() {
             let (sum, overflow) = self.0[i].overflowing_add(rhs.0[i]);
             let (sum_with_carry, overflow2) = sum.overflowing_add(carry);
-            result[i] = sum_with_carry;
+            *slot = sum_with_carry;
             carry = (overflow as u64) + (overflow2 as u64);
         }
         Self(result)

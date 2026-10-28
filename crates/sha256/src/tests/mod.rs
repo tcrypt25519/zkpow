@@ -71,13 +71,13 @@ fn subroutine_cycle_profiling_demonstration() {
 
 #[wiretype::wiretype]
 pub struct HeaderFixture {
-    pub expected_hash: [u8; 32],
-    pub version: u32,
+    pub expected_hash:  [u8; 32],
+    pub version:        u32,
     pub prev_blockhash: [u8; 32],
-    pub merkle_root: [u8; 32],
-    pub timestamp: u32,
+    pub merkle_root:    [u8; 32],
+    pub timestamp:      u32,
     pub compact_target: u32,
-    pub nonce: u32,
+    pub nonce:          u32,
 }
 
 #[test(fixture = "headers_fixture.bin")]

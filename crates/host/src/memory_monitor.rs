@@ -9,7 +9,7 @@ use std::str::from_utf8;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct StageSample {
-    rss_kb: u64,
+    rss_kb:  u64,
     live_kb: u64,
 }
 
@@ -36,7 +36,11 @@ pub fn rss_kb() -> Option<u64> {
 
     #[cfg(target_os = "macos")]
     {
-        let output = Command::new("ps").args(["-o", "rss=", "-p"]).arg(process::id().to_string()).output().ok()?;
+        let output = Command::new("ps")
+            .args(["-o", "rss=", "-p"])
+            .arg(process::id().to_string())
+            .output()
+            .ok()?;
         parse_ps_rss(&output.stdout)
     }
 
@@ -73,12 +77,7 @@ pub fn log_point(label: &'static str, message: &'static str) -> StageSample {
         return StageSample::new(0, 0);
     }
     let sample = sample();
-    tracing::info!(
-        label,
-        rss_kb = sample.rss_kb(),
-        live_kb = sample.live_kb(),
-        "{message}"
-    );
+    tracing::info!(label, rss_kb = sample.rss_kb(), live_kb = sample.live_kb(), "{message}");
     sample
 }
 

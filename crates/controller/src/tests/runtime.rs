@@ -7,7 +7,7 @@ use std::{
 };
 
 use zkpow_core::{PublicValues, ReturnCode, VerifierKeyDigest};
-use zkpow_store::{db_path, HeaderStore};
+use zkpow_store::HeaderStore;
 
 use super::*;
 use crate::{
@@ -18,7 +18,7 @@ use crate::{
 };
 
 struct ControllableStore {
-    inner: LocalArtifactStore,
+    inner:    LocalArtifactStore,
     fail_put: Arc<AtomicBool>,
     fail_get: Arc<AtomicBool>,
 }
@@ -71,25 +71,21 @@ impl ProofVerifier for BytesArePublicValues {
 struct Harness {
     runtime: ControllerRuntime<Mainnet>,
     root:    std::path::PathBuf,
+    db_path: std::path::PathBuf,
     run_ids: Mutex<Vec<String>>,
 }
 
 impl Harness {
     fn new() -> Self {
-        Self::with_faulty_storage(
-            Arc::new(AtomicBool::new(false)),
-            Arc::new(AtomicBool::new(false)),
-        )
+        Self::with_faulty_storage(Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)))
     }
 
     fn with_faulty_storage(fail_put: Arc<AtomicBool>, fail_get: Arc<AtomicBool>) -> Self {
         let nonce = unique_nonce();
         let root = std::env::temp_dir().join(format!("zkpow-runtime-{nonce}"));
-        let genesis_hash = {
-            let temp = HeaderStore::open(db_path()).unwrap();
-            BlockHash::from(&temp.load_header_record(0).header)
-        };
-        let store = HeaderStore::open(db_path()).unwrap();
+        std::fs::create_dir_all(&root).unwrap();
+        let db_path = root.join("headers.sqlite");
+        let (store, genesis_hash) = zkpow_store::test_utils::seeded_store_at(&db_path, 20);
         let mut config = ControllerConfig::new(genesis_hash, 2);
         config.pull_timeout = Duration::from_millis(100);
         let storage = ControllableStore {
@@ -106,6 +102,7 @@ impl Harness {
         Self {
             runtime,
             root,
+            db_path,
             run_ids: Mutex::new(Vec::new()),
         }
     }
@@ -118,7 +115,7 @@ impl Harness {
     }
 
     fn upload_expected(&self, run: &str, batch: &Batch) {
-        let state = HeaderStore::open(db_path())
+        let state = HeaderStore::open(&self.db_path)
             .unwrap()
             .state_at_height::<Mainnet>(batch.end_height, self.genesis_hash());
         let public_values = PublicValues::new(state, batch.verifier_key, ReturnCode::SUCCESS);
@@ -128,18 +125,13 @@ impl Harness {
     }
 
     fn genesis_hash(&self) -> BlockHash {
-        let store = HeaderStore::open(db_path()).unwrap();
+        let store = HeaderStore::open(&self.db_path).unwrap();
         BlockHash::from(&store.load_header_record(0).header)
     }
 }
 
 impl Drop for Harness {
     fn drop(&mut self) {
-        if let Ok(store) = HeaderStore::open(db_path()) {
-            for run in self.run_ids.lock().unwrap().iter() {
-                store.delete_run(run).ok();
-            }
-        }
         std::fs::remove_dir_all(&self.root).ok();
     }
 }
@@ -201,7 +193,7 @@ async fn resuming_into_a_different_artifact_root_names_the_missing_proof() {
 
     let elsewhere = std::env::temp_dir().join(format!("zkpow-runtime-elsewhere-{}", unique_nonce()));
     let moved = ControllerRuntime::<Mainnet>::new(
-        HeaderStore::open(db_path()).unwrap(),
+        HeaderStore::open(&harness.db_path).unwrap(),
         Box::new(LocalArtifactStore::new(&elsewhere)),
         Box::new(BytesArePublicValues(VerifierKeyDigest::from_raw([7; 8]))),
         ControllerConfig::new(harness.genesis_hash(), 2),
@@ -223,10 +215,7 @@ async fn an_empty_header_database_is_not_reported_as_a_run_problem() {
     let nonce = unique_nonce();
     let root = std::env::temp_dir().join(format!("zkpow-runtime-emptydb-{nonce}"));
     std::fs::create_dir_all(&root).unwrap();
-    let genesis_hash = {
-        let store = HeaderStore::open(db_path()).unwrap();
-        BlockHash::from(&store.load_header_record(0).header)
-    };
+    let genesis_hash = <Mainnet as zkpow_params::Consensus>::GENESIS_HASH;
     let empty = ControllerRuntime::<Mainnet>::new(
         HeaderStore::open(root.join("empty.db")).unwrap(),
         Box::new(LocalArtifactStore::new(&root)),
@@ -305,18 +294,9 @@ async fn get_target_failure_rolls_back_pending_and_retry_succeeds() {
 fn run_id_validation_rejects_empty_absolute_parent_and_separators() {
     use crate::runtime::validate_run_id;
 
-    assert_eq!(
-        validate_run_id("").unwrap_err().kind,
-        crate::protocol::ErrorKind::BadRequest
-    );
-    assert_eq!(
-        validate_run_id("..").unwrap_err().kind,
-        crate::protocol::ErrorKind::BadRequest
-    );
-    assert_eq!(
-        validate_run_id(".").unwrap_err().kind,
-        crate::protocol::ErrorKind::BadRequest
-    );
+    assert_eq!(validate_run_id("").unwrap_err().kind, crate::protocol::ErrorKind::BadRequest);
+    assert_eq!(validate_run_id("..").unwrap_err().kind, crate::protocol::ErrorKind::BadRequest);
+    assert_eq!(validate_run_id(".").unwrap_err().kind, crate::protocol::ErrorKind::BadRequest);
     assert_eq!(
         validate_run_id("/abs/path").unwrap_err().kind,
         crate::protocol::ErrorKind::BadRequest
@@ -386,4 +366,44 @@ async fn runtime_pull_batch_and_complete_reject_unsafe_run_ids() {
             "complete should reject {unsafe_id:?} with BadRequest"
         );
     }
+}
+
+#[tokio::test]
+async fn guest_compatible_batch_size_advances_and_completes() {
+    let nonce = unique_nonce();
+    let root = std::env::temp_dir().join(format!("zkpow-runtime-batch10-{nonce}"));
+    std::fs::create_dir_all(&root).unwrap();
+    let db_path = root.join("headers.sqlite");
+    let (store, genesis_hash) = zkpow_store::test_utils::seeded_store_at(&db_path, 25);
+    let mut config = ControllerConfig::new(genesis_hash, 10);
+    config.pull_timeout = Duration::from_millis(100);
+    let storage = LocalArtifactStore::new(&root);
+    let runtime = ControllerRuntime::<Mainnet>::new(
+        store,
+        Box::new(storage),
+        Box::new(BytesArePublicValues(VerifierKeyDigest::from_raw([7; 8]))),
+        config,
+    );
+
+    let run = "run00010";
+    let batch = runtime.pull_batch(run).await.unwrap();
+    assert_eq!(batch.first_new_height, 1);
+    assert_eq!(batch.end_height, 10);
+    assert_eq!(batch.header_bytes.len(), 10 * zkpow_core::HeaderInput::SIZE);
+    assert!(batch.previous_proof.is_none());
+
+    let state = HeaderStore::open(&db_path)
+        .unwrap()
+        .state_at_height::<Mainnet>(batch.end_height, genesis_hash);
+    let public_values = PublicValues::new(state, batch.verifier_key, ReturnCode::SUCCESS);
+    std::fs::write(&batch.proof_upload, public_values.to_bytes()).unwrap();
+    runtime.complete(run).await.unwrap();
+
+    let next = runtime.pull_batch(run).await.unwrap();
+    assert_eq!(next.first_new_height, 11);
+    assert_eq!(next.end_height, 20);
+    assert_eq!(next.header_bytes.len(), 10 * zkpow_core::HeaderInput::SIZE);
+    assert!(next.previous_proof.is_some());
+
+    std::fs::remove_dir_all(&root).ok();
 }

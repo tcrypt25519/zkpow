@@ -30,7 +30,7 @@ pub const WINDOW_SIZE: usize = 11;
 pub const WINDOW_SMALL_HALF_SIZE: usize = WINDOW_SIZE / 2;
 
 /// Half the window, rounded up; the number of timestamps that may sit above the median.
-pub const WINDOW_LARGE_HALF_SIZE: usize = (WINDOW_SIZE + 1) / 2;
+pub const WINDOW_LARGE_HALF_SIZE: usize = WINDOW_SIZE.div_ceil(2);
 
 /// Maximum index in the sliding window.
 pub const WINDOW_MAX_INDEX: usize = WINDOW_SIZE - 1;

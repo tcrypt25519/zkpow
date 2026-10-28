@@ -1,6 +1,6 @@
 use sync_headers::{ConnectedHeader, Header as SyncHeader};
 use zkpow_core::{ChainWork, VerifierKeyDigest};
-use zkpow_params::Mainnet;
+use zkpow_params::{Consensus, Mainnet};
 
 use super::*;
 use crate::db::{hash_to_bytes, work_to_bytes};

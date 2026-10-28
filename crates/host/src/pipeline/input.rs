@@ -74,10 +74,9 @@ fn resolve_prover_backend(execute_only: bool) -> Result<ProverBackend, BoxError>
             "cpu" => return Ok(ProverBackend::Cpu),
             "mock" => return Ok(ProverBackend::Mock),
             other => {
-                return Err(format!(
-                    "unknown {ENV_ZKPOW_PROVER_BACKEND}: `{other}`; expected 'cuda', 'cpu', or 'mock'"
+                return Err(
+                    format!("unknown {ENV_ZKPOW_PROVER_BACKEND}: `{other}`; expected 'cuda', 'cpu', or 'mock'").into(),
                 )
-                .into())
             },
         }
     }

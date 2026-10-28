@@ -8,9 +8,6 @@
 #![cfg_attr(all(test, target_os = "zkvm"), feature(custom_test_frameworks))]
 #![cfg_attr(all(test, target_os = "zkvm"), test_runner(zkvm_test::test_runner))]
 
-#[cfg(test)]
-mod tests;
-
 extern crate alloc;
 extern crate self as zkpow_core;
 
@@ -88,44 +85,6 @@ fn hash_header_input(input: &HeaderInput, prev_blockhash_words: &[u64; 8], compa
         };
         let hash = hash_header(&header);
         zkpow_sha256::hash_to_state(hash.as_inner())
-    }
-}
-
-#[cfg(test)]
-mod test_hash_mock {
-    extern crate std;
-    use std::cell::Cell;
-
-    std::thread_local! {
-        static MOCK_HEADER_HASH: Cell<Option<[u8; 32]>> = const { Cell::new(None) };
-    }
-
-    pub(crate) struct MockHashGuard;
-
-    pub(crate) fn get() -> Option<[u8; 32]> {
-        MOCK_HEADER_HASH.get()
-    }
-
-    pub(crate) fn set_success() -> MockHashGuard {
-        set([0; 32])
-    }
-
-    pub(crate) fn set_fail() -> MockHashGuard {
-        set([0xFF; 32])
-    }
-
-    fn set(hash: [u8; 32]) -> MockHashGuard {
-        MOCK_HEADER_HASH.with(|mock| {
-            assert!(mock.get().is_none(), "hash mock already set in this thread");
-            mock.set(Some(hash));
-        });
-        MockHashGuard
-    }
-
-    impl Drop for MockHashGuard {
-        fn drop(&mut self) {
-            MOCK_HEADER_HASH.set(None);
-        }
     }
 }
 
@@ -487,3 +446,44 @@ pub fn calculate_next_work_required<C: Consensus>(
     // The target is capped above and truncated below; return it and the compact form we calculated along the way.
     TargetTriplet::new(compact_target, normalized_target, block_work)
 }
+
+#[cfg(test)]
+mod test_hash_mock {
+    extern crate std;
+    use std::cell::Cell;
+
+    std::thread_local! {
+        static MOCK_HEADER_HASH: Cell<Option<[u8; 32]>> = const { Cell::new(None) };
+    }
+
+    pub(crate) struct MockHashGuard;
+
+    pub(crate) fn get() -> Option<[u8; 32]> {
+        MOCK_HEADER_HASH.get()
+    }
+
+    pub(crate) fn set_success() -> MockHashGuard {
+        set([0; 32])
+    }
+
+    pub(crate) fn set_fail() -> MockHashGuard {
+        set([0xFF; 32])
+    }
+
+    fn set(hash: [u8; 32]) -> MockHashGuard {
+        MOCK_HEADER_HASH.with(|mock| {
+            assert!(mock.get().is_none(), "hash mock already set in this thread");
+            mock.set(Some(hash));
+        });
+        MockHashGuard
+    }
+
+    impl Drop for MockHashGuard {
+        fn drop(&mut self) {
+            MOCK_HEADER_HASH.set(None);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests;

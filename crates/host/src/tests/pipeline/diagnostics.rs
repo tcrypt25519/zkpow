@@ -3,8 +3,7 @@ use std::sync::{Mutex, OnceLock};
 use tracing_subscriber::prelude::*;
 
 use crate::pipeline::diagnostics::{
-    chip_name, clear_shard_areas, conflicting_chips, shard_area, shard_areas, ShardAreas, ShardKind,
-    RECURSION_CHIPS,
+    chip_name, clear_shard_areas, conflicting_chips, shard_area, shard_areas, ShardAreas, ShardKind, RECURSION_CHIPS,
 };
 
 fn _shard_area_test_mutex() -> &'static Mutex<()> {
@@ -55,7 +54,10 @@ fn ignores_every_other_line_on_the_same_target() {
 #[test]
 fn reads_the_chip_name_off_a_statistics_line_only() {
     assert_eq!(chip_name(&chip_line("Byte", "851_968")), Some("Byte"));
-    assert_eq!(chip_name(&chip_line("Poseidon2WideDeg3", "36_107_904")), Some("Poseidon2WideDeg3"));
+    assert_eq!(
+        chip_name(&chip_line("Poseidon2WideDeg3", "36_107_904")),
+        Some("Poseidon2WideDeg3")
+    );
     assert_eq!(chip_name(&total_line("208_123_456", 28)), None);
     assert_eq!(chip_name("Proving shard"), None);
     assert_eq!(chip_name("setup | took 4s"), None);
@@ -135,10 +137,9 @@ fn a_piped_line_that_is_not_chip_statistics_does_not_classify_a_shard() {
         });
     });
 
-    assert_eq!(
-        shard_areas().iter().map(|area| area.kind).collect::<Vec<_>>(),
-        vec![ShardKind::Recursion]
-    );
+    assert_eq!(shard_areas().iter().map(|area| area.kind).collect::<Vec<_>>(), vec![
+        ShardKind::Recursion
+    ]);
     clear_shard_areas();
 }
 

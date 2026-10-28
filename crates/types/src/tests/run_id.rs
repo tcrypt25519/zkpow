@@ -1,3 +1,5 @@
+use zkvm_test::test;
+
 use crate::run_id::{RunId, RunIdError};
 
 #[test]
@@ -14,8 +16,8 @@ fn valid_from_bytes() {
 #[test]
 fn reject_invalid_characters_in_bytes() {
     let invalid_chars = [
-        b'-', b'_', b'/', b'\\', b'.', b' ', b'\0', b':', b';', b'!', b'@', b'#', b'$', b'%',
-        b'^', b'&', b'*', b'(', b')', 128, 255,
+        b'-', b'_', b'/', b'\\', b'.', b' ', b'\0', b':', b';', b'!', b'@', b'#', b'$', b'%', b'^', b'&', b'*', b'(',
+        b')', 128, 255,
     ];
 
     for &ch in &invalid_chars {
@@ -24,7 +26,7 @@ fn reject_invalid_characters_in_bytes() {
         assert_eq!(
             RunId::from_bytes(arr),
             Err(RunIdError::InvalidCharacter(ch)),
-            "should reject byte {ch:#02x}"
+            "should reject byte 0x{ch:02x}"
         );
     }
 }
@@ -44,7 +46,18 @@ fn valid_from_str() {
 
 #[test]
 fn reject_invalid_length_in_str() {
-    let lengths = ["", "a", "ab", "abc", "abcd", "abcde", "abcdef", "abcdefg", "123456789", "toolongrunid"];
+    let lengths = [
+        "",
+        "a",
+        "ab",
+        "abc",
+        "abcd",
+        "abcde",
+        "abcdef",
+        "abcdefg",
+        "123456789",
+        "toolongrunid",
+    ];
     for s in lengths {
         assert_eq!(
             RunId::from_str(s),
