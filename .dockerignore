@@ -1,56 +1,9 @@
-# Build artifacts
-target/
+.*
+*
 
-# Git
-.git/
-.gitignore
-
-# Documentation
-*.md
-docs/
-
-# Environment and secrets
-.env
-.env.*
-!.env.example
-
-# Rust toolchain files (use Docker's Rust version)
-rust-toolchain
-rust-toolchain.toml
-
-# Editor and IDE
-.claude/
-.kiro/
-.crush/
-.windsurf/
-.ai/
-.factory/
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# macOS
-.DS_Store
-
-# Runtime data (mounted as volumes)
-trace.json
-*.db
-
-# Profiling and debugging
-profiling/
-scratch/
-
-# Docker files (not needed in context)
-Dockerfile*
-docker-compose*.yml
-.dockerignore
-
-# Test artifacts
-test_data/
-**/tests/fixtures/
-
-# Vast deploy secrets (never ship in image)
-scripts/vast/env.vast
-**/env.vast
+!Cargo.toml
+!Cargo.lock
+!Makefile
+!crates/**
+!docker/entrypoint.sh
+!docker/supervisord.conf

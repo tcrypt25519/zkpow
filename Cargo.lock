@@ -6435,6 +6435,7 @@ dependencies = [
  "zkpow-controller",
  "zkpow-core",
  "zkpow-params",
+ "zkpow-store",
  "zkpow-worker",
 ]
 

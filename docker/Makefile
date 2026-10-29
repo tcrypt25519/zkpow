@@ -1,5 +1,7 @@
 ##
-## Deployment/infrastructure targets
+## Deployment/infrastructure targets for zkpow-prover
+## This Makefile handles building Docker images, preparing the database,
+## and managing deployment-related artifacts.
 ##
 
 # First find out where we are, how we were called, and where to build things
@@ -39,6 +41,7 @@ deployment-docker: $(DOCKER_BUILD_MARKER)
 deployment-db: $(HEADER_DB_ZST_PATH)
 deployment-clean:
 	rm -rf $(DEPLOY_BUILD_DIR)
+	docker rmi -f $(DOCKER_IMAGE):$(DOCKER_TAG) || true
 
 # The docker image's prereq are solely for improving staleness checks.
 # Trying to require them forces building zkpow-host which we don't want.
@@ -69,7 +72,7 @@ $(HEADER_DB_ZST_PATH): $(HEADER_DB_PATH) | $(DEPLOY_BUILD_DIR)
 $(DOCKER_BUILD_MARKER): $(DOCKER_DEPS_SCRIPTS) | $(DEPLOY_BUILD_DIR)
 	@(cd $(ROOT_DIR) && docker buildx build \
 		-f $(THIS_DIR)/Dockerfile.vast-cuda \
-		--build-context zkvm-test=$(ROOT_DIR)/../zkvm-test \
+		--ssh default \
 		--build-arg ZKPOW_FEATURES="$(DOCKER_FEATURES)" \
 		$(DOCKER_CACHE_ARGS) \
 		--platform $(DOCKER_PLATFORM) \
