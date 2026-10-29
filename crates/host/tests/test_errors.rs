@@ -42,7 +42,7 @@ fn open_db() -> zkpow_controller::HeaderStore {
 
 fn mainnet_genesis_state() -> util::State {
     let db = open_db();
-    let genesis = db.load_header_record(0);
+    let genesis = db.load_header_record(0).unwrap().expect("genesis record");
     zkpow_controller::genesis_state_from_record::<Mainnet>(genesis, Mainnet::GENESIS_HASH)
 }
 
@@ -75,7 +75,7 @@ fn compute_final_state_with_sparse_hints(
 #[tokio::test]
 async fn test_success_100_headers() -> Result<(), String> {
     let genesis_state = mainnet_genesis_state();
-    let witness = open_db().load_header_batch_witness(1, 100);
+    let witness = open_db().load_header_batch_witness(1, 100).expect("batch witness");
     let stdin = build_stdin(
         VerifierKeyDigest::default(),
         &genesis_state,
@@ -96,13 +96,19 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
     let db = open_db();
     let genesis_state = mainnet_genesis_state();
 
-    let witness_first_epoch = db.load_header_batch_witness(1, FIRST_BOUNDARY_TIP_HEIGHT as u64);
+    let witness_first_epoch = db
+        .load_header_batch_witness(1, FIRST_BOUNDARY_TIP_HEIGHT as u64)
+        .expect("batch witness");
     let first_epoch_state = compute_final_state_with_sparse_hints(
         &genesis_state,
         &witness_first_epoch.headers,
         &witness_first_epoch.median_time_past_hints,
     );
-    let first_retarget_bits = db.load_compact_target((FIRST_BOUNDARY_TIP_HEIGHT + 1) as u64).into_inner();
+    let first_retarget_bits = db
+        .load_compact_target((FIRST_BOUNDARY_TIP_HEIGHT + 1) as u64)
+        .expect("target result")
+        .expect("compact target")
+        .into_inner();
     if consensus_bits(first_epoch_state.current_nbits) != first_retarget_bits {
         return Err(format!(
             "expected first retarget boundary bits {:#x}, got {:#x}",
@@ -111,15 +117,25 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
         ));
     }
 
-    let witness_retarget = db.load_header_batch_witness(1, RETARGET_TIP_HEIGHT as u64);
+    let witness_retarget = db
+        .load_header_batch_witness(1, RETARGET_TIP_HEIGHT as u64)
+        .expect("batch witness");
     let state = compute_final_state_with_sparse_hints(
         &genesis_state,
         &witness_retarget.headers,
         &witness_retarget.median_time_past_hints,
     );
 
-    let previous_epoch_bits = db.load_compact_target(RETARGET_TIP_HEIGHT as u64).into_inner();
-    let next_header_bits = db.load_compact_target(RETARGET_HEIGHT as u64).into_inner();
+    let previous_epoch_bits = db
+        .load_compact_target(RETARGET_TIP_HEIGHT as u64)
+        .expect("target result")
+        .expect("compact target")
+        .into_inner();
+    let next_header_bits = db
+        .load_compact_target(RETARGET_HEIGHT as u64)
+        .expect("target result")
+        .expect("compact target")
+        .into_inner();
 
     if state.height != RETARGET_TIP_HEIGHT as u32 {
         return Err(format!(
@@ -143,7 +159,7 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
         ));
     }
 
-    let witness_boundary = db.load_header_batch_witness(RETARGET_HEIGHT as u64, 1);
+    let witness_boundary = db.load_header_batch_witness(RETARGET_HEIGHT as u64, 1).expect("batch witness");
     let boundary_state = compute_final_state_with_sparse_hints(
         &state,
         &witness_boundary.headers,
@@ -163,7 +179,9 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
         ));
     }
 
-    let witness_pre_boundary = db.load_header_batch_witness(1, (RETARGET_HEIGHT - 2) as u64);
+    let witness_pre_boundary = db
+        .load_header_batch_witness(1, (RETARGET_HEIGHT - 2) as u64)
+        .expect("batch witness");
     let pre_boundary_state = compute_final_state_with_sparse_hints(
         &genesis_state,
         &witness_pre_boundary.headers,
@@ -193,7 +211,7 @@ async fn test_error_recursive_on_failed_proof() -> Result<(), String> {
     let verifier_key = VerifierKeyDigest::from_raw(vk.hash_u32());
 
     let genesis_state = mainnet_genesis_state();
-    let witness1 = open_db().load_header_batch_witness(1, 10);
+    let witness1 = open_db().load_header_batch_witness(1, 10).expect("batch witness");
     let stdin1 = build_stdin(
         verifier_key,
         &genesis_state,
@@ -210,7 +228,7 @@ async fn test_error_recursive_on_failed_proof() -> Result<(), String> {
     let state_at_10 =
         compute_final_state_with_sparse_hints(&genesis_state, &witness1.headers, &witness1.median_time_past_hints);
 
-    let witness2 = open_db().load_header_batch_witness(11, 10);
+    let witness2 = open_db().load_header_batch_witness(11, 10).expect("batch witness");
     let mut stdin2 = build_stdin(verifier_key, &state_at_10, &witness2.headers, &witness2.median_time_past_hints);
 
     let sp1_sdk::SP1Proof::Compressed(inner_proof) = &proof1.proof else {
@@ -246,7 +264,7 @@ async fn test_error_recursive_on_tampered_state_witness() -> Result<(), String> 
     let verifier_key = VerifierKeyDigest::from_raw(vk.hash_u32());
 
     let genesis_state = mainnet_genesis_state();
-    let witness1 = open_db().load_header_batch_witness(1, 10);
+    let witness1 = open_db().load_header_batch_witness(1, 10).expect("batch witness");
     let stdin1 = build_stdin(
         verifier_key,
         &genesis_state,
@@ -266,7 +284,7 @@ async fn test_error_recursive_on_tampered_state_witness() -> Result<(), String> 
     let mut tampered_state = state_at_10;
     tampered_state.epoch_timestamp = util::BlockTimestamp::default();
 
-    let witness2 = open_db().load_header_batch_witness(11, 10);
+    let witness2 = open_db().load_header_batch_witness(11, 10).expect("batch witness");
     let mut stdin2 = build_stdin(
         verifier_key,
         &tampered_state,
@@ -299,7 +317,7 @@ async fn test_error_recursive_on_tampered_state_witness() -> Result<(), String> 
 /// a prover supplying any other initial state proves exactly the same chain.
 #[tokio::test]
 async fn test_tampered_anchor_state_is_derived_away() -> Result<(), String> {
-    let witness = open_db().load_header_batch_witness(1, 10);
+    let witness = open_db().load_header_batch_witness(1, 10).expect("batch witness");
     let run = |state: util::State| {
         let stdin = build_stdin(
             VerifierKeyDigest::default(),
@@ -347,7 +365,7 @@ async fn test_tampered_anchor_state_is_derived_away() -> Result<(), String> {
 #[tokio::test]
 async fn test_pv_public_values_format() -> Result<(), String> {
     let genesis_state = mainnet_genesis_state();
-    let witness = open_db().load_header_batch_witness(1, 10);
+    let witness = open_db().load_header_batch_witness(1, 10).expect("batch witness");
     let stdin = build_stdin(
         VerifierKeyDigest::default(),
         &genesis_state,
@@ -393,7 +411,7 @@ async fn test_recursive_chain_success() -> Result<(), String> {
 
     // === Run 1: genesis state → block 10 ===
     let genesis_state = mainnet_genesis_state();
-    let witness1 = db.load_header_batch_witness(1, 10);
+    let witness1 = db.load_header_batch_witness(1, 10).expect("batch witness");
     let verifier_key = VerifierKeyDigest::from_raw(vk.hash_u32());
     let stdin1 = build_stdin(
         verifier_key,
@@ -419,14 +437,14 @@ async fn test_recursive_chain_success() -> Result<(), String> {
 
     // === Run 2: Extend from Run 1 (blocks 11-20) ===
     let genesis_state2 = mainnet_genesis_state();
-    let witness_to_10 = db.load_header_batch_witness(1, 10);
+    let witness_to_10 = db.load_header_batch_witness(1, 10).expect("batch witness");
     let state1 = compute_final_state_with_sparse_hints(
         &genesis_state2,
         &witness_to_10.headers,
         &witness_to_10.median_time_past_hints,
     );
 
-    let witness2 = db.load_header_batch_witness(11, 10);
+    let witness2 = db.load_header_batch_witness(11, 10).expect("batch witness");
     let mut stdin2 = build_stdin(verifier_key, &state1, &witness2.headers, &witness2.median_time_past_hints);
     let sp1_sdk::SP1Proof::Compressed(inner_proof) = &proof1.proof else {
         return Err("Run 1 proof is not compressed".to_string());

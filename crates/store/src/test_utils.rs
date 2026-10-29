@@ -94,3 +94,14 @@ pub fn create_real_seeded_store(path: &Path, max_height: u32) -> HeaderStore {
     }
     store
 }
+
+/// Creates an in-memory HeaderStore populated with standard test fixture headers:
+/// heights 0..=128, height 38304, and heights 40260..=40320.
+pub fn create_test_fixture_store() -> HeaderStore {
+    let store = HeaderStore::open(":memory:").expect("failed to open in-memory store");
+    store
+        .conn
+        .execute_batch(include_str!("test_fixture_headers.sql"))
+        .expect("failed to insert test fixture headers");
+    store
+}

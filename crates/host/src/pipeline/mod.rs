@@ -117,12 +117,14 @@ async fn run_execution_session<C: Consensus>(config: ProofGenerationConfig) -> R
     let db = HeaderStore::open(&config.db_path).map_err(|err| format!("failed to open database: {err}"))?;
     let prover = ProverClient::builder().mock().build().await;
     let genesis_hash = C::GENESIS_HASH;
-    let mut state = db.state_at_height::<C>(0, genesis_hash);
+    let mut state = db
+        .state_at_height::<C>(0, genesis_hash)?
+        .ok_or("genesis state not found in store")?;
     let mut completed = 0;
 
     while completed < config.batch_count {
         let first_new_height = state.height + 1;
-        let witness = db.load_header_batch_witness(first_new_height as u64, config.local_batch_size as u64);
+        let witness = db.load_header_batch_witness(first_new_height as u64, config.local_batch_size as u64)?;
         if witness.headers.is_empty() {
             break;
         }
@@ -140,7 +142,9 @@ async fn run_execution_session<C: Consensus>(config: ProofGenerationConfig) -> R
         let elapsed = started.elapsed().as_secs_f64();
         tracing::info!(first_new_height, end_height, "Execution completed in {elapsed:.2} seconds");
         log_execution_report(&report, elapsed);
-        state = db.state_at_height::<C>(end_height, genesis_hash);
+        state = db
+            .state_at_height::<C>(end_height, genesis_hash)?
+            .ok_or_else(|| format!("state not found at height {end_height} in store"))?;
         completed += 1;
     }
     Ok(completed)

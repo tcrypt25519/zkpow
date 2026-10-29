@@ -15,7 +15,11 @@
 //! is inside SP1. If RSS is flat, the leak is in application-level state
 //! retained between batches.
 
-use std::path::PathBuf;
+use std::{
+    env::{set_var, var},
+    error::Error,
+    path::PathBuf,
+};
 
 use zkpow_host::{
     memory_monitor, observability,
@@ -23,15 +27,12 @@ use zkpow_host::{
 };
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     observability::init();
 
-    let iterations: u32 = std::env::var("ITERATIONS").ok().and_then(|s| s.parse().ok()).unwrap_or(5);
-    let num_headers: u32 = std::env::var(ENV_ZKPOW_BATCH_SIZE)
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(1);
-    let execute_only = std::env::var(ENV_ZKPOW_EXECUTE_ONLY)
+    let iterations: u32 = var("ITERATIONS").ok().and_then(|s| s.parse().ok()).unwrap_or(5);
+    let num_headers: u32 = var(ENV_ZKPOW_BATCH_SIZE).ok().and_then(|s| s.parse().ok()).unwrap_or(1);
+    let execute_only = var(ENV_ZKPOW_EXECUTE_ONLY)
         .ok()
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(true);
@@ -52,11 +53,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let run_id = format!("stress-{timestamp}");
     // SAFETY: single-threaded at this point; no other env readers yet.
     unsafe {
-        std::env::set_var("ZKPOW_RUN_ID", &run_id);
-        std::env::set_var("ZKPOW_PROOF_STORE_DIR", scratch.join("artifacts"));
-        std::env::set_var("ZKPOW_BATCH_COUNT", "1");
-        std::env::set_var(ENV_ZKPOW_BATCH_SIZE, num_headers.to_string());
-        std::env::set_var(ENV_ZKPOW_EXECUTE_ONLY, if execute_only { "1" } else { "0" });
+        set_var("ZKPOW_RUN_ID", &run_id);
+        set_var("ZKPOW_PROOF_STORE_DIR", scratch.join("artifacts"));
+        set_var("ZKPOW_BATCH_COUNT", "1");
+        set_var(ENV_ZKPOW_BATCH_SIZE, num_headers.to_string());
+        set_var(ENV_ZKPOW_EXECUTE_ONLY, if execute_only { "1" } else { "0" });
     }
 
     tracing::info!(iterations, num_headers, execute_only, "SP1 stress test starting");

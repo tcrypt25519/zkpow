@@ -297,8 +297,11 @@ impl<C: Consensus> ControllerRuntime<C> {
 }
 
 impl<C: Consensus> ControllerCore<C> {
-    fn state_at(&self, height: u32) -> State {
-        self.store.state_at_height::<C>(height, self.genesis_hash)
+    fn state_at(&self, height: u32) -> Result<State, ControllerError> {
+        self.store
+            .state_at_height::<C>(height, self.genesis_hash)
+            .map_err(|err| ControllerError::internal(format!("failed to load state at height {height}: {err}")))?
+            .ok_or_else(|| ControllerError::bad_request(format!("state not found at height {height}")))
     }
 
     fn session_mut(&mut self, run_id: &str) -> Result<&mut RunSession, ControllerError> {
@@ -361,7 +364,7 @@ impl<C: Consensus> ControllerCore<C> {
             )));
         }
         self.runs.insert(run_id.to_owned(), RunSession {
-            verified_state:        self.state_at(record.verified_height),
+            verified_state:        self.state_at(record.verified_height)?,
             verified_proof_object: record.proof_object,
             pending:               None,
             halted:                None,
@@ -411,14 +414,15 @@ impl<C: Consensus> ControllerCore<C> {
         let first_new_height = current_state.height + 1;
         let witness = self
             .store
-            .load_header_batch_witness(first_new_height as u64, self.batch_size as u64);
+            .load_header_batch_witness(first_new_height as u64, self.batch_size as u64)
+            .map_err(|err| ControllerError::internal(format!("failed to load header batch witness: {err}")))?;
         if witness.headers.is_empty() {
             return Err(ControllerError::exhausted(format!(
                 "{NO_HEADERS_REMAINING_PREFIX}: starting at height {first_new_height}"
             )));
         }
         let end_height = current_state.height + witness.headers.len() as u32;
-        let expected_state = self.state_at(end_height);
+        let expected_state = self.state_at(end_height)?;
         let expected_public_values =
             PublicValues::serialize(&expected_state, &self.verifier_key, ReturnCode::SUCCESS).to_vec();
         Ok(FetchedBatch {

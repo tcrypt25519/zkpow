@@ -117,7 +117,9 @@ impl Harness {
     fn upload_expected(&self, run: &str, batch: &Batch) {
         let state = HeaderStore::open(&self.db_path)
             .unwrap()
-            .state_at_height::<Mainnet>(batch.end_height, self.genesis_hash());
+            .state_at_height::<Mainnet>(batch.end_height, self.genesis_hash())
+            .unwrap()
+            .expect("state at height");
         let public_values = PublicValues::new(state, batch.verifier_key, ReturnCode::SUCCESS);
         let path = &batch.proof_upload;
         std::fs::write(path, public_values.to_bytes()).unwrap();
@@ -126,7 +128,7 @@ impl Harness {
 
     fn genesis_hash(&self) -> BlockHash {
         let store = HeaderStore::open(&self.db_path).unwrap();
-        BlockHash::from(&store.load_header_record(0).header)
+        BlockHash::from(&store.load_header_record(0).unwrap().expect("genesis record").header)
     }
 }
 
@@ -394,7 +396,9 @@ async fn guest_compatible_batch_size_advances_and_completes() {
 
     let state = HeaderStore::open(&db_path)
         .unwrap()
-        .state_at_height::<Mainnet>(batch.end_height, genesis_hash);
+        .state_at_height::<Mainnet>(batch.end_height, genesis_hash)
+        .unwrap()
+        .expect("state at height");
     let public_values = PublicValues::new(state, batch.verifier_key, ReturnCode::SUCCESS);
     std::fs::write(&batch.proof_upload, public_values.to_bytes()).unwrap();
     runtime.complete(run).await.unwrap();

@@ -8,16 +8,16 @@ mod runtime;
 mod storage;
 
 fn open_db() -> HeaderStore {
-    HeaderStore::open(db_path()).expect("failed to open test database")
+    zkpow_store::test_utils::create_test_fixture_store()
 }
 
 #[test]
 fn db_median_time_hints_match_genesis_seeded_state() {
     let db = open_db();
-    let genesis = db.load_header_record(0);
+    let genesis = db.load_header_record(0).unwrap().expect("genesis record");
     let genesis_hash = BlockHash::from(&genesis.header);
     let genesis_state = genesis_state_from_record::<Mainnet>(genesis, genesis_hash);
-    let witness = db.load_header_batch_witness(1, 13);
+    let witness = db.load_header_batch_witness(1, 13).unwrap();
 
     compute_final_state_cold::<Mainnet>(&genesis_state, &witness.headers, &witness.median_time_past_hints);
 }
@@ -25,8 +25,8 @@ fn db_median_time_hints_match_genesis_seeded_state() {
 #[test]
 fn batch_witness_loader_matches_record_projection() {
     let db = open_db();
-    let records = db.load_header_records(1, 13);
-    let witness = db.load_header_batch_witness(1, 13);
+    let records = db.load_header_records(1, 13).unwrap();
+    let witness = db.load_header_batch_witness(1, 13).unwrap();
 
     assert_eq!(witness.headers, records_to_new_headers(&records));
     assert!(witness.median_time_past_hints.is_empty());
@@ -35,10 +35,10 @@ fn batch_witness_loader_matches_record_projection() {
 #[test]
 fn compute_final_state_with_hints_reaches_expected_height() {
     let db = open_db();
-    let genesis = db.load_header_record(0);
+    let genesis = db.load_header_record(0).unwrap().expect("genesis record");
     let genesis_hash = BlockHash::from(&genesis.header);
     let genesis_state = genesis_state_from_record::<Mainnet>(genesis, genesis_hash);
-    let witness = db.load_header_batch_witness(1, 128);
+    let witness = db.load_header_batch_witness(1, 128).unwrap();
     let final_state =
         compute_final_state_cold::<Mainnet>(&genesis_state, &witness.headers, &witness.median_time_past_hints);
 
@@ -48,10 +48,10 @@ fn compute_final_state_with_hints_reaches_expected_height() {
 #[test]
 fn applying_headers_one_at_a_time_matches_db_claims() {
     let db = open_db();
-    let genesis = db.load_header_record(0);
+    let genesis = db.load_header_record(0).unwrap().expect("genesis record");
     let genesis_hash = BlockHash::from(&genesis.header);
     let mut state = genesis_state_from_record::<Mainnet>(genesis.clone(), genesis_hash);
-    let records = db.load_header_records(1, 64);
+    let records = db.load_header_records(1, 64).unwrap();
 
     let (initial_records, remaining_records) = records.split_at(10);
     let initial_headers = records_to_new_headers(initial_records);
@@ -90,22 +90,25 @@ fn applying_headers_one_at_a_time_matches_db_claims() {
 #[test]
 fn db_retarget_schedule_matches_height_40320() {
     let db = open_db();
-    let genesis = db.load_header_record(0);
+    let genesis = db.load_header_record(0).unwrap().expect("genesis record");
     let genesis_hash = BlockHash::from(&genesis.header);
-    let genesis_state = genesis_state_from_record::<Mainnet>(genesis, genesis_hash);
-    let witness_1 = db.load_header_batch_witness(1, 40319);
+    let initial_state = db
+        .state_at_height::<Mainnet>(40270, genesis_hash)
+        .unwrap()
+        .expect("initial state at height 40270");
+    let witness_1 = db.load_header_batch_witness(40271, 49).unwrap();
     let state =
-        compute_final_state_cold::<Mainnet>(&genesis_state, &witness_1.headers, &witness_1.median_time_past_hints);
-    let pre_boundary_nbits = db.load_compact_target(40319);
+        compute_final_state_warm::<Mainnet>(&initial_state, &witness_1.headers, &witness_1.median_time_past_hints);
+    let pre_boundary_nbits = db.load_compact_target(40319).unwrap().expect("pre-boundary nbits");
 
     assert_eq!(state.height, 40319);
     assert_eq!(state.current_nbits, pre_boundary_nbits);
 
-    let witness_2 = db.load_header_batch_witness(40320, 1);
+    let witness_2 = db.load_header_batch_witness(40320, 1).unwrap();
     let boundary_state =
         compute_final_state_warm::<Mainnet>(&state, &witness_2.headers, &witness_2.median_time_past_hints);
     assert_eq!(boundary_state.height, 40320);
-    let boundary_nbits = db.load_compact_target(40320);
+    let boundary_nbits = db.load_compact_target(40320).unwrap().expect("boundary nbits");
     assert_eq!(boundary_state.current_nbits, boundary_nbits);
 }
 
@@ -117,28 +120,31 @@ fn db_chainwork_matches_simulated_batches() {
     }
 
     let cases = [
-        ("genesis-started batch", InitialState::Genesis, 1, 4096, 4096),
-        ("retarget-boundary batch", InitialState::DbHeight(30240), 30241, 2016, 32256),
+        ("genesis-started batch", InitialState::Genesis, 1, 64, 64),
+        ("retarget-boundary batch", InitialState::DbHeight(40270), 40271, 50, 40320),
     ];
 
     let db = open_db();
-    let genesis = db.load_header_record(0);
+    let genesis = db.load_header_record(0).unwrap().expect("genesis record");
     let genesis_hash = BlockHash::from(&genesis.header);
 
     for (name, source, record_start, record_count, expected_height) in cases {
         let is_genesis = matches!(source, InitialState::Genesis);
         let initial_state = match source {
             InitialState::Genesis => genesis_state_from_record::<Mainnet>(genesis.clone(), genesis_hash),
-            InitialState::DbHeight(height) => db.state_at_height::<Mainnet>(height, genesis_hash),
+            InitialState::DbHeight(height) => db
+                .state_at_height::<Mainnet>(height, genesis_hash)
+                .unwrap()
+                .expect("state at height"),
         };
-        let witness = db.load_header_batch_witness(record_start, record_count);
+        let witness = db.load_header_batch_witness(record_start, record_count).unwrap();
         let final_state = if is_genesis {
             compute_final_state_cold::<Mainnet>(&initial_state, &witness.headers, &witness.median_time_past_hints)
         } else {
             compute_final_state_warm::<Mainnet>(&initial_state, &witness.headers, &witness.median_time_past_hints)
         };
-        let db_record = db.load_header_record(expected_height as u64);
-        let db_nbits = db.load_compact_target(expected_height as u64);
+        let db_record = db.load_header_record(expected_height as u64).unwrap().expect("db record");
+        let db_nbits = db.load_compact_target(expected_height as u64).unwrap().expect("compact target");
 
         assert_eq!(final_state.height, expected_height, "{name}: height");
         assert_eq!(final_state.block_hash, BlockHash::from(&db_record.header), "{name}: tip hash");

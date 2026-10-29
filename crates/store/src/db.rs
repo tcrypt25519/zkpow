@@ -31,6 +31,9 @@ impl From<Error> for rusqlite::Error {
     }
 }
 
+pub type DBResult<T> = Result<T, Error>;
+pub type DBResultOpt<T> = DBResult<Option<T>>;
+
 pub(crate) fn hash_to_bytes(hash: &BlockHash) -> [u8; BlockHash::SIZE] {
     *hash.as_inner()
 }
@@ -90,8 +93,13 @@ pub struct HeaderStore {
 
 impl HeaderStore {
     /// Open the database, creating the schema when missing.
-    pub fn open(db_path: impl AsRef<Path>) -> rusqlite::Result<Self> {
-        let conn = Connection::open(db_path)?;
+    pub fn open(db_path: impl AsRef<Path>) -> DBResult<Self> {
+        let conn = if db_path.as_ref().to_str() == Some(":memory:") {
+            Connection::open_in_memory()
+        } else {
+            Connection::open(db_path)
+        }?;
+
         conn.execute_batch(
             "
             PRAGMA journal_mode=WAL;
@@ -130,7 +138,7 @@ impl HeaderStore {
         Ok(Self { conn })
     }
 
-    pub fn get_best_tip<C: Consensus>(&self) -> rusqlite::Result<Option<Tip>> {
+    pub fn get_best_tip<C: Consensus>(&self) -> DBResultOpt<Tip> {
         struct BestTipRow {
             hash_bytes:            Vec<u8>,
             height:                u32,
@@ -200,7 +208,7 @@ impl HeaderStore {
         }
     }
 
-    pub fn bulk_insert(&mut self, headers: &[ConnectedHeader]) -> rusqlite::Result<()> {
+    pub fn bulk_insert(&mut self, headers: &[ConnectedHeader]) -> DBResult<()> {
         let tx = self.conn.transaction()?;
 
         for ch in headers {
@@ -229,12 +237,12 @@ impl HeaderStore {
         Ok(())
     }
 
-    pub fn header_count(&self) -> rusqlite::Result<u64> {
+    pub fn header_count(&self) -> DBResult<u64> {
         let count: i64 = self.conn.query_row("SELECT COUNT(*) FROM headers", [], |row| row.get(0))?;
         Ok(count as u64)
     }
 
-    pub fn insert_genesis(&self, genesis: &ConnectedHeader) -> rusqlite::Result<()> {
+    pub fn insert_genesis(&self, genesis: &ConnectedHeader) -> DBResult<()> {
         let fields = header_fields(&genesis.header.inner);
         self.conn.execute(
             "INSERT OR IGNORE INTO headers
@@ -256,162 +264,165 @@ impl HeaderStore {
         Ok(())
     }
 
-    pub fn load_compact_target(&self, height: u64) -> CompactTarget {
+    pub fn load_compact_target(&self, height: u64) -> DBResultOpt<CompactTarget> {
         const SQL: &str = "SELECT n_bits FROM headers WHERE height = ?1";
 
-        let mut stmt = self.conn.prepare_cached(SQL).expect("prepare");
-        stmt.query_row(params![height as i64], |row| {
-            let nbits: i64 = row.get(0)?;
-            Ok(CompactTarget::new(nbits as u32))
-        })
-        .expect("load_compact_target")
+        let mut stmt = self.conn.prepare_cached(SQL)?;
+        let opt = stmt
+            .query_row(params![height as i64], |row| {
+                let nbits: i64 = row.get(0)?;
+                Ok(CompactTarget::new(nbits as u32))
+            })
+            .optional()?;
+        Ok(opt)
     }
 
-    pub fn load_header_records(&self, start_height: u64, count: u64) -> Vec<HeaderRecord> {
+    pub fn load_header_records(&self, start_height: u64, count: u64) -> DBResult<Vec<HeaderRecord>> {
         const SQL: &str = "SELECT height, version, prev, merkle_root, timestamp, n_bits, nonce, chainwork, \
              median_time_past, ordered_timestamp_run FROM headers \
              WHERE height >= ?1 AND height < ?2 ORDER BY height ASC";
 
-        let mut stmt = self.conn.prepare_cached(SQL).expect("prepare");
-        let rows = stmt
-            .query_map(params![start_height as i64, (start_height + count) as i64], |row| {
-                let height: i64 = row.get(0)?;
-                let version: i64 = row.get(1)?;
-                // Borrow blob columns in place; the fixed-width consumers
-                // below never need an owned Vec.
-                let prev = row.get_ref(2)?.as_blob()?;
-                let merkle_root = row.get_ref(3)?.as_blob()?;
-                let timestamp: i64 = row.get(4)?;
-                let nbits: i64 = row.get(5)?;
-                let nonce: i64 = row.get(6)?;
-                let chainwork = row.get_ref(7)?.as_blob()?;
-                let median_time_past: i64 = row.get(8)?;
-                let ordered_timestamp_run: i64 = row.get(9)?;
-                let height = height as u64;
-                Ok(HeaderRecord {
-                    height,
-                    header: Header {
-                        version:        version as u32,
-                        prev_blockhash: hash_from_bytes(prev)?,
-                        merkle_root:    merkle_root.try_into().expect("merkle_root must be 32 bytes"),
-                        timestamp:      BlockTimestamp::new(timestamp as u32),
-                        compact_target: CompactTarget::new(nbits as u32),
-                        nonce:          nonce as u32,
-                    },
-                    chain_work: work_from_bytes(chainwork)?,
-                    median_time_past: BlockTimestamp::new(median_time_past as u32),
-                    ordered_timestamp_run: ordered_timestamp_run_from_db(height, ordered_timestamp_run),
-                })
+        let mut stmt = self.conn.prepare_cached(SQL)?;
+        let rows = stmt.query_map(params![start_height as i64, (start_height + count) as i64], |row| {
+            let height: i64 = row.get(0)?;
+            let version: i64 = row.get(1)?;
+            // Borrow blob columns in place; the fixed-width consumers
+            // below never need an owned Vec.
+            let prev = row.get_ref(2)?.as_blob()?;
+            let merkle_root = row.get_ref(3)?.as_blob()?;
+            let timestamp: i64 = row.get(4)?;
+            let nbits: i64 = row.get(5)?;
+            let nonce: i64 = row.get(6)?;
+            let chainwork = row.get_ref(7)?.as_blob()?;
+            let median_time_past: i64 = row.get(8)?;
+            let ordered_timestamp_run: i64 = row.get(9)?;
+            let height = height as u64;
+            Ok(HeaderRecord {
+                height,
+                header: Header {
+                    version:        version as u32,
+                    prev_blockhash: hash_from_bytes(prev)?,
+                    merkle_root:    merkle_root.try_into().map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(3, rusqlite::types::Type::Blob, Box::new(e))
+                    })?,
+                    timestamp:      BlockTimestamp::new(timestamp as u32),
+                    compact_target: CompactTarget::new(nbits as u32),
+                    nonce:          nonce as u32,
+                },
+                chain_work: work_from_bytes(chainwork)?,
+                median_time_past: BlockTimestamp::new(median_time_past as u32),
+                ordered_timestamp_run: ordered_timestamp_run_from_db(height, ordered_timestamp_run),
             })
-            .expect("query");
+        })?;
 
         let mut records = Vec::with_capacity(count as usize);
         for row in rows {
-            records.push(row.expect("row"));
+            records.push(row?);
         }
-        records
+        Ok(records)
     }
 
-    pub fn load_header_record(&self, height: u64) -> HeaderRecord {
-        self.load_header_records(height, 1)
-            .into_iter()
-            .next()
-            .expect("one header record")
+    pub fn load_header_record(&self, height: u64) -> DBResultOpt<HeaderRecord> {
+        let mut records = self.load_header_records(height, 1)?;
+        Ok(records.pop())
     }
 
-    pub fn load_new_headers(&self, start_height: u64, count: u64) -> Vec<HeaderInput> {
-        self.load_header_batch_witness(start_height, count).headers
+    pub fn load_new_headers(&self, start_height: u64, count: u64) -> DBResult<Vec<HeaderInput>> {
+        Ok(self.load_header_batch_witness(start_height, count)?.headers)
     }
 
     /// The `ordered_timestamp_run` column of one row, without materializing
     /// the whole record.
-    fn load_ordered_timestamp_run(&self, height: u64) -> u64 {
+    fn load_ordered_timestamp_run(&self, height: u64) -> DBResultOpt<u64> {
         const SQL: &str = "SELECT ordered_timestamp_run FROM headers WHERE height = ?1";
-        let mut stmt = self.conn.prepare_cached(SQL).expect("prepare");
-        let raw: i64 = stmt
-            .query_row(params![height as i64], |row| row.get(0))
-            .expect("load_ordered_timestamp_run");
-        ordered_timestamp_run_from_db(height, raw)
+        let mut stmt = self.conn.prepare_cached(SQL)?;
+        let raw: Option<i64> = stmt.query_row(params![height as i64], |row| row.get(0)).optional()?;
+        Ok(raw.map(|v| ordered_timestamp_run_from_db(height, v)))
     }
 
     /// Load `count` headers from `start_height`, plus a sparse median hint for each header whose
     /// window is full but not provably ordered (see [`requires_median_hint`]).
-    pub fn load_header_batch_witness(&self, start_height: u64, count: u64) -> HeaderBatchWitness {
+    pub fn load_header_batch_witness(&self, start_height: u64, count: u64) -> DBResult<HeaderBatchWitness> {
         const SQL: &str =
             "SELECT h.height, h.version, h.merkle_root, h.timestamp, h.nonce, h.median_time_past, h.ordered_timestamp_run \
              FROM headers h \
              WHERE h.height >= ?1 AND h.height < ?2 ORDER BY h.height ASC";
 
-        let mut stmt = self.conn.prepare_cached(SQL).expect("prepare");
-        let rows = stmt
-            .query_map(params![start_height as i64, (start_height + count) as i64], |row| {
-                let height: i64 = row.get(0)?;
-                let version: i64 = row.get(1)?;
-                // Borrowed blob: copied once into the fixed-width array, no
-                // per-row Vec.
-                let merkle_root = row.get_ref(2)?.as_blob()?;
-                let timestamp: i64 = row.get(3)?;
-                let nonce: i64 = row.get(4)?;
-                let median_time_past: i64 = row.get(5)?;
-                let ordered_timestamp_run: i64 = row.get(6)?;
-                let height = height as u64;
-                Ok((
-                    height,
-                    HeaderInput {
-                        version:     version as u32,
-                        merkle_root: merkle_root.try_into().expect("merkle_root must be 32 bytes"),
-                        timestamp:   BlockTimestamp::new(timestamp as u32),
-                        nonce:       nonce as u32,
-                    },
-                    BlockTimestamp::new(median_time_past as u32),
-                    ordered_timestamp_run_from_db(height, ordered_timestamp_run),
-                ))
-            })
-            .expect("query");
+        let mut stmt = self.conn.prepare_cached(SQL)?;
+        let rows = stmt.query_map(params![start_height as i64, (start_height + count) as i64], |row| {
+            let height: i64 = row.get(0)?;
+            let version: i64 = row.get(1)?;
+            // Borrowed blob: copied once into the fixed-width array, no
+            // per-row Vec.
+            let merkle_root = row.get_ref(2)?.as_blob()?;
+            let timestamp: i64 = row.get(3)?;
+            let nonce: i64 = row.get(4)?;
+            let median_time_past: i64 = row.get(5)?;
+            let ordered_timestamp_run: i64 = row.get(6)?;
+            let height = height as u64;
+            Ok((
+                height,
+                HeaderInput {
+                    version:     version as u32,
+                    merkle_root: merkle_root.try_into().map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(2, rusqlite::types::Type::Blob, Box::new(e))
+                    })?,
+                    timestamp:   BlockTimestamp::new(timestamp as u32),
+                    nonce:       nonce as u32,
+                },
+                BlockTimestamp::new(median_time_past as u32),
+                ordered_timestamp_run_from_db(height, ordered_timestamp_run),
+            ))
+        })?;
 
         let mut headers = Vec::with_capacity(count as usize);
         let mut median_time_past_hints = Vec::with_capacity(count as usize);
         let mut previous_ordered_timestamp_run = if start_height == 0 {
             0
         } else {
-            self.load_ordered_timestamp_run(start_height - 1)
+            self.load_ordered_timestamp_run(start_height - 1)?.unwrap_or(0)
         };
         for row in rows {
-            let (height, h, m, ordered_timestamp_run) = row.expect("row");
+            let (height, h, m, ordered_timestamp_run) = row?;
             headers.push(h);
             if requires_median_hint(height, previous_ordered_timestamp_run) {
                 median_time_past_hints.push(m);
             }
             previous_ordered_timestamp_run = ordered_timestamp_run;
         }
-        HeaderBatchWitness {
+        Ok(HeaderBatchWitness {
             headers,
             median_time_past_hints,
-        }
+        })
     }
 
     /// Reconstruct full consensus state at an arbitrary height.
-    pub fn state_at_height<C: Consensus>(&self, height: u32, genesis_hash: BlockHash) -> State {
+    pub fn state_at_height<C: Consensus>(&self, height: u32, genesis_hash: BlockHash) -> DBResultOpt<State> {
         if height == 0 {
-            return genesis_state_from_record::<C>(self.load_header_record(0), genesis_hash);
+            let Some(genesis) = self.load_header_record(0)? else {
+                return Ok(None);
+            };
+            return Ok(Some(genesis_state_from_record::<C>(genesis, genesis_hash)));
         }
 
         let epoch_length = C::PARAMS.epoch_length;
         let epoch_start_height = (height / epoch_length) * epoch_length;
-        let epoch_start = self.load_header_record(epoch_start_height as u64);
+        let Some(epoch_start) = self.load_header_record(epoch_start_height as u64)? else {
+            return Ok(None);
+        };
         let window_count = (height as usize + 1).min(WINDOW_SIZE) as u64;
         let window_start = height as u64 + 1 - window_count;
-        let window = self.load_header_records(window_start, window_count);
+        let window = self.load_header_records(window_start, window_count)?;
 
         let mut timestamps = [BlockTimestamp::default(); WINDOW_SIZE];
         for r in &window {
             timestamps[r.height as usize % WINDOW_SIZE] = r.header.timestamp;
         }
-        // The window's last row is the requested height itself; no separate
-        // query for the current header.
-        let current = window.last().expect("window covers the requested height");
+        let Some(current) = window.last() else {
+            return Ok(None);
+        };
 
-        State {
+        Ok(Some(State {
             block_hash: BlockHash::from(&current.header),
             genesis_hash,
             current_nbits: current.header.compact_target,
@@ -419,11 +430,12 @@ impl HeaderStore {
             chain_work: current.chain_work,
             epoch_timestamp: epoch_start.header.timestamp,
             timestamps,
-        }
+        }))
     }
 
-    pub fn load_run(&self, run_id: &str) -> rusqlite::Result<Option<RunRecord>> {
-        self.conn
+    pub fn load_run(&self, run_id: &str) -> DBResultOpt<RunRecord> {
+        let opt = self
+            .conn
             .query_row(
                 "SELECT verifier_key, verified_height, proof_object FROM runs WHERE run_id = ?1",
                 [run_id],
@@ -443,10 +455,11 @@ impl HeaderStore {
                     })
                 },
             )
-            .optional()
+            .optional()?;
+        Ok(opt)
     }
 
-    pub fn create_run(&self, run_id: &str, record: &RunRecord) -> rusqlite::Result<()> {
+    pub fn create_run(&self, run_id: &str, record: &RunRecord) -> DBResult<()> {
         self.conn.execute(
             "INSERT INTO runs (run_id, verifier_key, verified_height, proof_object)
              VALUES (?1, ?2, ?3, ?4)",
@@ -463,12 +476,7 @@ impl HeaderStore {
     /// Persist a newly verified height. Callers must only invoke this after
     /// the batch's public values (and proof, when configured) have been
     /// validated.
-    pub fn record_run_progress(
-        &self,
-        run_id: &str,
-        verified_height: u32,
-        proof_object: Option<&str>,
-    ) -> rusqlite::Result<()> {
+    pub fn record_run_progress(&self, run_id: &str, verified_height: u32, proof_object: Option<&str>) -> DBResult<()> {
         let updated = self.conn.execute(
             "UPDATE runs
              SET verified_height = ?2,
@@ -478,13 +486,13 @@ impl HeaderStore {
             params![run_id, verified_height, proof_object],
         )?;
         if updated != 1 {
-            return Err(rusqlite::Error::QueryReturnedNoRows);
+            return Err(rusqlite::Error::QueryReturnedNoRows.into());
         }
         Ok(())
     }
 
     /// Forget a run entirely (operator reset of a halted or abandoned chain).
-    pub fn delete_run(&self, run_id: &str) -> rusqlite::Result<()> {
+    pub fn delete_run(&self, run_id: &str) -> DBResult<()> {
         self.conn.execute("DELETE FROM runs WHERE run_id = ?1", [run_id])?;
         Ok(())
     }
