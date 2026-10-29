@@ -107,7 +107,7 @@ impl Harness {
         }
     }
 
-    fn run(&self, _name: &str) -> String {
+    fn run(&self) -> String {
         let counter = NEXT_TEST_ID.fetch_add(1, Ordering::Relaxed);
         let run = format!("r{:07x}", counter & 0x0fffffff);
         self.run_ids.lock().unwrap().push(run.clone());
@@ -139,7 +139,7 @@ impl Drop for Harness {
 #[tokio::test]
 async fn run_id_is_the_entire_request_and_completion() {
     let harness = Harness::new();
-    let run = harness.run("advance");
+    let run = harness.run();
     let batch = harness.runtime.pull_batch(&run).await.unwrap();
     assert_eq!(batch.first_new_height, 1);
     assert_eq!(batch.end_height, 2);
@@ -156,7 +156,7 @@ async fn run_id_is_the_entire_request_and_completion() {
 #[tokio::test]
 async fn completion_requires_the_controller_selected_proof() {
     let harness = Harness::new();
-    let run = harness.run("missing-proof");
+    let run = harness.run();
     harness.runtime.pull_batch(&run).await.unwrap();
     let error = harness.runtime.complete(&run).await.unwrap_err();
     assert!(error.message.contains("failed to fetch uploaded proof"));
@@ -169,7 +169,7 @@ async fn completion_requires_the_controller_selected_proof() {
 #[tokio::test]
 async fn only_one_batch_may_be_outstanding() {
     let harness = Harness::new();
-    let run = harness.run("serial");
+    let run = harness.run();
     let first = harness.runtime.pull_batch(&run).await.unwrap();
 
     // A second pull before completing the first should wait (and time out,
@@ -186,7 +186,7 @@ async fn only_one_batch_may_be_outstanding() {
 #[tokio::test]
 async fn resuming_into_a_different_artifact_root_names_the_missing_proof() {
     let harness = Harness::new();
-    let run = harness.run("moved-store");
+    let run = harness.run();
     let batch = harness.runtime.pull_batch(&run).await.unwrap();
     harness.upload_expected(&run, &batch);
     harness.runtime.complete(&run).await.unwrap();
@@ -243,7 +243,7 @@ async fn put_target_failure_rolls_back_pending_and_retry_succeeds() {
     let fail_put = Arc::new(AtomicBool::new(false));
     let fail_get = Arc::new(AtomicBool::new(false));
     let harness = Harness::with_faulty_storage(fail_put.clone(), fail_get.clone());
-    let run = harness.run("put-failure");
+    let run = harness.run();
 
     // Enable PUT target failure
     fail_put.store(true, Ordering::SeqCst);
@@ -266,7 +266,7 @@ async fn get_target_failure_rolls_back_pending_and_retry_succeeds() {
     let fail_put = Arc::new(AtomicBool::new(false));
     let fail_get = Arc::new(AtomicBool::new(false));
     let harness = Harness::with_faulty_storage(fail_put.clone(), fail_get.clone());
-    let run = harness.run("get-failure");
+    let run = harness.run();
 
     // Complete the first batch so there is a previous proof.
     let first = harness.runtime.pull_batch(&run).await.unwrap();
