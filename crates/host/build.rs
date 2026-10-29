@@ -4,6 +4,7 @@
 const GUEST_CRATE_PATH: &str = "../guest";
 
 fn main() {
+    println!("cargo:rustc-check-cfg=cfg(test_proofs)");
     println!("cargo:rerun-if-env-changed=GUEST_PROFILING");
     let use_docker = std::env::var("USE_DOCKER_BUILD").is_ok();
     let guest_profiling = std::env::var("GUEST_PROFILING")

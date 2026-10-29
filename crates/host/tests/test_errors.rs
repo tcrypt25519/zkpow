@@ -3,7 +3,7 @@
 //! Each test crafts specific inputs that should trigger a particular error code or success,
 //! then runs the zkVM program via `client.execute()` and checks public values.
 
-use sp1_sdk::{prelude::*, Elf, HashableKey, Prover, ProverClient, SP1Stdin};
+use sp1_sdk::{prelude::*, Elf, Prover, ProverClient, SP1Stdin};
 use zkpow_controller::db_path;
 use zkpow_host::{
     util,
@@ -203,116 +203,6 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_error_recursive_on_failed_proof() -> Result<(), String> {
-    let client = ProverClient::builder().mock().build().await;
-    let pk = client.setup(ELF).await.map_err(|e| format!("setup: {e}"))?;
-    let vk = pk.verifying_key();
-    let verifier_key = VerifierKeyDigest::from_raw(vk.hash_u32());
-
-    let genesis_state = mainnet_genesis_state();
-    let witness1 = open_db().load_header_batch_witness(1, 10).expect("batch witness");
-    let stdin1 = build_stdin(
-        verifier_key,
-        &genesis_state,
-        &witness1.headers,
-        &witness1.median_time_past_hints,
-    );
-
-    let proof1 = client
-        .prove(&pk, stdin1)
-        .compressed()
-        .await
-        .map_err(|e| format!("Run 1 proof generation failed: {e}"))?;
-
-    let state_at_10 =
-        compute_final_state_with_sparse_hints(&genesis_state, &witness1.headers, &witness1.median_time_past_hints);
-
-    let witness2 = open_db().load_header_batch_witness(11, 10).expect("batch witness");
-    let mut stdin2 = build_stdin(verifier_key, &state_at_10, &witness2.headers, &witness2.median_time_past_hints);
-
-    let sp1_sdk::SP1Proof::Compressed(inner_proof) = &proof1.proof else {
-        return Err("Run 1 proof is not compressed".to_string());
-    };
-
-    // Invalidate the recursion VK so proof verification itself is rejected.
-    let mut bad_vk = vk.vk.clone();
-    bad_vk.pc_start = Default::default();
-    stdin2.write_proof(inner_proof.as_ref().clone(), bad_vk);
-
-    let result = client.execute(ELF, stdin2).await;
-
-    match result {
-        Err(_) => Ok(()),
-        Ok((pv, _)) => {
-            let pv_bytes = pv.to_vec();
-            match PublicValues::parse(&pv_bytes) {
-                Ok(pv) if pv.is_success() => {
-                    Err("expected guest to reject failed prior proof, but got a success state".to_string())
-                },
-                _ => Ok(()),
-            }
-        },
-    }
-}
-
-#[tokio::test]
-async fn test_error_recursive_on_tampered_state_witness() -> Result<(), String> {
-    let client = ProverClient::builder().mock().build().await;
-    let pk = client.setup(ELF).await.map_err(|e| format!("setup: {e}"))?;
-    let vk = pk.verifying_key();
-    let verifier_key = VerifierKeyDigest::from_raw(vk.hash_u32());
-
-    let genesis_state = mainnet_genesis_state();
-    let witness1 = open_db().load_header_batch_witness(1, 10).expect("batch witness");
-    let stdin1 = build_stdin(
-        verifier_key,
-        &genesis_state,
-        &witness1.headers,
-        &witness1.median_time_past_hints,
-    );
-
-    let proof1 = client
-        .prove(&pk, stdin1)
-        .compressed()
-        .await
-        .map_err(|e| format!("Run 1 proof generation failed: {e}"))?;
-
-    let state_at_10 =
-        compute_final_state_with_sparse_hints(&genesis_state, &witness1.headers, &witness1.median_time_past_hints);
-
-    let mut tampered_state = state_at_10;
-    tampered_state.epoch_timestamp = util::BlockTimestamp::default();
-
-    let witness2 = open_db().load_header_batch_witness(11, 10).expect("batch witness");
-    let mut stdin2 = build_stdin(
-        verifier_key,
-        &tampered_state,
-        &witness2.headers,
-        &witness2.median_time_past_hints,
-    );
-
-    let sp1_sdk::SP1Proof::Compressed(inner_proof) = &proof1.proof else {
-        return Err("Run 1 proof is not compressed".to_string());
-    };
-    stdin2.write_proof(inner_proof.as_ref().clone(), vk.vk.clone());
-
-    let result = client.execute(ELF, stdin2).await;
-
-    match result {
-        Err(_) => Ok(()),
-        Ok((pv, _)) => {
-            let pv_bytes = pv.to_vec();
-            match PublicValues::parse(&pv_bytes) {
-                Ok(pv) if pv.is_success() => {
-                    Err("expected guest to reject tampered continuation state, but got success".to_string())
-                },
-                _ => Ok(()),
-            }
-        },
-    }
-}
-
 /// The guest derives the height-zero state from the anchor header the program itself carries, so
 /// a prover supplying any other initial state proves exactly the same chain.
 #[tokio::test]
@@ -401,67 +291,6 @@ async fn test_pv_public_values_format() -> Result<(), String> {
     Ok(())
 }
 
-#[tokio::test]
-#[ignore = "generates two full SP1 compressed proofs"]
-async fn test_recursive_chain_success() -> Result<(), String> {
-    let client = ProverClient::from_env().await;
-    let pk = client.setup(ELF).await.map_err(|e| format!("setup: {}", e))?;
-    let vk = pk.verifying_key();
-    let db = open_db();
-
-    // === Run 1: genesis state → block 10 ===
-    let genesis_state = mainnet_genesis_state();
-    let witness1 = db.load_header_batch_witness(1, 10).expect("batch witness");
-    let verifier_key = VerifierKeyDigest::from_raw(vk.hash_u32());
-    let stdin1 = build_stdin(
-        verifier_key,
-        &genesis_state,
-        &witness1.headers,
-        &witness1.median_time_past_hints,
-    );
-
-    let proof1 = client
-        .prove(&pk, stdin1)
-        .compressed()
-        .await
-        .map_err(|e| format!("Run 1 proof generation failed: {}", e))?;
-    client
-        .verify(&proof1, vk, None)
-        .map_err(|e| format!("Run 1 proof verification failed: {}", e))?;
-    let pv1_bytes = proof1.public_values.to_vec();
-
-    let state1 = expect_success(&pv1_bytes)?;
-    if state1.height != 10 {
-        return Err(format!("Run 1: expected height 10, got {}", state1.height));
-    }
-
-    // === Run 2: Extend from Run 1 (blocks 11-20) ===
-    let genesis_state2 = mainnet_genesis_state();
-    let witness_to_10 = db.load_header_batch_witness(1, 10).expect("batch witness");
-    let state1 = compute_final_state_with_sparse_hints(
-        &genesis_state2,
-        &witness_to_10.headers,
-        &witness_to_10.median_time_past_hints,
-    );
-
-    let witness2 = db.load_header_batch_witness(11, 10).expect("batch witness");
-    let mut stdin2 = build_stdin(verifier_key, &state1, &witness2.headers, &witness2.median_time_past_hints);
-    let sp1_sdk::SP1Proof::Compressed(inner_proof) = &proof1.proof else {
-        return Err("Run 1 proof is not compressed".to_string());
-    };
-    stdin2.write_proof(inner_proof.as_ref().clone(), vk.vk.clone());
-
-    let proof2 = client
-        .prove(&pk, stdin2)
-        .compressed()
-        .await
-        .map_err(|e| format!("Run 2 proof generation failed: {}", e))?;
-    client
-        .verify(&proof2, vk, None)
-        .map_err(|e| format!("Run 2 proof verification failed: {}", e))?;
-    let state2 = expect_success(&proof2.public_values.to_vec())?;
-    if state2.height != 20 {
-        return Err(format!("Run 2: expected height 20, got {}", state2.height));
-    }
-    Ok(())
-}
+#[cfg(any(feature = "test_proofs", feature = "test-proofs", test_proofs))]
+#[path = "test_errors/proofs/mod.rs"]
+mod proofs;

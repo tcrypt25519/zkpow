@@ -43,6 +43,8 @@ default = []
 cuda = ["sp1-sdk/cuda"]
 memory-diagnostics = []
 slow-tests = []
+test_proofs = []
+test-proofs = ["test_proofs"]
 
 [dev-dependencies]
 zkpow-store = { workspace = true, features = ["test-utils"] }
