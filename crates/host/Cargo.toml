@@ -35,6 +35,8 @@ tracing-subscriber = { version = "0.3.23", features = [
   "json",
 ] }
 tracing-appender = "0.2"
+wiretype.workspace = true
+
 [build-dependencies]
 sp1-build = { workspace = true }
 

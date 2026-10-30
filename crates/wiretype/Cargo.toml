@@ -3,14 +3,9 @@ name = "wiretype"
 version = "0.1.0"
 edition = "2024"
 
-[lib]
-proc-macro = true
-
 [dependencies]
 bytemuck.workspace = true
-syn.workspace = true
-quote.workspace = true
-proc-macro2.workspace = true
+wiretype-macro.workspace = true
 
 [dev-dependencies]
 trybuild.workspace = true
