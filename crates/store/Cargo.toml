@@ -11,6 +11,8 @@ zkpow-params.workspace = true
 rusqlite.workspace = true
 thiserror.workspace = true
 num-bigint.workspace = true
+bytemuck.workspace = true
+wiretype.workspace = true
 
 [features]
 default = []

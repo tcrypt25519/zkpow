@@ -10,14 +10,22 @@ use zkpow_core::{
     requires_median_hint, BlockHash, BlockTimestamp, ChainWork, CompactTarget, Header, HeaderInput, State,
     VerifierKeyDigest,
 };
-use zkpow_params::{Consensus, WINDOW_SIZE};
+use zkpow_params::{Consensus, WINDOW_SIZE};        
 
-#[derive(thiserror::Error, Debug)]
+#[derive(thiserror::Error, Debug)]   
 pub enum Error {
     #[error("data failed to convert")]
     ConversionError(#[from] std::array::TryFromSliceError),
     #[error("rusqlite error")]
     RusqliteError(#[from] rusqlite::Error),
+    #[error("bytemuck cast failed: {0}")]
+    BytemuckDeserializeError(bytemuck::PodCastError),
+}
+
+impl Into<Error> for bytemuck::PodCastError {
+    fn into(self) -> Error {
+        Error::BytemuckDeserializeError(self)
+    }
 }
 
 impl From<Error> for rusqlite::Error {
@@ -27,10 +35,11 @@ impl From<Error> for rusqlite::Error {
                 rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
             },
             Error::RusqliteError(e) => e,
+            _ => rusqlite::Error::InvalidQuery,
         }
     }
 }
-
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    
 pub type DBResult<T> = Result<T, Error>;
 pub type DBResultOpt<T> = DBResult<Option<T>>;
 
@@ -38,8 +47,11 @@ pub(crate) fn hash_to_bytes(hash: &BlockHash) -> [u8; BlockHash::SIZE] {
     *hash.as_inner()
 }
 
-fn hash_from_bytes(bytes: &[u8]) -> Result<BlockHash, Error> {
-    Ok(BlockHash::new(bytes.try_into()?))
+fn hash_from_bytes(bytes: &[u8]) -> DBResult<BlockHash> {
+    match BlockHash::parse(bytes) {
+        Ok(hash) => Ok(*hash),
+        Err(e) => Err(Error::BytemuckDeserializeError(e)),
+    }
 }
 
 /// Big-endian byte encoding of chainwork as stored in `headers.db`'s `chainwork`
@@ -49,10 +61,10 @@ pub(crate) fn work_to_bytes(work: &ChainWork) -> [u8; ChainWork::SIZE] {
     let mut bytes = work.to_le_bytes();
     bytes.reverse();
     bytes
-}
+    }
 
 /// Inverse of [`work_to_bytes`]. Returns `None` if `bytes` isn't exactly 32 bytes.
-fn work_from_bytes(bytes: &[u8]) -> Result<ChainWork, Error> {
+fn work_from_bytes(bytes: &[u8]) -> DBResult<ChainWork> {
     let mut arr: [u8; ChainWork::SIZE] = bytes.try_into()?;
     arr.reverse();
     Ok(ChainWork::from_le_bytes(arr))
