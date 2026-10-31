@@ -1,10 +1,16 @@
-#[cfg(test)]
-mod tests;
+use std::path::PathBuf;
+
+#[cfg(any(test, feature = "test-utils"))]
+pub mod tests;
+
+#[cfg(any(test, feature = "test-utils"))]
+pub use tests::test_utils;
 
 pub mod db;
 
-#[cfg(any(test, feature = "test-utils"))]
-pub mod test_utils;
+pub const ENV_ZKPOW_DB_PATH: &str = "ZKPOW_DB_PATH";
+pub const DEFAULT_DB_FILE_NAME: &str = "headers.db";
+const WORKSPACE_ROOT_RELATIVE_TO_STORE: &str = "../..";
 
 pub use db::{
     genesis_state_from_record, Error, HeaderBatchWitness, HeaderRecord, HeaderStore, Result, ResultOpt, RunRecord,

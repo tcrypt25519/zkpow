@@ -8,17 +8,29 @@ use sync_headers::{ConnectedHeader, Header as SyncHeader};
 use zkpow_core::{block_work_from_target, target_from_bits, BlockHash, BlockTimestamp, ChainWork};
 use zkpow_params::{Consensus, Mainnet};
 
-use crate::HeaderStore;
+use crate::{db::SQLITE_MEMORY_DATABASE, HeaderStore};
+
+const TEMP_DB_FILE_PREFIX: &str = "zkpow-store-";
+const TEMP_DB_FILE_EXTENSION: &str = ".sqlite";
+const SQLITE_SHARED_MEMORY_EXTENSION: &str = "sqlite-shm";
+const SQLITE_WRITE_AHEAD_LOG_EXTENSION: &str = "sqlite-wal";
+const SQL_ATTACH_SOURCE_DATABASE: &str = "ATTACH DATABASE ?1 AS src";
+const SQL_COPY_SOURCE_HEADERS: &str = "INSERT INTO headers SELECT * FROM src.headers WHERE height <= ?1";
+const SQL_DETACH_SOURCE_DATABASE: &str = "DETACH DATABASE src";
+const TEST_FIXTURE_HEADERS_SQL: &str = include_str!("test_fixture_headers.sql");
 
 pub fn temp_db_path(test_name: &str) -> PathBuf {
     let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-    std::env::temp_dir().join(format!("zkpow-store-{test_name}-{}-{nonce}.sqlite", std::process::id()))
+    std::env::temp_dir().join(format!(
+        "{TEMP_DB_FILE_PREFIX}{test_name}-{}-{nonce}{TEMP_DB_FILE_EXTENSION}",
+        std::process::id()
+    ))
 }
 
 pub fn remove_db_files(path: &Path) {
     let _ = fs::remove_file(path);
-    let _ = fs::remove_file(path.with_extension("sqlite-shm"));
-    let _ = fs::remove_file(path.with_extension("sqlite-wal"));
+    let _ = fs::remove_file(path.with_extension(SQLITE_SHARED_MEMORY_EXTENSION));
+    let _ = fs::remove_file(path.with_extension(SQLITE_WRITE_AHEAD_LOG_EXTENSION));
 }
 
 /// A genesis-seeded store with `count` more headers appended at `path`.
@@ -84,13 +96,9 @@ pub fn create_real_seeded_store(path: &Path, max_height: u32) -> HeaderStore {
     let src_path = crate::db_path();
     if src_path.exists() {
         let conn = rusqlite::Connection::open(path).unwrap();
-        conn.execute("ATTACH DATABASE ?1 AS src", [src_path.to_str().unwrap()]).unwrap();
-        conn.execute(
-            "INSERT INTO headers SELECT * FROM src.headers WHERE height <= ?1",
-            rusqlite::params![max_height],
-        )
-        .unwrap();
-        conn.execute("DETACH DATABASE src", []).unwrap();
+        conn.execute(SQL_ATTACH_SOURCE_DATABASE, [src_path.to_str().unwrap()]).unwrap();
+        conn.execute(SQL_COPY_SOURCE_HEADERS, rusqlite::params![max_height]).unwrap();
+        conn.execute(SQL_DETACH_SOURCE_DATABASE, []).unwrap();
     }
     store
 }
@@ -98,10 +106,7 @@ pub fn create_real_seeded_store(path: &Path, max_height: u32) -> HeaderStore {
 /// Creates an in-memory HeaderStore populated with standard test fixture headers:
 /// heights 0..=128, height 38304, and heights 40260..=40320.
 pub fn create_test_fixture_store() -> HeaderStore {
-    let store = HeaderStore::open(":memory:").expect("failed to open in-memory store");
-    store
-        .conn
-        .execute_batch(include_str!("test_fixture_headers.sql"))
-        .expect("failed to insert test fixture headers");
+    let store = HeaderStore::open(SQLITE_MEMORY_DATABASE).expect("failed to open in-memory store");
+    store.conn.execute_batch(TEST_FIXTURE_HEADERS_SQL).expect("failed to insert test fixture headers");
     store
 }
