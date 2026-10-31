@@ -1,0 +1,2900 @@
+{
+  "assets": {
+    "by_page": {},
+    "referenced": [],
+    "unreferenced": []
+  },
+  "counts": {
+    "assets": {
+      "by_media_type": {
+        "image": 0,
+        "other": 0,
+        "video": 0
+      },
+      "referenced": 0,
+      "total": 0,
+      "unreferenced": 0
+    },
+    "by_kind": {
+      "api-contracts": 0,
+      "dependencies": 1,
+      "entities": 63,
+      "flows": 2,
+      "guides": 0,
+      "index": 1,
+      "infrastructure": 3,
+      "load-order": 1,
+      "log": 1,
+      "modules": 122,
+      "workflows": 0
+    },
+    "dependency_architecture": 2,
+    "total": 194
+  },
+  "dependency_pages": {
+    "count": 2,
+    "dependencies": true,
+    "load_order": true
+  },
+  "flows": [
+    {
+      "category": "process",
+      "detector": "builtin",
+      "entry_point": {
+        "label": "generate-epoch-profile-fixture",
+        "source_path": "scripts/generate-epoch-profile-fixture.py",
+        "symbol": "main"
+      },
+      "evidence": {
+        "data_flow": {
+          "boundary_effects": [
+            {
+              "confidence": "unknown",
+              "kind": "mutation",
+              "line": 36,
+              "step": "main",
+              "step_index": 1,
+              "target": "headers.extend"
+            },
+            {
+              "confidence": "unknown",
+              "kind": "mutation",
+              "line": 38,
+              "step": "main",
+              "step_index": 1,
+              "target": "hints.extend"
+            },
+            {
+              "confidence": "unknown",
+              "kind": "mutation",
+              "line": 39,
+              "step": "main",
+              "step_index": 1,
+              "target": "hint_offsets.extend"
+            },
+            {
+              "confidence": "unknown",
+              "kind": "output",
+              "line": 49,
+              "step": "main",
+              "step_index": 1,
+              "target": "print"
+            }
+          ],
+          "gaps": [
+            {
+              "kind": "external_call",
+              "line": 14,
+              "step": "main",
+              "target": "argparse.ArgumentParser"
+            },
+            {
+              "kind": "unresolved_call",
+              "line": 15,
+              "step": "main",
+              "target": "parser.add_argument"
+            },
+            {
+              "kind": "unresolved_call",
+              "line": 16,
+              "step": "main",
+              "target": "parser.add_argument"
+            },
+            {
+              "kind": "unresolved_call",
+              "line": 17,
+              "step": "main",
+              "target": "parser.add_argument"
+            },
+            {
+              "kind": "unresolved_call",
+              "line": 18,
+              "step": "main",
+              "target": "parser.parse_args"
+            },
+            {
+              "kind": "unresolved_call",
+              "line": 20,
+              "step": "main",
+              "target": "parser.error"
+            },
+            {
+              "kind": "external_call",
+              "line": 23,
+              "step": "main",
+              "target": "sqlite3.connect"
+            },
+            {
+              "kind": "unresolved_call",
+              "line": 24,
+              "step": "main",
+              "target": "db.execute"
+            },
+            {
+              "kind": "external_call",
+              "line": 28,
+              "step": "main",
+              "target": "bytearray"
+            },
+            {
+              "kind": "external_call",
+              "line": 29,
+              "step": "main",
+              "target": "bytearray"
+            },
+            {
+              "kind": "external_call",
+              "line": 29,
+              "step": "main",
+              "target": "struct.pack"
+            },
+            {
+              "kind": "step_limit",
+              "line": 0,
+              "step": "main",
+              "target": "first 12 steps"
+            }
+          ],
+          "generated": true,
+          "step_count": 12,
+          "transfer_count": 11,
+          "truncated": false
+        },
+        "flow": {
+          "modules_touched": [
+            "scripts/generate-epoch-profile-fixture.py"
+          ],
+          "step_count": 31,
+          "truncated": false
+        }
+      },
+      "id": "process-generate-epoch-profile-fixture",
+      "language": "python"
+    },
+    {
+      "category": "process",
+      "detector": "builtin",
+      "entry_point": {
+        "label": "summarize-prove-spans",
+        "source_path": "scripts/summarize-prove-spans.py",
+        "symbol": "main"
+      },
+      "evidence": {
+        "data_flow": {
+          "boundary_effects": [
+            {
+              "confidence": "unknown",
+              "kind": "output",
+              "line": 145,
+              "step": "main",
+              "step_index": 1,
+              "target": "print"
+            },
+            {
+              "confidence": "unknown",
+              "kind": "filesystem_read",
+              "line": 71,
+              "step": "summarize",
+              "step_index": 6,
+              "target": "open"
+            },
+            {
+              "confidence": "unknown",
+              "kind": "filesystem_write",
+              "line": 108,
+              "step": "summarize",
+              "step_index": 6,
+              "target": "open"
+            }
+          ],
+          "gaps": [
+            {
+              "kind": "external_call",
+              "line": 66,
+              "step": "summarize",
+              "target": "defaultdict"
+            },
+            {
+              "kind": "external_call",
+              "line": 74,
+              "step": "summarize",
+              "target": "json.loads"
+            },
+            {
+              "kind": "unresolved_call",
+              "line": 78,
+              "step": "summarize",
+              "target": "record.get"
+            },
+            {
+              "kind": "unresolved_call",
+              "line": 79,
+              "step": "summarize",
+              "target": "fields.get"
+            },
+            {
+              "kind": "unresolved_call",
+              "line": 84,
+              "step": "summarize",
+              "target": "str(message).startswith"
+            },
+            {
+              "kind": "step_limit",
+              "line": 0,
+              "step": "main",
+              "target": "first 12 steps"
+            }
+          ],
+          "generated": true,
+          "step_count": 12,
+          "transfer_count": 11,
+          "truncated": false
+        },
+        "flow": {
+          "modules_touched": [
+            "scripts/summarize-prove-spans.py"
+          ],
+          "step_count": 52,
+          "truncated": false
+        }
+      },
+      "id": "process-summarize-prove-spans",
+      "language": "python"
+    }
+  ],
+  "pages": [
+    {
+      "canonical_path": "index.md",
+      "id": "index",
+      "kind": "index",
+      "mcp_uri": "llm-wiki://index",
+      "outgoing_internal_links": [
+        "dependencies.md",
+        "entities/ApplyError.md",
+        "entities/ArtifactStore.md",
+        "entities/Batch.md",
+        "entities/Bucket.md",
+        "entities/Cold.md",
+        "entities/Command.md",
+        "entities/ConnectedHeader.md",
+        "entities/Consensus.md",
+        "entities/ConsensusParams.md",
+        "entities/controller_src_lib_BoxError.md",
+        "entities/ControllerConfig.md",
+        "entities/ControllerError.md",
+        "entities/ControllerRuntime.md",
+        "entities/Error.md",
+        "entities/ErrorCode.md",
+        "entities/ErrorKind.md",
+        "entities/HeaderBatchWitness.md",
+        "entities/HeaderFixture.md",
+        "entities/HeaderInput.md",
+        "entities/HeaderRecord.md",
+        "entities/HeaderStore.md",
+        "entities/host_src_pipeline_mod_BoxError.md",
+        "entities/InsufficientColdHeaders.md",
+        "entities/InvalidParts.md",
+        "entities/LocalArtifactStore.md",
+        "entities/Mainnet.md",
+        "entities/Network.md",
+        "entities/NonMaxU256.md",
+        "entities/NotMedian.md",
+        "entities/ParseError.md",
+        "entities/PeerConnection.md",
+        "entities/PeerEntry.md",
+        "entities/PeerStatus.md",
+        "entities/PeerStore.md",
+        "entities/PhaseTiming.md",
+        "entities/PreparedProverVerifier.md",
+        "entities/ProofGenerationConfig.md",
+        "entities/ProofVerifier.md",
+        "entities/ProverBackend.md",
+        "entities/PublicValues.md",
+        "entities/ReportableError.md",
+        "entities/Result.md",
+        "entities/ResultOpt.md",
+        "entities/ReturnCode.md",
+        "entities/Ring.md",
+        "entities/RunId.md",
+        "entities/RunIdError.md",
+        "entities/RunRecord.md",
+        "entities/ShortEpoch.md",
+        "entities/src_types_Header.md",
+        "entities/StageSample.md",
+        "entities/State.md",
+        "entities/SyncHeadersError.md",
+        "entities/TargetTriplet.md",
+        "entities/Tip.md",
+        "entities/types_src_header_Header.md",
+        "entities/u256.md",
+        "entities/VerifierKeyDigest.md",
+        "entities/VersionMessage.md",
+        "entities/Warm.md",
+        "entities/Window.md",
+        "entities/WireType.md",
+        "entities/WorkerConfig.md",
+        "flows/process-generate-epoch-profile-fixture.md",
+        "flows/process-summarize-prove-spans.md",
+        "infrastructure/_github_workflows_ci_yml.md",
+        "infrastructure/_github_workflows_docker_yml.md",
+        "infrastructure/docker_Dockerfile_vast-cuda.md",
+        "load-order.md",
+        "log.md",
+        "modules/arguments.md",
+        "modules/build.md",
+        "modules/bytes.md",
+        "modules/cli_src_main.md",
+        "modules/compressed.md",
+        "modules/consensus.md",
+        "modules/controller_src_lib.md",
+        "modules/controller_src_tests_mod.md",
+        "modules/controller_src_validation.md",
+        "modules/core_src_errors.md",
+        "modules/core_src_halt_mod.md",
+        "modules/core_src_header.md",
+        "modules/core_src_lib.md",
+        "modules/core_src_tests_mod.md",
+        "modules/error.md",
+        "modules/execution.md",
+        "modules/failed_proof.md",
+        "modules/generate-epoch-profile-fixture.md",
+        "modules/guest_src_main.md",
+        "modules/halt.md",
+        "modules/hash.md",
+        "modules/host_src_lib.md",
+        "modules/host_src_main.md",
+        "modules/host_src_pipeline_mod.md",
+        "modules/host_src_tests_mod.md",
+        "modules/input_failure.md",
+        "modules/input_success.md",
+        "modules/inspect-proof.md",
+        "modules/jobs.md",
+        "modules/memory_monitor.md",
+        "modules/msg.md",
+        "modules/mtp_failure.md",
+        "modules/mtp_src_errors.md",
+        "modules/mtp_src_lib.md",
+        "modules/mtp_success.md",
+        "modules/not_pod.md",
+        "modules/observability.md",
+        "modules/p2p_sync.md",
+        "modules/params_src_lib.md",
+        "modules/params_src_tests_mod.md",
+        "modules/pipeline_input.md",
+        "modules/pipeline_verify.md",
+        "modules/platform.md",
+        "modules/pow_failure.md",
+        "modules/pow_success.md",
+        "modules/profile.md",
+        "modules/public_values.md",
+        "modules/public_values_failure.md",
+        "modules/public_values_success.md",
+        "modules/recursive_chain.md",
+        "modules/retarget_failure.md",
+        "modules/retarget_success.md",
+        "modules/ring.md",
+        "modules/serialization.md",
+        "modules/sha256_const_src_lib.md",
+        "modules/sha256_const_src_tests_mod.md",
+        "modules/sha256_src_lib.md",
+        "modules/sha256_src_tests_mod.md",
+        "modules/sp1-stress.md",
+        "modules/src_bigint.md",
+        "modules/src_brand.md",
+        "modules/src_config.md",
+        "modules/src_connection.md",
+        "modules/src_db.md",
+        "modules/src_input.md",
+        "modules/src_peers.md",
+        "modules/src_pipeline_artifacts.md",
+        "modules/src_pipeline_diagnostics.md",
+        "modules/src_pipeline_proof_mod.md",
+        "modules/src_protocol.md",
+        "modules/src_run_id.md",
+        "modules/src_runtime.md",
+        "modules/src_storage.md",
+        "modules/src_tests_header.md",
+        "modules/src_tests_input_mod.md",
+        "modules/src_tests_mtp_mod.md",
+        "modules/src_tests_pipeline_mod.md",
+        "modules/src_tests_pow_mod.md",
+        "modules/src_tests_public_values_mod.md",
+        "modules/src_tests_retarget_mod.md",
+        "modules/src_tests_state_mod.md",
+        "modules/src_tests_validation.md",
+        "modules/src_types.md",
+        "modules/src_verify.md",
+        "modules/state.md",
+        "modules/state_failure.md",
+        "modules/state_success.md",
+        "modules/store_src_lib.md",
+        "modules/store_src_tests_mod.md",
+        "modules/summarize-prove-spans.md",
+        "modules/sync-headers_src_lib.md",
+        "modules/sync-headers_src_tests_mod.md",
+        "modules/sync-headers_src_validation.md",
+        "modules/tampered_witness.md",
+        "modules/target_triplet.md",
+        "modules/test_errors.md",
+        "modules/test_utils.md",
+        "modules/tests.md",
+        "modules/tests_bigint.md",
+        "modules/tests_brand.md",
+        "modules/tests_config.md",
+        "modules/tests_connection.md",
+        "modules/tests_db.md",
+        "modules/tests_peers.md",
+        "modules/tests_pipeline_artifacts.md",
+        "modules/tests_pipeline_diagnostics.md",
+        "modules/tests_protocol.md",
+        "modules/tests_run_id.md",
+        "modules/tests_runtime.md",
+        "modules/tests_storage.md",
+        "modules/tests_test_errors_proofs_mod.md",
+        "modules/tests_types.md",
+        "modules/types_src_header.md",
+        "modules/types_src_lib.md",
+        "modules/types_src_tests_mod.md",
+        "modules/ui.md",
+        "modules/util.md",
+        "modules/wiretype_macro_src_lib.md",
+        "modules/wiretype_src_lib.md",
+        "modules/worker_src_lib.md",
+        "modules/worker_src_tests_mod.md",
+        "modules/zkvm.md"
+      ],
+      "role": "mixed",
+      "source_path": null,
+      "title": "LLM Wiki Index"
+    },
+    {
+      "canonical_path": "log.md",
+      "id": "log",
+      "kind": "log",
+      "mcp_uri": "llm-wiki://log",
+      "outgoing_internal_links": [],
+      "role": "generated",
+      "source_path": null,
+      "title": "Architectural Log"
+    },
+    {
+      "canonical_path": "entities/ApplyError.md",
+      "id": "ApplyError",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/ApplyError",
+      "outgoing_internal_links": [
+        "modules/core_src_errors.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/core/src/errors.rs",
+      "title": "ApplyError"
+    },
+    {
+      "canonical_path": "entities/ArtifactStore.md",
+      "id": "ArtifactStore",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/ArtifactStore",
+      "outgoing_internal_links": [
+        "modules/src_storage.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/controller/src/storage.rs",
+      "title": "ArtifactStore"
+    },
+    {
+      "canonical_path": "entities/Batch.md",
+      "id": "Batch",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/Batch",
+      "outgoing_internal_links": [
+        "modules/src_protocol.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/controller/src/protocol.rs",
+      "title": "Batch"
+    },
+    {
+      "canonical_path": "entities/Bucket.md",
+      "id": "Bucket",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/Bucket",
+      "outgoing_internal_links": [
+        "modules/summarize-prove-spans.md"
+      ],
+      "role": "semantic",
+      "source_path": "scripts/summarize-prove-spans.py",
+      "title": "Bucket"
+    },
+    {
+      "canonical_path": "entities/Cold.md",
+      "id": "Cold",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/Cold",
+      "outgoing_internal_links": [
+        "modules/ring.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/mtp/src/ring.rs",
+      "title": "Cold"
+    },
+    {
+      "canonical_path": "entities/Command.md",
+      "id": "Command",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/Command",
+      "outgoing_internal_links": [
+        "modules/src_connection.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/sync-headers/src/connection.rs",
+      "title": "Command"
+    },
+    {
+      "canonical_path": "entities/ConnectedHeader.md",
+      "id": "ConnectedHeader",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/ConnectedHeader",
+      "outgoing_internal_links": [
+        "modules/src_types.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/sync-headers/src/types.rs",
+      "title": "ConnectedHeader"
+    },
+    {
+      "canonical_path": "entities/Consensus.md",
+      "id": "Consensus",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/Consensus",
+      "outgoing_internal_links": [
+        "modules/consensus.md",
+        "modules/params_src_lib.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/params/src/consensus.rs",
+      "title": "Consensus"
+    },
+    {
+      "canonical_path": "entities/ConsensusParams.md",
+      "id": "ConsensusParams",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/ConsensusParams",
+      "outgoing_internal_links": [
+        "modules/consensus.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/params/src/consensus.rs",
+      "title": "ConsensusParams"
+    },
+    {
+      "canonical_path": "entities/controller_src_lib_BoxError.md",
+      "id": "controller_src_lib_BoxError",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/controller_src_lib_BoxError",
+      "outgoing_internal_links": [
+        "modules/controller_src_lib.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/controller/src/lib.rs",
+      "title": "BoxError"
+    },
+    {
+      "canonical_path": "entities/ControllerConfig.md",
+      "id": "ControllerConfig",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/ControllerConfig",
+      "outgoing_internal_links": [
+        "modules/src_runtime.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/controller/src/runtime.rs",
+      "title": "ControllerConfig"
+    },
+    {
+      "canonical_path": "entities/ControllerError.md",
+      "id": "ControllerError",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/ControllerError",
+      "outgoing_internal_links": [
+        "modules/src_db.md",
+        "modules/src_protocol.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/controller/src/protocol.rs",
+      "title": "ControllerError"
+    },
+    {
+      "canonical_path": "entities/ControllerRuntime.md",
+      "id": "ControllerRuntime",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/ControllerRuntime",
+      "outgoing_internal_links": [
+        "modules/src_runtime.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/controller/src/runtime.rs",
+      "title": "ControllerRuntime"
+    },
+    {
+      "canonical_path": "entities/Error.md",
+      "id": "Error",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/Error",
+      "outgoing_internal_links": [
+        "modules/src_db.md",
+        "modules/src_protocol.md",
+        "modules/src_run_id.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/store/src/db.rs",
+      "title": "Error"
+    },
+    {
+      "canonical_path": "entities/ErrorCode.md",
+      "id": "ErrorCode",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/ErrorCode",
+      "outgoing_internal_links": [
+        "modules/public_values.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/core/src/public_values.rs",
+      "title": "ErrorCode"
+    },
+    {
+      "canonical_path": "entities/ErrorKind.md",
+      "id": "ErrorKind",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/ErrorKind",
+      "outgoing_internal_links": [
+        "modules/src_protocol.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/controller/src/protocol.rs",
+      "title": "ErrorKind"
+    },
+    {
+      "canonical_path": "entities/HeaderBatchWitness.md",
+      "id": "HeaderBatchWitness",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/HeaderBatchWitness",
+      "outgoing_internal_links": [
+        "modules/src_db.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/store/src/db.rs",
+      "title": "HeaderBatchWitness"
+    },
+    {
+      "canonical_path": "entities/HeaderFixture.md",
+      "id": "HeaderFixture",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/HeaderFixture",
+      "outgoing_internal_links": [
+        "modules/sha256_src_tests_mod.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/sha256/src/tests/mod.rs",
+      "title": "HeaderFixture"
+    },
+    {
+      "canonical_path": "entities/HeaderInput.md",
+      "id": "HeaderInput",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/HeaderInput",
+      "outgoing_internal_links": [
+        "modules/core_src_header.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/core/src/header.rs",
+      "title": "HeaderInput"
+    },
+    {
+      "canonical_path": "entities/HeaderRecord.md",
+      "id": "HeaderRecord",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/HeaderRecord",
+      "outgoing_internal_links": [
+        "modules/src_db.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/store/src/db.rs",
+      "title": "HeaderRecord"
+    },
+    {
+      "canonical_path": "entities/HeaderStore.md",
+      "id": "HeaderStore",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/HeaderStore",
+      "outgoing_internal_links": [
+        "modules/src_db.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/store/src/db.rs",
+      "title": "HeaderStore"
+    },
+    {
+      "canonical_path": "entities/host_src_pipeline_mod_BoxError.md",
+      "id": "host_src_pipeline_mod_BoxError",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/host_src_pipeline_mod_BoxError",
+      "outgoing_internal_links": [
+        "modules/host_src_pipeline_mod.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/host/src/pipeline/mod.rs",
+      "title": "BoxError"
+    },
+    {
+      "canonical_path": "entities/InsufficientColdHeaders.md",
+      "id": "InsufficientColdHeaders",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/InsufficientColdHeaders",
+      "outgoing_internal_links": [
+        "modules/mtp_src_errors.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/mtp/src/errors.rs",
+      "title": "InsufficientColdHeaders"
+    },
+    {
+      "canonical_path": "entities/InvalidParts.md",
+      "id": "InvalidParts",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/InvalidParts",
+      "outgoing_internal_links": [
+        "modules/mtp_src_errors.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/mtp/src/errors.rs",
+      "title": "InvalidParts"
+    },
+    {
+      "canonical_path": "entities/LocalArtifactStore.md",
+      "id": "LocalArtifactStore",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/LocalArtifactStore",
+      "outgoing_internal_links": [
+        "modules/src_storage.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/controller/src/storage.rs",
+      "title": "LocalArtifactStore"
+    },
+    {
+      "canonical_path": "entities/Mainnet.md",
+      "id": "Mainnet",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/Mainnet",
+      "outgoing_internal_links": [
+        "modules/consensus.md",
+        "modules/params_src_lib.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/params/src/lib.rs",
+      "title": "Mainnet"
+    },
+    {
+      "canonical_path": "entities/Network.md",
+      "id": "Network",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/Network",
+      "outgoing_internal_links": [
+        "modules/src_types.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/sync-headers/src/types.rs",
+      "title": "Network"
+    },
+    {
+      "canonical_path": "entities/NonMaxU256.md",
+      "id": "NonMaxU256",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/NonMaxU256",
+      "outgoing_internal_links": [
+        "modules/src_bigint.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/types/src/bigint.rs",
+      "title": "NonMaxU256"
+    },
+    {
+      "canonical_path": "entities/NotMedian.md",
+      "id": "NotMedian",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/NotMedian",
+      "outgoing_internal_links": [
+        "modules/mtp_src_errors.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/mtp/src/errors.rs",
+      "title": "NotMedian"
+    },
+    {
+      "canonical_path": "entities/ParseError.md",
+      "id": "ParseError",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/ParseError",
+      "outgoing_internal_links": [
+        "modules/core_src_errors.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/core/src/errors.rs",
+      "title": "ParseError"
+    },
+    {
+      "canonical_path": "entities/PeerConnection.md",
+      "id": "PeerConnection",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/PeerConnection",
+      "outgoing_internal_links": [
+        "modules/src_connection.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/sync-headers/src/connection.rs",
+      "title": "PeerConnection"
+    },
+    {
+      "canonical_path": "entities/PeerEntry.md",
+      "id": "PeerEntry",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/PeerEntry",
+      "outgoing_internal_links": [
+        "modules/src_peers.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/sync-headers/src/peers.rs",
+      "title": "PeerEntry"
+    },
+    {
+      "canonical_path": "entities/PeerStatus.md",
+      "id": "PeerStatus",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/PeerStatus",
+      "outgoing_internal_links": [
+        "modules/src_peers.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/sync-headers/src/peers.rs",
+      "title": "PeerStatus"
+    },
+    {
+      "canonical_path": "entities/PeerStore.md",
+      "id": "PeerStore",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/PeerStore",
+      "outgoing_internal_links": [
+        "modules/src_peers.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/sync-headers/src/peers.rs",
+      "title": "PeerStore"
+    },
+    {
+      "canonical_path": "entities/PhaseTiming.md",
+      "id": "PhaseTiming",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/PhaseTiming",
+      "outgoing_internal_links": [
+        "modules/src_pipeline_diagnostics.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/host/src/pipeline/diagnostics.rs",
+      "title": "PhaseTiming"
+    },
+    {
+      "canonical_path": "entities/PreparedProverVerifier.md",
+      "id": "PreparedProverVerifier",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/PreparedProverVerifier",
+      "outgoing_internal_links": [
+        "modules/pipeline_verify.md",
+        "modules/src_verify.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/host/src/pipeline/verify.rs",
+      "title": "PreparedProverVerifier"
+    },
+    {
+      "canonical_path": "entities/ProofGenerationConfig.md",
+      "id": "ProofGenerationConfig",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/ProofGenerationConfig",
+      "outgoing_internal_links": [
+        "modules/host_src_pipeline_mod.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/host/src/pipeline/mod.rs",
+      "title": "ProofGenerationConfig"
+    },
+    {
+      "canonical_path": "entities/ProofVerifier.md",
+      "id": "ProofVerifier",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/ProofVerifier",
+      "outgoing_internal_links": [
+        "modules/pipeline_verify.md",
+        "modules/src_verify.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/controller/src/verify.rs",
+      "title": "ProofVerifier"
+    },
+    {
+      "canonical_path": "entities/ProverBackend.md",
+      "id": "ProverBackend",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/ProverBackend",
+      "outgoing_internal_links": [
+        "modules/host_src_pipeline_mod.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/host/src/pipeline/mod.rs",
+      "title": "ProverBackend"
+    },
+    {
+      "canonical_path": "entities/PublicValues.md",
+      "id": "PublicValues",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/PublicValues",
+      "outgoing_internal_links": [
+        "modules/public_values.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/core/src/public_values.rs",
+      "title": "PublicValues"
+    },
+    {
+      "canonical_path": "entities/ReportableError.md",
+      "id": "ReportableError",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/ReportableError",
+      "outgoing_internal_links": [
+        "modules/core_src_errors.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/core/src/errors.rs",
+      "title": "ReportableError"
+    },
+    {
+      "canonical_path": "entities/Result.md",
+      "id": "Result",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/Result",
+      "outgoing_internal_links": [
+        "modules/src_db.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/store/src/db.rs",
+      "title": "Result"
+    },
+    {
+      "canonical_path": "entities/ResultOpt.md",
+      "id": "ResultOpt",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/ResultOpt",
+      "outgoing_internal_links": [
+        "modules/src_db.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/store/src/db.rs",
+      "title": "ResultOpt"
+    },
+    {
+      "canonical_path": "entities/ReturnCode.md",
+      "id": "ReturnCode",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/ReturnCode",
+      "outgoing_internal_links": [
+        "modules/public_values.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/core/src/public_values.rs",
+      "title": "ReturnCode"
+    },
+    {
+      "canonical_path": "entities/Ring.md",
+      "id": "Ring",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/Ring",
+      "outgoing_internal_links": [
+        "modules/ring.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/mtp/src/ring.rs",
+      "title": "Ring"
+    },
+    {
+      "canonical_path": "entities/RunId.md",
+      "id": "RunId",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/RunId",
+      "outgoing_internal_links": [
+        "modules/src_run_id.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/types/src/run_id.rs",
+      "title": "RunId"
+    },
+    {
+      "canonical_path": "entities/RunIdError.md",
+      "id": "RunIdError",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/RunIdError",
+      "outgoing_internal_links": [
+        "modules/src_db.md",
+        "modules/src_run_id.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/types/src/run_id.rs",
+      "title": "RunIdError"
+    },
+    {
+      "canonical_path": "entities/RunRecord.md",
+      "id": "RunRecord",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/RunRecord",
+      "outgoing_internal_links": [
+        "modules/src_db.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/store/src/db.rs",
+      "title": "RunRecord"
+    },
+    {
+      "canonical_path": "entities/ShortEpoch.md",
+      "id": "ShortEpoch",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/ShortEpoch",
+      "outgoing_internal_links": [
+        "modules/consensus.md",
+        "modules/params_src_lib.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/params/src/lib.rs",
+      "title": "ShortEpoch"
+    },
+    {
+      "canonical_path": "entities/src_types_Header.md",
+      "id": "src_types_Header",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/src_types_Header",
+      "outgoing_internal_links": [
+        "modules/src_types.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/sync-headers/src/types.rs",
+      "title": "Header"
+    },
+    {
+      "canonical_path": "entities/StageSample.md",
+      "id": "StageSample",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/StageSample",
+      "outgoing_internal_links": [
+        "modules/memory_monitor.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/host/src/memory_monitor.rs",
+      "title": "StageSample"
+    },
+    {
+      "canonical_path": "entities/State.md",
+      "id": "State",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/State",
+      "outgoing_internal_links": [
+        "modules/state.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/core/src/state.rs",
+      "title": "State"
+    },
+    {
+      "canonical_path": "entities/SyncHeadersError.md",
+      "id": "SyncHeadersError",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/SyncHeadersError",
+      "outgoing_internal_links": [
+        "modules/error.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/sync-headers/src/error.rs",
+      "title": "SyncHeadersError"
+    },
+    {
+      "canonical_path": "entities/TargetTriplet.md",
+      "id": "TargetTriplet",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/TargetTriplet",
+      "outgoing_internal_links": [
+        "modules/target_triplet.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/types/src/target_triplet.rs",
+      "title": "TargetTriplet"
+    },
+    {
+      "canonical_path": "entities/Tip.md",
+      "id": "Tip",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/Tip",
+      "outgoing_internal_links": [
+        "modules/src_types.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/sync-headers/src/types.rs",
+      "title": "Tip"
+    },
+    {
+      "canonical_path": "entities/types_src_header_Header.md",
+      "id": "types_src_header_Header",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/types_src_header_Header",
+      "outgoing_internal_links": [
+        "modules/types_src_header.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/types/src/header.rs",
+      "title": "Header"
+    },
+    {
+      "canonical_path": "entities/u256.md",
+      "id": "u256",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/u256",
+      "outgoing_internal_links": [
+        "modules/src_bigint.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/types/src/bigint.rs",
+      "title": "u256"
+    },
+    {
+      "canonical_path": "entities/VerifierKeyDigest.md",
+      "id": "VerifierKeyDigest",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/VerifierKeyDigest",
+      "outgoing_internal_links": [
+        "modules/public_values.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/core/src/public_values.rs",
+      "title": "VerifierKeyDigest"
+    },
+    {
+      "canonical_path": "entities/VersionMessage.md",
+      "id": "VersionMessage",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/VersionMessage",
+      "outgoing_internal_links": [
+        "modules/src_connection.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/sync-headers/src/connection.rs",
+      "title": "VersionMessage"
+    },
+    {
+      "canonical_path": "entities/Warm.md",
+      "id": "Warm",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/Warm",
+      "outgoing_internal_links": [
+        "modules/ring.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/mtp/src/ring.rs",
+      "title": "Warm"
+    },
+    {
+      "canonical_path": "entities/Window.md",
+      "id": "Window",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/Window",
+      "outgoing_internal_links": [
+        "modules/ring.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/mtp/src/ring.rs",
+      "title": "Window"
+    },
+    {
+      "canonical_path": "entities/WireType.md",
+      "id": "WireType",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/WireType",
+      "outgoing_internal_links": [
+        "modules/wiretype_src_lib.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/wiretype/src/lib.rs",
+      "title": "WireType"
+    },
+    {
+      "canonical_path": "entities/WorkerConfig.md",
+      "id": "WorkerConfig",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/WorkerConfig",
+      "outgoing_internal_links": [
+        "modules/src_config.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/worker/src/config.rs",
+      "title": "WorkerConfig"
+    },
+    {
+      "canonical_path": "modules/arguments.md",
+      "id": "arguments",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/arguments",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/wiretype/tests/ui/arguments.rs",
+      "title": "arguments Module"
+    },
+    {
+      "canonical_path": "modules/build.md",
+      "id": "build",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/build",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/host/build.rs",
+      "title": "build Module"
+    },
+    {
+      "canonical_path": "modules/bytes.md",
+      "id": "bytes",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/bytes",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/types/src/tests/bytes.rs",
+      "title": "bytes Module"
+    },
+    {
+      "canonical_path": "modules/cli_src_main.md",
+      "id": "cli_src_main",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/cli_src_main",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/cli/src/main.rs",
+      "title": "main Module"
+    },
+    {
+      "canonical_path": "modules/compressed.md",
+      "id": "compressed",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/compressed",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/host/src/pipeline/proof/compressed.rs",
+      "title": "compressed Module"
+    },
+    {
+      "canonical_path": "modules/consensus.md",
+      "id": "consensus",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/consensus",
+      "outgoing_internal_links": [
+        "entities/Consensus.md",
+        "entities/ConsensusParams.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/params/src/consensus.rs",
+      "title": "consensus Module"
+    },
+    {
+      "canonical_path": "modules/controller_src_lib.md",
+      "id": "controller_src_lib",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/controller_src_lib",
+      "outgoing_internal_links": [
+        "entities/controller_src_lib_BoxError.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/controller/src/lib.rs",
+      "title": "lib Module"
+    },
+    {
+      "canonical_path": "modules/controller_src_tests_mod.md",
+      "id": "controller_src_tests_mod",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/controller_src_tests_mod",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/controller/src/tests/mod.rs",
+      "title": "mod Module"
+    },
+    {
+      "canonical_path": "modules/controller_src_validation.md",
+      "id": "controller_src_validation",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/controller_src_validation",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/controller/src/validation.rs",
+      "title": "validation Module"
+    },
+    {
+      "canonical_path": "modules/core_src_errors.md",
+      "id": "core_src_errors",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/core_src_errors",
+      "outgoing_internal_links": [
+        "entities/ApplyError.md",
+        "entities/ErrorCode.md",
+        "entities/ParseError.md",
+        "entities/ReportableError.md",
+        "modules/core_src_halt_mod.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/core/src/errors.rs",
+      "title": "errors Module"
+    },
+    {
+      "canonical_path": "modules/core_src_halt_mod.md",
+      "id": "core_src_halt_mod",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/core_src_halt_mod",
+      "outgoing_internal_links": [
+        "modules/platform.md",
+        "modules/zkvm.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/core/src/halt/mod.rs",
+      "title": "mod Module"
+    },
+    {
+      "canonical_path": "modules/core_src_header.md",
+      "id": "core_src_header",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/core_src_header",
+      "outgoing_internal_links": [
+        "entities/HeaderInput.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/core/src/header.rs",
+      "title": "header Module"
+    },
+    {
+      "canonical_path": "modules/core_src_lib.md",
+      "id": "core_src_lib",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/core_src_lib",
+      "outgoing_internal_links": [
+        "entities/TargetTriplet.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/core/src/lib.rs",
+      "title": "lib Module"
+    },
+    {
+      "canonical_path": "modules/core_src_tests_mod.md",
+      "id": "core_src_tests_mod",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/core_src_tests_mod",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/core/src/tests/mod.rs",
+      "title": "mod Module"
+    },
+    {
+      "canonical_path": "modules/error.md",
+      "id": "error",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/error",
+      "outgoing_internal_links": [
+        "entities/SyncHeadersError.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/sync-headers/src/error.rs",
+      "title": "error Module"
+    },
+    {
+      "canonical_path": "modules/execution.md",
+      "id": "execution",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/execution",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/host/src/pipeline/execution.rs",
+      "title": "execution Module"
+    },
+    {
+      "canonical_path": "modules/failed_proof.md",
+      "id": "failed_proof",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/failed_proof",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/host/tests/test_errors/proofs/failed_proof.rs",
+      "title": "failed_proof Module"
+    },
+    {
+      "canonical_path": "modules/generate-epoch-profile-fixture.md",
+      "id": "generate-epoch-profile-fixture",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/generate-epoch-profile-fixture",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "scripts/generate-epoch-profile-fixture.py",
+      "title": "generate-epoch-profile-fixture Module"
+    },
+    {
+      "canonical_path": "modules/guest_src_main.md",
+      "id": "guest_src_main",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/guest_src_main",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/guest/src/main.rs",
+      "title": "main Module"
+    },
+    {
+      "canonical_path": "modules/halt.md",
+      "id": "halt",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/halt",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/core/src/tests/halt.rs",
+      "title": "halt Module"
+    },
+    {
+      "canonical_path": "modules/hash.md",
+      "id": "hash",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/hash",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/host/src/util/hash.rs",
+      "title": "hash Module"
+    },
+    {
+      "canonical_path": "modules/host_src_lib.md",
+      "id": "host_src_lib",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/host_src_lib",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/host/src/lib.rs",
+      "title": "lib Module"
+    },
+    {
+      "canonical_path": "modules/host_src_main.md",
+      "id": "host_src_main",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/host_src_main",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/host/src/main.rs",
+      "title": "main Module"
+    },
+    {
+      "canonical_path": "modules/host_src_pipeline_mod.md",
+      "id": "host_src_pipeline_mod",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/host_src_pipeline_mod",
+      "outgoing_internal_links": [
+        "entities/host_src_pipeline_mod_BoxError.md",
+        "entities/ProofGenerationConfig.md",
+        "entities/ProverBackend.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/host/src/pipeline/mod.rs",
+      "title": "mod Module"
+    },
+    {
+      "canonical_path": "modules/host_src_tests_mod.md",
+      "id": "host_src_tests_mod",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/host_src_tests_mod",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/host/src/tests/mod.rs",
+      "title": "mod Module"
+    },
+    {
+      "canonical_path": "modules/input_failure.md",
+      "id": "input_failure",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/input_failure",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/core/src/tests/input/failure.rs",
+      "title": "failure Module"
+    },
+    {
+      "canonical_path": "modules/input_success.md",
+      "id": "input_success",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/input_success",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/core/src/tests/input/success.rs",
+      "title": "success Module"
+    },
+    {
+      "canonical_path": "modules/inspect-proof.md",
+      "id": "inspect-proof",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/inspect-proof",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/host/src/bin/inspect-proof.rs",
+      "title": "inspect-proof Module"
+    },
+    {
+      "canonical_path": "modules/jobs.md",
+      "id": "jobs",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/jobs",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/worker/src/jobs.rs",
+      "title": "jobs Module"
+    },
+    {
+      "canonical_path": "modules/memory_monitor.md",
+      "id": "memory_monitor",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/memory_monitor",
+      "outgoing_internal_links": [
+        "entities/StageSample.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/host/src/memory_monitor.rs",
+      "title": "memory_monitor Module"
+    },
+    {
+      "canonical_path": "modules/msg.md",
+      "id": "msg",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/msg",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/sync-headers/src/msg.rs",
+      "title": "msg Module"
+    },
+    {
+      "canonical_path": "modules/mtp_failure.md",
+      "id": "mtp_failure",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/mtp_failure",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/core/src/tests/mtp/failure.rs",
+      "title": "failure Module"
+    },
+    {
+      "canonical_path": "modules/mtp_src_errors.md",
+      "id": "mtp_src_errors",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/mtp_src_errors",
+      "outgoing_internal_links": [
+        "entities/InsufficientColdHeaders.md",
+        "entities/InvalidParts.md",
+        "entities/NotMedian.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/mtp/src/errors.rs",
+      "title": "errors Module"
+    },
+    {
+      "canonical_path": "modules/mtp_src_lib.md",
+      "id": "mtp_src_lib",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/mtp_src_lib",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/mtp/src/lib.rs",
+      "title": "lib Module"
+    },
+    {
+      "canonical_path": "modules/mtp_success.md",
+      "id": "mtp_success",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/mtp_success",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/core/src/tests/mtp/success.rs",
+      "title": "success Module"
+    },
+    {
+      "canonical_path": "modules/not_pod.md",
+      "id": "not_pod",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/not_pod",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/wiretype/tests/ui/not_pod.rs",
+      "title": "not_pod Module"
+    },
+    {
+      "canonical_path": "modules/observability.md",
+      "id": "observability",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/observability",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/host/src/observability.rs",
+      "title": "observability Module"
+    },
+    {
+      "canonical_path": "modules/p2p_sync.md",
+      "id": "p2p_sync",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/p2p_sync",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/sync-headers/src/p2p_sync.rs",
+      "title": "p2p_sync Module"
+    },
+    {
+      "canonical_path": "modules/params_src_lib.md",
+      "id": "params_src_lib",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/params_src_lib",
+      "outgoing_internal_links": [
+        "entities/Mainnet.md",
+        "entities/ShortEpoch.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/params/src/lib.rs",
+      "title": "lib Module"
+    },
+    {
+      "canonical_path": "modules/params_src_tests_mod.md",
+      "id": "params_src_tests_mod",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/params_src_tests_mod",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/params/src/tests/mod.rs",
+      "title": "mod Module"
+    },
+    {
+      "canonical_path": "modules/pipeline_input.md",
+      "id": "pipeline_input",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/pipeline_input",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/host/src/pipeline/input.rs",
+      "title": "input Module"
+    },
+    {
+      "canonical_path": "modules/pipeline_verify.md",
+      "id": "pipeline_verify",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/pipeline_verify",
+      "outgoing_internal_links": [
+        "entities/PreparedProverVerifier.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/host/src/pipeline/verify.rs",
+      "title": "verify Module"
+    },
+    {
+      "canonical_path": "modules/platform.md",
+      "id": "platform",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/platform",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/core/src/halt/platform.rs",
+      "title": "platform Module"
+    },
+    {
+      "canonical_path": "modules/pow_failure.md",
+      "id": "pow_failure",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/pow_failure",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/core/src/tests/pow/failure.rs",
+      "title": "failure Module"
+    },
+    {
+      "canonical_path": "modules/pow_success.md",
+      "id": "pow_success",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/pow_success",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/core/src/tests/pow/success.rs",
+      "title": "success Module"
+    },
+    {
+      "canonical_path": "modules/profile.md",
+      "id": "profile",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/profile",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/core/src/tests/state/profile.rs",
+      "title": "profile Module"
+    },
+    {
+      "canonical_path": "modules/public_values.md",
+      "id": "public_values",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/public_values",
+      "outgoing_internal_links": [
+        "entities/ErrorCode.md",
+        "entities/PublicValues.md",
+        "entities/ReturnCode.md",
+        "entities/State.md",
+        "entities/VerifierKeyDigest.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/core/src/public_values.rs",
+      "title": "public_values Module"
+    },
+    {
+      "canonical_path": "modules/public_values_failure.md",
+      "id": "public_values_failure",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/public_values_failure",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/core/src/tests/public_values/failure.rs",
+      "title": "failure Module"
+    },
+    {
+      "canonical_path": "modules/public_values_success.md",
+      "id": "public_values_success",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/public_values_success",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/core/src/tests/public_values/success.rs",
+      "title": "success Module"
+    },
+    {
+      "canonical_path": "modules/recursive_chain.md",
+      "id": "recursive_chain",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/recursive_chain",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/host/tests/test_errors/proofs/recursive_chain.rs",
+      "title": "recursive_chain Module"
+    },
+    {
+      "canonical_path": "modules/retarget_failure.md",
+      "id": "retarget_failure",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/retarget_failure",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/core/src/tests/retarget/failure.rs",
+      "title": "failure Module"
+    },
+    {
+      "canonical_path": "modules/retarget_success.md",
+      "id": "retarget_success",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/retarget_success",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/core/src/tests/retarget/success.rs",
+      "title": "success Module"
+    },
+    {
+      "canonical_path": "modules/ring.md",
+      "id": "ring",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/ring",
+      "outgoing_internal_links": [
+        "entities/Cold.md",
+        "entities/Ring.md",
+        "entities/Warm.md",
+        "entities/Window.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/mtp/src/ring.rs",
+      "title": "ring Module"
+    },
+    {
+      "canonical_path": "modules/serialization.md",
+      "id": "serialization",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/serialization",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/wiretype/tests/serialization.rs",
+      "title": "serialization Module"
+    },
+    {
+      "canonical_path": "modules/sha256_const_src_lib.md",
+      "id": "sha256_const_src_lib",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/sha256_const_src_lib",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/sha256_const/src/lib.rs",
+      "title": "lib Module"
+    },
+    {
+      "canonical_path": "modules/sha256_const_src_tests_mod.md",
+      "id": "sha256_const_src_tests_mod",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/sha256_const_src_tests_mod",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/sha256_const/src/tests/mod.rs",
+      "title": "mod Module"
+    },
+    {
+      "canonical_path": "modules/sha256_src_lib.md",
+      "id": "sha256_src_lib",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/sha256_src_lib",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/sha256/src/lib.rs",
+      "title": "lib Module"
+    },
+    {
+      "canonical_path": "modules/sha256_src_tests_mod.md",
+      "id": "sha256_src_tests_mod",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/sha256_src_tests_mod",
+      "outgoing_internal_links": [
+        "entities/HeaderFixture.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/sha256/src/tests/mod.rs",
+      "title": "mod Module"
+    },
+    {
+      "canonical_path": "modules/sp1-stress.md",
+      "id": "sp1-stress",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/sp1-stress",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/host/src/bin/sp1-stress.rs",
+      "title": "sp1-stress Module"
+    },
+    {
+      "canonical_path": "modules/src_bigint.md",
+      "id": "src_bigint",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/src_bigint",
+      "outgoing_internal_links": [
+        "entities/NonMaxU256.md",
+        "entities/u256.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/types/src/bigint.rs",
+      "title": "bigint Module"
+    },
+    {
+      "canonical_path": "modules/src_brand.md",
+      "id": "src_brand",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/src_brand",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/types/src/brand.rs",
+      "title": "brand Module"
+    },
+    {
+      "canonical_path": "modules/src_config.md",
+      "id": "src_config",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/src_config",
+      "outgoing_internal_links": [
+        "entities/WorkerConfig.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/worker/src/config.rs",
+      "title": "config Module"
+    },
+    {
+      "canonical_path": "modules/src_connection.md",
+      "id": "src_connection",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/src_connection",
+      "outgoing_internal_links": [
+        "entities/Command.md",
+        "entities/PeerConnection.md",
+        "entities/VersionMessage.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/sync-headers/src/connection.rs",
+      "title": "connection Module"
+    },
+    {
+      "canonical_path": "modules/src_db.md",
+      "id": "src_db",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/src_db",
+      "outgoing_internal_links": [
+        "entities/Error.md",
+        "entities/HeaderBatchWitness.md",
+        "entities/HeaderRecord.md",
+        "entities/HeaderStore.md",
+        "entities/Result.md",
+        "entities/ResultOpt.md",
+        "entities/RunRecord.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/store/src/db.rs",
+      "title": "db Module"
+    },
+    {
+      "canonical_path": "modules/src_input.md",
+      "id": "src_input",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/src_input",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/core/src/input.rs",
+      "title": "input Module"
+    },
+    {
+      "canonical_path": "modules/src_peers.md",
+      "id": "src_peers",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/src_peers",
+      "outgoing_internal_links": [
+        "entities/PeerEntry.md",
+        "entities/PeerStatus.md",
+        "entities/PeerStore.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/sync-headers/src/peers.rs",
+      "title": "peers Module"
+    },
+    {
+      "canonical_path": "modules/src_pipeline_artifacts.md",
+      "id": "src_pipeline_artifacts",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/src_pipeline_artifacts",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/host/src/pipeline/artifacts.rs",
+      "title": "artifacts Module"
+    },
+    {
+      "canonical_path": "modules/src_pipeline_diagnostics.md",
+      "id": "src_pipeline_diagnostics",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/src_pipeline_diagnostics",
+      "outgoing_internal_links": [
+        "entities/PhaseTiming.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/host/src/pipeline/diagnostics.rs",
+      "title": "diagnostics Module"
+    },
+    {
+      "canonical_path": "modules/src_pipeline_proof_mod.md",
+      "id": "src_pipeline_proof_mod",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/src_pipeline_proof_mod",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/host/src/pipeline/proof/mod.rs",
+      "title": "mod Module"
+    },
+    {
+      "canonical_path": "modules/src_protocol.md",
+      "id": "src_protocol",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/src_protocol",
+      "outgoing_internal_links": [
+        "entities/Batch.md",
+        "entities/ControllerError.md",
+        "entities/ErrorKind.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/controller/src/protocol.rs",
+      "title": "protocol Module"
+    },
+    {
+      "canonical_path": "modules/src_run_id.md",
+      "id": "src_run_id",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/src_run_id",
+      "outgoing_internal_links": [
+        "entities/RunId.md",
+        "entities/RunIdError.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/types/src/run_id.rs",
+      "title": "run_id Module"
+    },
+    {
+      "canonical_path": "modules/src_runtime.md",
+      "id": "src_runtime",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/src_runtime",
+      "outgoing_internal_links": [
+        "entities/ControllerConfig.md",
+        "entities/ControllerRuntime.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/controller/src/runtime.rs",
+      "title": "runtime Module"
+    },
+    {
+      "canonical_path": "modules/src_storage.md",
+      "id": "src_storage",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/src_storage",
+      "outgoing_internal_links": [
+        "entities/ArtifactStore.md",
+        "entities/LocalArtifactStore.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/controller/src/storage.rs",
+      "title": "storage Module"
+    },
+    {
+      "canonical_path": "modules/src_tests_header.md",
+      "id": "src_tests_header",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/src_tests_header",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/types/src/tests/header.rs",
+      "title": "header Module"
+    },
+    {
+      "canonical_path": "modules/src_tests_input_mod.md",
+      "id": "src_tests_input_mod",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/src_tests_input_mod",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/core/src/tests/input/mod.rs",
+      "title": "mod Module"
+    },
+    {
+      "canonical_path": "modules/src_tests_mtp_mod.md",
+      "id": "src_tests_mtp_mod",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/src_tests_mtp_mod",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/core/src/tests/mtp/mod.rs",
+      "title": "mod Module"
+    },
+    {
+      "canonical_path": "modules/src_tests_pipeline_mod.md",
+      "id": "src_tests_pipeline_mod",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/src_tests_pipeline_mod",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/host/src/tests/pipeline/mod.rs",
+      "title": "mod Module"
+    },
+    {
+      "canonical_path": "modules/src_tests_pow_mod.md",
+      "id": "src_tests_pow_mod",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/src_tests_pow_mod",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/core/src/tests/pow/mod.rs",
+      "title": "mod Module"
+    },
+    {
+      "canonical_path": "modules/src_tests_public_values_mod.md",
+      "id": "src_tests_public_values_mod",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/src_tests_public_values_mod",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/core/src/tests/public_values/mod.rs",
+      "title": "mod Module"
+    },
+    {
+      "canonical_path": "modules/src_tests_retarget_mod.md",
+      "id": "src_tests_retarget_mod",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/src_tests_retarget_mod",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/core/src/tests/retarget/mod.rs",
+      "title": "mod Module"
+    },
+    {
+      "canonical_path": "modules/src_tests_state_mod.md",
+      "id": "src_tests_state_mod",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/src_tests_state_mod",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/core/src/tests/state/mod.rs",
+      "title": "mod Module"
+    },
+    {
+      "canonical_path": "modules/src_tests_validation.md",
+      "id": "src_tests_validation",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/src_tests_validation",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/sync-headers/src/tests/validation.rs",
+      "title": "validation Module"
+    },
+    {
+      "canonical_path": "modules/src_types.md",
+      "id": "src_types",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/src_types",
+      "outgoing_internal_links": [
+        "entities/ConnectedHeader.md",
+        "entities/Network.md",
+        "entities/src_types_Header.md",
+        "entities/Tip.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/sync-headers/src/types.rs",
+      "title": "types Module"
+    },
+    {
+      "canonical_path": "modules/src_verify.md",
+      "id": "src_verify",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/src_verify",
+      "outgoing_internal_links": [
+        "entities/ProofVerifier.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/controller/src/verify.rs",
+      "title": "verify Module"
+    },
+    {
+      "canonical_path": "modules/state.md",
+      "id": "state",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/state",
+      "outgoing_internal_links": [
+        "entities/State.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/core/src/state.rs",
+      "title": "state Module"
+    },
+    {
+      "canonical_path": "modules/state_failure.md",
+      "id": "state_failure",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/state_failure",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/core/src/tests/state/failure.rs",
+      "title": "failure Module"
+    },
+    {
+      "canonical_path": "modules/state_success.md",
+      "id": "state_success",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/state_success",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/core/src/tests/state/success.rs",
+      "title": "success Module"
+    },
+    {
+      "canonical_path": "modules/store_src_lib.md",
+      "id": "store_src_lib",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/store_src_lib",
+      "outgoing_internal_links": [
+        "modules/src_db.md",
+        "modules/store_src_lib.md",
+        "modules/test_utils.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/store/src/lib.rs",
+      "title": "lib Module"
+    },
+    {
+      "canonical_path": "modules/store_src_tests_mod.md",
+      "id": "store_src_tests_mod",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/store_src_tests_mod",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/store/src/tests/mod.rs",
+      "title": "mod Module"
+    },
+    {
+      "canonical_path": "modules/summarize-prove-spans.md",
+      "id": "summarize-prove-spans",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/summarize-prove-spans",
+      "outgoing_internal_links": [
+        "entities/Bucket.md"
+      ],
+      "role": "semantic",
+      "source_path": "scripts/summarize-prove-spans.py",
+      "title": "summarize-prove-spans Module"
+    },
+    {
+      "canonical_path": "modules/sync-headers_src_lib.md",
+      "id": "sync-headers_src_lib",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/sync-headers_src_lib",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/sync-headers/src/lib.rs",
+      "title": "lib Module"
+    },
+    {
+      "canonical_path": "modules/sync-headers_src_tests_mod.md",
+      "id": "sync-headers_src_tests_mod",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/sync-headers_src_tests_mod",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/sync-headers/src/tests/mod.rs",
+      "title": "mod Module"
+    },
+    {
+      "canonical_path": "modules/sync-headers_src_validation.md",
+      "id": "sync-headers_src_validation",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/sync-headers_src_validation",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/sync-headers/src/validation.rs",
+      "title": "validation Module"
+    },
+    {
+      "canonical_path": "modules/tampered_witness.md",
+      "id": "tampered_witness",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/tampered_witness",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/host/tests/test_errors/proofs/tampered_witness.rs",
+      "title": "tampered_witness Module"
+    },
+    {
+      "canonical_path": "modules/target_triplet.md",
+      "id": "target_triplet",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/target_triplet",
+      "outgoing_internal_links": [
+        "entities/TargetTriplet.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/types/src/target_triplet.rs",
+      "title": "target_triplet Module"
+    },
+    {
+      "canonical_path": "modules/test_errors.md",
+      "id": "test_errors",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/test_errors",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/host/tests/test_errors.rs",
+      "title": "test_errors Module"
+    },
+    {
+      "canonical_path": "modules/test_utils.md",
+      "id": "test_utils",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/test_utils",
+      "outgoing_internal_links": [
+        "modules/store_src_lib.md",
+        "modules/test_utils.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/store/src/tests/test_utils.rs",
+      "title": "test_utils Module"
+    },
+    {
+      "canonical_path": "modules/tests.md",
+      "id": "tests",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/tests",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/mtp/src/tests.rs",
+      "title": "tests Module"
+    },
+    {
+      "canonical_path": "modules/tests_bigint.md",
+      "id": "tests_bigint",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/tests_bigint",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/types/src/tests/bigint.rs",
+      "title": "bigint Module"
+    },
+    {
+      "canonical_path": "modules/tests_brand.md",
+      "id": "tests_brand",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/tests_brand",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/types/src/tests/brand.rs",
+      "title": "brand Module"
+    },
+    {
+      "canonical_path": "modules/tests_config.md",
+      "id": "tests_config",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/tests_config",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/worker/src/tests/config.rs",
+      "title": "config Module"
+    },
+    {
+      "canonical_path": "modules/tests_connection.md",
+      "id": "tests_connection",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/tests_connection",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/sync-headers/src/tests/connection.rs",
+      "title": "connection Module"
+    },
+    {
+      "canonical_path": "modules/tests_db.md",
+      "id": "tests_db",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/tests_db",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/store/src/tests/db.rs",
+      "title": "db Module"
+    },
+    {
+      "canonical_path": "modules/tests_peers.md",
+      "id": "tests_peers",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/tests_peers",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/sync-headers/src/tests/peers.rs",
+      "title": "peers Module"
+    },
+    {
+      "canonical_path": "modules/tests_pipeline_artifacts.md",
+      "id": "tests_pipeline_artifacts",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/tests_pipeline_artifacts",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/host/src/tests/pipeline/artifacts.rs",
+      "title": "artifacts Module"
+    },
+    {
+      "canonical_path": "modules/tests_pipeline_diagnostics.md",
+      "id": "tests_pipeline_diagnostics",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/tests_pipeline_diagnostics",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/host/src/tests/pipeline/diagnostics.rs",
+      "title": "diagnostics Module"
+    },
+    {
+      "canonical_path": "modules/tests_protocol.md",
+      "id": "tests_protocol",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/tests_protocol",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/controller/src/tests/protocol.rs",
+      "title": "protocol Module"
+    },
+    {
+      "canonical_path": "modules/tests_run_id.md",
+      "id": "tests_run_id",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/tests_run_id",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/types/src/tests/run_id.rs",
+      "title": "run_id Module"
+    },
+    {
+      "canonical_path": "modules/tests_runtime.md",
+      "id": "tests_runtime",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/tests_runtime",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/controller/src/tests/runtime.rs",
+      "title": "runtime Module"
+    },
+    {
+      "canonical_path": "modules/tests_storage.md",
+      "id": "tests_storage",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/tests_storage",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/controller/src/tests/storage.rs",
+      "title": "storage Module"
+    },
+    {
+      "canonical_path": "modules/tests_test_errors_proofs_mod.md",
+      "id": "tests_test_errors_proofs_mod",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/tests_test_errors_proofs_mod",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/host/tests/test_errors/proofs/mod.rs",
+      "title": "mod Module"
+    },
+    {
+      "canonical_path": "modules/tests_types.md",
+      "id": "tests_types",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/tests_types",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/sync-headers/src/tests/types.rs",
+      "title": "types Module"
+    },
+    {
+      "canonical_path": "modules/types_src_header.md",
+      "id": "types_src_header",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/types_src_header",
+      "outgoing_internal_links": [
+        "entities/types_src_header_Header.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/types/src/header.rs",
+      "title": "header Module"
+    },
+    {
+      "canonical_path": "modules/types_src_lib.md",
+      "id": "types_src_lib",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/types_src_lib",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/types/src/lib.rs",
+      "title": "lib Module"
+    },
+    {
+      "canonical_path": "modules/types_src_tests_mod.md",
+      "id": "types_src_tests_mod",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/types_src_tests_mod",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/types/src/tests/mod.rs",
+      "title": "mod Module"
+    },
+    {
+      "canonical_path": "modules/ui.md",
+      "id": "ui",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/ui",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/wiretype/tests/ui.rs",
+      "title": "ui Module"
+    },
+    {
+      "canonical_path": "modules/util.md",
+      "id": "util",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/util",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/host/src/util.rs",
+      "title": "util Module"
+    },
+    {
+      "canonical_path": "modules/wiretype_macro_src_lib.md",
+      "id": "wiretype_macro_src_lib",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/wiretype_macro_src_lib",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/wiretype_macro/src/lib.rs",
+      "title": "lib Module"
+    },
+    {
+      "canonical_path": "modules/wiretype_src_lib.md",
+      "id": "wiretype_src_lib",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/wiretype_src_lib",
+      "outgoing_internal_links": [
+        "entities/WireType.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/wiretype/src/lib.rs",
+      "title": "lib Module"
+    },
+    {
+      "canonical_path": "modules/worker_src_lib.md",
+      "id": "worker_src_lib",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/worker_src_lib",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/worker/src/lib.rs",
+      "title": "lib Module"
+    },
+    {
+      "canonical_path": "modules/worker_src_tests_mod.md",
+      "id": "worker_src_tests_mod",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/worker_src_tests_mod",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/worker/src/tests/mod.rs",
+      "title": "mod Module"
+    },
+    {
+      "canonical_path": "modules/zkvm.md",
+      "id": "zkvm",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/zkvm",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/core/src/halt/zkvm.rs",
+      "title": "zkvm Module"
+    },
+    {
+      "canonical_path": "flows/process-generate-epoch-profile-fixture.md",
+      "id": "process-generate-epoch-profile-fixture",
+      "kind": "flows",
+      "mcp_uri": "llm-wiki://flows/process-generate-epoch-profile-fixture",
+      "outgoing_internal_links": [
+        "entities/HeaderInput.md",
+        "modules/generate-epoch-profile-fixture.md"
+      ],
+      "role": "mixed",
+      "source_path": "scripts/generate-epoch-profile-fixture.py",
+      "title": "generate-epoch-profile-fixture"
+    },
+    {
+      "canonical_path": "flows/process-summarize-prove-spans.md",
+      "id": "process-summarize-prove-spans",
+      "kind": "flows",
+      "mcp_uri": "llm-wiki://flows/process-summarize-prove-spans",
+      "outgoing_internal_links": [
+        "modules/summarize-prove-spans.md"
+      ],
+      "role": "mixed",
+      "source_path": "scripts/summarize-prove-spans.py",
+      "title": "summarize-prove-spans"
+    },
+    {
+      "canonical_path": "infrastructure/_github_workflows_ci_yml.md",
+      "id": "_github_workflows_ci_yml",
+      "kind": "infrastructure",
+      "mcp_uri": "llm-wiki://infrastructure/_github_workflows_ci_yml",
+      "outgoing_internal_links": [],
+      "role": "mixed",
+      "source_path": ".github/workflows/ci.yml",
+      "title": "GitHub Actions: CI"
+    },
+    {
+      "canonical_path": "infrastructure/_github_workflows_docker_yml.md",
+      "id": "_github_workflows_docker_yml",
+      "kind": "infrastructure",
+      "mcp_uri": "llm-wiki://infrastructure/_github_workflows_docker_yml",
+      "outgoing_internal_links": [
+        "infrastructure/docker_Dockerfile_vast-cuda.md"
+      ],
+      "role": "mixed",
+      "source_path": ".github/workflows/docker.yml",
+      "title": "GitHub Actions: docker"
+    },
+    {
+      "canonical_path": "infrastructure/docker_Dockerfile_vast-cuda.md",
+      "id": "docker_Dockerfile_vast-cuda",
+      "kind": "infrastructure",
+      "mcp_uri": "llm-wiki://infrastructure/docker_Dockerfile_vast-cuda",
+      "outgoing_internal_links": [],
+      "role": "mixed",
+      "source_path": "docker/Dockerfile.vast-cuda",
+      "title": "docker/Dockerfile.vast-cuda"
+    },
+    {
+      "canonical_path": "dependencies.md",
+      "id": "dependencies",
+      "kind": "dependencies",
+      "mcp_uri": "llm-wiki://dependencies",
+      "outgoing_internal_links": [
+        "modules/arguments.md",
+        "modules/build.md",
+        "modules/bytes.md",
+        "modules/cli_src_main.md",
+        "modules/compressed.md",
+        "modules/consensus.md",
+        "modules/controller_src_lib.md",
+        "modules/controller_src_tests_mod.md",
+        "modules/controller_src_validation.md",
+        "modules/core_src_errors.md",
+        "modules/core_src_halt_mod.md",
+        "modules/core_src_header.md",
+        "modules/core_src_lib.md",
+        "modules/core_src_tests_mod.md",
+        "modules/error.md",
+        "modules/execution.md",
+        "modules/failed_proof.md",
+        "modules/generate-epoch-profile-fixture.md",
+        "modules/guest_src_main.md",
+        "modules/halt.md",
+        "modules/hash.md",
+        "modules/host_src_lib.md",
+        "modules/host_src_main.md",
+        "modules/host_src_pipeline_mod.md",
+        "modules/host_src_tests_mod.md",
+        "modules/input_failure.md",
+        "modules/input_success.md",
+        "modules/inspect-proof.md",
+        "modules/jobs.md",
+        "modules/memory_monitor.md",
+        "modules/msg.md",
+        "modules/mtp_failure.md",
+        "modules/mtp_src_errors.md",
+        "modules/mtp_src_lib.md",
+        "modules/mtp_success.md",
+        "modules/not_pod.md",
+        "modules/observability.md",
+        "modules/p2p_sync.md",
+        "modules/params_src_lib.md",
+        "modules/params_src_tests_mod.md",
+        "modules/pipeline_input.md",
+        "modules/pipeline_verify.md",
+        "modules/platform.md",
+        "modules/pow_failure.md",
+        "modules/pow_success.md",
+        "modules/profile.md",
+        "modules/public_values.md",
+        "modules/public_values_failure.md",
+        "modules/public_values_success.md",
+        "modules/recursive_chain.md",
+        "modules/retarget_failure.md",
+        "modules/retarget_success.md",
+        "modules/ring.md",
+        "modules/serialization.md",
+        "modules/sha256_const_src_lib.md",
+        "modules/sha256_const_src_tests_mod.md",
+        "modules/sha256_src_lib.md",
+        "modules/sha256_src_tests_mod.md",
+        "modules/sp1-stress.md",
+        "modules/src_bigint.md",
+        "modules/src_brand.md",
+        "modules/src_config.md",
+        "modules/src_connection.md",
+        "modules/src_db.md",
+        "modules/src_input.md",
+        "modules/src_peers.md",
+        "modules/src_pipeline_artifacts.md",
+        "modules/src_pipeline_diagnostics.md",
+        "modules/src_pipeline_proof_mod.md",
+        "modules/src_protocol.md",
+        "modules/src_run_id.md",
+        "modules/src_runtime.md",
+        "modules/src_storage.md",
+        "modules/src_tests_header.md",
+        "modules/src_tests_input_mod.md",
+        "modules/src_tests_mtp_mod.md",
+        "modules/src_tests_pipeline_mod.md",
+        "modules/src_tests_pow_mod.md",
+        "modules/src_tests_public_values_mod.md",
+        "modules/src_tests_retarget_mod.md",
+        "modules/src_tests_state_mod.md",
+        "modules/src_tests_validation.md",
+        "modules/src_types.md",
+        "modules/src_verify.md",
+        "modules/state.md",
+        "modules/state_failure.md",
+        "modules/state_success.md",
+        "modules/store_src_lib.md",
+        "modules/store_src_tests_mod.md",
+        "modules/summarize-prove-spans.md",
+        "modules/sync-headers_src_lib.md",
+        "modules/sync-headers_src_tests_mod.md",
+        "modules/sync-headers_src_validation.md",
+        "modules/tampered_witness.md",
+        "modules/target_triplet.md",
+        "modules/test_errors.md",
+        "modules/test_utils.md",
+        "modules/tests.md",
+        "modules/tests_bigint.md",
+        "modules/tests_brand.md",
+        "modules/tests_config.md",
+        "modules/tests_connection.md",
+        "modules/tests_db.md",
+        "modules/tests_peers.md",
+        "modules/tests_pipeline_artifacts.md",
+        "modules/tests_pipeline_diagnostics.md",
+        "modules/tests_protocol.md",
+        "modules/tests_run_id.md",
+        "modules/tests_runtime.md",
+        "modules/tests_storage.md",
+        "modules/tests_test_errors_proofs_mod.md",
+        "modules/tests_types.md",
+        "modules/types_src_header.md",
+        "modules/types_src_lib.md",
+        "modules/types_src_tests_mod.md",
+        "modules/ui.md",
+        "modules/util.md",
+        "modules/wiretype_macro_src_lib.md",
+        "modules/wiretype_src_lib.md",
+        "modules/worker_src_lib.md",
+        "modules/worker_src_tests_mod.md",
+        "modules/zkvm.md"
+      ],
+      "role": "mixed",
+      "source_path": null,
+      "title": "Dependencies"
+    },
+    {
+      "canonical_path": "load-order.md",
+      "id": "load-order",
+      "kind": "load-order",
+      "mcp_uri": "llm-wiki://load-order",
+      "outgoing_internal_links": [
+        "dependencies.md",
+        "modules/arguments.md",
+        "modules/build.md",
+        "modules/bytes.md",
+        "modules/cli_src_main.md",
+        "modules/compressed.md",
+        "modules/consensus.md",
+        "modules/controller_src_lib.md",
+        "modules/controller_src_tests_mod.md",
+        "modules/controller_src_validation.md",
+        "modules/core_src_errors.md",
+        "modules/core_src_halt_mod.md",
+        "modules/core_src_header.md",
+        "modules/core_src_lib.md",
+        "modules/core_src_tests_mod.md",
+        "modules/error.md",
+        "modules/execution.md",
+        "modules/failed_proof.md",
+        "modules/generate-epoch-profile-fixture.md",
+        "modules/guest_src_main.md",
+        "modules/halt.md",
+        "modules/hash.md",
+        "modules/host_src_lib.md",
+        "modules/host_src_main.md",
+        "modules/host_src_pipeline_mod.md",
+        "modules/host_src_tests_mod.md",
+        "modules/input_failure.md",
+        "modules/input_success.md",
+        "modules/inspect-proof.md",
+        "modules/jobs.md",
+        "modules/memory_monitor.md",
+        "modules/msg.md",
+        "modules/mtp_failure.md",
+        "modules/mtp_src_errors.md",
+        "modules/mtp_src_lib.md",
+        "modules/mtp_success.md",
+        "modules/not_pod.md",
+        "modules/observability.md",
+        "modules/p2p_sync.md",
+        "modules/params_src_lib.md",
+        "modules/params_src_tests_mod.md",
+        "modules/pipeline_input.md",
+        "modules/pipeline_verify.md",
+        "modules/platform.md",
+        "modules/pow_failure.md",
+        "modules/pow_success.md",
+        "modules/profile.md",
+        "modules/public_values.md",
+        "modules/public_values_failure.md",
+        "modules/public_values_success.md",
+        "modules/recursive_chain.md",
+        "modules/retarget_failure.md",
+        "modules/retarget_success.md",
+        "modules/ring.md",
+        "modules/serialization.md",
+        "modules/sha256_const_src_lib.md",
+        "modules/sha256_const_src_tests_mod.md",
+        "modules/sha256_src_lib.md",
+        "modules/sha256_src_tests_mod.md",
+        "modules/sp1-stress.md",
+        "modules/src_bigint.md",
+        "modules/src_brand.md",
+        "modules/src_config.md",
+        "modules/src_connection.md",
+        "modules/src_db.md",
+        "modules/src_input.md",
+        "modules/src_peers.md",
+        "modules/src_pipeline_artifacts.md",
+        "modules/src_pipeline_diagnostics.md",
+        "modules/src_pipeline_proof_mod.md",
+        "modules/src_protocol.md",
+        "modules/src_run_id.md",
+        "modules/src_runtime.md",
+        "modules/src_storage.md",
+        "modules/src_tests_header.md",
+        "modules/src_tests_input_mod.md",
+        "modules/src_tests_mtp_mod.md",
+        "modules/src_tests_pipeline_mod.md",
+        "modules/src_tests_pow_mod.md",
+        "modules/src_tests_public_values_mod.md",
+        "modules/src_tests_retarget_mod.md",
+        "modules/src_tests_state_mod.md",
+        "modules/src_tests_validation.md",
+        "modules/src_types.md",
+        "modules/src_verify.md",
+        "modules/state.md",
+        "modules/state_failure.md",
+        "modules/state_success.md",
+        "modules/store_src_lib.md",
+        "modules/store_src_tests_mod.md",
+        "modules/summarize-prove-spans.md",
+        "modules/sync-headers_src_lib.md",
+        "modules/sync-headers_src_tests_mod.md",
+        "modules/sync-headers_src_validation.md",
+        "modules/tampered_witness.md",
+        "modules/target_triplet.md",
+        "modules/test_errors.md",
+        "modules/test_utils.md",
+        "modules/tests.md",
+        "modules/tests_bigint.md",
+        "modules/tests_brand.md",
+        "modules/tests_config.md",
+        "modules/tests_connection.md",
+        "modules/tests_db.md",
+        "modules/tests_peers.md",
+        "modules/tests_pipeline_artifacts.md",
+        "modules/tests_pipeline_diagnostics.md",
+        "modules/tests_protocol.md",
+        "modules/tests_run_id.md",
+        "modules/tests_runtime.md",
+        "modules/tests_storage.md",
+        "modules/tests_test_errors_proofs_mod.md",
+        "modules/tests_types.md",
+        "modules/types_src_header.md",
+        "modules/types_src_lib.md",
+        "modules/types_src_tests_mod.md",
+        "modules/ui.md",
+        "modules/util.md",
+        "modules/wiretype_macro_src_lib.md",
+        "modules/wiretype_src_lib.md",
+        "modules/worker_src_lib.md",
+        "modules/worker_src_tests_mod.md",
+        "modules/zkvm.md"
+      ],
+      "role": "mixed",
+      "source_path": null,
+      "title": "Load order"
+    }
+  ],
+  "schema_version": "llm-wiki-surface-index/v1",
+  "source_hash": "sha256:c9a46a8fd7dbadf363baaec63f9957be8a2b5f85c6404556cb498491af173262"
+}

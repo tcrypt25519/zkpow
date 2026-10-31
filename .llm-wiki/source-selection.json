@@ -1,0 +1,5 @@
+{
+  "schema_version": "llm-wiki-source-selection/v1",
+  "include": [".github", "Cargo.toml", "crates", "docker", "scripts"],
+  "exclude": ["docker/.agents", "docker/.claude", "docker/.devin"]
+}
