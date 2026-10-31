@@ -39,15 +39,15 @@ impl From<Error> for rusqlite::Error {
         }
     }
 }
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    
-pub type DBResult<T> = Result<T, Error>;
-pub type DBResultOpt<T> = DBResult<Option<T>>;
+
+pub type Result<T> = std::result::Result<T, Error>;
+pub type ResultOpt<T> = Result<Option<T>>;
 
 pub(crate) fn hash_to_bytes(hash: &BlockHash) -> [u8; BlockHash::SIZE] {
     *hash.as_inner()
 }
 
-fn hash_from_bytes(bytes: &[u8]) -> DBResult<BlockHash> {
+fn hash_from_bytes(bytes: &[u8]) -> Result<BlockHash> {
     match BlockHash::parse(bytes) {
         Ok(hash) => Ok(*hash),
         Err(e) => Err(Error::BytemuckDeserializeError(e)),
@@ -61,10 +61,10 @@ pub(crate) fn work_to_bytes(work: &ChainWork) -> [u8; ChainWork::SIZE] {
     let mut bytes = work.to_le_bytes();
     bytes.reverse();
     bytes
-    }
+}
 
 /// Inverse of [`work_to_bytes`]. Returns `None` if `bytes` isn't exactly 32 bytes.
-fn work_from_bytes(bytes: &[u8]) -> DBResult<ChainWork> {
+fn work_from_bytes(bytes: &[u8]) -> Result<ChainWork> {
     let mut arr: [u8; ChainWork::SIZE] = bytes.try_into()?;
     arr.reverse();
     Ok(ChainWork::from_le_bytes(arr))
@@ -150,7 +150,7 @@ impl HeaderStore {
         Ok(Self { conn })
     }
 
-    pub fn get_best_tip<C: Consensus>(&self) -> DBResultOpt<Tip> {
+    pub fn get_best_tip<C: Consensus>(&self) -> ResultOpt<Tip> {
         struct BestTipRow {
             hash_bytes:            Vec<u8>,
             height:                u32,
@@ -409,7 +409,7 @@ impl HeaderStore {
     }
 
     /// Reconstruct full consensus state at an arbitrary height.
-    pub fn state_at_height<C: Consensus>(&self, height: u32, genesis_hash: BlockHash) -> DBResultOpt<State> {
+    pub fn state_at_height<C: Consensus>(&self, height: u32, genesis_hash: BlockHash) -> ResultOpt<State> {
         if height == 0 {
             let Some(genesis) = self.load_header_record(0)? else {
                 return Ok(None);

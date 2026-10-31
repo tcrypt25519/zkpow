@@ -7,7 +7,7 @@ pub mod db;
 pub mod test_utils;
 
 pub use db::{
-    genesis_state_from_record, DBResult, DBResultOpt, Error, HeaderBatchWitness, HeaderRecord, HeaderStore, RunRecord,
+    genesis_state_from_record, Error, HeaderBatchWitness, HeaderRecord, HeaderStore, Result, ResultOpt, RunRecord,
 };
 
 /// Resolve the SQLite header database path: `ZKPOW_DB_PATH` if set, otherwise
