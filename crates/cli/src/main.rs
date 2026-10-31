@@ -1,3 +1,6 @@
+use core::str::FromStr;
+use std::str;
+
 use clap::{Args, Parser, Subcommand};
 use sync_headers::{connect_headers, tip_from_connected, ConnectedHeader, Header, Network, PeerStore, Tip};
 use zkpow_params::{Consensus, Mainnet};
@@ -60,11 +63,11 @@ fn sync_p2p_for_network(args: &SyncArgs) -> Result<(), Box<dyn std::error::Error
 /// on `zkpow-sync-headers`, so the producer cannot call back into the store.
 /// The CLI owns the store and supplies persistence through the callback here.
 fn sync_p2p<C: Consensus>(args: &SyncArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let Some(network) = Network::parse(&args.p2p_network) else {
+    let Ok(network) = Network::from_str(&args.p2p_network) else {
         return Err("network not found".into());
     };
     if network != Network::Mainnet {
-        return Err(format!("unsupported network: {}", network.name()).into());
+        return Err(format!("unsupported network: {}", network).into());
     }
     tracing::info!(?network, db = %args.db, "Starting P2P sync");
 

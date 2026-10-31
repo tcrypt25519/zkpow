@@ -12,14 +12,25 @@ use zkpow_core::BlockHash;
 use zkpow_params::Consensus;
 
 use crate::{
-    connection::{PeerConnection, MAX_HEADERS_PER_MSG},
-    error::SyncHeadersError,
+    connection::PeerConnection,
+    error::{ConnectionError, SyncHeadersError},
+    msg::MAX_HEADERS_PER_MSG,
     peers::PeerStore,
     types::{Header, Network, Tip},
 };
 
 /// How many times to retry a connection attempt to the same peer.
 const CONNECT_RETRIES: u32 = 3;
+
+#[derive(Debug, thiserror::Error)]
+enum PeerSyncError<E: std::fmt::Debug> {
+    #[error("connection failed: {0}")]
+    Connect(#[source] ConnectionError),
+    #[error("peer error: {0}")]
+    Peer(#[source] ConnectionError),
+    #[error("header processing error: {0:?}")]
+    Callback(E),
+}
 
 /// Sync headers from the Bitcoin P2P network, passing each batch to a callback.
 ///
@@ -79,20 +90,20 @@ where
                 tracing::info!(height = current_tip.height, "Sync completed");
                 break;
             },
-            Err(e) => {
-                current_tip = e.latest_tip().clone();
-                match &e {
-                    SyncHeadersError::Connect { peer, source, .. } => {
-                        tracing::warn!(peer = %peer, error = %source, "Connection failed, trying different peer");
+            Err(error) => {
+                match error {
+                    PeerSyncError::Connect(source) => {
+                        tracing::warn!(peer = %peer_addr, error = %source, "Connection failed, trying different peer");
                     },
-                    SyncHeadersError::Peer { source, synced, .. } => {
-                        tracing::warn!(error = %source, synced, "Peer error during sync, trying different peer");
+                    PeerSyncError::Peer(source) => {
+                        tracing::warn!(error = %source, synced = total_synced, "Peer error during sync, trying different peer");
                     },
-                    SyncHeadersError::Callback { .. } => {
-                        return Err(e);
-                    },
-                    SyncHeadersError::NoCandidates { .. } => {
-                        return Err(e);
+                    PeerSyncError::Callback(source) => {
+                        return Err(SyncHeadersError::Callback {
+                            source:     Box::new(source),
+                            latest_tip: Box::new(current_tip),
+                            synced:     total_synced,
+                        });
                     },
                 }
                 peer_store.mark_unreachable(&peer_addr);
@@ -111,47 +122,29 @@ fn sync_with_peer<P, C, E>(
     total_synced: &mut u32,
     batch: &mut u32,
     on_headers: &mut C,
-) -> Result<(), SyncHeadersError<E>>
+) -> Result<(), PeerSyncError<E>>
 where
     P: Consensus,
     C: FnMut(&[Header], &Tip) -> Result<Tip, E>,
     E: std::fmt::Debug,
 {
-    let mut p2p_conn = None;
-    for attempt in 0..CONNECT_RETRIES {
-        match PeerConnection::connect(peer_addr, network, current_tip.height as i32) {
-            Ok(c) => {
-                p2p_conn = Some(c);
-                break;
-            },
-            Err(e) => {
-                if attempt + 1 < CONNECT_RETRIES {
-                    let backoff = Duration::from_secs(2u64.pow(attempt + 1));
-                    tracing::warn!(
-                        peer = %peer_addr, error = %e, attempt = attempt + 1, backoff = ?backoff,
-                        "Connection failed, retrying"
-                    );
-                    thread::sleep(backoff);
-                } else {
-                    tracing::warn!(peer = %peer_addr, error = %e, "All connection retries exhausted");
-                }
-            },
-        }
+    let connect = || PeerConnection::connect(peer_addr, network, current_tip.height as i32);
+    let mut connection = connect();
+    for attempt in 1..CONNECT_RETRIES {
+        let Err(error) = &connection else { break };
+        let backoff = Duration::from_secs(2u64.pow(attempt));
+        tracing::warn!(
+            peer = %peer_addr, error = %error, attempt, backoff = ?backoff,
+            "Connection failed, retrying"
+        );
+        thread::sleep(backoff);
+        connection = connect();
     }
 
-    let mut p2p_conn = match p2p_conn {
-        Some(c) => c,
-        None => {
-            return Err(SyncHeadersError::Connect {
-                peer:       peer_addr,
-                source:     Box::new(std::io::Error::new(
-                    std::io::ErrorKind::ConnectionRefused,
-                    "all connection retries exhausted",
-                )),
-                latest_tip: Box::new(current_tip.clone()),
-            });
-        },
-    };
+    let mut p2p_conn = connection.map_err(|source| {
+        tracing::warn!(peer = %peer_addr, error = %source, "All connection retries exhausted");
+        PeerSyncError::Connect(source)
+    })?;
 
     loop {
         if max_headers > 0 && *total_synced >= max_headers {
@@ -161,24 +154,9 @@ where
         let locators = build_locators::<P>(current_tip);
         let stop_hash = BlockHash::new([0u8; 32]);
 
-        if let Err(e) = p2p_conn.send_getheaders(&locators, stop_hash) {
-            return Err(SyncHeadersError::Peer {
-                source:     Box::new(e),
-                latest_tip: Box::new(current_tip.clone()),
-                synced:     *total_synced,
-            });
-        }
+        p2p_conn.send_getheaders(&locators, stop_hash).map_err(PeerSyncError::Peer)?;
 
-        let raw_headers = match p2p_conn.read_headers() {
-            Ok(h) => h,
-            Err(e) => {
-                return Err(SyncHeadersError::Peer {
-                    source:     Box::new(e),
-                    latest_tip: Box::new(current_tip.clone()),
-                    synced:     *total_synced,
-                });
-            },
-        };
+        let raw_headers = p2p_conn.read_headers().map_err(PeerSyncError::Peer)?;
 
         if raw_headers.is_empty() {
             tracing::info!(height = current_tip.height, "Peer has no more headers, we're at the tip");
@@ -195,16 +173,7 @@ where
             &raw_headers[..]
         };
 
-        let new_tip = match on_headers(batch_headers, current_tip) {
-            Ok(tip) => tip,
-            Err(e) => {
-                return Err(SyncHeadersError::Callback {
-                    source:     Box::new(e),
-                    latest_tip: Box::new(current_tip.clone()),
-                    synced:     *total_synced,
-                });
-            },
-        };
+        let new_tip = on_headers(batch_headers, current_tip).map_err(PeerSyncError::Callback)?;
 
         let valid_count = new_tip.height - current_tip.height;
         *total_synced += valid_count;
@@ -220,14 +189,10 @@ where
         *current_tip = new_tip;
 
         if valid_count < batch_headers.len() as u32 {
-            return Err(SyncHeadersError::Peer {
-                source:     Box::new(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "peer sent invalid headers",
-                )),
-                latest_tip: Box::new(current_tip.clone()),
-                synced:     *total_synced,
-            });
+            return Err(PeerSyncError::Peer(ConnectionError::InvalidHeaders {
+                valid: valid_count as usize,
+                total: batch_headers.len(),
+            }));
         }
 
         if raw_headers.len() < MAX_HEADERS_PER_MSG {
@@ -241,4 +206,61 @@ where
 
 fn build_locators<P: Consensus>(tip: &Tip) -> Vec<BlockHash> {
     vec![tip.hash, P::GENESIS_HASH]
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        error::Error,
+        io::{Read, Write},
+        net::TcpListener,
+    };
+
+    use zkpow_params::Mainnet;
+
+    use super::*;
+
+    #[test]
+    fn exhausted_retries_preserve_the_last_handshake_error_and_tip() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let peer = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            for attempt in 0..CONNECT_RETRIES {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+                let mut frame = [0; 24];
+                stream.read_exact(&mut frame).unwrap();
+                let length = u32::from_le_bytes(frame[16..20].try_into().unwrap());
+                stream.read_exact(&mut vec![0; length as usize]).unwrap();
+                stream.write_all(&[attempt as u8; 4]).unwrap();
+            }
+        });
+
+        let mut tip = Tip::genesis::<Mainnet>(Mainnet::GENESIS_HASH);
+        let mut total_synced = 0;
+        let mut batch = 0;
+        let mut on_headers = |_: &[Header], _: &Tip| -> Result<Tip, std::convert::Infallible> {
+            panic!("failed handshakes must not invoke the callback")
+        };
+        let error = sync_with_peer::<Mainnet, _, _>(
+            peer,
+            Network::Mainnet,
+            &mut tip,
+            0,
+            &mut total_synced,
+            &mut batch,
+            &mut on_headers,
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            &error,
+            PeerSyncError::Connect(ConnectionError::InvalidMagic { received, .. })
+                if *received == [(CONNECT_RETRIES - 1) as u8; 4]
+        ));
+        assert_eq!(tip.hash, Mainnet::GENESIS_HASH);
+        assert_eq!(tip.height, 0);
+        assert!(error.source().unwrap().downcast_ref::<ConnectionError>().is_some());
+        server.join().unwrap();
+    }
 }

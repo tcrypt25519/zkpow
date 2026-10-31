@@ -17,9 +17,7 @@ pub fn connect_headers<C: Consensus>(anchor: &Tip, headers: &[Header]) -> Vec<Co
     let mut ordered_timestamp_run = anchor.ordered_timestamp_run;
     let mut epoch_timestamp = anchor.epoch_timestamp;
 
-    let mut active_nbits = anchor.current_nbits;
-    let mut active_target = anchor.current_target;
-    let mut active_work = anchor.current_block_work;
+    let mut target_triplet = anchor.target_triplet;
 
     for header in headers {
         if header.prev_blockhash() != prev_hash {
@@ -35,17 +33,16 @@ pub fn connect_headers<C: Consensus>(anchor: &Tip, headers: &[Header]) -> Vec<Co
         let previous_timestamp = timestamps[timestamp_slot(height)];
 
         if candidate_height.is_multiple_of(C::PARAMS.epoch_length) {
-            (active_nbits, active_target, active_work) = calculate_next_work_required::<C>(
-                active_target,
+            target_triplet = calculate_next_work_required::<C>(
+                target_triplet.target(),
                 BlockTimestamp::new(epoch_timestamp),
                 BlockTimestamp::new(previous_timestamp),
-            )
-            .components();
+            );
         }
 
-        if header.inner.compact_target != active_nbits {
+        if header.inner.compact_target != target_triplet.compact_target() {
             tracing::debug!(
-                expected = ?active_nbits,
+                expected = ?target_triplet.compact_target(),
                 got = ?header.inner.compact_target,
                 "compact_target mismatch"
             );
@@ -53,7 +50,7 @@ pub fn connect_headers<C: Consensus>(anchor: &Tip, headers: &[Header]) -> Vec<Co
         }
 
         let hash = header.block_hash();
-        if !check_proof_of_work(hash, &active_target) {
+        if !check_proof_of_work(hash, &target_triplet.target()) {
             tracing::debug!(%hash, "PoW validation failed");
             break;
         }
@@ -72,7 +69,7 @@ pub fn connect_headers<C: Consensus>(anchor: &Tip, headers: &[Header]) -> Vec<Co
             break;
         }
 
-        cumulative_work += active_work;
+        cumulative_work += target_triplet.block_work();
         height = candidate_height;
         if height.is_multiple_of(C::PARAMS.epoch_length) {
             epoch_timestamp = header.inner.timestamp.into_inner();
@@ -111,11 +108,8 @@ pub fn tip_from_connected<C: Consensus>(anchor: &Tip, connected: &[ConnectedHead
 
     let epoch_length = C::PARAMS.epoch_length;
     let epoch_start = (last.height / epoch_length) * epoch_length;
-    let (epoch_timestamp, (current_nbits, current_target, current_block_work)) = if epoch_start <= anchor.height {
-        (
-            anchor.epoch_timestamp,
-            (anchor.current_nbits, anchor.current_target, anchor.current_block_work),
-        )
+    let (epoch_timestamp, target_triplet) = if epoch_start <= anchor.height {
+        (anchor.epoch_timestamp, anchor.target_triplet)
     } else {
         let idx = (epoch_start - anchor.height - 1) as usize;
         (
@@ -131,8 +125,6 @@ pub fn tip_from_connected<C: Consensus>(anchor: &Tip, connected: &[ConnectedHead
         timestamps,
         last.ordered_timestamp_run,
         epoch_timestamp,
-        current_nbits,
-        current_target,
-        current_block_work,
+        target_triplet,
     )
 }

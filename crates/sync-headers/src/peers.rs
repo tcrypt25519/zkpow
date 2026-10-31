@@ -3,7 +3,7 @@
 use std::{
     collections::{HashMap, HashSet},
     fmt,
-    net::{SocketAddr, ToSocketAddrs},
+    net::{IpAddr, SocketAddr, ToSocketAddrs},
     time::SystemTime,
 };
 
@@ -84,27 +84,31 @@ impl PeerStore {
     /// Resolve all DNS seeds and populate the peer store.
     pub fn from_dns_seeds() -> std::io::Result<Self> {
         let mut seen = HashSet::new();
-        let mut entries = Vec::new();
 
-        for seed in DNS_SEEDS {
-            let seed_addr = format!("{}:{}", seed, DEFAULT_PORT);
-            match seed_addr.to_socket_addrs() {
-                Ok(addrs) => {
-                    let count = addrs
+        let entries: Vec<PeerEntry> = DNS_SEEDS
+            .iter()
+            .filter_map(|s| {
+                // Compute the addresses fort this seed; drop the seed if the resolution fails.
+                let seeds = format!("{}:{}", s, DEFAULT_PORT).to_socket_addrs();
+                let Ok(addrs) = seeds else {
+                    tracing::warn!(seed = %s, error = %seeds.unwrap_err(), "Failed to resolve DNS seed");
+                    return None;
+                };
+
+                // Filter out loopback, private, link-local addresses, and duplicates.
+                // Return PeerEntry for each of the remaining addresses.
+                Some(
+                    addrs
                         .filter(|a| match a.ip() {
-                            std::net::IpAddr::V4(ip) => !ip.is_loopback() && !ip.is_private() && !ip.is_link_local(),
-                            std::net::IpAddr::V6(ip) => !ip.is_loopback() && !ip.is_unspecified(),
+                            IpAddr::V4(ip) => !ip.is_loopback() && !ip.is_private() && !ip.is_link_local(),
+                            IpAddr::V6(ip) => !ip.is_loopback() && !ip.is_unspecified(),
                         })
-                        .filter_map(|a| if seen.insert(a) { Some(PeerEntry::new(a)) } else { None })
-                        .collect::<Vec<_>>();
-                    tracing::debug!(seed = %seed, resolved = count.len(), "DNS seed resolved");
-                    entries.extend(count);
-                },
-                Err(e) => {
-                    tracing::warn!(seed = %seed, error = %e, "Failed to resolve DNS seed");
-                },
-            }
-        }
+                        .filter_map(|a| seen.insert(a).then(|| PeerEntry::new(a)))
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .flatten()
+            .collect();
 
         tracing::info!(peers = entries.len(), "Discovered peers from DNS seeds");
         Ok(Self { entries })
@@ -130,28 +134,24 @@ impl PeerStore {
         }
     }
 
+    pub fn mark_status(&mut self, addr: &SocketAddr, status: PeerStatus) {
+        self.find_mut(addr).map(|e| e.transition(status));
+    }
+
     pub fn mark_connected(&mut self, addr: &SocketAddr) {
-        if let Some(entry) = self.find_mut(addr) {
-            entry.transition(PeerStatus::Connected);
-        }
+        self.mark_status(addr, PeerStatus::Connected);
     }
 
     pub fn mark_unreachable(&mut self, addr: &SocketAddr) {
-        if let Some(entry) = self.find_mut(addr) {
-            entry.transition(PeerStatus::Unreachable);
-        }
+        self.mark_status(addr, PeerStatus::Unreachable);
     }
 
     pub fn mark_disconnected(&mut self, addr: &SocketAddr) {
-        if let Some(entry) = self.find_mut(addr) {
-            entry.transition(PeerStatus::Disconnected);
-        }
+        self.mark_status(addr, PeerStatus::Disconnected);
     }
 
     pub fn mark_too_slow(&mut self, addr: &SocketAddr) {
-        if let Some(entry) = self.find_mut(addr) {
-            entry.transition(PeerStatus::TooSlow);
-        }
+        self.mark_status(addr, PeerStatus::TooSlow);
     }
 
     pub fn len(&self) -> usize {

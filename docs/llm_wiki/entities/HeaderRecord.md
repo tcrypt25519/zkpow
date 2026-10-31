@@ -1,6 +1,6 @@
 # HeaderRecord
 
-**Location:** `crates/store/src/db.rs:530`
+**Location:** `crates/store/src/db.rs:527`
 **Kind:** Class
 **Bases:** —
 **Module:** [src_db](../modules/src_db.md)

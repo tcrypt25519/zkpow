@@ -4,7 +4,7 @@ use std::{
     thread,
 };
 
-use bitcoin::consensus::{encode, Decodable, Encodable};
+use bitcoin::consensus::{encode, Encodable};
 use zkpow_core::{
     calculate_next_work_required, check_proof_of_work, target_from_bits, BlockHash, BlockTimestamp, BlockWork,
     CompactTarget, Header as CoreHeader, Target,
@@ -12,7 +12,10 @@ use zkpow_core::{
 use zkpow_params::{Consensus, ConsensusParams, Mainnet, WINDOW_MAX_INDEX, WINDOW_SIZE};
 
 use super::*;
-use crate::connection::{create_checksum, VersionMessage, MAX_HEADERS_PER_MSG};
+use crate::{
+    connection::{create_checksum, VersionMessage},
+    msg::MAX_HEADERS_PER_MSG,
+};
 
 const TRIVIAL_NBITS_A: u32 = 0x2007FFFF;
 const TRIVIAL_NBITS_B: u32 = 0x2003FFFF;
@@ -78,12 +81,12 @@ fn build_chain(anchor: &Tip, count: u32, nbits_at: impl Fn(u32) -> u32) -> Vec<H
     headers
 }
 
-/// A synthetic anchor at `height` with `current_target`/`current_block_work`
-/// already cached from `nbits`, matching what a `Tip` holds after validating
+/// A synthetic anchor at `height` with its target triplet already cached
+/// from `nbits`, matching what a `Tip` holds after validating
 /// that far without mining `height` real headers.
 fn synthetic_anchor(height: u32, nbits: u32) -> Tip {
-    let (current_nbits, current_target, current_block_work) = expand_target(CompactTarget::new(nbits));
-    let chainwork = current_block_work * (height + 1);
+    let target_triplet = expand_target(CompactTarget::new(nbits));
+    let chainwork = target_triplet.block_work() * (height + 1);
     let ordered_run = (height as u64).min(WINDOW_MAX_INDEX as u64);
     Tip::new(
         BlockHash::new([0xAB; 32]),
@@ -92,9 +95,7 @@ fn synthetic_anchor(height: u32, nbits: u32) -> Tip {
         [2_000_000_000u32; WINDOW_SIZE],
         ordered_run,
         2_000_000_000,
-        current_nbits,
-        current_target,
-        current_block_work,
+        target_triplet,
     )
 }
 
@@ -136,7 +137,7 @@ fn connect_headers_only_re_derives_target_at_epoch_boundary() {
     anchor.epoch_timestamp = 2_000_000_000 - (TrivialConsensus::PARAMS.expected_epoch_time() / 2);
 
     let (nbits_b, target_b, work_b) = calculate_next_work_required::<TrivialConsensus>(
-        anchor.current_target,
+        anchor.target_triplet.target(),
         BlockTimestamp::new(anchor.epoch_timestamp),
         BlockTimestamp::new(2_000_000_000),
     )
@@ -159,7 +160,7 @@ fn connect_headers_only_re_derives_target_at_epoch_boundary() {
     );
 
     let tip = tip_from_connected::<TrivialConsensus>(&anchor, &connected);
-    assert_eq!(tip.current_nbits, CompactTarget::new(TRIVIAL_NBITS_B));
+    assert_eq!(tip.target_triplet.compact_target(), CompactTarget::new(TRIVIAL_NBITS_B));
     assert_eq!(tip.epoch_timestamp, 2_000_010_000);
 
     let mismatched_mid = mine_header_against(tip.hash, TRIVIAL_NBITS_A, target_b, 2_000_020_000);
@@ -180,7 +181,7 @@ fn connect_headers_only_re_derives_target_at_epoch_boundary() {
     assert_eq!(two_step_tip.hash, one_shot_tip.hash);
     assert_eq!(two_step_tip.chainwork, one_shot_tip.chainwork);
     assert_eq!(two_step_tip.epoch_timestamp, one_shot_tip.epoch_timestamp);
-    assert_eq!(two_step_tip.current_nbits, one_shot_tip.current_nbits);
+    assert_eq!(two_step_tip.target_triplet, one_shot_tip.target_triplet);
 }
 
 /// An anchor at height 0 with one known timestamp (`base`), followed by
@@ -191,21 +192,11 @@ fn connect_headers_only_re_derives_target_at_epoch_boundary() {
 #[test]
 fn median_time_past_matches_hand_computed_values_through_a_wrap() {
     let base = 2_000_000_000u32;
-    let (current_nbits, current_target, current_block_work) = expand_target(CompactTarget::new(TRIVIAL_NBITS_A));
-    let chainwork = current_block_work * 1u32;
+    let target_triplet = expand_target(CompactTarget::new(TRIVIAL_NBITS_A));
+    let chainwork = target_triplet.block_work() * 1u32;
     let mut timestamps = [0u32; WINDOW_SIZE];
     timestamps[0] = base;
-    let anchor = Tip::new(
-        BlockHash::new([0xCD; 32]),
-        0,
-        chainwork,
-        timestamps,
-        0,
-        base,
-        current_nbits,
-        current_target,
-        current_block_work,
-    );
+    let anchor = Tip::new(BlockHash::new([0xCD; 32]), 0, chainwork, timestamps, 0, base, target_triplet);
 
     // At height 0 the count is 1, not 0: the anchor itself is a recorded
     // block with a known timestamp.
@@ -254,8 +245,8 @@ fn median_time_past_matches_hand_computed_values_through_a_wrap() {
 #[test]
 fn connect_headers_resets_ordered_timestamp_run_on_timestamp_regression() {
     let base = 2_000_000_000u32;
-    let (current_nbits, current_target, current_block_work) = expand_target(CompactTarget::new(TRIVIAL_NBITS_A));
-    let chainwork = current_block_work * 11u32;
+    let target_triplet = expand_target(CompactTarget::new(TRIVIAL_NBITS_A));
+    let chainwork = target_triplet.block_work() * 11u32;
     let anchor = Tip::new(
         BlockHash::new([0xEF; 32]),
         10,
@@ -275,9 +266,7 @@ fn connect_headers_resets_ordered_timestamp_run_on_timestamp_regression() {
         ],
         10,
         base,
-        current_nbits,
-        current_target,
-        current_block_work,
+        target_triplet,
     );
 
     let regressing_header = mine_header(anchor.hash, TRIVIAL_NBITS_A, base + 7);
@@ -291,8 +280,8 @@ fn connect_headers_resets_ordered_timestamp_run_on_timestamp_regression() {
 #[test]
 fn ordered_window_uses_ring_median_without_changing_result() {
     let base = 2_000_000_000u32;
-    let (current_nbits, current_target, current_block_work) = expand_target(CompactTarget::new(TRIVIAL_NBITS_A));
-    let chainwork = current_block_work * 11u32;
+    let target_triplet = expand_target(CompactTarget::new(TRIVIAL_NBITS_A));
+    let chainwork = target_triplet.block_work() * 11u32;
     let anchor = Tip::new(
         BlockHash::new([0x9A; 32]),
         10,
@@ -312,9 +301,7 @@ fn ordered_window_uses_ring_median_without_changing_result() {
         ],
         10,
         base,
-        current_nbits,
-        current_target,
-        current_block_work,
+        target_triplet,
     );
     let header = mine_header(anchor.hash, TRIVIAL_NBITS_A, base + 11);
 
@@ -338,8 +325,10 @@ fn version_message_rejects_oversized_user_agent() {
     payload.extend(std::iter::repeat_n(b'a', 257));
     payload.extend_from_slice(&0i32.to_le_bytes());
 
-    let mut cursor = bitcoin::io::Cursor::new(&payload);
-    assert!(VersionMessage::consensus_decode(&mut cursor).is_err());
+    assert!(matches!(
+        VersionMessage::decode(&payload),
+        Err(ConnectionError::UserAgentTooLong { length: 257, limit: 256 })
+    ));
 }
 
 #[test]
@@ -428,7 +417,10 @@ fn peer_connection_rejects_oversized_frame_and_header_count() {
     });
     let mut conn = PeerConnection::connect(addr, Network::Mainnet, 0).unwrap();
     let err = conn.read_headers().unwrap_err();
-    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    assert!(matches!(err, ConnectionError::MessageTooLarge {
+        length: 4_000_001,
+        limit:  4_000_000,
+    }));
     server.join().unwrap();
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -447,7 +439,10 @@ fn peer_connection_rejects_oversized_frame_and_header_count() {
     });
     let mut conn = PeerConnection::connect(addr, Network::Mainnet, 0).unwrap();
     let err = conn.read_headers().unwrap_err();
-    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    assert!(matches!(
+        err,
+        ConnectionError::TooManyHeaders { count, limit } if count == (MAX_HEADERS_PER_MSG + 1) as u64 && limit == MAX_HEADERS_PER_MSG
+    ));
     server.join().unwrap();
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -460,7 +455,10 @@ fn peer_connection_rejects_oversized_frame_and_header_count() {
     });
     let mut conn = PeerConnection::connect(addr, Network::Mainnet, 0).unwrap();
     let err = conn.read_headers().unwrap_err();
-    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    assert!(matches!(err, ConnectionError::TooManyUnsolicitedMessages {
+        expected: Command::Headers,
+        limit:    64,
+    }));
     server.join().unwrap();
 }
 
@@ -514,4 +512,48 @@ fn p2p_sync_enforces_max_headers_and_fails_over_on_invalid_header() {
     assert_eq!(final_tip.height, 4);
     assert_eq!(final_tip.hash, chain[3].block_hash());
     good_server.join().unwrap();
+}
+
+#[test]
+fn callback_failure_returns_the_tip_from_the_last_accepted_batch() {
+    let anchor = synthetic_anchor(0, TRIVIAL_NBITS_A);
+    let header = make_header(anchor.hash, TRIVIAL_NBITS_A, 2_000_000_001, 0);
+    let expected_hash = header.block_hash();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let mut stream = accept_handshake(&listener);
+        let _ = read_p2p_frame(&mut stream);
+        write_p2p_frame(
+            &mut stream,
+            b"headers",
+            &encode_headers_payload(&vec![header.clone(); MAX_HEADERS_PER_MSG]),
+        );
+        let _ = read_p2p_frame(&mut stream);
+        write_p2p_frame(&mut stream, b"headers", &encode_headers_payload(&[header]));
+    });
+
+    let mut store = PeerStore::default();
+    store.add_peer(address);
+    let mut calls = 0;
+    let error = p2p::sync::<TrivialConsensus, _, u8>(Network::Mainnet, &anchor, 0, &mut store, |headers, tip| {
+        calls += 1;
+        if calls == 2 {
+            return Err(42);
+        }
+        let mut next = tip.clone();
+        next.height += headers.len() as u32;
+        next.hash = headers.last().unwrap().block_hash();
+        Ok(next)
+    })
+    .unwrap_err();
+
+    assert!(matches!(
+        error,
+        SyncHeadersError::Callback { source, latest_tip, synced }
+            if *source == 42 && latest_tip.height == MAX_HEADERS_PER_MSG as u32
+                && latest_tip.hash == expected_hash && synced == MAX_HEADERS_PER_MSG as u32
+    ));
+    assert_eq!(calls, 2);
+    server.join().unwrap();
 }

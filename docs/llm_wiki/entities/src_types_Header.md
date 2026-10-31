@@ -1,6 +1,6 @@
 # Header
 
-**Location:** `crates/sync-headers/src/types.rs:104`
+**Location:** `crates/sync-headers/src/types.rs:94`
 **Kind:** Class
 **Bases:** —
 **Module:** [src_types](../modules/src_types.md)

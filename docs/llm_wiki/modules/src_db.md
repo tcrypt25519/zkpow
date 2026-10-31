@@ -47,9 +47,9 @@ SQLite access to `headers.db`; every reader and writer in the workspace goes thr
 | [Result](../entities/Result.md) | Type alias | 45 | — | — |
 | [ResultOpt](../entities/ResultOpt.md) | Type alias | 46 | — | — |
 | [HeaderStore](../entities/HeaderStore.md) | Class | 104 | — | The SQLite header store. |
-| [RunRecord](../entities/RunRecord.md) | Class | 519 | — | One IVC chain's verified progress, keyed by `run_id` in the `runs` table. |
-| [HeaderRecord](../entities/HeaderRecord.md) | Class | 530 | — | A single `headers` row, decoded into typed fields. |
-| [HeaderBatchWitness](../entities/HeaderBatchWitness.md) | Class | 540 | — | The SP1 stdin witness for a batch: the new headers plus their median-time-past hints. |
+| [RunRecord](../entities/RunRecord.md) | Class | 516 | — | One IVC chain's verified progress, keyed by `run_id` in the `runs` table. |
+| [HeaderRecord](../entities/HeaderRecord.md) | Class | 527 | — | A single `headers` row, decoded into typed fields. |
+| [HeaderBatchWitness](../entities/HeaderBatchWitness.md) | Class | 537 | — | The SP1 stdin witness for a batch: the new headers plus their median-time-past hints. |
 
 ## Functions
 

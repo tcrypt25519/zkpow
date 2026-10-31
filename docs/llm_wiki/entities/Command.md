@@ -1,11 +1,11 @@
 # Command
 
-**Location:** `crates/sync-headers/src/connection.rs:22`
+**Location:** `crates/sync-headers/src/connection.rs:26`
 **Kind:** Enum
 **Bases:** —
 **Module:** [src_connection](../modules/src_connection.md)
 
-**Decorators:** `@Debug`, `@Clone`, `@Copy`, `@PartialEq`, `@Eq`
+**Decorators:** `@Debug`, `@Clone`, `@Copy`, `@PartialEq`, `@Eq`, `@EnumCount`, `@EnumString`, `@EnumIter`
 
 ## Description
 

@@ -18,18 +18,18 @@
     "by_kind": {
       "api-contracts": 0,
       "dependencies": 1,
-      "entities": 63,
+      "entities": 64,
       "flows": 2,
       "guides": 0,
       "index": 1,
       "infrastructure": 3,
       "load-order": 1,
       "log": 1,
-      "modules": 122,
+      "modules": 124,
       "workflows": 0
     },
     "dependency_architecture": 2,
-    "total": 194
+    "total": 197
   },
   "dependency_pages": {
     "count": 2,
@@ -277,6 +277,7 @@
         "entities/Cold.md",
         "entities/Command.md",
         "entities/ConnectedHeader.md",
+        "entities/ConnectionError.md",
         "entities/Consensus.md",
         "entities/ConsensusParams.md",
         "entities/controller_src_lib_BoxError.md",
@@ -355,6 +356,8 @@
         "modules/core_src_lib.md",
         "modules/core_src_tests_mod.md",
         "modules/error.md",
+        "modules/estring-macro_src_lib.md",
+        "modules/estring_src_lib.md",
         "modules/execution.md",
         "modules/failed_proof.md",
         "modules/generate-epoch-profile-fixture.md",
@@ -560,6 +563,18 @@
       "role": "semantic",
       "source_path": "crates/sync-headers/src/types.rs",
       "title": "ConnectedHeader"
+    },
+    {
+      "canonical_path": "entities/ConnectionError.md",
+      "id": "ConnectionError",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/ConnectionError",
+      "outgoing_internal_links": [
+        "modules/error.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/sync-headers/src/error.rs",
+      "title": "ConnectionError"
     },
     {
       "canonical_path": "entities/Consensus.md",
@@ -848,6 +863,7 @@
       "kind": "entities",
       "mcp_uri": "llm-wiki://entities/PeerConnection",
       "outgoing_internal_links": [
+        "entities/ConnectionError.md",
         "modules/src_connection.md"
       ],
       "role": "semantic",
@@ -1116,6 +1132,7 @@
       "kind": "entities",
       "mcp_uri": "llm-wiki://entities/SyncHeadersError",
       "outgoing_internal_links": [
+        "entities/ConnectionError.md",
         "modules/error.md"
       ],
       "role": "semantic",
@@ -1188,6 +1205,7 @@
       "kind": "entities",
       "mcp_uri": "llm-wiki://entities/VersionMessage",
       "outgoing_internal_links": [
+        "entities/ConnectionError.md",
         "modules/src_connection.md"
       ],
       "role": "semantic",
@@ -1406,11 +1424,32 @@
       "kind": "modules",
       "mcp_uri": "llm-wiki://modules/error",
       "outgoing_internal_links": [
+        "entities/ConnectionError.md",
         "entities/SyncHeadersError.md"
       ],
       "role": "semantic",
       "source_path": "crates/sync-headers/src/error.rs",
       "title": "error Module"
+    },
+    {
+      "canonical_path": "modules/estring-macro_src_lib.md",
+      "id": "estring-macro_src_lib",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/estring-macro_src_lib",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/estring-macro/src/lib.rs",
+      "title": "lib Module"
+    },
+    {
+      "canonical_path": "modules/estring_src_lib.md",
+      "id": "estring_src_lib",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/estring_src_lib",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/estring/src/lib.rs",
+      "title": "lib Module"
     },
     {
       "canonical_path": "modules/execution.md",
@@ -1647,7 +1686,9 @@
       "id": "p2p_sync",
       "kind": "modules",
       "mcp_uri": "llm-wiki://modules/p2p_sync",
-      "outgoing_internal_links": [],
+      "outgoing_internal_links": [
+        "entities/SyncHeadersError.md"
+      ],
       "role": "semantic",
       "source_path": "crates/sync-headers/src/p2p_sync.rs",
       "title": "p2p_sync Module"
@@ -1922,6 +1963,7 @@
       "mcp_uri": "llm-wiki://modules/src_connection",
       "outgoing_internal_links": [
         "entities/Command.md",
+        "entities/ConnectionError.md",
         "entities/PeerConnection.md",
         "entities/VersionMessage.md"
       ],
@@ -2648,6 +2690,8 @@
         "modules/core_src_lib.md",
         "modules/core_src_tests_mod.md",
         "modules/error.md",
+        "modules/estring-macro_src_lib.md",
+        "modules/estring_src_lib.md",
         "modules/execution.md",
         "modules/failed_proof.md",
         "modules/generate-epoch-profile-fixture.md",
@@ -2782,6 +2826,8 @@
         "modules/core_src_lib.md",
         "modules/core_src_tests_mod.md",
         "modules/error.md",
+        "modules/estring-macro_src_lib.md",
+        "modules/estring_src_lib.md",
         "modules/execution.md",
         "modules/failed_proof.md",
         "modules/generate-epoch-profile-fixture.md",
@@ -2896,5 +2942,5 @@
     }
   ],
   "schema_version": "llm-wiki-surface-index/v1",
-  "source_hash": "sha256:c9a46a8fd7dbadf363baaec63f9957be8a2b5f85c6404556cb498491af173262"
+  "source_hash": "sha256:b3ec62981dd1118f6997756de086ae01671f1baa148f7b885caf6f13631e81d5"
 }

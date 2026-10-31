@@ -10,7 +10,6 @@ _Auto-generated from `crates/sync-headers/src/tests/validation.rs`._
 
 | Source | Symbols |
 |--------|---------|
-| `bitcoin::consensus::Decodable` | `Decodable` |
 | `bitcoin::consensus::Encodable` | `Encodable` |
 | `bitcoin::consensus::encode` | `encode` |
 | `crate::connection::VersionMessage` | `VersionMessage` |

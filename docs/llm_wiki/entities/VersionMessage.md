@@ -1,8 +1,8 @@
 # VersionMessage
 
-**Location:** `crates/sync-headers/src/connection.rs:88`
+**Location:** `crates/sync-headers/src/connection.rs:96`
 **Kind:** Class
-**Bases:** `Decodable`
+**Bases:** —
 **Module:** [src_connection](../modules/src_connection.md)
 
 **Decorators:** `@Debug`
@@ -10,6 +10,8 @@
 ## Description
 
 Simplified version message structure.
+
+The crate-local decoder returns [ConnectionError](ConnectionError.md), preserving Bitcoin decoding failures and reporting an oversized user agent with its actual length and limit before allocation. It accepts a missing optional relay byte and rejects trailing bytes after the version payload. It uses an inherent decoder rather than Bitcoin's `Decodable` trait so protocol checks can return the connection enum directly.
 
 ## Attributes
 
@@ -26,29 +28,15 @@ Simplified version message structure.
 
 ## Methods
 
-| Method | Signature | Decorators | Description |
-|--------|-----------|------------|-------------|
-| `consensus_decode` | `(d: &mut D) -> std::result::Result<Self, encode::Error >` | — | — |
+*No public methods. Inherits from base classes.*
 
 ## Relationships
 
 <!-- Auto-generated relationship summary. Do not edit by hand. -->
-```mermaid
-flowchart LR
-    n0["VersionMessage (crates/sync-headers/src/connection.rs)"]
-    n1["Decodable"]
-    n0 --> n1
-    click n0 "../modules/src_connection.md"
-```
+*No generated relationships detected.*
 
 ### Summary
 
 | Module | Methods | Attributes |
 |---|---:|---|
-| [src_connection](../modules/src_connection.md) | 1 | `nonce`, `receiver_services`, `sender_services`, `services`, `starting_height`, `timestamp`, `user_agent`, `version` |
-
-### Structure
-
-| Kind | Entity | Module |
-|---|---|---|
-| Base | `Decodable` | — |
+| [src_connection](../modules/src_connection.md) | 0 | `nonce`, `receiver_services`, `sender_services`, `services`, `starting_height`, `timestamp`, `user_agent`, `version` |

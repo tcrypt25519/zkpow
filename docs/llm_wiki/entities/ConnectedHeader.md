@@ -1,6 +1,6 @@
 # ConnectedHeader
 
-**Location:** `crates/sync-headers/src/types.rs:124`
+**Location:** `crates/sync-headers/src/types.rs:114`
 **Kind:** Class
 **Bases:** —
 **Module:** [src_types](../modules/src_types.md)

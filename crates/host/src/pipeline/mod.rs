@@ -49,19 +49,18 @@ pub enum ProverBackend {
     Cpu,
     Cuda,
 }
-
 /// One proving session's settings, read from `ZKPOW_*` variables by [`input::config_from_env`].
 #[derive(Debug, Clone)]
 pub struct ProofGenerationConfig {
     /// The IVC chain this host extends; the controller tracks progress per
     /// run id in its run ledger.
-    pub run_id:           String,
+    pub run_id: String,
     pub local_batch_size: u32,
-    pub batch_count:      u32,
+    pub batch_count: u32,
     /// The SQLite header database holding the run ledger and header content.
-    pub db_path:          std::path::PathBuf,
-    pub execute_only:     bool,
-    pub prover_backend:   ProverBackend,
+    pub db_path: std::path::PathBuf,
+    pub execute_only: bool,
+    pub prover_backend: ProverBackend,
 }
 
 pub(crate) fn is_header_exhaustion_error(err: &BoxError) -> bool {
@@ -109,7 +108,7 @@ fn build_local_controller<C: Consensus>(
 
 struct BatchCompletion {
     proof_upload: String,
-    proof_bytes:  Vec<u8>,
+    proof_bytes: Vec<u8>,
 }
 
 async fn run_execution_session<C: Consensus>(config: ProofGenerationConfig) -> Result<u32, BoxError> {

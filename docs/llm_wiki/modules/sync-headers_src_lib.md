@@ -10,7 +10,9 @@ _Auto-generated from `crates/sync-headers/src/lib.rs`._
 
 | Source | Symbols |
 |--------|---------|
+| `connection::Command` | `Command` |
 | `connection::PeerConnection` | `PeerConnection` |
+| `error::ConnectionError` | `ConnectionError` |
 | `error::SyncHeadersError` | `SyncHeadersError` |
 | `peers::PeerEntry` | `PeerEntry` |
 | `peers::PeerStatus` | `PeerStatus` |

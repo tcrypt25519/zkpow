@@ -1,12 +1,14 @@
 //! Core types for the header sync protocol.
 
+use strum_macros::{Display, EnumCount, EnumString};
 use zkpow_core::{
-    block_work_from_target, target_from_bits, BlockHash, BlockWork, ChainWork, CompactTarget, Header as CoreHeader,
-    Target,
+    block_work_from_target, target_from_bits, BlockHash, ChainWork, CompactTarget, Header as CoreHeader, TargetTriplet,
 };
 use zkpow_params::{Consensus, WINDOW_SIZE};
 /// Network selection for Bitcoin consensus.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, EnumCount)]
+#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
+#[repr(u8)]
 pub enum Network {
     Mainnet,
     Testnet,
@@ -14,21 +16,8 @@ pub enum Network {
 }
 
 impl Network {
-    pub fn name(&self) -> &'static str {
-        match self {
-            Network::Mainnet => "mainnet",
-            Network::Testnet => "testnet",
-            Network::Regtest => "regtest",
-        }
-    }
-
     pub fn parse(s: &str) -> Option<Self> {
-        match s.to_lowercase().as_str() {
-            "bitcoin" | "mainnet" | "main" => Some(Network::Mainnet),
-            "testnet" | "test" => Some(Network::Testnet),
-            "regtest" | "reg" => Some(Network::Regtest),
-            _ => None,
-        }
+        str::parse(s).ok()
     }
 }
 
@@ -50,9 +39,7 @@ pub struct Tip {
     /// Updated only at a retarget boundary (`height % EPOCH_LENGTH == 0`) and
     /// left unchanged otherwise.
     /// TODO: Just put this in a separate table of epochs. Reader selects from epochs where id = height / EPOCH_LENGTH
-    pub current_nbits:      CompactTarget,
-    pub current_target:     Target,
-    pub current_block_work: BlockWork,
+    pub target_triplet: TargetTriplet,
 }
 
 impl Tip {
@@ -64,9 +51,7 @@ impl Tip {
         timestamps: [u32; WINDOW_SIZE],
         ordered_timestamp_run: u64,
         epoch_timestamp: u32,
-        current_nbits: CompactTarget,
-        current_target: Target,
-        current_block_work: BlockWork,
+        target_triplet: TargetTriplet,
     ) -> Self {
         Self {
             hash,
@@ -75,9 +60,7 @@ impl Tip {
             timestamps,
             ordered_timestamp_run,
             epoch_timestamp,
-            current_nbits,
-            current_target,
-            current_block_work,
+            target_triplet,
         }
     }
 
@@ -86,26 +69,24 @@ impl Tip {
         let epoch_timestamp = genesis.timestamp.into_inner();
         let mut timestamps = [0u32; WINDOW_SIZE];
         timestamps[0] = epoch_timestamp;
-        let (_, target, block_work) = expand_target(genesis.compact_target);
+        let target_triplet = expand_target(genesis.compact_target);
         Self {
             hash,
             height: 0,
-            chainwork: ChainWork::new(block_work.into_inner()),
+            chainwork: ChainWork::new(target_triplet.block_work().into_inner()),
             timestamps,
             ordered_timestamp_run: 0,
             epoch_timestamp,
-            current_nbits: genesis.compact_target,
-            current_target: target,
-            current_block_work: block_work,
+            target_triplet,
         }
     }
 }
 
 /// Expand `bits` into the `(nbits, target, block_work)` triple a `Tip` caches.
-pub fn expand_target(bits: CompactTarget) -> (CompactTarget, Target, BlockWork) {
+pub fn expand_target(bits: CompactTarget) -> TargetTriplet {
     let target = target_from_bits(bits);
     let work = block_work_from_target(&target);
-    (bits, target, work)
+    TargetTriplet::new(bits, target, work)
 }
 
 /// A raw block header received from the network.

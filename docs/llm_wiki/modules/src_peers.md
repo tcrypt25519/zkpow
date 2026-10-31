@@ -14,6 +14,7 @@ _Auto-generated from `crates/sync-headers/src/peers.rs`._
 | `std::collections::HashMap` | `HashMap` |
 | `std::collections::HashSet` | `HashSet` |
 | `std::fmt` | `fmt` |
+| `std::net::IpAddr` | `IpAddr` |
 | `std::net::SocketAddr` | `SocketAddr` |
 | `std::net::ToSocketAddrs` | `ToSocketAddrs` |
 | `std::time::SystemTime` | `SystemTime` |

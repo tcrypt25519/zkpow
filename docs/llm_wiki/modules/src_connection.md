@@ -4,7 +4,7 @@
 
 ## Description
 
-_Auto-generated from `crates/sync-headers/src/connection.rs`._
+Frames Bitcoin P2P messages, completes the version handshake, and requests header batches. All fallible connection operations return [ConnectionError](../entities/ConnectionError.md), preserving transport and codec sources alongside structured protocol failures.
 
 ## Imports
 
@@ -15,6 +15,7 @@ _Auto-generated from `crates/sync-headers/src/connection.rs`._
 | `bitcoin::consensus::Encodable` | `Encodable` |
 | `bitcoin::consensus::encode` | `encode` |
 | `bitcoin::hashes::Hash` | `Hash` |
+| `crate::error::ConnectionError` | `ConnectionError` |
 | `crate::msg` | `msg` |
 | `crate::types::Header` | `Header` |
 | `crate::types::Network` | `Network` |
@@ -22,6 +23,9 @@ _Auto-generated from `crates/sync-headers/src/connection.rs`._
 | `std::io::Write` | `Write` |
 | `std::net::SocketAddr` | `SocketAddr` |
 | `std::net::TcpStream` | `TcpStream` |
+| `strum_macros::EnumCount` | `EnumCount` |
+| `strum_macros::EnumIter` | `EnumIter` |
+| `strum_macros::EnumString` | `EnumString` |
 | `zkpow_core::BlockHash` | `BlockHash` |
 | `zkpow_core::BlockTimestamp` | `BlockTimestamp` |
 | `zkpow_core::CompactTarget` | `CompactTarget` |
@@ -36,15 +40,15 @@ _Auto-generated from `crates/sync-headers/src/connection.rs`._
 
 | Language | Used packages | Undeclared packages |
 |---|---:|---:|
-| rust | 2 | 0 |
+| rust | 3 | 0 |
 
 ## Classes
 
 | Class | Kind | Line | Bases / Target | Description |
 |-------|------|------|----------------|-------------|
-| [Command](../entities/Command.md) | Enum | 22 | — | A Bitcoin P2P network message command. |
-| [VersionMessage](../entities/VersionMessage.md) | Class | 88 | `Decodable` | Simplified version message structure. |
-| [PeerConnection](../entities/PeerConnection.md) | Class | 150 | — | A P2P connection to a Bitcoin peer. |
+| [Command](../entities/Command.md) | Enum | 26 | — | A Bitcoin P2P network message command. |
+| [VersionMessage](../entities/VersionMessage.md) | Class | 96 | — | Simplified version message structure. |
+| [PeerConnection](../entities/PeerConnection.md) | Class | 168 | — | A P2P connection to a Bitcoin peer. |
 
 ## Functions
 

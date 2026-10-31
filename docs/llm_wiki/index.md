@@ -6,8 +6,8 @@ This page is an exhaustive reference inventory of the selected source. Task-orie
 
 | Surface | Count | Start here |
 |---|---:|---|
-| Entities | 63 | [Open section](#entities) |
-| Modules | 122 | [Open section](#modules) |
+| Entities | 64 | [Open section](#entities) |
+| Modules | 124 | [Open section](#modules) |
 | Workflows | 0 | No pages |
 | Guides | 0 | No pages |
 | Entry-point flows | 2 | [Open section](#entry-point-flows) |
@@ -25,6 +25,7 @@ This page is an exhaustive reference inventory of the selected source. Task-orie
 - [Cold](entities/Cold.md)
 - [Command](entities/Command.md)
 - [ConnectedHeader](entities/ConnectedHeader.md)
+- [ConnectionError](entities/ConnectionError.md)
 - [Consensus](entities/Consensus.md)
 - [ConsensusParams](entities/ConsensusParams.md)
 - [ControllerConfig](entities/ControllerConfig.md)
@@ -99,6 +100,8 @@ This page is an exhaustive reference inventory of the selected source. Task-orie
 - [core_src_lib](modules/core_src_lib.md) - `crates/core/src/lib.rs`
 - [core_src_tests_mod](modules/core_src_tests_mod.md) - `crates/core/src/tests/mod.rs`
 - [error](modules/error.md) - `crates/sync-headers/src/error.rs`
+- [estring-macro_src_lib](modules/estring-macro_src_lib.md) - `crates/estring-macro/src/lib.rs`
+- [estring_src_lib](modules/estring_src_lib.md) - `crates/estring/src/lib.rs`
 - [execution](modules/execution.md) - `crates/host/src/pipeline/execution.rs`
 - [failed_proof](modules/failed_proof.md) - `crates/host/tests/test_errors/proofs/failed_proof.rs`
 - [generate-epoch-profile-fixture](modules/generate-epoch-profile-fixture.md) - Export real mainnet HeaderInput records for the opt-in zkVM epoch profile.

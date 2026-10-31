@@ -34,11 +34,14 @@ Lifecycle status of a known peer address.
 flowchart LR
     n0["PeerStatus (crates/sync-headers/src/peers.rs)"]
     n1["fmt::Display"]
-    n2["PeerStore.status_summary (crates/sync-headers/src/peers.rs)"]
+    n2["PeerStore.mark_status (crates/sync-headers/src/peers.rs)"]
+    n3["PeerStore.status_summary (crates/sync-headers/src/peers.rs)"]
     n0 --> n1
     n2 --> n0
+    n3 --> n0
     click n0 "../modules/src_peers.md"
     click n2 "../modules/src_peers.md"
+    click n3 "../modules/src_peers.md"
 ```
 
 ### Summary
@@ -57,4 +60,5 @@ flowchart LR
 
 | Reference | Kind | Source | Call sites |
 |---|---|---|---:|
+| `PeerStore.mark_status` | type_reference | [src_peers](../modules/src_peers.md) | — |
 | `PeerStore.status_summary` | type_reference | [src_peers](../modules/src_peers.md) | — |

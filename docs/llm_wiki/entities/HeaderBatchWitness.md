@@ -1,6 +1,6 @@
 # HeaderBatchWitness
 
-**Location:** `crates/store/src/db.rs:540`
+**Location:** `crates/store/src/db.rs:537`
 **Kind:** Class
 **Bases:** —
 **Module:** [src_db](../modules/src_db.md)

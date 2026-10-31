@@ -15,6 +15,8 @@ members = [
   "crates/worker",
   "crates/wiretype",
   "crates/wiretype_macro",
+  "crates/estring",
+  "crates/estring-macro",
 ]
 exclude = ["sp1"]
 resolver = "3"
@@ -36,6 +38,8 @@ zkpow-mtp = { path = "crates/mtp" }
 wiretype = { path = "crates/wiretype" }
 wiretype-macro = { path = "crates/wiretype_macro" }
 sha256_const = { path = "crates/sha256_const" }
+estring = { path = "crates/estring" }
+estring-macro = { path = "crates/estring-macro" }
 
 zkvm-test = { path = "/Users/tcrypt/code/github.com/tcrypt25519/zkvm-test/crates/zkvm-test" }
 # zkvm-test = { git = "ssh://git@github.com/tcrypt25519/zkvm-test", branch = "main" }
@@ -82,9 +86,11 @@ rkyv = { version = "0.8.18", default-features = false, features = [
 ] }
 
 proc-macro2 = { version = "1.0.96" }
-syn = { version = "3.0.9" }
+syn = { version = "3.0.9", features = ["full"] }
 quote = { version = "1.0.47" }
 trybuild = { version = "1.0.22" }
+strum = { version = "0.28.0" }
+strum_macros = { version = "0.28.0" }
 
 ##
 ## To remove

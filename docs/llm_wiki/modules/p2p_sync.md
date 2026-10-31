@@ -4,13 +4,14 @@
 
 ## Description
 
-_Auto-generated from `crates/sync-headers/src/p2p_sync.rs`._
+Coordinates peer selection, connection retries, and header-batch callbacks. The private `PeerSyncError` enum carries connection, peer, or callback failures without a tip snapshot. Accepted progress stays in the mutable tip and counters shared with each peer attempt. Peer failures retry directly from that state. When sync returns a terminal [SyncHeadersError](../entities/SyncHeadersError.md), it moves its owned tip into the error instead of cloning it. Exhausted retries retain the last failure, and a partially accepted batch reports `ConnectionError::InvalidHeaders` with accepted and total counts before trying another peer.
 
 ## Imports
 
 | Source | Symbols |
 |--------|---------|
 | `crate::connection::PeerConnection` | `PeerConnection` |
+| `crate::error::ConnectionError` | `ConnectionError` |
 | `crate::error::SyncHeadersError` | `SyncHeadersError` |
 | `crate::msg::MAX_HEADERS_PER_MSG` | `MAX_HEADERS_PER_MSG` |
 | `crate::peers::PeerStore` | `PeerStore` |

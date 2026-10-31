@@ -3,14 +3,9 @@ use super::*;
 #[test]
 fn parses_network_names_and_aliases() {
     let cases = [
-        ("bitcoin", Network::Mainnet),
         ("mainnet", Network::Mainnet),
-        ("main", Network::Mainnet),
         ("testnet", Network::Testnet),
-        ("test", Network::Testnet),
         ("regtest", Network::Regtest),
-        ("reg", Network::Regtest),
-        ("BiTcOiN", Network::Mainnet),
     ];
 
     for (alias, expected) in cases {
@@ -19,7 +14,7 @@ fn parses_network_names_and_aliases() {
 
     assert_eq!(Network::parse("unknown"), None);
     assert_eq!(Network::parse(""), None);
-    assert_eq!(Network::Mainnet.name(), "mainnet");
-    assert_eq!(Network::Testnet.name(), "testnet");
-    assert_eq!(Network::Regtest.name(), "regtest");
+    assert_eq!(Network::Mainnet.to_string(), "mainnet");
+    assert_eq!(Network::Testnet.to_string(), "testnet");
+    assert_eq!(Network::Regtest.to_string(), "regtest");
 }

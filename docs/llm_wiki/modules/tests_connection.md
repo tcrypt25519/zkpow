@@ -10,9 +10,18 @@ _Auto-generated from `crates/sync-headers/src/tests/connection.rs`._
 
 | Source | Symbols |
 |--------|---------|
-| `crate::connection::Command` | `Command` |
+| `std::error::Error` | `Error` |
+| `std::net::TcpListener` | `TcpListener` |
+| `strum::IntoEnumIterator` | `IntoEnumIterator` |
+| `super::*` | `*` |
 
 ## Local dependency map
 
 <!-- Auto-generated local dependency summary. Do not edit by hand. -->
 *No internal module dependencies detected.*
+
+### External packages
+
+| Language | Used packages | Undeclared packages |
+|---|---:|---:|
+| rust | 1 | 0 |

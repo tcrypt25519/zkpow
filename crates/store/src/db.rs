@@ -189,8 +189,7 @@ impl HeaderStore {
                     params![epoch_start_height as i64],
                     |row| row.get(0),
                 )?;
-                let (current_nbits, current_target, current_work) =
-                    sync_headers::expand_target(CompactTarget::new(row.n_bits as u32));
+                let target_triplet = sync_headers::expand_target(CompactTarget::new(row.n_bits as u32));
 
                 let mut stmt = self
                     .conn
@@ -213,9 +212,7 @@ impl HeaderStore {
                     timestamps,
                     ordered_timestamp_run,
                     epoch_timestamp,
-                    current_nbits,
-                    current_target,
-                    current_work,
+                    target_triplet,
                 )))
             },
             None => Ok(None),

@@ -24,6 +24,7 @@ A collection of discovered peers with status tracking.
 | `from_dns_seeds` | `() -> std::io::Result<Self >` | — | Resolve all DNS seeds and populate the peer store. |
 | `pick_candidate` | `(rng: &mut impl rand::Rng) -> Option<SocketAddr >` | — | Pick a random peer with `Unknown` or `Disconnected` status. |
 | `add_peer` | `(addr: SocketAddr)` | — | — |
+| `mark_status` | `(addr: &SocketAddr, status: PeerStatus)` | — | — |
 | `mark_connected` | `(addr: &SocketAddr)` | — | — |
 | `mark_unreachable` | `(addr: &SocketAddr)` | — | — |
 | `mark_disconnected` | `(addr: &SocketAddr)` | — | — |
@@ -41,4 +42,4 @@ A collection of discovered peers with status tracking.
 
 | Module | Methods | Attributes |
 |---|---:|---|
-| [src_peers](../modules/src_peers.md) | 10 | `entries` |
+| [src_peers](../modules/src_peers.md) | 11 | `entries` |

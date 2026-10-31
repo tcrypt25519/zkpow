@@ -1,9 +1,6 @@
-//! Minimal Bitcoin P2P client.
-
 use std::{
     io::{Read, Write},
     net::{SocketAddr, TcpStream},
-    time::Duration,
 };
 
 use bitcoin::{
@@ -11,34 +8,21 @@ use bitcoin::{
     consensus::{encode, Decodable, Encodable},
     hashes::Hash,
 };
+use strum_macros::{EnumCount, EnumIter, EnumString};
 use zkpow_core::{BlockHash, BlockTimestamp, CompactTarget, Header as CoreHeader};
 
-use crate::types::{Header, Network};
+use crate::{
+    error::ConnectionError,
+    msg,
+    types::{Header, Network},
+};
 
-/// Magic bytes for Bitcoin mainnet.
-const MAINNET_MAGIC: [u8; 4] = [0xF9, 0xBE, 0xB4, 0xD9];
-
-/// Bitcoin P2P protocol version.
-const PROTOCOL_VERSION: u32 = 70015;
-
-/// Our node's services (none, we're a headers-only client).
-const SERVICES: u64 = 0;
-
-/// User agent string.
-const USER_AGENT: &str = "/zkpow-cli:0.1.0/";
-
-/// Size of the command field in a Bitcoin P2P message frame.
-const COMMAND_SIZE: usize = 12;
-
-pub const MAX_HEADERS_PER_MSG: usize = 2000;
-const MAX_MESSAGE_BYTES: usize = 4_000_000;
-const MAX_USER_AGENT_BYTES: u64 = 256;
-const MAX_SKIPPED_MESSAGES: usize = 64;
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-const IO_TIMEOUT: Duration = Duration::from_secs(30);
+#[cfg(test)]
+#[path = "tests/connection.rs"]
+mod tests;
 
 /// A Bitcoin P2P network message command.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, EnumCount, EnumString, EnumIter)]
 pub enum Command {
     Version,
     Verack,
@@ -57,24 +41,8 @@ pub enum Command {
 }
 
 impl Command {
-    pub(crate) const ALL: [Self; 13] = [
-        Command::Version,
-        Command::Verack,
-        Command::SendHeaders,
-        Command::GetHeaders,
-        Command::Headers,
-        Command::SendCmpct,
-        Command::Addr,
-        Command::AddrV2,
-        Command::Ping,
-        Command::Pong,
-        Command::FeeFilter,
-        Command::SendAddrV2,
-        Command::Unknown,
-    ];
-
-    pub(crate) fn as_bytes(&self) -> [u8; COMMAND_SIZE] {
-        let mut buf = [0u8; COMMAND_SIZE];
+    fn as_bytes(&self) -> [u8; msg::COMMAND_SIZE] {
+        let mut buf = [0u8; msg::COMMAND_SIZE];
         let name = self.name_bytes();
         buf[..name.len()].copy_from_slice(name);
         buf
@@ -98,13 +66,28 @@ impl Command {
         }
     }
 
-    pub(crate) fn from_wire(buf: &[u8; COMMAND_SIZE]) -> Self {
-        let len = buf.iter().position(|&b| b == 0).unwrap_or(COMMAND_SIZE);
-        Self::ALL
-            .iter()
-            .find(|command| command.name_bytes() == &buf[..len])
-            .copied()
-            .unwrap_or(Command::Unknown)
+    // TODO: This should handle unknown commands by returning a Result or Option  Not a sentinel value.
+    fn from_wire(buf: &[u8; msg::COMMAND_SIZE]) -> Self {
+        let len = buf.iter().position(|&b| b == 0).unwrap_or(msg::COMMAND_SIZE);
+        let Ok(name) = std::str::from_utf8(&buf[..len]) else {
+            return Command::Unknown;
+        };
+
+        match name {
+            "addr" => Command::Addr,
+            "ping" => Command::Ping,
+            "pong" => Command::Pong,
+            "verack" => Command::Verack,
+            "addrv2" => Command::AddrV2,
+            "version" => Command::Version,
+            "headers" => Command::Headers,
+            "sendcmpct" => Command::SendCmpct,
+            "feefilter" => Command::FeeFilter,
+            "getheaders" => Command::GetHeaders,
+            "sendaddrv2" => Command::SendAddrV2,
+            "sendheaders" => Command::SendHeaders,
+            _ => Command::Unknown,
+        }
     }
 }
 
@@ -126,9 +109,11 @@ pub struct VersionMessage {
     pub starting_height:   i32,
 }
 
-impl Decodable for VersionMessage {
-    fn consensus_decode<D: bitcoin::io::Read + ?Sized>(d: &mut D) -> std::result::Result<Self, encode::Error> {
+impl VersionMessage {
+    pub(crate) fn decode(payload: &[u8]) -> Result<Self, ConnectionError> {
         use bitcoin::io::Read as BitcoinRead;
+        let mut cursor = bitcoin::io::Cursor::new(payload);
+        let d = &mut cursor;
         let version = Decodable::consensus_decode(d)?;
         let services = Decodable::consensus_decode(d)?;
         let timestamp = Decodable::consensus_decode(d)?;
@@ -145,8 +130,11 @@ impl Decodable for VersionMessage {
         let nonce = Decodable::consensus_decode(d)?;
 
         let ua_len: encode::VarInt = Decodable::consensus_decode(d)?;
-        if ua_len.0 > MAX_USER_AGENT_BYTES {
-            return Err(encode::Error::ParseFailed("user agent exceeds maximum length"));
+        if ua_len.0 > msg::MAX_USER_AGENT_SIZE {
+            return Err(ConnectionError::UserAgentTooLong {
+                length: ua_len.0,
+                limit:  msg::MAX_USER_AGENT_SIZE,
+            });
         }
         let mut ua_buf = vec![0u8; ua_len.0 as usize];
         BitcoinRead::read_exact(d, &mut ua_buf)?;
@@ -157,6 +145,11 @@ impl Decodable for VersionMessage {
         // Relay flag (1 byte), present since protocol version 70001.
         let mut _relay = [0u8; 1];
         let _ = BitcoinRead::read_exact(d, &mut _relay);
+
+        let remaining = payload.len() - cursor.position() as usize;
+        if remaining != 0 {
+            return Err(ConnectionError::TrailingVersionData { remaining });
+        }
 
         Ok(VersionMessage {
             version,
@@ -179,24 +172,20 @@ pub struct PeerConnection {
 
 impl PeerConnection {
     /// Open the TCP connection and complete the version handshake.
-    pub fn connect(addr: SocketAddr, network: Network, start_height: i32) -> std::io::Result<Self> {
-        let stream = TcpStream::connect_timeout(&addr, CONNECT_TIMEOUT)?;
+    pub fn connect(addr: SocketAddr, network: Network, start_height: i32) -> Result<Self, ConnectionError> {
+        let stream = TcpStream::connect_timeout(&addr, msg::CONNECT_TIMEOUT)?;
         stream.set_nodelay(true)?;
-        stream.set_read_timeout(Some(IO_TIMEOUT))?;
-        stream.set_write_timeout(Some(IO_TIMEOUT))?;
+        stream.set_read_timeout(Some(msg::IO_TIMEOUT))?;
+        stream.set_write_timeout(Some(msg::IO_TIMEOUT))?;
 
-        let network_magic = match network {
-            Network::Mainnet => MAINNET_MAGIC,
-            Network::Testnet => [0x0B, 0x11, 0x09, 0x07],
-            Network::Regtest => [0xFA, 0xBF, 0xB5, 0xDA],
-        };
+        let network_magic = msg::MAGIC[network as usize];
 
         let mut conn = Self { stream, network_magic };
         conn.handshake(start_height)?;
         Ok(conn)
     }
 
-    fn handshake(&mut self, start_height: i32) -> std::io::Result<()> {
+    fn handshake(&mut self, start_height: i32) -> Result<(), ConnectionError> {
         self.send_version(start_height)?;
         let (_their_version, _their_start_height) = self.read_version()?;
         self.send_verack()?;
@@ -205,22 +194,22 @@ impl PeerConnection {
         Ok(())
     }
 
-    fn send_version(&mut self, start_height: i32) -> std::io::Result<()> {
+    fn send_version(&mut self, start_height: i32) -> Result<(), ConnectionError> {
         use std::time::{SystemTime, UNIX_EPOCH};
 
-        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64;
 
         let mut payload = Vec::new();
-        payload.extend_from_slice(&PROTOCOL_VERSION.to_le_bytes());
-        payload.extend_from_slice(&SERVICES.to_le_bytes());
+        payload.extend_from_slice(&msg::VERSION.to_le_bytes());
+        payload.extend_from_slice(&msg::SERVICES.to_le_bytes());
         payload.extend_from_slice(&timestamp.to_le_bytes());
-        payload.extend_from_slice(&SERVICES.to_le_bytes());
+        payload.extend_from_slice(&msg::SERVICES.to_le_bytes());
         payload.extend_from_slice(&[0u8; 18]);
-        payload.extend_from_slice(&SERVICES.to_le_bytes());
+        payload.extend_from_slice(&msg::SERVICES.to_le_bytes());
         payload.extend_from_slice(&[0u8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF, 0, 0, 0, 0]);
         payload.extend_from_slice(&0u16.to_le_bytes());
         payload.extend_from_slice(&rand::random::<u64>().to_le_bytes());
-        let ua_bytes = USER_AGENT.as_bytes();
+        let ua_bytes = msg::USER_AGENT.as_bytes();
         encode::VarInt(ua_bytes.len() as u64).consensus_encode(&mut payload)?;
         payload.extend_from_slice(ua_bytes);
         payload.extend_from_slice(&start_height.to_le_bytes());
@@ -229,9 +218,9 @@ impl PeerConnection {
         self.write_message(Command::Version, &payload)
     }
 
-    fn read_version(&mut self) -> std::io::Result<(VersionMessage, i32)> {
+    fn read_version(&mut self) -> Result<(VersionMessage, i32), ConnectionError> {
         let payload = self.read_message_of_type(Command::Version)?;
-        let version_msg: VersionMessage = encode::deserialize(&payload).map_err(io_error)?;
+        let version_msg = VersionMessage::decode(&payload)?;
         let start_height = version_msg.starting_height;
 
         tracing::info!(
@@ -244,22 +233,22 @@ impl PeerConnection {
         Ok((version_msg, start_height))
     }
 
-    fn send_verack(&mut self) -> std::io::Result<()> {
+    fn send_verack(&mut self) -> Result<(), ConnectionError> {
         self.write_message(Command::Verack, &[])
     }
 
-    fn read_verack(&mut self) -> std::io::Result<()> {
+    fn read_verack(&mut self) -> Result<(), ConnectionError> {
         self.read_message_of_type(Command::Verack)?;
         Ok(())
     }
 
-    fn send_sendheaders(&mut self) -> std::io::Result<()> {
+    fn send_sendheaders(&mut self) -> Result<(), ConnectionError> {
         self.write_message(Command::SendHeaders, &[])
     }
 
-    pub fn send_getheaders(&mut self, locators: &[BlockHash], stop_hash: BlockHash) -> std::io::Result<()> {
+    pub fn send_getheaders(&mut self, locators: &[BlockHash], stop_hash: BlockHash) -> Result<(), ConnectionError> {
         let mut payload = Vec::new();
-        payload.extend_from_slice(&PROTOCOL_VERSION.to_le_bytes());
+        payload.extend_from_slice(&msg::VERSION.to_le_bytes());
         encode::VarInt(locators.len() as u64).consensus_encode(&mut payload)?;
         for hash in locators {
             payload.extend_from_slice(hash.as_inner());
@@ -269,21 +258,21 @@ impl PeerConnection {
     }
 
     /// Read a `headers` message and return validated headers using our own types.
-    pub fn read_headers(&mut self) -> std::io::Result<Vec<Header>> {
+    pub fn read_headers(&mut self) -> Result<Vec<Header>, ConnectionError> {
         let payload = self.read_message_of_type(Command::Headers)?;
         let mut cursor = std::io::Cursor::new(payload);
-        let count: encode::VarInt = Decodable::consensus_decode(&mut cursor).map_err(io_error)?;
-        if count.0 > MAX_HEADERS_PER_MSG as u64 {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("headers count {} exceeds {MAX_HEADERS_PER_MSG}", count.0),
-            ));
+        let count: encode::VarInt = Decodable::consensus_decode(&mut cursor)?;
+        if count.0 > msg::MAX_HEADERS_PER_MSG as u64 {
+            return Err(ConnectionError::TooManyHeaders {
+                count: count.0,
+                limit: msg::MAX_HEADERS_PER_MSG,
+            });
         }
 
         let mut headers = Vec::with_capacity(count.0 as usize);
         for _ in 0..count.0 {
-            let bh: BitcoinHeader = Decodable::consensus_decode(&mut cursor).map_err(io_error)?;
-            let _tx_count: encode::VarInt = Decodable::consensus_decode(&mut cursor).map_err(io_error)?;
+            let bh: BitcoinHeader = Decodable::consensus_decode(&mut cursor)?;
+            let _tx_count: encode::VarInt = Decodable::consensus_decode(&mut cursor)?;
             headers.push(Header::new(bitcoin_to_core(bh)));
         }
 
@@ -291,7 +280,7 @@ impl PeerConnection {
         Ok(headers)
     }
 
-    fn write_message(&mut self, command: Command, payload: &[u8]) -> std::io::Result<()> {
+    fn write_message(&mut self, command: Command, payload: &[u8]) -> Result<(), ConnectionError> {
         let mut buf = Vec::with_capacity(24 + payload.len());
         buf.extend_from_slice(&self.network_magic);
         buf.extend_from_slice(&command.as_bytes());
@@ -299,11 +288,12 @@ impl PeerConnection {
         let checksum = create_checksum(payload);
         buf.extend_from_slice(&checksum);
         buf.extend_from_slice(payload);
-        self.stream.write_all(&buf)
+        self.stream.write_all(&buf)?;
+        Ok(())
     }
 
-    fn read_message_of_type(&mut self, expected: Command) -> std::io::Result<Vec<u8>> {
-        for _ in 0..=MAX_SKIPPED_MESSAGES {
+    fn read_message_of_type(&mut self, expected: Command) -> Result<Vec<u8>, ConnectionError> {
+        for _ in 0..=msg::MAX_SKIPPED_MESSAGES {
             let (command, payload) = self.read_message()?;
             if command == expected {
                 return Ok(payload);
@@ -313,34 +303,34 @@ impl PeerConnection {
             }
             tracing::debug!(?command, ?expected, "Skipping unsolicited message");
         }
-        Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "too many unsolicited messages",
-        ))
+        Err(ConnectionError::TooManyUnsolicitedMessages {
+            expected,
+            limit: msg::MAX_SKIPPED_MESSAGES,
+        })
     }
 
-    fn read_message(&mut self) -> std::io::Result<(Command, Vec<u8>)> {
+    fn read_message(&mut self) -> Result<(Command, Vec<u8>), ConnectionError> {
         let mut magic = [0u8; 4];
         self.stream.read_exact(&mut magic)?;
         if magic != self.network_magic {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("Invalid magic bytes: {:02x?} (expected {:02x?})", magic, self.network_magic),
-            ));
+            return Err(ConnectionError::InvalidMagic {
+                received: magic,
+                expected: self.network_magic,
+            });
         }
 
-        let mut cmd_buf = [0u8; COMMAND_SIZE];
+        let mut cmd_buf = [0u8; msg::COMMAND_SIZE];
         self.stream.read_exact(&mut cmd_buf)?;
         let command = Command::from_wire(&cmd_buf);
 
         let mut len_buf = [0u8; 4];
         self.stream.read_exact(&mut len_buf)?;
         let payload_len = u32::from_le_bytes(len_buf) as usize;
-        if payload_len > MAX_MESSAGE_BYTES {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("payload length {payload_len} exceeds {MAX_MESSAGE_BYTES}"),
-            ));
+        if payload_len > msg::MAX_MESSAGE_SIZE {
+            return Err(ConnectionError::MessageTooLarge {
+                length: payload_len,
+                limit:  msg::MAX_MESSAGE_SIZE,
+            });
         }
 
         let mut checksum_buf = [0u8; 4];
@@ -351,11 +341,13 @@ impl PeerConnection {
             self.stream.read_exact(&mut payload)?;
         }
 
-        if checksum_buf != create_checksum(&payload) {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("Checksum mismatch for message {:?}", command),
-            ));
+        let expected = create_checksum(&payload);
+        if checksum_buf != expected {
+            return Err(ConnectionError::ChecksumMismatch {
+                command,
+                received: checksum_buf,
+                expected,
+            });
         }
 
         Ok((command, payload))
@@ -381,8 +373,4 @@ fn bitcoin_to_core(bh: BitcoinHeader) -> CoreHeader {
         compact_target: CompactTarget::new(bh.bits.to_consensus()),
         nonce:          bh.nonce,
     }
-}
-
-fn io_error(e: encode::Error) -> std::io::Error {
-    std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
 }
