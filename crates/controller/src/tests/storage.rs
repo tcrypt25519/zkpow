@@ -2,6 +2,12 @@ use std::path::PathBuf;
 
 use crate::storage::{ArtifactStore, LocalArtifactStore};
 
+const RUN_ID_A: &str = "run0000a";
+const RUN_ID_B: &str = "run0000b";
+const RUN_ID_C: &str = "run0000c";
+const PROOF_FILE_NAME: &str = "proof.bin";
+const MISSING_PROOF_FILE_NAME: &str = "proof_2016.bin";
+
 fn temp_root(test_name: &str) -> PathBuf {
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -15,11 +21,11 @@ fn local_store_round_trips_artifacts() {
     let root = temp_root("round-trip");
     let store = LocalArtifactStore::new(&root);
 
-    let path = store.put_target("run0000a", "proof.bin").unwrap();
+    let path = store.put_target(RUN_ID_A, PROOF_FILE_NAME).unwrap();
     std::fs::write(&path, b"proof bytes").unwrap();
 
-    assert_eq!(store.fetch("run0000a", "proof.bin").unwrap(), b"proof bytes");
-    assert_eq!(store.get_target("run0000a", "proof.bin").unwrap(), path);
+    assert_eq!(store.fetch(RUN_ID_A, PROOF_FILE_NAME).unwrap(), b"proof bytes");
+    assert_eq!(store.get_target(RUN_ID_A, PROOF_FILE_NAME).unwrap(), path);
 
     std::fs::remove_dir_all(&root).ok();
 }
@@ -29,8 +35,8 @@ fn local_store_segments_by_run_id() {
     let root = temp_root("segments");
     let store = LocalArtifactStore::new(&root);
 
-    let path = store.put_target("run0000b", "proof.bin").unwrap();
-    assert!(path.contains("run0000b"), "path should be segmented by run id: {path}");
+    let path = store.put_target(RUN_ID_B, PROOF_FILE_NAME).unwrap();
+    assert!(path.contains(RUN_ID_B), "path should be segmented by run id: {path}");
 
     std::fs::remove_dir_all(&root).ok();
 }
@@ -40,9 +46,9 @@ fn local_store_refuses_a_target_it_never_stored() {
     let root = temp_root("missing");
     let store = LocalArtifactStore::new(&root);
 
-    let error = store.get_target("run0000c", "proof_2016.bin").unwrap_err().to_string();
-    assert!(error.contains("run0000c"), "error should name the run: {error}");
-    assert!(error.contains("proof_2016.bin"), "error should name the object: {error}");
+    let error = store.get_target(RUN_ID_C, MISSING_PROOF_FILE_NAME).unwrap_err().to_string();
+    assert!(error.contains(RUN_ID_C), "error should name the run: {error}");
+    assert!(error.contains(MISSING_PROOF_FILE_NAME), "error should name the object: {error}");
 
     std::fs::remove_dir_all(&root).ok();
 }
@@ -72,15 +78,15 @@ fn local_store_rejects_unsafe_run_ids() {
 
     for unsafe_id in unsafe_ids {
         assert!(
-            store.put_target(unsafe_id, "proof.bin").is_err(),
+            store.put_target(unsafe_id, PROOF_FILE_NAME).is_err(),
             "put_target should reject {unsafe_id:?}"
         );
         assert!(
-            store.get_target(unsafe_id, "proof.bin").is_err(),
+            store.get_target(unsafe_id, PROOF_FILE_NAME).is_err(),
             "get_target should reject {unsafe_id:?}"
         );
         assert!(
-            store.fetch(unsafe_id, "proof.bin").is_err(),
+            store.fetch(unsafe_id, PROOF_FILE_NAME).is_err(),
             "fetch should reject {unsafe_id:?}"
         );
     }

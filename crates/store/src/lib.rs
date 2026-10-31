@@ -14,14 +14,17 @@ const WORKSPACE_ROOT_RELATIVE_TO_STORE: &str = "../..";
 
 pub use db::{
     genesis_state_from_record, Error, HeaderBatchWitness, HeaderRecord, HeaderStore, Result, ResultOpt, RunRecord,
+    SQLITE_MEMORY_DATABASE,
 };
 
 /// Resolve the SQLite header database path: `ZKPOW_DB_PATH` if set, otherwise
 /// `headers.db` at the workspace root. This is the sync-writable system of
 /// record; also useful for out-of-band querying.
-pub fn db_path() -> std::path::PathBuf {
-    match std::env::var("ZKPOW_DB_PATH") {
-        Ok(path) => std::path::PathBuf::from(path),
-        Err(_) => concat!(env!("CARGO_MANIFEST_DIR"), "/../../headers.db").into(),
+pub fn db_path() -> PathBuf {
+    match std::env::var(ENV_ZKPOW_DB_PATH) {
+        Ok(path) => PathBuf::from(path),
+        Err(_) => PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join(WORKSPACE_ROOT_RELATIVE_TO_STORE)
+            .join(DEFAULT_DB_FILE_NAME),
     }
 }

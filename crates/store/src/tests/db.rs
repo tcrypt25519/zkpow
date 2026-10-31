@@ -5,6 +5,9 @@ use zkpow_params::{Consensus, Mainnet};
 use super::*;
 use crate::db::{hash_to_bytes, work_to_bytes};
 
+const RUN_ID: &str = "mainnet-01";
+const RUN_PROOF_OBJECT: &str = "proof_height_1_to_2016.bin";
+
 #[test]
 fn run_ledger_round_trips_in_the_header_database() {
     let path = temp_db_path("runs");
@@ -17,21 +20,20 @@ fn run_ledger_round_trips_in_the_header_database() {
         verified_height: 0,
         proof_object:    None,
     };
-    db.create_run("mainnet-01", &record).unwrap();
-    assert_eq!(db.load_run("mainnet-01").unwrap(), Some(record.clone()));
-    assert!(db.create_run("mainnet-01", &record).is_err(), "duplicate create");
+    db.create_run(RUN_ID, &record).unwrap();
+    assert_eq!(db.load_run(RUN_ID).unwrap(), Some(record.clone()));
+    assert!(db.create_run(RUN_ID, &record).is_err(), "duplicate create");
 
-    db.record_run_progress("mainnet-01", 2016, Some("proof_height_1_to_2016.bin"))
-        .unwrap();
-    let loaded = db.load_run("mainnet-01").unwrap().unwrap();
+    db.record_run_progress(RUN_ID, 2016, Some(RUN_PROOF_OBJECT)).unwrap();
+    let loaded = db.load_run(RUN_ID).unwrap().unwrap();
     assert_eq!(loaded.verified_height, 2016);
-    assert_eq!(loaded.proof_object.as_deref(), Some("proof_height_1_to_2016.bin"));
+    assert_eq!(loaded.proof_object.as_deref(), Some(RUN_PROOF_OBJECT));
     assert_eq!(loaded.verifier_key, record.verifier_key);
 
     assert!(db.record_run_progress("ghost", 1, None).is_err(), "unknown run");
 
-    db.delete_run("mainnet-01").unwrap();
-    assert_eq!(db.load_run("mainnet-01").unwrap(), None);
+    db.delete_run(RUN_ID).unwrap();
+    assert_eq!(db.load_run(RUN_ID).unwrap(), None);
 
     remove_db_files(&path);
 }
@@ -57,7 +59,7 @@ fn open_creates_current_headers_schema_only() {
         let mut stmt = store.conn.prepare("PRAGMA table_info(headers)").unwrap();
         stmt.query_map([], |row| row.get::<_, String>(1))
             .unwrap()
-            .collect::<Result<_, _>>()
+            .collect::<std::result::Result<_, _>>()
             .unwrap()
     };
     assert_eq!(columns, vec![
@@ -81,7 +83,7 @@ fn open_creates_current_headers_schema_only() {
             .unwrap();
         stmt.query_map([], |row| row.get::<_, String>(0))
             .unwrap()
-            .collect::<Result<_, _>>()
+            .collect::<std::result::Result<_, _>>()
             .unwrap()
     };
     assert_eq!(table_names, vec!["headers", "runs"]);
@@ -90,7 +92,7 @@ fn open_creates_current_headers_schema_only() {
         let mut stmt = store.conn.prepare("PRAGMA index_list(headers)").unwrap();
         stmt.query_map([], |row| Ok((row.get::<_, String>(1)?, row.get::<_, bool>(2)?)))
             .unwrap()
-            .collect::<Result<_, _>>()
+            .collect::<std::result::Result<_, _>>()
             .unwrap()
     };
     assert!(indexes.contains(&("idx_headers_height".to_string(), true)));

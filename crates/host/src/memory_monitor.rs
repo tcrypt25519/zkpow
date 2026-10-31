@@ -7,6 +7,9 @@ use std::process::{self, Command};
 #[cfg(any(target_os = "macos", test))]
 use std::str::from_utf8;
 
+#[cfg(not(feature = "memory-diagnostics"))]
+use crate::pipeline::input::ENV_ZKPOW_MEMORY_LOGGING;
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct StageSample {
     rss_kb:  u64,
@@ -107,7 +110,7 @@ pub fn logging_enabled() -> bool {
     }
     #[cfg(not(feature = "memory-diagnostics"))]
     {
-        std::env::var_os("ZKPOW_MEMORY_LOGGING")
+        std::env::var_os(ENV_ZKPOW_MEMORY_LOGGING)
             .map(|val| val == "1" || val == "true" || val == "on")
             .unwrap_or(false)
     }

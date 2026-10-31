@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 
 use sp1_sdk::{prelude::*, SP1Proof};
+use zkpow_params::Consensus;
 
 use crate::{
     pipeline::{BoxError, ProofGenerationConfig, ProverBackend},
@@ -10,20 +11,22 @@ use crate::{
     util::VerifierKeyDigest,
 };
 
+pub use zkpow_controller::ENV_ZKPOW_DB_PATH;
+
 pub const ENV_ZKPOW_RUN_ID: &str = "ZKPOW_RUN_ID";
 pub const ENV_ZKPOW_BATCH_SIZE: &str = "ZKPOW_BATCH_SIZE";
 pub const ENV_ZKPOW_BATCH_COUNT: &str = "ZKPOW_BATCH_COUNT";
-pub const ENV_ZKPOW_DB_PATH: &str = "ZKPOW_DB_PATH";
 pub const ENV_ZKPOW_PROOF_STORE_DIR: &str = "ZKPOW_PROOF_STORE_DIR";
 pub const ENV_ZKPOW_SHOW_COMPRESSED_PROOF_SPANS: &str = "ZKPOW_SHOW_COMPRESSED_PROOF_SPANS";
 
 pub const ENV_ZKPOW_EXECUTE_ONLY: &str = "ZKPOW_EXECUTE_ONLY";
 pub const ENV_ZKPOW_PROVER_BACKEND: &str = "ZKPOW_PROVER_BACKEND";
 pub const ENV_ZKPOW_USE_CUDA: &str = "ZKPOW_USE_CUDA";
+#[cfg(not(feature = "memory-diagnostics"))]
+pub(crate) const ENV_ZKPOW_MEMORY_LOGGING: &str = "ZKPOW_MEMORY_LOGGING";
 
 const DEFAULT_RUN_ID: &str = "dev";
 const DEFAULT_PROOF_STORE_DIR: &str = "proof_store";
-use zkpow_params::Consensus;
 const DEFAULT_BATCH_COUNT: u32 = 500;
 
 pub(crate) fn parse_bool_env(var_name: &'static str) -> Result<bool, BoxError> {

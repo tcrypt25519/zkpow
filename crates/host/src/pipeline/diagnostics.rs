@@ -13,6 +13,9 @@ use tracing_subscriber::{
 
 use crate::{memory_monitor, pipeline::BoxError};
 
+const ENV_ELEMENT_THRESHOLD: &str = "ELEMENT_THRESHOLD";
+const ENV_ZKPOW_GAS_PER_SHARD: &str = "ZKPOW_GAS_PER_SHARD";
+
 static PHASE_TIMINGS: OnceLock<Mutex<Vec<(String, Duration)>>> = OnceLock::new();
 static SHARD_AREAS: Mutex<Vec<ShardArea>> = Mutex::new(Vec::new());
 static CONFLICTING_CHIPS: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
@@ -206,7 +209,7 @@ pub(crate) fn log_shard_areas() {
         return;
     }
     let of_kind = |kind| areas.iter().filter(move |area| area.kind == kind);
-    let budget = env_u64("ELEMENT_THRESHOLD", DEFAULT_SHARD_AREA);
+    let budget = env_u64(ENV_ELEMENT_THRESHOLD, DEFAULT_SHARD_AREA);
 
     tracing::info!("Core shards proved: {} (fullest first)", of_kind(ShardKind::Core).count());
     for area in of_kind(ShardKind::Core) {
@@ -290,7 +293,7 @@ pub fn log_execution_report(report: &ExecutionReport, total_proving_time_secs: f
     tracing::info!("  prover gas: {}", prover_gas);
 
     if prover_gas > 0 {
-        let budget = env_u64("ZKPOW_GAS_PER_SHARD", DEFAULT_GAS_PER_SHARD);
+        let budget = env_u64(ENV_ZKPOW_GAS_PER_SHARD, DEFAULT_GAS_PER_SHARD);
         tracing::info!(
             "  estimated shard fill: {:.1}% of one shard ({} of {} gas), estimated shards: {}",
             (prover_gas as f64 * 100.0) / budget as f64,

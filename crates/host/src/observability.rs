@@ -5,10 +5,28 @@ use tracing_subscriber::{fmt::format::FmtSpan, prelude::*, EnvFilter};
 
 use crate::pipeline::{diagnostics::ShardAreas, input::ENV_ZKPOW_SHOW_COMPRESSED_PROOF_SPANS};
 
+const ENV_SP1_ENABLE_TOKIO_CONSOLE: &str = "SP1_ENABLE_TOKIO_CONSOLE";
+const ENV_TOKIO_CONSOLE_BIND: &str = "TOKIO_CONSOLE_BIND";
+const QUIET_DIRECTIVES: [&str; 7] = [
+    "hyper=off",
+    "slop_keccak_air=off",
+    "sp1_sdk::mock=warn",
+    "sp1_prover::worker::prover::execute=warn",
+    "p3_fri=off",
+    "p3_dft=off",
+    "p3_challenger=off",
+];
+
 static INIT: Once = Once::new();
 
 /// Holds the non-blocking file writer guard. Must be kept alive for the duration of the process.
 static mut LOG_GUARD: Option<WorkerGuard> = None;
+
+fn quiet(filter: EnvFilter) -> EnvFilter {
+    QUIET_DIRECTIVES
+        .iter()
+        .fold(filter, |filter, directive| filter.add_directive(directive.parse().unwrap()))
+}
 
 fn env_truthy(name: &str) -> bool {
     matches!(
@@ -32,15 +50,7 @@ pub fn init() {
         };
 
         // stderr layer
-        let fmt_filter = EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| EnvFilter::new("off"))
-            .add_directive("hyper=off".parse().unwrap())
-            .add_directive("slop_keccak_air=off".parse().unwrap())
-            .add_directive("sp1_sdk::mock=warn".parse().unwrap())
-            .add_directive("sp1_prover::worker::prover::execute=warn".parse().unwrap())
-            .add_directive("p3_fri=off".parse().unwrap())
-            .add_directive("p3_dft=off".parse().unwrap())
-            .add_directive("p3_challenger=off".parse().unwrap());
+        let fmt_filter = quiet(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("off")));
 
         let stderr_layer = tracing_subscriber::fmt::layer()
             .compact()
@@ -60,14 +70,7 @@ pub fn init() {
 
         let json_level = if show_detailed_spans { "debug" } else { "info" };
 
-        let json_filter = EnvFilter::new(json_level)
-            .add_directive("hyper=off".parse().unwrap())
-            .add_directive("slop_keccak_air=off".parse().unwrap())
-            .add_directive("sp1_sdk::mock=warn".parse().unwrap())
-            .add_directive("sp1_prover::worker::prover::execute=warn".parse().unwrap())
-            .add_directive("p3_fri=off".parse().unwrap())
-            .add_directive("p3_dft=off".parse().unwrap())
-            .add_directive("p3_challenger=off".parse().unwrap());
+        let json_filter = quiet(EnvFilter::new(json_level));
 
         let json_layer = tracing_subscriber::fmt::layer()
             .json()
@@ -79,7 +82,7 @@ pub fn init() {
         let shard_layer = ShardAreas
             .with_filter(EnvFilter::new("off").add_directive("sp1_hypercube::prover::shard=debug".parse().unwrap()));
 
-        let enable_console = env_truthy("SP1_ENABLE_TOKIO_CONSOLE");
+        let enable_console = env_truthy(ENV_SP1_ENABLE_TOKIO_CONSOLE);
         tracing_subscriber::registry()
             .with(enable_console.then(console_subscriber::spawn))
             .with(stderr_layer)
@@ -88,7 +91,7 @@ pub fn init() {
             .init();
 
         if enable_console {
-            let console_bind = std::env::var("TOKIO_CONSOLE_BIND").unwrap_or_else(|_| "127.0.0.1:6669".to_string());
+            let console_bind = std::env::var(ENV_TOKIO_CONSOLE_BIND).unwrap_or_else(|_| "127.0.0.1:6669".to_string());
             println!("Tokio Console subscriber initialized on {console_bind}");
         }
         println!("Structured JSON logs → logs/run.jsonl");

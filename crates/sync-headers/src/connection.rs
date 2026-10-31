@@ -57,7 +57,23 @@ pub enum Command {
 }
 
 impl Command {
-    fn as_bytes(&self) -> [u8; COMMAND_SIZE] {
+    pub(crate) const ALL: [Self; 13] = [
+        Command::Version,
+        Command::Verack,
+        Command::SendHeaders,
+        Command::GetHeaders,
+        Command::Headers,
+        Command::SendCmpct,
+        Command::Addr,
+        Command::AddrV2,
+        Command::Ping,
+        Command::Pong,
+        Command::FeeFilter,
+        Command::SendAddrV2,
+        Command::Unknown,
+    ];
+
+    pub(crate) fn as_bytes(&self) -> [u8; COMMAND_SIZE] {
         let mut buf = [0u8; COMMAND_SIZE];
         let name = self.name_bytes();
         buf[..name.len()].copy_from_slice(name);
@@ -82,24 +98,13 @@ impl Command {
         }
     }
 
-    fn from_wire(buf: &[u8; COMMAND_SIZE]) -> Self {
+    pub(crate) fn from_wire(buf: &[u8; COMMAND_SIZE]) -> Self {
         let len = buf.iter().position(|&b| b == 0).unwrap_or(COMMAND_SIZE);
-        let name = std::str::from_utf8(&buf[..len]);
-        match name {
-            Ok("version") => Command::Version,
-            Ok("verack") => Command::Verack,
-            Ok("sendheaders") => Command::SendHeaders,
-            Ok("getheaders") => Command::GetHeaders,
-            Ok("headers") => Command::Headers,
-            Ok("sendcmpct") => Command::SendCmpct,
-            Ok("addr") => Command::Addr,
-            Ok("addrv2") => Command::AddrV2,
-            Ok("ping") => Command::Ping,
-            Ok("pong") => Command::Pong,
-            Ok("feefilter") => Command::FeeFilter,
-            Ok("sendaddrv2") => Command::SendAddrV2,
-            _ => Command::Unknown,
-        }
+        Self::ALL
+            .iter()
+            .find(|command| command.name_bytes() == &buf[..len])
+            .copied()
+            .unwrap_or(Command::Unknown)
     }
 }
 

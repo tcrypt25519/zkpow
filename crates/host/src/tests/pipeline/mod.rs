@@ -3,7 +3,7 @@ use std::{
     sync::{Mutex, OnceLock},
 };
 
-use zkpow_controller::{db_path, HeaderStore, NO_HEADERS_REMAINING_PREFIX};
+use zkpow_controller::{db_path, HeaderStore, ENV_ZKPOW_DB_PATH, NO_HEADERS_REMAINING_PREFIX};
 use zkpow_params::Mainnet;
 
 mod artifacts;
@@ -11,10 +11,15 @@ mod diagnostics;
 
 use crate::pipeline::{
     input::{
-        config_from_env, parse_bool_env, parse_u32_env, ENV_ZKPOW_BATCH_SIZE, ENV_ZKPOW_EXECUTE_ONLY, ENV_ZKPOW_RUN_ID,
+        config_from_env, parse_bool_env, parse_u32_env, ENV_ZKPOW_BATCH_COUNT, ENV_ZKPOW_BATCH_SIZE, ENV_ZKPOW_EXECUTE_ONLY,
+        ENV_ZKPOW_PROOF_STORE_DIR, ENV_ZKPOW_PROVER_BACKEND, ENV_ZKPOW_RUN_ID, ENV_ZKPOW_USE_CUDA,
     },
     is_header_exhaustion_error, run_batch_session, BoxError, ProverBackend,
 };
+
+const INVALID_BOOL_ENV_VALUE: &str = "maybe";
+const INVALID_U32_ENV_VALUE: &str = "abc";
+const TEST_RUN_ID: &str = "mainnet-01";
 
 fn _env_test_mutex() -> &'static Mutex<()> {
     static ENV_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
@@ -35,19 +40,78 @@ fn remove_env(name: &str) {
 fn config_validation_matrix_invalid_values() {
     let _guard = _env_test_mutex().lock().unwrap();
 
-    set_env(ENV_ZKPOW_EXECUTE_ONLY, "maybe");
+    set_env(ENV_ZKPOW_EXECUTE_ONLY, INVALID_BOOL_ENV_VALUE);
     assert!(
         parse_bool_env(ENV_ZKPOW_EXECUTE_ONLY).is_err(),
-        "{ENV_ZKPOW_EXECUTE_ONLY}=maybe should be invalid"
+        "{ENV_ZKPOW_EXECUTE_ONLY}={INVALID_BOOL_ENV_VALUE} should be invalid"
     );
     remove_env(ENV_ZKPOW_EXECUTE_ONLY);
 
-    set_env(ENV_ZKPOW_BATCH_SIZE, "abc");
+    set_env(ENV_ZKPOW_BATCH_SIZE, INVALID_U32_ENV_VALUE);
     assert!(
         parse_u32_env(ENV_ZKPOW_BATCH_SIZE).is_err(),
-        "{ENV_ZKPOW_BATCH_SIZE}=abc should be invalid"
+        "{ENV_ZKPOW_BATCH_SIZE}={INVALID_U32_ENV_VALUE} should be invalid"
     );
     remove_env(ENV_ZKPOW_BATCH_SIZE);
+}
+
+#[test]
+fn boolean_environment_parser_accepts_named_true_and_false_values() {
+    let _guard = _env_test_mutex().lock().unwrap();
+
+    for value in ["1", "true", "yes", "on", "TrUe"] {
+        set_env(ENV_ZKPOW_EXECUTE_ONLY, value);
+        assert!(parse_bool_env(ENV_ZKPOW_EXECUTE_ONLY).unwrap(), "{value} should be true");
+    }
+    for value in ["0", "false", "no", "off"] {
+        set_env(ENV_ZKPOW_EXECUTE_ONLY, value);
+        assert!(!parse_bool_env(ENV_ZKPOW_EXECUTE_ONLY).unwrap(), "{value} should be false");
+    }
+    remove_env(ENV_ZKPOW_EXECUTE_ONLY);
+}
+
+#[test]
+fn prover_backend_aliases_select_typed_backends() {
+    let _guard = _env_test_mutex().lock().unwrap();
+    remove_env(ENV_ZKPOW_BATCH_SIZE);
+    remove_env(ENV_ZKPOW_BATCH_COUNT);
+    remove_env(ENV_ZKPOW_USE_CUDA);
+    set_env(ENV_ZKPOW_EXECUTE_ONLY, "0");
+
+    for (name, expected) in [
+        ("cuda", ProverBackend::Cuda),
+        ("gpu", ProverBackend::Cuda),
+        ("CPU", ProverBackend::Cpu),
+        ("mock", ProverBackend::Mock),
+    ] {
+        set_env(ENV_ZKPOW_PROVER_BACKEND, name);
+        assert_eq!(config_from_env::<Mainnet>().unwrap().prover_backend, expected);
+    }
+
+    set_env(ENV_ZKPOW_PROVER_BACKEND, "tpu");
+    assert!(config_from_env::<Mainnet>().is_err());
+
+    remove_env(ENV_ZKPOW_EXECUTE_ONLY);
+    remove_env(ENV_ZKPOW_PROVER_BACKEND);
+}
+
+#[test]
+#[cfg(not(feature = "memory-diagnostics"))]
+fn memory_logging_preserves_its_narrow_truthy_set() {
+    use crate::pipeline::input::ENV_ZKPOW_MEMORY_LOGGING;
+
+    let _guard = _env_test_mutex().lock().unwrap();
+
+    for value in ["1", "true", "on"] {
+        set_env(ENV_ZKPOW_MEMORY_LOGGING, value);
+        assert!(crate::memory_monitor::logging_enabled(), "{value} should enable logging");
+    }
+    for value in ["yes", "TRUE", ""] {
+        set_env(ENV_ZKPOW_MEMORY_LOGGING, value);
+        assert!(!crate::memory_monitor::logging_enabled(), "{value} should not enable logging");
+    }
+    remove_env(ENV_ZKPOW_MEMORY_LOGGING);
+    assert!(!crate::memory_monitor::logging_enabled());
 }
 
 #[test]
@@ -69,10 +133,10 @@ fn execute_only_defaults_to_mock_backend_and_dev_run() {
 #[test]
 fn run_id_env_overrides_default() {
     let _guard = _env_test_mutex().lock().unwrap();
-    set_env(ENV_ZKPOW_RUN_ID, "mainnet-01");
+    set_env(ENV_ZKPOW_RUN_ID, TEST_RUN_ID);
 
     let config = config_from_env::<Mainnet>().unwrap();
-    assert_eq!(config.run_id, "mainnet-01");
+    assert_eq!(config.run_id, TEST_RUN_ID);
 
     remove_env(ENV_ZKPOW_RUN_ID);
 }
@@ -107,7 +171,7 @@ impl SessionEnv {
         let dir = std::env::temp_dir().join(format!("zkpow-host-session-{test_name}-{}-{nonce}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let run_id = format!("test-{test_name}-{nonce}");
-        set_env("ZKPOW_PROOF_STORE_DIR", dir.join("artifacts").to_str().unwrap());
+        set_env(ENV_ZKPOW_PROOF_STORE_DIR, dir.join("artifacts").to_str().unwrap());
         set_env(ENV_ZKPOW_RUN_ID, &run_id);
         set_env(ENV_ZKPOW_EXECUTE_ONLY, "1");
         Self { dir, run_id }
@@ -120,12 +184,12 @@ impl Drop for SessionEnv {
             db.delete_run(&self.run_id).ok();
         }
         for name in [
-            "ZKPOW_PROOF_STORE_DIR",
+            ENV_ZKPOW_PROOF_STORE_DIR,
             ENV_ZKPOW_RUN_ID,
             ENV_ZKPOW_EXECUTE_ONLY,
-            "ZKPOW_BATCH_COUNT",
+            ENV_ZKPOW_BATCH_COUNT,
             ENV_ZKPOW_BATCH_SIZE,
-            "ZKPOW_DB_PATH",
+            ENV_ZKPOW_DB_PATH,
         ] {
             remove_env(name);
         }
@@ -138,9 +202,9 @@ impl Drop for SessionEnv {
 async fn stops_after_reaching_configured_batch_count() {
     let _guard = _env_test_mutex().lock().unwrap();
     let env = SessionEnv::new("batch-count");
-    set_env("ZKPOW_BATCH_COUNT", "0");
+    set_env(ENV_ZKPOW_BATCH_COUNT, "0");
     set_env(ENV_ZKPOW_BATCH_SIZE, "1");
-    set_env("ZKPOW_DB_PATH", env.dir.to_str().unwrap());
+    set_env(ENV_ZKPOW_DB_PATH, env.dir.to_str().unwrap());
 
     let completed = run_batch_session::<Mainnet>().await.expect("session should exit cleanly");
     assert_eq!(completed, 0);
@@ -153,9 +217,9 @@ async fn stops_after_exhausting_headers_in_database() {
     let env = SessionEnv::new("exhausted");
     let db_path = env.dir.join("headers.sqlite");
     zkpow_store::test_utils::create_real_seeded_store(&db_path, 10);
-    set_env("ZKPOW_BATCH_COUNT", "5");
+    set_env(ENV_ZKPOW_BATCH_COUNT, "5");
     set_env(ENV_ZKPOW_BATCH_SIZE, "10");
-    set_env("ZKPOW_DB_PATH", db_path.to_str().unwrap());
+    set_env(ENV_ZKPOW_DB_PATH, db_path.to_str().unwrap());
 
     let completed = run_batch_session::<Mainnet>()
         .await
@@ -170,7 +234,7 @@ async fn stops_after_exhausting_headers_in_database() {
 async fn execute_only_session_is_separate_from_run_progress() {
     let _guard = _env_test_mutex().lock().unwrap();
     let env = SessionEnv::new("advance-resume");
-    set_env("ZKPOW_BATCH_COUNT", "2");
+    set_env(ENV_ZKPOW_BATCH_COUNT, "2");
     set_env(ENV_ZKPOW_BATCH_SIZE, "10");
 
     let completed = run_batch_session::<Mainnet>().await.expect("first session should complete");

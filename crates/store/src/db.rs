@@ -10,9 +10,11 @@ use zkpow_core::{
     requires_median_hint, BlockHash, BlockTimestamp, ChainWork, CompactTarget, Header, HeaderInput, State,
     VerifierKeyDigest,
 };
-use zkpow_params::{Consensus, WINDOW_SIZE};        
+use zkpow_params::{Consensus, WINDOW_SIZE};
 
-#[derive(thiserror::Error, Debug)]   
+pub const SQLITE_MEMORY_DATABASE: &str = ":memory:";
+
+#[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("data failed to convert")]
     ConversionError(#[from] std::array::TryFromSliceError),
@@ -105,8 +107,8 @@ pub struct HeaderStore {
 
 impl HeaderStore {
     /// Open the database, creating the schema when missing.
-    pub fn open(db_path: impl AsRef<Path>) -> DBResult<Self> {
-        let conn = if db_path.as_ref().to_str() == Some(":memory:") {
+    pub fn open(db_path: impl AsRef<Path>) -> Result<Self> {
+        let conn = if db_path.as_ref().to_str() == Some(SQLITE_MEMORY_DATABASE) {
             Connection::open_in_memory()
         } else {
             Connection::open(db_path)
@@ -220,7 +222,7 @@ impl HeaderStore {
         }
     }
 
-    pub fn bulk_insert(&mut self, headers: &[ConnectedHeader]) -> DBResult<()> {
+    pub fn bulk_insert(&mut self, headers: &[ConnectedHeader]) -> Result<()> {
         let tx = self.conn.transaction()?;
 
         for ch in headers {
@@ -249,12 +251,12 @@ impl HeaderStore {
         Ok(())
     }
 
-    pub fn header_count(&self) -> DBResult<u64> {
+    pub fn header_count(&self) -> Result<u64> {
         let count: i64 = self.conn.query_row("SELECT COUNT(*) FROM headers", [], |row| row.get(0))?;
         Ok(count as u64)
     }
 
-    pub fn insert_genesis(&self, genesis: &ConnectedHeader) -> DBResult<()> {
+    pub fn insert_genesis(&self, genesis: &ConnectedHeader) -> Result<()> {
         let fields = header_fields(&genesis.header.inner);
         self.conn.execute(
             "INSERT OR IGNORE INTO headers
@@ -276,7 +278,7 @@ impl HeaderStore {
         Ok(())
     }
 
-    pub fn load_compact_target(&self, height: u64) -> DBResultOpt<CompactTarget> {
+    pub fn load_compact_target(&self, height: u64) -> ResultOpt<CompactTarget> {
         const SQL: &str = "SELECT n_bits FROM headers WHERE height = ?1";
 
         let mut stmt = self.conn.prepare_cached(SQL)?;
@@ -289,7 +291,7 @@ impl HeaderStore {
         Ok(opt)
     }
 
-    pub fn load_header_records(&self, start_height: u64, count: u64) -> DBResult<Vec<HeaderRecord>> {
+    pub fn load_header_records(&self, start_height: u64, count: u64) -> Result<Vec<HeaderRecord>> {
         const SQL: &str = "SELECT height, version, prev, merkle_root, timestamp, n_bits, nonce, chainwork, \
              median_time_past, ordered_timestamp_run FROM headers \
              WHERE height >= ?1 AND height < ?2 ORDER BY height ASC";
@@ -334,18 +336,18 @@ impl HeaderStore {
         Ok(records)
     }
 
-    pub fn load_header_record(&self, height: u64) -> DBResultOpt<HeaderRecord> {
+    pub fn load_header_record(&self, height: u64) -> ResultOpt<HeaderRecord> {
         let mut records = self.load_header_records(height, 1)?;
         Ok(records.pop())
     }
 
-    pub fn load_new_headers(&self, start_height: u64, count: u64) -> DBResult<Vec<HeaderInput>> {
+    pub fn load_new_headers(&self, start_height: u64, count: u64) -> Result<Vec<HeaderInput>> {
         Ok(self.load_header_batch_witness(start_height, count)?.headers)
     }
 
     /// The `ordered_timestamp_run` column of one row, without materializing
     /// the whole record.
-    fn load_ordered_timestamp_run(&self, height: u64) -> DBResultOpt<u64> {
+    fn load_ordered_timestamp_run(&self, height: u64) -> ResultOpt<u64> {
         const SQL: &str = "SELECT ordered_timestamp_run FROM headers WHERE height = ?1";
         let mut stmt = self.conn.prepare_cached(SQL)?;
         let raw: Option<i64> = stmt.query_row(params![height as i64], |row| row.get(0)).optional()?;
@@ -354,7 +356,7 @@ impl HeaderStore {
 
     /// Load `count` headers from `start_height`, plus a sparse median hint for each header whose
     /// window is full but not provably ordered (see [`requires_median_hint`]).
-    pub fn load_header_batch_witness(&self, start_height: u64, count: u64) -> DBResult<HeaderBatchWitness> {
+    pub fn load_header_batch_witness(&self, start_height: u64, count: u64) -> Result<HeaderBatchWitness> {
         const SQL: &str =
             "SELECT h.height, h.version, h.merkle_root, h.timestamp, h.nonce, h.median_time_past, h.ordered_timestamp_run \
              FROM headers h \
@@ -445,7 +447,7 @@ impl HeaderStore {
         }))
     }
 
-    pub fn load_run(&self, run_id: &str) -> DBResultOpt<RunRecord> {
+    pub fn load_run(&self, run_id: &str) -> ResultOpt<RunRecord> {
         let opt = self
             .conn
             .query_row(
@@ -471,7 +473,7 @@ impl HeaderStore {
         Ok(opt)
     }
 
-    pub fn create_run(&self, run_id: &str, record: &RunRecord) -> DBResult<()> {
+    pub fn create_run(&self, run_id: &str, record: &RunRecord) -> Result<()> {
         self.conn.execute(
             "INSERT INTO runs (run_id, verifier_key, verified_height, proof_object)
              VALUES (?1, ?2, ?3, ?4)",
@@ -488,7 +490,7 @@ impl HeaderStore {
     /// Persist a newly verified height. Callers must only invoke this after
     /// the batch's public values (and proof, when configured) have been
     /// validated.
-    pub fn record_run_progress(&self, run_id: &str, verified_height: u32, proof_object: Option<&str>) -> DBResult<()> {
+    pub fn record_run_progress(&self, run_id: &str, verified_height: u32, proof_object: Option<&str>) -> Result<()> {
         let updated = self.conn.execute(
             "UPDATE runs
              SET verified_height = ?2,
@@ -504,7 +506,7 @@ impl HeaderStore {
     }
 
     /// Forget a run entirely (operator reset of a halted or abandoned chain).
-    pub fn delete_run(&self, run_id: &str) -> DBResult<()> {
+    pub fn delete_run(&self, run_id: &str) -> Result<()> {
         self.conn.execute("DELETE FROM runs WHERE run_id = ?1", [run_id])?;
         Ok(())
     }

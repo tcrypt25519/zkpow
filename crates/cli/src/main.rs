@@ -1,7 +1,7 @@
 use clap::{Args, Parser, Subcommand};
 use sync_headers::{connect_headers, tip_from_connected, ConnectedHeader, Header, Network, PeerStore, Tip};
 use zkpow_params::{Consensus, Mainnet};
-use zkpow_store::HeaderStore;
+use zkpow_store::{HeaderStore, DEFAULT_DB_FILE_NAME};
 use zkpow_types::ChainWork;
 
 #[derive(Parser, Debug)]
@@ -20,7 +20,7 @@ enum Command {
 
 #[derive(Args, Debug)]
 struct SyncArgs {
-    #[arg(short, long, default_value = "headers.db")]
+    #[arg(short, long, default_value = DEFAULT_DB_FILE_NAME)]
     db: String,
 
     #[arg(short, long, default_value = "0")]
@@ -130,13 +130,15 @@ fn genesis_connected_header<C: Consensus>() -> ConnectedHeader {
 
 #[cfg(test)]
 mod tests {
+    use zkpow_store::SQLITE_MEMORY_DATABASE;
+
     use super::*;
 
     #[test]
     fn rejects_unknown_and_unsupported_networks() {
         for network in ["invalid", "testnet", "regtest"] {
             let args = SyncArgs {
-                db:          ":memory:".to_string(),
+                db:          SQLITE_MEMORY_DATABASE.to_string(),
                 max_headers: 1,
                 p2p_peer:    None,
                 p2p_network: network.to_string(),

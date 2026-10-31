@@ -17,6 +17,9 @@ use crate::{
     verify::ProofVerifier,
 };
 
+const TEST_DATABASE_FILE: &str = "headers.sqlite";
+const EMPTY_DATABASE_RUN_ID: &str = "anyrun01";
+
 struct ControllableStore {
     inner:    LocalArtifactStore,
     fail_put: Arc<AtomicBool>,
@@ -84,7 +87,7 @@ impl Harness {
         let nonce = unique_nonce();
         let root = std::env::temp_dir().join(format!("zkpow-runtime-{nonce}"));
         std::fs::create_dir_all(&root).unwrap();
-        let db_path = root.join("headers.sqlite");
+        let db_path = root.join(TEST_DATABASE_FILE);
         let (store, genesis_hash) = zkpow_store::test_utils::seeded_store_at(&db_path, 20);
         let mut config = ControllerConfig::new(genesis_hash, 2);
         config.pull_timeout = Duration::from_millis(100);
@@ -225,14 +228,14 @@ async fn an_empty_header_database_is_not_reported_as_a_run_problem() {
         ControllerConfig::new(genesis_hash, 2),
     );
 
-    let error = empty.pull_batch("anyrun01").await.unwrap_err();
+    let error = empty.pull_batch(EMPTY_DATABASE_RUN_ID).await.unwrap_err();
     assert!(
         error.message.contains("header database"),
         "error should name the database: {}",
         error.message
     );
     assert!(
-        !error.message.contains("anyrun01"),
+        !error.message.contains(EMPTY_DATABASE_RUN_ID),
         "error should not blame the run id: {}",
         error.message
     );
@@ -375,7 +378,7 @@ async fn guest_compatible_batch_size_advances_and_completes() {
     let nonce = unique_nonce();
     let root = std::env::temp_dir().join(format!("zkpow-runtime-batch10-{nonce}"));
     std::fs::create_dir_all(&root).unwrap();
-    let db_path = root.join("headers.sqlite");
+    let db_path = root.join(TEST_DATABASE_FILE);
     let (store, genesis_hash) = zkpow_store::test_utils::seeded_store_at(&db_path, 25);
     let mut config = ControllerConfig::new(genesis_hash, 10);
     config.pull_timeout = Duration::from_millis(100);

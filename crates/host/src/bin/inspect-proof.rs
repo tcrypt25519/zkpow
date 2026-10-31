@@ -7,6 +7,8 @@ use zkpow_params::{Consensus, Mainnet};
 
 use crate::util::PublicValues;
 
+const DEFAULT_PROOF_FILE_NAME: &str = "zkpow-proof.bin";
+
 fn reverse_hash_display(hash: util::BlockHash) -> String {
     let mut hash_be = hash.into_inner();
     hash_be.reverse();
@@ -14,7 +16,7 @@ fn reverse_hash_display(hash: util::BlockHash) -> String {
 }
 
 fn main() {
-    let proof_path = std::env::args().nth(1).unwrap_or_else(|| "zkpow-proof.bin".to_string());
+    let proof_path = std::env::args().nth(1).unwrap_or_else(|| DEFAULT_PROOF_FILE_NAME.to_string());
 
     println!("Loading proof from: {}", proof_path);
     let proof = SP1ProofWithPublicValues::load(&proof_path).expect("failed to load proof file");

@@ -7,6 +7,8 @@ use std::{
 use sp1_sdk::{prelude::*, ExecutionReport};
 use tracing::Instrument;
 
+const WORKER_JOB_SPAN_NAME: &str = "worker_job";
+
 static JOB_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn next_job_id() -> u64 {
@@ -45,7 +47,7 @@ where
     let job_id = next_job_id();
     let shape = stdin_shape(&stdin);
     let span = tracing::info_span!(
-        "worker_job",
+        WORKER_JOB_SPAN_NAME,
         job_id,
         kind = "execute",
         stdin_items = shape.items,
@@ -96,7 +98,7 @@ where
     let job_id = next_job_id();
     let shape = stdin_shape(&stdin);
     let span = tracing::info_span!(
-        "worker_job",
+        WORKER_JOB_SPAN_NAME,
         job_id,
         kind = "prove_compressed",
         stdin_items = shape.items,

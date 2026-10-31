@@ -23,14 +23,18 @@ use std::{
 
 use zkpow_host::{
     memory_monitor, observability,
-    pipeline::input::{ENV_ZKPOW_BATCH_SIZE, ENV_ZKPOW_EXECUTE_ONLY},
+    pipeline::input::{
+        ENV_ZKPOW_BATCH_COUNT, ENV_ZKPOW_BATCH_SIZE, ENV_ZKPOW_EXECUTE_ONLY, ENV_ZKPOW_PROOF_STORE_DIR, ENV_ZKPOW_RUN_ID,
+    },
 };
+
+const ENV_ITERATIONS: &str = "ITERATIONS";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     observability::init();
 
-    let iterations: u32 = var("ITERATIONS").ok().and_then(|s| s.parse().ok()).unwrap_or(5);
+    let iterations: u32 = var(ENV_ITERATIONS).ok().and_then(|s| s.parse().ok()).unwrap_or(5);
     let num_headers: u32 = var(ENV_ZKPOW_BATCH_SIZE).ok().and_then(|s| s.parse().ok()).unwrap_or(1);
     let execute_only = var(ENV_ZKPOW_EXECUTE_ONLY)
         .ok()
@@ -53,9 +57,9 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let run_id = format!("stress-{timestamp}");
     // SAFETY: single-threaded at this point; no other env readers yet.
     unsafe {
-        set_var("ZKPOW_RUN_ID", &run_id);
-        set_var("ZKPOW_PROOF_STORE_DIR", scratch.join("artifacts"));
-        set_var("ZKPOW_BATCH_COUNT", "1");
+        set_var(ENV_ZKPOW_RUN_ID, &run_id);
+        set_var(ENV_ZKPOW_PROOF_STORE_DIR, scratch.join("artifacts"));
+        set_var(ENV_ZKPOW_BATCH_COUNT, "1");
         set_var(ENV_ZKPOW_BATCH_SIZE, num_headers.to_string());
         set_var(ENV_ZKPOW_EXECUTE_ONLY, if execute_only { "1" } else { "0" });
     }
