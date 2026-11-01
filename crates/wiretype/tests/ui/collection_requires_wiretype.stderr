@@ -1,0 +1,36 @@
+error[E0599]: the method `to_bytes` exists for struct `Vec<u32>`, but its trait bounds were not satisfied
+ --> tests/ui/collection_requires_wiretype.rs:6:12
+  |
+6 |     values.to_bytes();
+  |            ^^^^^^^^ method cannot be called on `Vec<u32>` due to unsatisfied trait bounds
+  |
+ ::: $RUST/alloc/src/vec/mod.rs
+  |
+  | pub struct Vec<T, #[unstable(feature = "allocator_api", issue = "32838")] A: Allocator = Global> {
+  | ------------------------------------------------------------------------------------------------ doesn't satisfy `Vec<u32>: WireType`
+  |
+  = note: the following trait bounds were not satisfied:
+          `<u32 as WireType>::Inner = u32`
+          which is required by `Vec<u32>: WireType`
+          `u32: WireType`
+          which is required by `Vec<u32>: WireType`
+          `<u32 as WireType>::Inner = u32`
+          which is required by `[u32]: WireType`
+          `u32: WireType`
+          which is required by `[u32]: WireType`
+
+error[E0599]: the method `to_bytes` exists for reference `&[u32]`, but its trait bounds were not satisfied
+ --> tests/ui/collection_requires_wiretype.rs:7:23
+  |
+7 |     values.as_slice().to_bytes();
+  |                       ^^^^^^^^ method cannot be called on `&[u32]` due to unsatisfied trait bounds
+  |
+  = note: the following trait bounds were not satisfied:
+          `<u32 as WireType>::Inner = u32`
+          which is required by `[u32]: WireType`
+          `u32: WireType`
+          which is required by `[u32]: WireType`
+          `<u32 as WireType>::Inner = u32`
+          which is required by `&[u32]: WireType`
+          `u32: WireType`
+          which is required by `&[u32]: WireType`
