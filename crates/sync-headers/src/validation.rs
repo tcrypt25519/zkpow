@@ -1,8 +1,9 @@
 use zkpow_core::{
     advance_ordered_timestamp_run, calculate_next_work_required, check_proof_of_work, has_ordered_timestamp_window,
-    ordered_median_timestamp_slot, timestamp_slot, BlockTimestamp,
+    ordered_median_timestamp_slot, timestamp_slot,
 };
 use zkpow_params::{Consensus, WINDOW_SIZE};
+use zkpow_types::BlockTimestamp;
 
 use crate::types::{expand_target, ConnectedHeader, Header, Tip};
 

@@ -4,13 +4,12 @@
 
 use std::path::Path;
 
+use bytemuck::PodCastError;
 use rusqlite::{params, Connection, OptionalExtension};
 use sync_headers::{ConnectedHeader, Tip};
-use zkpow_core::{
-    requires_median_hint, BlockHash, BlockTimestamp, ChainWork, CompactTarget, Header, HeaderInput, State,
-    VerifierKeyDigest,
-};
+use zkpow_core::{requires_median_hint, HeaderInput, State, VerifierKeyDigest};
 use zkpow_params::{Consensus, WINDOW_SIZE};
+use zkpow_types::{BlockHash, BlockTimestamp, ChainWork, CompactTarget, Header, MerkleRoot};
 
 pub const SQLITE_MEMORY_DATABASE: &str = ":memory:";
 
@@ -20,25 +19,15 @@ pub enum Error {
     ConversionError(#[from] std::array::TryFromSliceError),
     #[error("rusqlite error")]
     RusqliteError(#[from] rusqlite::Error),
+    #[error("SQL value conversion failed: {0}")]
+    FromSqlError(#[from] rusqlite::types::FromSqlError),
     #[error("bytemuck cast failed: {0}")]
-    BytemuckDeserializeError(bytemuck::PodCastError),
+    PodCastError(bytemuck::PodCastError),
 }
 
-impl Into<Error> for bytemuck::PodCastError {
-    fn into(self) -> Error {
-        Error::BytemuckDeserializeError(self)
-    }
-}
-
-impl From<Error> for rusqlite::Error {
-    fn from(err: Error) -> Self {
-        match err {
-            Error::ConversionError(e) => {
-                rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
-            },
-            Error::RusqliteError(e) => e,
-            _ => rusqlite::Error::InvalidQuery,
-        }
+impl From<PodCastError> for Error {
+    fn from(err: PodCastError) -> Self {
+        Self::PodCastError(err)
     }
 }
 
@@ -47,13 +36,6 @@ pub type ResultOpt<T> = Result<Option<T>>;
 
 pub(crate) fn hash_to_bytes(hash: &BlockHash) -> [u8; BlockHash::SIZE] {
     *hash.as_inner()
-}
-
-fn hash_from_bytes(bytes: &[u8]) -> Result<BlockHash> {
-    match BlockHash::parse(bytes) {
-        Ok(hash) => Ok(*hash),
-        Err(e) => Err(Error::BytemuckDeserializeError(e)),
-    }
 }
 
 /// Big-endian byte encoding of chainwork as stored in `headers.db`'s `chainwork`
@@ -93,7 +75,7 @@ fn header_fields(header: &Header) -> HeaderFields {
     HeaderFields {
         version:     header.version,
         prev:        *header.prev_blockhash.as_inner(),
-        merkle_root: header.merkle_root,
+        merkle_root: *header.merkle_root,
         timestamp:   header.timestamp.into_inner(),
         n_bits:      header.compact_target.into_inner(),
         nonce:       header.nonce,
@@ -180,7 +162,7 @@ impl HeaderStore {
 
         match row {
             Some(row) => {
-                let hash = hash_from_bytes(&row.hash_bytes)?;
+                let hash = *BlockHash::parse(&row.hash_bytes)?;
                 let chainwork = work_from_bytes(&row.chainwork_bytes)?;
                 let ordered_timestamp_run = ordered_timestamp_run_from_db(row.height as u64, row.ordered_timestamp_run);
                 let epoch_start_height = (row.height / C::PARAMS.epoch_length) * C::PARAMS.epoch_length;
@@ -227,7 +209,7 @@ impl HeaderStore {
             tx.execute(
                 "INSERT OR IGNORE INTO headers
                     (block_hash, prev, merkle_root, version, timestamp, n_bits, nonce, height, chainwork, median_time_past, ordered_timestamp_run)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                 params![
                     hash_to_bytes(&ch.block_hash()),
                     fields.prev,
@@ -258,7 +240,7 @@ impl HeaderStore {
         self.conn.execute(
             "INSERT OR IGNORE INTO headers
                 (block_hash, prev, merkle_root, version, timestamp, n_bits, nonce, height, chainwork, median_time_past, ordered_timestamp_run)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, ?10)",
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, ?10)",
             params![
                 hash_to_bytes(&genesis.block_hash()),
                 fields.prev,
@@ -290,41 +272,46 @@ impl HeaderStore {
 
     pub fn load_header_records(&self, start_height: u64, count: u64) -> Result<Vec<HeaderRecord>> {
         const SQL: &str = "SELECT height, version, prev, merkle_root, timestamp, n_bits, nonce, chainwork, \
-             median_time_past, ordered_timestamp_run FROM headers \
-             WHERE height >= ?1 AND height < ?2 ORDER BY height ASC";
+            median_time_past, ordered_timestamp_run FROM headers \
+            WHERE height >= ?1 AND height < ?2 ORDER BY height ASC";
 
         let mut stmt = self.conn.prepare_cached(SQL)?;
-        let rows = stmt.query_map(params![start_height as i64, (start_height + count) as i64], |row| {
-            let height: i64 = row.get(0)?;
-            let version: i64 = row.get(1)?;
-            // Borrow blob columns in place; the fixed-width consumers
-            // below never need an owned Vec.
-            let prev = row.get_ref(2)?.as_blob()?;
-            let merkle_root = row.get_ref(3)?.as_blob()?;
-            let timestamp: i64 = row.get(4)?;
-            let nbits: i64 = row.get(5)?;
-            let nonce: i64 = row.get(6)?;
-            let chainwork = row.get_ref(7)?.as_blob()?;
-            let median_time_past: i64 = row.get(8)?;
-            let ordered_timestamp_run: i64 = row.get(9)?;
-            let height = height as u64;
-            Ok(HeaderRecord {
-                height,
-                header: Header {
-                    version:        version as u32,
-                    prev_blockhash: hash_from_bytes(prev)?,
-                    merkle_root:    merkle_root.try_into().map_err(|e| {
-                        rusqlite::Error::FromSqlConversionFailure(3, rusqlite::types::Type::Blob, Box::new(e))
-                    })?,
-                    timestamp:      BlockTimestamp::new(timestamp as u32),
-                    compact_target: CompactTarget::new(nbits as u32),
-                    nonce:          nonce as u32,
-                },
-                chain_work: work_from_bytes(chainwork)?,
-                median_time_past: BlockTimestamp::new(median_time_past as u32),
-                ordered_timestamp_run: ordered_timestamp_run_from_db(height, ordered_timestamp_run),
-            })
-        })?;
+        let rows = stmt.query_and_then(
+            params![start_height as i64, (start_height + count) as i64],
+            |row| -> Result<_> {
+                let height: i64 = row.get(0)?;
+                let version: i64 = row.get(1)?;
+                // Borrow blob columns in place; the fixed-width consumers
+                // below never need an owned Vec.
+                let prev = row.get_ref(2)?.as_blob()?;
+                let merkle_root = row.get_ref(3)?.as_blob()?;
+                let timestamp: i64 = row.get(4)?;
+                let nbits: i64 = row.get(5)?;
+                let nonce: i64 = row.get(6)?;
+                let chainwork = row.get_ref(7)?.as_blob()?;
+                let median_time_past: i64 = row.get(8)?;
+                let ordered_timestamp_run: i64 = row.get(9)?;
+                let height = height as u64;
+
+                let prev_blockhash = BlockHash::parse(prev)?;
+                let merkle_root = MerkleRoot::parse(merkle_root)?;
+
+                Ok(HeaderRecord {
+                    height,
+                    header: Header {
+                        version:        version as u32,
+                        prev_blockhash: *prev_blockhash,
+                        merkle_root:    *merkle_root,
+                        timestamp:      BlockTimestamp::new(timestamp as u32),
+                        compact_target: CompactTarget::new(nbits as u32),
+                        nonce:          nonce as u32,
+                    },
+                    chain_work: work_from_bytes(chainwork)?,
+                    median_time_past: BlockTimestamp::new(median_time_past as u32),
+                    ordered_timestamp_run: ordered_timestamp_run_from_db(height, ordered_timestamp_run),
+                })
+            },
+        )?;
 
         let mut records = Vec::with_capacity(count as usize);
         for row in rows {
@@ -356,35 +343,37 @@ impl HeaderStore {
     pub fn load_header_batch_witness(&self, start_height: u64, count: u64) -> Result<HeaderBatchWitness> {
         const SQL: &str =
             "SELECT h.height, h.version, h.merkle_root, h.timestamp, h.nonce, h.median_time_past, h.ordered_timestamp_run \
-             FROM headers h \
-             WHERE h.height >= ?1 AND h.height < ?2 ORDER BY h.height ASC";
+            FROM headers h \
+            WHERE h.height >= ?1 AND h.height < ?2 ORDER BY h.height ASC";
 
         let mut stmt = self.conn.prepare_cached(SQL)?;
-        let rows = stmt.query_map(params![start_height as i64, (start_height + count) as i64], |row| {
-            let height: i64 = row.get(0)?;
-            let version: i64 = row.get(1)?;
-            // Borrowed blob: copied once into the fixed-width array, no
-            // per-row Vec.
-            let merkle_root = row.get_ref(2)?.as_blob()?;
-            let timestamp: i64 = row.get(3)?;
-            let nonce: i64 = row.get(4)?;
-            let median_time_past: i64 = row.get(5)?;
-            let ordered_timestamp_run: i64 = row.get(6)?;
-            let height = height as u64;
-            Ok((
-                height,
-                HeaderInput {
-                    version:     version as u32,
-                    merkle_root: merkle_root.try_into().map_err(|e| {
-                        rusqlite::Error::FromSqlConversionFailure(2, rusqlite::types::Type::Blob, Box::new(e))
-                    })?,
-                    timestamp:   BlockTimestamp::new(timestamp as u32),
-                    nonce:       nonce as u32,
-                },
-                BlockTimestamp::new(median_time_past as u32),
-                ordered_timestamp_run_from_db(height, ordered_timestamp_run),
-            ))
-        })?;
+        let rows = stmt.query_and_then(
+            params![start_height as i64, (start_height + count) as i64],
+            |row| -> Result<_> {
+                let height: i64 = row.get(0)?;
+                let version: i64 = row.get(1)?;
+                // Borrowed blob: copied once into the fixed-width array, no
+                // per-row Vec.
+                let merkle_root = row.get_ref(2)?.as_blob()?;
+                let timestamp: i64 = row.get(3)?;
+                let nonce: i64 = row.get(4)?;
+                let median_time_past: i64 = row.get(5)?;
+                let ordered_timestamp_run: i64 = row.get(6)?;
+                let height = height as u64;
+                let merkle_root = MerkleRoot::parse(merkle_root)?;
+                Ok((
+                    height,
+                    HeaderInput {
+                        version:     version as u32,
+                        merkle_root: *merkle_root,
+                        timestamp:   BlockTimestamp::new(timestamp as u32),
+                        nonce:       nonce as u32,
+                    },
+                    BlockTimestamp::new(median_time_past as u32),
+                    ordered_timestamp_run_from_db(height, ordered_timestamp_run),
+                ))
+            },
+        )?;
 
         let mut headers = Vec::with_capacity(count as usize);
         let mut median_time_past_hints = Vec::with_capacity(count as usize);
@@ -450,30 +439,24 @@ impl HeaderStore {
             .query_row(
                 "SELECT verifier_key, verified_height, proof_object FROM runs WHERE run_id = ?1",
                 [run_id],
-                |row| {
-                    let verifier_key: [u8; size_of::<VerifierKeyDigest>()] =
-                        row.get::<_, Vec<u8>>(0)?.try_into().map_err(|_| {
-                            rusqlite::Error::InvalidColumnType(
-                                0,
-                                format!("verifier_key must be {} bytes", size_of::<VerifierKeyDigest>()),
-                                rusqlite::types::Type::Blob,
-                            )
-                        })?;
-                    Ok(RunRecord {
-                        verifier_key:    VerifierKeyDigest::from_bytes(verifier_key),
-                        verified_height: row.get(1)?,
-                        proof_object:    row.get(2)?,
-                    })
-                },
+                |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get(1)?, row.get(2)?)),
             )
             .optional()?;
-        Ok(opt)
+        opt.map(|(verifier_key, verified_height, proof_object)| -> Result<_> {
+            let verifier_key: [u8; VerifierKeyDigest::SIZE] = verifier_key.as_slice().try_into()?;
+            Ok(RunRecord {
+                verifier_key: VerifierKeyDigest::from_bytes(verifier_key),
+                verified_height,
+                proof_object,
+            })
+        })
+        .transpose()
     }
 
     pub fn create_run(&self, run_id: &str, record: &RunRecord) -> Result<()> {
         self.conn.execute(
             "INSERT INTO runs (run_id, verifier_key, verified_height, proof_object)
-             VALUES (?1, ?2, ?3, ?4)",
+            VALUES (?1, ?2, ?3, ?4)",
             params![
                 run_id,
                 record.verifier_key.to_bytes(),
@@ -490,10 +473,10 @@ impl HeaderStore {
     pub fn record_run_progress(&self, run_id: &str, verified_height: u32, proof_object: Option<&str>) -> Result<()> {
         let updated = self.conn.execute(
             "UPDATE runs
-             SET verified_height = ?2,
-                 proof_object = ?3,
-                 updated_at = strftime('%s','now')
-             WHERE run_id = ?1",
+            SET verified_height = ?2,
+                proof_object = ?3,
+                updated_at = strftime('%s','now')
+            WHERE run_id = ?1",
             params![run_id, verified_height, proof_object],
         )?;
         if updated != 1 {

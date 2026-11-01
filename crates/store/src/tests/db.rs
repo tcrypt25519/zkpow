@@ -1,12 +1,68 @@
 use sync_headers::{ConnectedHeader, Header as SyncHeader};
-use zkpow_core::{ChainWork, VerifierKeyDigest};
+use zkpow_core::VerifierKeyDigest;
 use zkpow_params::{Consensus, Mainnet};
+use zkpow_types::ChainWork;
 
 use super::*;
 use crate::db::{hash_to_bytes, work_to_bytes};
 
 const RUN_ID: &str = "mainnet-01";
 const RUN_PROOF_OBJECT: &str = "proof_height_1_to_2016.bin";
+
+#[test]
+fn malformed_merkle_root_preserves_cast_error() {
+    let store = HeaderStore::open(SQLITE_MEMORY_DATABASE).unwrap();
+    store.insert_genesis(&genesis_connected_header()).unwrap();
+    store.conn.execute("UPDATE headers SET merkle_root = zeroblob(31)", []).unwrap();
+
+    assert!(matches!(store.load_header_records(0, 1), Err(Error::PodCastError(_))));
+    assert!(matches!(store.load_header_batch_witness(0, 1), Err(Error::PodCastError(_))));
+}
+
+#[test]
+fn malformed_hashes_preserve_cast_error() {
+    let store = HeaderStore::open(SQLITE_MEMORY_DATABASE).unwrap();
+    store.insert_genesis(&genesis_connected_header()).unwrap();
+    store.conn.execute("UPDATE headers SET prev = zeroblob(31)", []).unwrap();
+    assert!(matches!(store.load_header_records(0, 1), Err(Error::PodCastError(_))));
+
+    store.conn.execute("UPDATE headers SET block_hash = zeroblob(31)", []).unwrap();
+    assert!(matches!(store.get_best_tip::<Mainnet>(), Err(Error::PodCastError(_))));
+}
+
+#[test]
+fn malformed_chainwork_preserves_conversion_error() {
+    let store = HeaderStore::open(SQLITE_MEMORY_DATABASE).unwrap();
+    store.insert_genesis(&genesis_connected_header()).unwrap();
+    store.conn.execute("UPDATE headers SET chainwork = zeroblob(31)", []).unwrap();
+
+    assert!(matches!(store.load_header_records(0, 1), Err(Error::ConversionError(_))));
+    assert!(matches!(store.get_best_tip::<Mainnet>(), Err(Error::ConversionError(_))));
+}
+
+#[test]
+fn malformed_verifier_key_preserves_conversion_error() {
+    let store = HeaderStore::open(SQLITE_MEMORY_DATABASE).unwrap();
+    let record = RunRecord {
+        verifier_key:    VerifierKeyDigest::from_raw([7; 8]),
+        verified_height: 0,
+        proof_object:    None,
+    };
+    store.create_run(RUN_ID, &record).unwrap();
+    store.conn.execute("UPDATE runs SET verifier_key = zeroblob(31)", []).unwrap();
+
+    assert!(matches!(store.load_run(RUN_ID), Err(Error::ConversionError(_))));
+    assert_eq!(store.load_run("missing").unwrap(), None);
+}
+
+#[test]
+fn sql_failures_are_wrapped_in_store_error() {
+    let store = HeaderStore::open(SQLITE_MEMORY_DATABASE).unwrap();
+    store.conn.execute("DROP TABLE headers", []).unwrap();
+
+    assert!(matches!(store.load_header_records(0, 1), Err(Error::RusqliteError(_))));
+    assert!(matches!(store.load_header_batch_witness(0, 1), Err(Error::RusqliteError(_))));
+}
 
 #[test]
 fn run_ledger_round_trips_in_the_header_database() {
@@ -136,7 +192,7 @@ fn insert_genesis_stores_decomposed_header_fields() {
 
     assert_eq!(row.0, hash_to_bytes(&genesis.block_hash()));
     assert_eq!(row.1, hash_to_bytes(&genesis.prev_blockhash()));
-    assert_eq!(row.2, genesis.header.inner.merkle_root);
+    assert_eq!(row.2, genesis.header.inner.merkle_root.as_bytes());
     assert_eq!(row.3, 1);
     assert_eq!(row.4, 1231006505);
     assert_eq!(row.5, 0x1d00ffff);

@@ -1,4 +1,4 @@
-use crate::brand::{BlockHash, BlockTimestamp, CompactTarget};
+use crate::brand::{BlockHash, BlockTimestamp, CompactTarget, MerkleRoot};
 
 /// A Bitcoin block header
 #[wiretype::wiretype]
@@ -7,7 +7,7 @@ pub struct Header {
     /// The maximally correct underlying type is a `NonZero<i32>`
     pub version:        u32,
     pub prev_blockhash: BlockHash,
-    pub merkle_root:    [u8; 32],
+    pub merkle_root:    MerkleRoot,
     pub timestamp:      BlockTimestamp,
     pub compact_target: CompactTarget,
     pub nonce:          u32,
@@ -38,7 +38,7 @@ impl Header {
         let mut i = 0;
         while i < 32 {
             bytes[4 + i] = prev_blockhash[i];
-            bytes[36 + i] = self.merkle_root[i];
+            bytes[36 + i] = self.merkle_root.as_inner()[i];
             i += 1;
         }
 
@@ -55,7 +55,7 @@ impl From<&Header> for BlockHash {
             BlockHash::new(zkpow_sha256::of_header(
                 header.version,
                 header.prev_blockhash.as_inner(),
-                &header.merkle_root,
+                &header.merkle_root.as_inner(),
                 *header.timestamp.as_inner(),
                 *header.compact_target.as_inner(),
                 header.nonce,

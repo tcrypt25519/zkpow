@@ -11,7 +11,7 @@
 #![cfg_attr(all(test, target_os = "zkvm"), feature(custom_test_frameworks))]
 #![cfg_attr(all(test, target_os = "zkvm"), test_runner(zkvm_test::test_runner))]
 
-use zkpow_types::{BlockHash, BlockTimestamp, BlockWork, CompactTarget, Header, Target};
+use zkpow_types::{BlockHash, BlockTimestamp, BlockWork, CompactTarget, Header, MerkleRoot, Target};
 
 mod consensus;
 pub use consensus::{
@@ -23,10 +23,10 @@ const MAINNET_PARAMS: ConsensusParams = ConsensusParams {
         version:        1,
         prev_blockhash: BlockHash::new([0u8; 32]),
         // The genesis coinbase merkle root, in internal (reversed-from-display) byte order.
-        merkle_root:    [
+        merkle_root:    MerkleRoot::new([
             0x3b, 0xa3, 0xed, 0xfd, 0x7a, 0x7b, 0x12, 0xb2, 0x7a, 0xc7, 0x2c, 0x3e, 0x67, 0x76, 0x8f, 0x61, 0x7f, 0xc8,
             0x1b, 0xc3, 0x88, 0x8a, 0x51, 0x32, 0x3a, 0x9f, 0xb8, 0xaa, 0x4b, 0x1e, 0x5e, 0x4a,
-        ],
+        ]),
         timestamp:      BlockTimestamp::new(1231006505),
         compact_target: CompactTarget::new(0x1d00ffff),
         nonce:          2083236893,

@@ -211,6 +211,13 @@ define_bytes32_newtype! {
     pub struct BlockHash([u8; 32]);
 }
 
+define_bytes32_newtype! {
+    /// The Merkle root of a block's transactions. Unlike the BlockHash, it is
+    /// a single round of SHA-256. To consensus rules it's an opaque vqlue, and
+    /// only validation required for it is the proof-of-work check.
+    pub struct MerkleRoot([u8; 32]);
+}
+
 define_u32_newtype! {
     /// A block's Unix timestamp.
     pub struct BlockTimestamp(u32);

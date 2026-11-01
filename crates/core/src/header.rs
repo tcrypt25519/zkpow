@@ -1,4 +1,4 @@
-use crate::{BlockHash, BlockTimestamp, CompactTarget, Header};
+use zkpow_types::{BlockHash, BlockTimestamp, CompactTarget, Header, MerkleRoot};
 
 /// Prover-supplied fields for a new header.
 ///
@@ -7,7 +7,7 @@ use crate::{BlockHash, BlockTimestamp, CompactTarget, Header};
 #[wiretype::wiretype]
 pub struct HeaderInput {
     pub version:     u32,
-    pub merkle_root: [u8; 32],
+    pub merkle_root: MerkleRoot,
     pub timestamp:   BlockTimestamp,
     pub nonce:       u32,
 }

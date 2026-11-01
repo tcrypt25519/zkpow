@@ -11,15 +11,15 @@
 extern crate alloc;
 extern crate self as zkpow_core;
 
+
 pub use zkpow_mtp::{
     advance_ordered_timestamp_run, has_ordered_timestamp_window, ordered_median_timestamp_slot, ordered_timestamp_run,
     requires_median_hint, timestamp_count, timestamp_slot, WINDOW_LARGE_HALF_SIZE, WINDOW_MAX_INDEX, WINDOW_SIZE,
     WINDOW_SMALL_HALF_SIZE,
 };
 use zkpow_params::Consensus;
-pub use zkpow_types::{
-    u256, BlockHash, BlockTimestamp, BlockWork, ChainWork, CompactTarget, Header, NonMaxU256, RunId, RunIdError,
-    Target, TargetTriplet,
+use zkpow_types::{
+    u256, BlockHash, BlockTimestamp, BlockWork, CompactTarget, Header, MerkleRoot, NonMaxU256, Target, TargetTriplet,
 };
 
 mod header;
@@ -34,10 +34,9 @@ pub use state::State;
 mod errors;
 pub use errors::{ApplyError, ParseError, ReportableError};
 
-pub mod halt;
+mod halt;
 mod input;
 
-pub use input::{cast_slice, serialize_inputs};
 
 /// Hashing lives on [`Header`]; this wrapper exists only so tests can substitute a hash without
 /// mining one. It must stay in this crate: `cfg(test)` is per-compilation-unit, so a mock in
@@ -78,7 +77,7 @@ fn hash_header_input(input: &HeaderInput, prev_blockhash_words: &[u64; 8], compa
         let header = Header {
             version: input.version,
             prev_blockhash: BlockHash::new(prev_hash_bytes),
-            merkle_root: input.merkle_root,
+            merkle_root: MerkleRoot::new(*input.merkle_root),
             timestamp: input.timestamp,
             compact_target,
             nonce: input.nonce,

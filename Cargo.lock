@@ -6457,6 +6457,7 @@ dependencies = [
  "zkpow-core",
  "zkpow-params",
  "zkpow-sha256",
+ "zkpow-types",
 ]
 
 [[package]]
@@ -6518,6 +6519,7 @@ dependencies = [
  "zkpow-core",
  "zkpow-params",
  "zkpow-sync-headers",
+ "zkpow-types",
 ]
 
 [[package]]
@@ -6533,6 +6535,7 @@ dependencies = [
  "tracing",
  "zkpow-core",
  "zkpow-params",
+ "zkpow-types",
 ]
 
 [[package]]

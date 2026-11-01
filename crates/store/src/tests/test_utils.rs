@@ -5,8 +5,9 @@ use std::{
 };
 
 use sync_headers::{ConnectedHeader, Header as SyncHeader};
-use zkpow_core::{block_work_from_target, target_from_bits, BlockHash, BlockTimestamp, ChainWork};
+use zkpow_core::{block_work_from_target, target_from_bits};
 use zkpow_params::{Consensus, Mainnet};
+use zkpow_types::{BlockHash, BlockTimestamp, ChainWork};
 
 use crate::{db::SQLITE_MEMORY_DATABASE, HeaderStore};
 

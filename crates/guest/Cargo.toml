@@ -12,6 +12,7 @@ path = "src/main.rs"
 zkpow-core = { workspace = true }
 zkpow-params = { workspace = true }
 zkpow-sha256 = { workspace = true }
+zkpow-types = { workspace = true }
 sp1-zkvm = { workspace = true, features = ["lib", "verify"] }
 sp1-derive = { workspace = true }
 bytemuck = "1.15.2"

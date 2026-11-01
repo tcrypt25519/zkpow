@@ -8,8 +8,8 @@
 
 use std::{net::SocketAddr, thread, time::Duration};
 
-use zkpow_core::BlockHash;
 use zkpow_params::Consensus;
+use zkpow_types::BlockHash;
 
 use crate::{
     connection::PeerConnection,

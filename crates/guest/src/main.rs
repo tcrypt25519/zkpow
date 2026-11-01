@@ -19,8 +19,9 @@ sp1_zkvm::entrypoint!(main);
 
 use bytemuck::{self, Pod, PodCastError};
 use sp1_zkvm::lib::read_vec_raw;
-use zkpow_core::{BlockTimestamp, HeaderInput, PublicValues, ReportableError, ReturnCode, State, VerifierKeyDigest};
+use zkpow_core::{HeaderInput, PublicValues, ReportableError, ReturnCode, State, VerifierKeyDigest};
 use zkpow_params::Mainnet;
+use zkpow_types::BlockTimestamp;
 
 /// Commit the public values and halt.
 fn commit_public_values(state: &State, verifier_key: &VerifierKeyDigest, return_code: ReturnCode) -> ! {
