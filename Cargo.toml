@@ -38,11 +38,9 @@ zkpow-mtp = { path = "crates/mtp" }
 wiretype = { path = "crates/wiretype" }
 wiretype-macro = { path = "crates/wiretype_macro" }
 sha256_const = { path = "crates/sha256_const" }
-estring = { path = "crates/estring" }
-estring-macro = { path = "crates/estring-macro" }
 
-zkvm-test = { path = "/Users/tcrypt/code/github.com/tcrypt25519/zkvm-test/crates/zkvm-test" }
-# zkvm-test = { git = "ssh://git@github.com/tcrypt25519/zkvm-test", branch = "main" }
+# zkvm-test = { path = "/Users/tcrypt/code/github.com/tcrypt25519/zkvm-test/crates/zkvm-test" }
+zkvm-test = { git = "ssh://git@github.com/tcrypt25519/zkvm-test", branch = "main" }
 
 ##
 ## SP1
