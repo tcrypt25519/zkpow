@@ -284,21 +284,7 @@ async fn timed_upload(label: &str, target: &str, bytes: Vec<u8>) -> Result<(), B
 }
 
 async fn run_batch(prepared: &PreparedProver, stdin: SP1Stdin) -> Result<SP1ProofWithPublicValues, BoxError> {
-    match prepared {
-        PreparedProver::Mock { prover, proving_key } => prove_batch(prover, proving_key, stdin).await,
-        PreparedProver::Cpu { prover, proving_key } => prove_batch(prover, proving_key, stdin).await,
-        #[cfg(feature = "cuda")]
-        PreparedProver::Cuda { prover, proving_key } => prove_batch(prover, proving_key, stdin).await,
-    }
-}
-
-async fn prove_batch<P, K>(prover: &P, proving_key: &K, stdin: SP1Stdin) -> Result<SP1ProofWithPublicValues, BoxError>
-where
-    P: Prover<ProvingKey = K>,
-    K: ProvingKey,
-    P::Error: std::fmt::Display + Send + Sync + 'static,
-{
-    generate_compressed_proof(prover, proving_key, stdin).await
+    generate_compressed_proof(prepared.prover(), prepared.proving_key(), stdin).await
 }
 
 fn log_batch_completion(total_duration_secs: f64) {

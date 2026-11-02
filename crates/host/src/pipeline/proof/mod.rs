@@ -2,7 +2,11 @@ pub(crate) mod compressed;
 
 use std::sync::OnceLock;
 
-use sp1_sdk::{prelude::*, CpuProver, MockProver, Prover, ProverClient, SP1ProvingKey};
+use sp1_sdk::{
+    env::{EnvProver, EnvProvingKey},
+    prelude::*,
+    Prover, ProverClient,
+};
 use tokio::sync::Mutex as AsyncMutex;
 
 use crate::pipeline::{diagnostics::timed_async, BoxError, ProverBackend, ELF};
@@ -15,31 +19,23 @@ struct PreparedProverConfig {
 }
 
 #[derive(Clone)]
-pub(crate) enum PreparedProver {
-    Mock {
-        prover:      MockProver,
-        proving_key: SP1ProvingKey,
-    },
-    Cpu {
-        prover:      CpuProver,
-        proving_key: SP1ProvingKey,
-    },
-    #[cfg(feature = "cuda")]
-    Cuda {
-        prover:      sp1_sdk::CudaProver,
-        proving_key: <sp1_sdk::CudaProver as Prover>::ProvingKey,
-    },
+pub(crate) struct PreparedProver {
+    prover: EnvProver,
+    proving_key: EnvProvingKey,
 }
 
 impl PreparedProver {
+    pub(crate) fn prover(&self) -> &EnvProver {
+        &self.prover
+    }
+
+    pub(crate) fn proving_key(&self) -> &EnvProvingKey {
+        &self.proving_key
+    }
+
     /// The verifying key the guest recursion is pinned to.
     pub(crate) fn verifying_key(&self) -> &sp1_prover::SP1VerifyingKey {
-        match self {
-            PreparedProver::Mock { proving_key, .. } => proving_key.verifying_key(),
-            PreparedProver::Cpu { proving_key, .. } => proving_key.verifying_key(),
-            #[cfg(feature = "cuda")]
-            PreparedProver::Cuda { proving_key, .. } => proving_key.verifying_key(),
-        }
+        self.proving_key.verifying_key()
     }
 
     /// Digest of the verifying key, as committed in every proof's public values.
@@ -78,14 +74,13 @@ pub(crate) async fn get_prepared_prover(prover_backend: ProverBackend) -> Result
         "building prepared prover"
     );
 
-    let prepared = match prover_backend {
+    let prover = match prover_backend {
         ProverBackend::Mock => {
             let prover = timed_async("build_mock_prover", || async {
                 Ok::<_, BoxError>(ProverClient::builder().mock().build().await)
             })
             .await?;
-            let proving_key = timed_async("setup_vkey", || async { prover.setup(ELF).await }).await?;
-            PreparedProver::Mock { prover, proving_key }
+            EnvProver::Mock(prover)
         },
         ProverBackend::Cpu => {
             let worker_config = zkpow_worker::WorkerConfig::from_env();
@@ -93,8 +88,7 @@ pub(crate) async fn get_prepared_prover(prover_backend: ProverBackend) -> Result
                 Ok::<_, BoxError>(zkpow_worker::build_cpu_worker(&worker_config).await)
             })
             .await?;
-            let proving_key = timed_async("setup_vkey", || async { prover.setup(ELF).await }).await?;
-            PreparedProver::Cpu { prover, proving_key }
+            EnvProver::Cpu(prover)
         },
         ProverBackend::Cuda => {
             #[cfg(feature = "cuda")]
@@ -103,8 +97,7 @@ pub(crate) async fn get_prepared_prover(prover_backend: ProverBackend) -> Result
                     Ok::<_, BoxError>(ProverClient::builder().cuda().build().await)
                 })
                 .await?;
-                let proving_key = timed_async("setup_vkey", || async { prover.setup(ELF).await }).await?;
-                PreparedProver::Cuda { prover, proving_key }
+                EnvProver::Cuda(prover)
             }
             #[cfg(not(feature = "cuda"))]
             {
@@ -114,6 +107,16 @@ pub(crate) async fn get_prepared_prover(prover_backend: ProverBackend) -> Result
             }
         },
     };
+
+    let proving_key = timed_async("setup_vkey", || async {
+        prover
+            .setup(ELF)
+            .await
+            .map_err(|err| -> BoxError { err.to_string().into() })
+    })
+    .await?;
+
+    let prepared = PreparedProver { prover, proving_key };
 
     let mut guard = prepared_prover_store().lock().await;
     *guard = Some((desired, prepared.clone()));
