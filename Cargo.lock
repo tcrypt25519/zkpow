@@ -320,7 +320,6 @@ dependencies = [
  "hex-conservative 0.2.3",
  "hex_lit",
  "secp256k1",
- "serde",
 ]
 
 [[package]]
@@ -356,7 +355,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9cb95693f371d089a4b5b6fc41c6f3ea6e01ee8c15388335dfac8ea685173b51"
 dependencies = [
  "bitcoin-consensus-encoding",
- "serde",
 ]
 
 [[package]]
@@ -367,7 +365,6 @@ checksum = "bca4c7abb40c8817d77403c880988cfd484f23ab2365726afb2f798363e2c4a2"
 dependencies = [
  "bitcoin-io",
  "hex-conservative 0.2.3",
- "serde",
 ]
 
 [[package]]
@@ -765,9 +762,9 @@ dependencies = [
 
 [[package]]
 name = "crc32fast"
-version = "1.5.3"
+version = "1.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ba106e844045ddc02c20768ac4b0b7cb45f2cc2ecbd833ac9f5dacb183c2055"
+checksum = "5f97d3416d5337d15c4b0d78c8c91df922ca143f57ec20e2d1c188333047ef04"
 dependencies = [
  "cfg-if",
 ]
@@ -3749,7 +3746,6 @@ checksum = "9465315bc9d4566e1724f0fffcbcc446268cb522e60f9a27bcded6b19c108113"
 dependencies = [
  "bitcoin_hashes",
  "secp256k1-sys",
- "serde",
 ]
 
 [[package]]
@@ -6425,9 +6421,12 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "wiretype",
  "zkpow-core",
+ "zkpow-mtp",
  "zkpow-params",
  "zkpow-store",
+ "zkpow-types",
 ]
 
 [[package]]
@@ -6480,12 +6479,16 @@ dependencies = [
  "zkpow-core",
  "zkpow-params",
  "zkpow-store",
+ "zkpow-types",
  "zkpow-worker",
 ]
 
 [[package]]
 name = "zkpow-mtp"
 version = "0.1.0"
+dependencies = [
+ "zkpow-params",
+]
 
 [[package]]
 name = "zkpow-params"
@@ -6517,6 +6520,7 @@ dependencies = [
  "thiserror 2.0.21",
  "wiretype",
  "zkpow-core",
+ "zkpow-mtp",
  "zkpow-params",
  "zkpow-sync-headers",
  "zkpow-types",
@@ -6534,6 +6538,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tracing",
  "zkpow-core",
+ "zkpow-mtp",
  "zkpow-params",
  "zkpow-types",
 ]

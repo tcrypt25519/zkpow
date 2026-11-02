@@ -21,4 +21,3 @@ pub use brand::{BlockHash, BlockTimestamp, BlockWork, ChainWork, CompactTarget, 
 pub use header::Header;
 pub use run_id::{RunId, RunIdError};
 pub use target_triplet::TargetTriplet;
-pub use wiretype::wiretype;

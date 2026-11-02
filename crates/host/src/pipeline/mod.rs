@@ -34,7 +34,6 @@ use zkpow_controller::{
     verify::ProofVerifier,
     NO_HEADERS_REMAINING_PREFIX,
 };
-use zkpow_core::PublicValues;
 use zkpow_params::Consensus;
 use zkpow_store::HeaderStore;
 
@@ -218,21 +217,14 @@ async fn process_batch(
     let started = Instant::now();
     tracing::info!("=== Starting batch {batch_number} (heights {first_new_height}..={end_height}) ===");
 
-    if verifier_key != prepared.verifier_key_digest() {
-        return Err("controller verifier key does not match the host proving key".into());
-    }
-
-    let recursion = current_state.height > 0;
-    let previous = if recursion {
-        let target = previous_proof
-            .as_ref()
-            .ok_or("controller omitted the previous proof for a recursive batch")?;
-        let bytes = artifacts::fetch_artifact(target).await?;
-        let proof: SP1ProofWithPublicValues =
-            postcard::from_bytes(&bytes).map_err(|err| format!("previous proof does not deserialize: {err}"))?;
-        Some((validate_previous_proof(proof, current_state.height)?, prepared.verifying_key()))
-    } else {
-        None
+    let previous = match previous_proof {
+        Some(target) => {
+            let bytes = artifacts::fetch_artifact(&target).await?;
+            let proof: SP1ProofWithPublicValues =
+                postcard::from_bytes(&bytes).map_err(|err| format!("previous proof does not deserialize: {err}"))?;
+            Some((proof, prepared.verifying_key()))
+        },
+        None => None,
     };
 
     clear_phase_timings();
@@ -240,9 +232,6 @@ async fn process_batch(
     let stdin = timed_sync("serialize_input", || {
         build_stdin(verifier_key, &current_state, header_bytes, median_hint_bytes, previous)
     })?;
-    if let Err(err) = prepared.log_batch_shape(stdin.clone()).await {
-        tracing::warn!(%err, "execution report skipped");
-    }
     let before_prove_memory =
         memory_monitor::log_point("batch_memory_before_prove", "Batch memory snapshot before proving");
     let compressed_proof = run_batch(prepared, stdin).await?;
@@ -310,27 +299,6 @@ where
     P::Error: std::fmt::Display + Send + Sync + 'static,
 {
     generate_compressed_proof(prover, proving_key, stdin).await
-}
-
-fn validate_previous_proof(
-    proof: SP1ProofWithPublicValues,
-    expected_end_height: u32,
-) -> Result<SP1ProofWithPublicValues, BoxError> {
-    let end_height = match PublicValues::parse(proof.public_values.as_slice()) {
-        Ok(pv) if pv.is_success() => pv.state.height,
-        Ok(pv) => {
-            let error_code = pv.validation_error_code().expect("failure has an error code");
-            return Err(format!("previous proof ended in error {error_code} at height {}", pv.state.height + 1).into());
-        },
-        Err(err) => return Err(format!("previous proof has malformed public values: {err}").into()),
-    };
-    if end_height != expected_end_height {
-        return Err(format!(
-            "previous proof covers height {end_height} but the run resumes from {expected_end_height}"
-        )
-        .into());
-    }
-    Ok(proof)
 }
 
 fn log_batch_completion(total_duration_secs: f64) {

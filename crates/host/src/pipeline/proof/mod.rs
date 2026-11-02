@@ -1,15 +1,11 @@
 pub(crate) mod compressed;
 
-use std::{sync::OnceLock, time::Instant};
+use std::sync::OnceLock;
 
 use sp1_sdk::{prelude::*, CpuProver, MockProver, Prover, ProverClient, SP1ProvingKey};
 use tokio::sync::Mutex as AsyncMutex;
 
-use crate::pipeline::{
-    diagnostics::{log_execution_report, timed_async},
-    execution::execute_batch,
-    BoxError, ProverBackend, ELF,
-};
+use crate::pipeline::{diagnostics::timed_async, BoxError, ProverBackend, ELF};
 
 static PREPARED_PROVER: OnceLock<AsyncMutex<Option<(PreparedProverConfig, PreparedProver)>>> = OnceLock::new();
 
@@ -49,21 +45,6 @@ impl PreparedProver {
     /// Digest of the verifying key, as committed in every proof's public values.
     pub(crate) fn verifier_key_digest(&self) -> zkpow_core::VerifierKeyDigest {
         zkpow_core::VerifierKeyDigest::from_raw(self.verifying_key().hash_u32())
-    }
-
-    /// Execute the batch and log its shard shape before proving it. SP1's prove API returns no
-    /// execution report, so the shape only comes from a separate execution pass. CUDA skips it:
-    /// a second pass over the batch is not worth the diagnostic at GPU proving rates.
-    pub(crate) async fn log_batch_shape(&self, stdin: SP1Stdin) -> Result<(), BoxError> {
-        let started = Instant::now();
-        let report = match self {
-            PreparedProver::Mock { prover, .. } => execute_batch(prover, stdin).await?.1,
-            PreparedProver::Cpu { prover, .. } => execute_batch(prover, stdin).await?.1,
-            #[cfg(feature = "cuda")]
-            PreparedProver::Cuda { .. } => return Ok(()),
-        };
-        log_execution_report(&report, started.elapsed().as_secs_f64());
-        Ok(())
     }
 }
 

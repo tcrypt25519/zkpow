@@ -1,10 +1,6 @@
 use sp1_sdk::prelude::*;
 
-use crate::pipeline::{
-    diagnostics::{timed_async, timed_sync},
-    execution::check_guest_success,
-    BoxError,
-};
+use crate::pipeline::{diagnostics::timed_async, BoxError};
 
 /// Prove a batch directly from its stdin. The prover executes the guest
 /// itself, so there is deliberately no separate execution pass first.
@@ -18,22 +14,10 @@ where
     K: ProvingKey,
     P::Error: std::fmt::Display + Send + Sync + 'static,
 {
-    let compressed_proof = timed_async("prove_compressed", || async {
+    timed_async("prove_compressed", || async {
         zkpow_worker::prove_compressed(prover, proving_key, stdin)
             .await
             .map_err(|err| -> BoxError { err.to_string().into() })
     })
-    .await?;
-
-    // Local integrity checks before shipping the artifact: the guest must
-    // not have reported a failure, and the proof must verify against our own
-    // verifying key. The controller independently re-validates both.
-    check_guest_success(compressed_proof.public_values.as_slice(), "proving")?;
-    timed_sync("verify_compressed_proof", || -> Result<(), BoxError> {
-        prover
-            .verify(&compressed_proof, proving_key.verifying_key(), None)
-            .map_err(|err| -> BoxError { err.to_string().into() })
-    })?;
-
-    Ok(compressed_proof)
+    .await
 }

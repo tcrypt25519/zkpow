@@ -4,7 +4,7 @@
 //! already-set-up prepared prover to cryptographically verify uploaded
 //! proofs instead of building a separate one.
 
-use sp1_sdk::{prelude::*, SP1ProofWithPublicValues};
+use sp1_sdk::{prelude::*, SP1ProofWithPublicValues, Prover};
 use zkpow_controller::verify::ProofVerifier;
 
 use crate::pipeline::proof::PreparedProver;
@@ -30,6 +30,7 @@ impl ProofVerifier for PreparedProverVerifier {
         if proof.public_values.as_slice() != expected_public_values {
             return Err("uploaded proof commits different public values".to_string());
         }
+        self.prepared.verif
         let verified = match &self.prepared {
             PreparedProver::Mock { prover, proving_key } => prover.verify(&proof, proving_key.verifying_key(), None),
             PreparedProver::Cpu { prover, proving_key } => prover.verify(&proof, proving_key.verifying_key(), None),

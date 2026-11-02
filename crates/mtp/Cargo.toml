@@ -8,5 +8,6 @@ publish = false
 path = "src/lib.rs"
 
 [dependencies]
+zkpow-params.workspace=true
 
 [build-dependencies]

@@ -119,6 +119,8 @@ impl core::fmt::Display for ErrorCode {
 pub struct ReturnCode(Option<ErrorCode>);
 
 impl ReturnCode {
+    pub(crate) const SIZE: usize = 1;
+
     /// Successful validation.
     pub const SUCCESS: Self = Self(None);
 
@@ -204,7 +206,7 @@ pub struct PublicValues {
 }
 
 impl PublicValues {
-    pub const SIZE: usize = 185;
+    pub const SIZE: usize = State::SIZE + VerifierKeyDigest::SIZE + ReturnCode::SIZE;
 
     /// Create public values from their constituent parts.
     #[must_use]
@@ -225,9 +227,15 @@ impl PublicValues {
     #[must_use]
     pub fn serialize(state: &State, verifier_key: &VerifierKeyDigest, return_code: ReturnCode) -> [u8; Self::SIZE] {
         let mut out = [0u8; Self::SIZE];
-        out[0..State::SIZE].copy_from_slice(bytemuck::bytes_of(state));
-        out[State::SIZE..State::SIZE + 32].copy_from_slice(verifier_key.as_bytes());
-        out[Self::SIZE - 1] = return_code.into_u8();
+        let mut offset = 0;
+
+        out[0..State::SIZE].copy_from_slice(state.as_bytes());
+        offset += State::SIZE;
+
+        out[offset..offset + VerifierKeyDigest::SIZE].copy_from_slice(verifier_key.as_bytes());
+        offset += VerifierKeyDigest::SIZE;
+
+        out[offset] = return_code.into_u8();
         out
     }
 
@@ -235,8 +243,8 @@ impl PublicValues {
     pub fn parse(bytes: &[u8]) -> Result<Self, ParseError> {
         check_exact_len(bytes, Self::SIZE)?;
         let state = bytemuck::pod_read_unaligned::<State>(&bytes[0..State::SIZE]);
-        let mut verifier_key_bytes = [0; 32];
-        verifier_key_bytes.copy_from_slice(&bytes[State::SIZE..State::SIZE + 32]);
+        let mut verifier_key_bytes = [0; VerifierKeyDigest::SIZE];
+        verifier_key_bytes.copy_from_slice(&bytes[State::SIZE..State::SIZE + VerifierKeyDigest::SIZE]);
         let verifier_key = *VerifierKeyDigest::parse(verifier_key_bytes.as_slice())?;
         let return_code = ReturnCode::from(bytes[Self::SIZE - 1]);
         Ok(Self {

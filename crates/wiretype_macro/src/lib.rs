@@ -43,15 +43,15 @@ pub fn wiretype(attr: TokenStream, item: TokenStream) -> TokenStream {
             type Bytes = [u8; core::mem::size_of::<#name>()];
             type Inner = Self;
 
+            fn as_bytes(&self) -> &[u8] {
+                ::bytemuck::bytes_of(self)
+            }
+
             #[must_use]
             fn to_bytes(&self) -> Self::Bytes {
                 ::bytemuck::bytes_of(self)
                     .try_into()
                     .expect("bytes_of() should equal the type's ::SIZE")
-            }
-
-            fn as_bytes(&self) -> &[u8] {
-                ::bytemuck::bytes_of(self)
             }
 
             #[must_use]
