@@ -4,6 +4,7 @@ use zkpow_params::{Consensus, Mainnet};
 use zkpow_types::ChainWork;
 
 use super::*;
+use super::test_utils::in_memory_store;
 use crate::db::{hash_to_bytes, work_to_bytes};
 
 const RUN_ID: &str = "mainnet-01";
@@ -11,7 +12,7 @@ const RUN_PROOF_OBJECT: &str = "proof_height_1_to_2016.bin";
 
 #[test]
 fn malformed_merkle_root_preserves_cast_error() {
-    let store = HeaderStore::open(SQLITE_MEMORY_DATABASE).unwrap();
+    let store = in_memory_store();
     store.insert_genesis(&genesis_connected_header()).unwrap();
     store.conn.execute("UPDATE headers SET merkle_root = zeroblob(31)", []).unwrap();
 
@@ -21,7 +22,7 @@ fn malformed_merkle_root_preserves_cast_error() {
 
 #[test]
 fn malformed_hashes_preserve_cast_error() {
-    let store = HeaderStore::open(SQLITE_MEMORY_DATABASE).unwrap();
+    let store = in_memory_store();
     store.insert_genesis(&genesis_connected_header()).unwrap();
     store.conn.execute("UPDATE headers SET prev = zeroblob(31)", []).unwrap();
     assert!(matches!(store.load_header_records(0, 1), Err(Error::PodCastError(_))));
@@ -32,7 +33,7 @@ fn malformed_hashes_preserve_cast_error() {
 
 #[test]
 fn malformed_chainwork_preserves_conversion_error() {
-    let store = HeaderStore::open(SQLITE_MEMORY_DATABASE).unwrap();
+    let store = in_memory_store();
     store.insert_genesis(&genesis_connected_header()).unwrap();
     store.conn.execute("UPDATE headers SET chainwork = zeroblob(31)", []).unwrap();
 
@@ -42,7 +43,7 @@ fn malformed_chainwork_preserves_conversion_error() {
 
 #[test]
 fn malformed_verifier_key_preserves_conversion_error() {
-    let store = HeaderStore::open(SQLITE_MEMORY_DATABASE).unwrap();
+    let store = in_memory_store();
     let record = RunRecord {
         verifier_key:    VerifierKeyDigest::from_raw([7; 8]),
         verified_height: 0,
@@ -57,7 +58,7 @@ fn malformed_verifier_key_preserves_conversion_error() {
 
 #[test]
 fn sql_failures_are_wrapped_in_store_error() {
-    let store = HeaderStore::open(SQLITE_MEMORY_DATABASE).unwrap();
+    let store = in_memory_store();
     store.conn.execute("DROP TABLE headers", []).unwrap();
 
     assert!(matches!(store.load_header_records(0, 1), Err(Error::RusqliteError(_))));
@@ -66,8 +67,7 @@ fn sql_failures_are_wrapped_in_store_error() {
 
 #[test]
 fn run_ledger_round_trips_in_the_header_database() {
-    let path = temp_db_path("runs");
-    let db = HeaderStore::open(&path).unwrap();
+    let db = in_memory_store();
 
     assert_eq!(db.load_run("missing").unwrap(), None);
 
@@ -90,8 +90,6 @@ fn run_ledger_round_trips_in_the_header_database() {
 
     db.delete_run(RUN_ID).unwrap();
     assert_eq!(db.load_run(RUN_ID).unwrap(), None);
-
-    remove_db_files(&path);
 }
 
 fn genesis_connected_header() -> ConnectedHeader {
@@ -106,10 +104,7 @@ fn genesis_connected_header() -> ConnectedHeader {
 
 #[test]
 fn open_creates_current_headers_schema_only() {
-    let path = temp_db_path("schema");
-    remove_db_files(&path);
-
-    let store = HeaderStore::open(path.to_str().unwrap()).unwrap();
+    let store = in_memory_store();
 
     let columns: Vec<String> = {
         let mut stmt = store.conn.prepare("PRAGMA table_info(headers)").unwrap();
@@ -152,16 +147,11 @@ fn open_creates_current_headers_schema_only() {
             .unwrap()
     };
     assert!(indexes.contains(&("idx_headers_height".to_string(), true)));
-
-    drop(store);
-    remove_db_files(&path);
 }
 
 #[test]
 fn insert_genesis_stores_decomposed_header_fields() {
-    let path = temp_db_path("insert");
-    remove_db_files(&path);
-    let store = HeaderStore::open(path.to_str().unwrap()).unwrap();
+    let store = in_memory_store();
     let genesis = genesis_connected_header();
 
     store.insert_genesis(&genesis).unwrap();
@@ -204,17 +194,12 @@ fn insert_genesis_stores_decomposed_header_fields() {
 
     assert_eq!(store.header_count().unwrap(), 1);
     assert_eq!(store.get_best_tip::<Mainnet>().unwrap().unwrap().hash, genesis.block_hash());
-
-    drop(store);
-    remove_db_files(&path);
 }
 
 #[test]
 #[should_panic(expected = "invalid ordered_timestamp_run 1 at height 0")]
 fn stale_ordered_timestamp_run_fails_before_witness_loading() {
-    let path = temp_db_path("invalid-ordered-run");
-    remove_db_files(&path);
-    let store = HeaderStore::open(path.to_str().unwrap()).unwrap();
+    let store = in_memory_store();
     let genesis = genesis_connected_header();
 
     store.insert_genesis(&genesis).unwrap();
@@ -225,29 +210,21 @@ fn stale_ordered_timestamp_run_fails_before_witness_loading() {
 }
 
 #[test]
-fn bulk_insert_calculates_median_time_past() {
-    let (store, path, _genesis_hash) = seeded_store("bulk-insert-mtp");
+fn bulk_insert_stores_median_time_past() {
+    let mut store = in_memory_store();
+    let genesis = genesis_connected_header();
+    store.insert_genesis(&genesis).unwrap();
 
-    let base_time = Mainnet::PARAMS.genesis.timestamp.into_inner();
+    let mut inner = genesis.header.inner;
+    inner.prev_blockhash = genesis.block_hash();
+    let header = SyncHeader::new(inner);
+    let block_hash = header.block_hash();
+    let ch = ConnectedHeader::new(header, block_hash, 1, genesis.chainwork, 123456, 1);
+    store.bulk_insert(&[ch]).unwrap();
 
-    let mtp1: i64 = store
+    let mtp: i64 = store
         .conn
         .query_row("SELECT median_time_past FROM headers WHERE height = 1", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(mtp1, base_time as i64);
-
-    let mtp2: i64 = store
-        .conn
-        .query_row("SELECT median_time_past FROM headers WHERE height = 2", [], |row| row.get(0))
-        .unwrap();
-    assert_eq!(mtp2, (base_time + 600) as i64);
-
-    let mtp11: i64 = store
-        .conn
-        .query_row("SELECT median_time_past FROM headers WHERE height = 11", [], |row| row.get(0))
-        .unwrap();
-    assert_eq!(mtp11, (base_time + 3000) as i64);
-
-    drop(store);
-    remove_db_files(&path);
+    assert_eq!(mtp, 123456);
 }

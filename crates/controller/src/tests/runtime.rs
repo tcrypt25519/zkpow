@@ -1,14 +1,13 @@
 use std::{
     sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex,
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::Duration,
 };
 
 use zkpow_core::{PublicValues, ReturnCode, VerifierKeyDigest};
-use zkpow_store::HeaderStore;
-use zkpow_types::BlockHash;
+use zkpow_params::Consensus;
 
 use super::*;
 use crate::{
@@ -18,7 +17,6 @@ use crate::{
     verify::ProofVerifier,
 };
 
-const TEST_DATABASE_FILE: &str = "headers.sqlite";
 const EMPTY_DATABASE_RUN_ID: &str = "anyrun01";
 
 struct ControllableStore {
@@ -75,7 +73,6 @@ impl ProofVerifier for BytesArePublicValues {
 struct Harness {
     runtime: ControllerRuntime<Mainnet>,
     root:    std::path::PathBuf,
-    db_path: std::path::PathBuf,
     run_ids: Mutex<Vec<String>>,
 }
 
@@ -88,8 +85,8 @@ impl Harness {
         let nonce = unique_nonce();
         let root = std::env::temp_dir().join(format!("zkpow-runtime-{nonce}"));
         std::fs::create_dir_all(&root).unwrap();
-        let db_path = root.join("headers.sqlite");
-        let (store, genesis_hash) = zkpow_store::test_utils::seeded_store_at(&db_path, 20);
+        let store = zkpow_store::test_utils::create_test_fixture_store();
+        let genesis_hash = <Mainnet as Consensus>::GENESIS_HASH;
         let mut config = ControllerConfig::new(genesis_hash, 2);
         config.pull_timeout = Duration::from_millis(100);
         let storage = ControllableStore {
@@ -106,7 +103,6 @@ impl Harness {
         Self {
             runtime,
             root,
-            db_path,
             run_ids: Mutex::new(Vec::new()),
         }
     }
@@ -119,20 +115,14 @@ impl Harness {
     }
 
     fn upload_expected(&self, run: &str, batch: &Batch) {
-        let state = HeaderStore::open(&self.db_path)
-            .unwrap()
-            .state_at_height::<Mainnet>(batch.end_height, self.genesis_hash())
-            .unwrap()
+        let state = self
+            .runtime
+            .state_at(batch.end_height)
             .expect("state at height");
         let public_values = PublicValues::new(state, batch.verifier_key, ReturnCode::SUCCESS);
         let path = &batch.proof_upload;
         std::fs::write(path, public_values.to_bytes()).unwrap();
         assert!(path.contains(run));
-    }
-
-    fn genesis_hash(&self) -> BlockHash {
-        let store = HeaderStore::open(&self.db_path).unwrap();
-        BlockHash::from(&store.load_header_record(0).unwrap().expect("genesis record").header)
     }
 }
 
@@ -197,14 +187,8 @@ async fn resuming_into_a_different_artifact_root_names_the_missing_proof() {
     harness.upload_expected(&run, &batch);
     harness.runtime.complete(&run).await.unwrap();
 
-    let elsewhere = std::env::temp_dir().join(format!("zkpow-runtime-elsewhere-{}", unique_nonce()));
-    let moved = ControllerRuntime::<Mainnet>::new(
-        HeaderStore::open(&harness.db_path).unwrap(),
-        Box::new(LocalArtifactStore::new(&elsewhere)),
-        Box::new(BytesArePublicValues(VerifierKeyDigest::from_raw([7; 8]))),
-        ControllerConfig::new(harness.genesis_hash(), 2),
-    );
-    let error = moved.pull_batch(&run).await.unwrap_err();
+    std::fs::remove_file(&batch.proof_upload).unwrap();
+    let error = harness.runtime.pull_batch(&run).await.unwrap_err();
     assert_eq!(error.kind, crate::protocol::ErrorKind::Internal);
     assert!(error.message.contains(&run), "error should name the run: {}", error.message);
     assert!(
@@ -212,8 +196,6 @@ async fn resuming_into_a_different_artifact_root_names_the_missing_proof() {
         "error should name the proof: {}",
         error.message
     );
-
-    std::fs::remove_dir_all(&elsewhere).ok();
 }
 
 #[tokio::test]
@@ -223,7 +205,7 @@ async fn an_empty_header_database_is_not_reported_as_a_run_problem() {
     std::fs::create_dir_all(&root).unwrap();
     let genesis_hash = <Mainnet as zkpow_params::Consensus>::GENESIS_HASH;
     let empty = ControllerRuntime::<Mainnet>::new(
-        HeaderStore::open(root.join("empty.db")).unwrap(),
+        zkpow_store::test_utils::in_memory_store(),
         Box::new(LocalArtifactStore::new(&root)),
         Box::new(BytesArePublicValues(VerifierKeyDigest::from_raw([7; 8]))),
         ControllerConfig::new(genesis_hash, 2),
@@ -379,8 +361,8 @@ async fn guest_compatible_batch_size_advances_and_completes() {
     let nonce = unique_nonce();
     let root = std::env::temp_dir().join(format!("zkpow-runtime-batch10-{nonce}"));
     std::fs::create_dir_all(&root).unwrap();
-    let db_path = root.join("headers.sqlite");
-    let (store, genesis_hash) = zkpow_store::test_utils::seeded_store_at(&db_path, 25);
+    let store = zkpow_store::test_utils::create_test_fixture_store();
+    let genesis_hash = <Mainnet as Consensus>::GENESIS_HASH;
     let mut config = ControllerConfig::new(genesis_hash, 10);
     config.pull_timeout = Duration::from_millis(100);
     let storage = LocalArtifactStore::new(&root);
@@ -398,11 +380,7 @@ async fn guest_compatible_batch_size_advances_and_completes() {
     assert_eq!(batch.header_bytes.len(), 10 * zkpow_core::HeaderInput::SIZE);
     assert!(batch.previous_proof.is_none());
 
-    let state = HeaderStore::open(&db_path)
-        .unwrap()
-        .state_at_height::<Mainnet>(batch.end_height, genesis_hash)
-        .unwrap()
-        .expect("state at height");
+    let state = runtime.state_at(batch.end_height).expect("state at height");
     let public_values = PublicValues::new(state, batch.verifier_key, ReturnCode::SUCCESS);
     std::fs::write(&batch.proof_upload, public_values.to_bytes()).unwrap();
     runtime.complete(run).await.unwrap();

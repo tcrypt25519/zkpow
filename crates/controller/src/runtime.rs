@@ -296,6 +296,11 @@ impl<C: Consensus> ControllerRuntime<C> {
             proof_upload,
         })
     }
+
+    #[cfg(test)]
+    pub(crate) fn state_at(&self, height: u32) -> Result<State, ControllerError> {
+        lock_core(&self.inner.core).state_at(height)
+    }
 }
 
 impl<C: Consensus> ControllerCore<C> {

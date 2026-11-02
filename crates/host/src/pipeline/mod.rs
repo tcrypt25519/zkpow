@@ -72,29 +72,37 @@ pub(crate) fn is_header_exhaustion_error(err: &BoxError) -> bool {
 /// runs out, returning how many batches completed.
 pub async fn run_batch_session<C: Consensus>() -> Result<u32, BoxError> {
     let config = config_from_env::<C>()?;
+    let db = HeaderStore::open(&config.db_path).map_err(|err| format!("failed to open database: {err}"))?;
+    run_batch_session_with_store::<C>(db, config).await
+}
+
+/// Prove batches using the provided `store` and `config`.
+pub async fn run_batch_session_with_store<C: Consensus>(
+    db: HeaderStore,
+    config: ProofGenerationConfig,
+) -> Result<u32, BoxError> {
     if config.batch_count == 0 {
         tracing::info!("ZKPOW_BATCH_COUNT=0; nothing to do");
         return Ok(0);
     }
 
     if config.execute_only {
-        return run_execution_session::<C>(config).await;
+        return run_execution_session::<C>(&db, config).await;
     }
 
     log_prover_backend_selection(config.prover_backend);
     let prepared = get_prepared_prover(config.prover_backend).await?;
-    let runtime = build_local_controller::<C>(&config, &prepared)?;
+    let runtime = build_local_controller::<C>(db, &config, &prepared)?;
     run_batch_session_with(runtime, config, prepared).await
 }
 
 /// Build the in-process controller: run ledger, header content, local-disk
 /// artifact storage, and proof verification.
 fn build_local_controller<C: Consensus>(
+    db: HeaderStore,
     config: &ProofGenerationConfig,
     prepared: &PreparedProver,
 ) -> Result<ControllerRuntime<C>, BoxError> {
-    let db = HeaderStore::open(&config.db_path).map_err(|err| format!("failed to open database: {err}"))?;
-
     let root = input::proof_store_dir_from_env();
     tracing::info!(root = %root.display(), "Using local artifact storage");
     let storage: Box<dyn ArtifactStore> = Box::new(LocalArtifactStore::new(root));
@@ -112,9 +120,11 @@ struct BatchCompletion {
     proof_bytes:  Vec<u8>,
 }
 
-async fn run_execution_session<C: Consensus>(config: ProofGenerationConfig) -> Result<u32, BoxError> {
+pub async fn run_execution_session<C: Consensus>(
+    db: &HeaderStore,
+    config: ProofGenerationConfig,
+) -> Result<u32, BoxError> {
     tracing::info!("Execute-only diagnostic; controller progress and artifact storage are disabled");
-    let db = HeaderStore::open(&config.db_path).map_err(|err| format!("failed to open database: {err}"))?;
     let prover = ProverClient::builder().mock().build().await;
     let genesis_hash = C::GENESIS_HASH;
     let mut state = db

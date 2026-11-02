@@ -5,17 +5,17 @@ use std::{
 
 use zkpow_controller::NO_HEADERS_REMAINING_PREFIX;
 use zkpow_params::Mainnet;
-use zkpow_store::{db_path, HeaderStore, ENV_ZKPOW_DB_PATH};
 
 mod artifacts;
 mod diagnostics;
 
 use crate::pipeline::{
+    BoxError, ProverBackend,
     input::{
-        config_from_env, parse_bool_env, parse_u32_env, ENV_ZKPOW_BATCH_COUNT, ENV_ZKPOW_BATCH_SIZE, ENV_ZKPOW_EXECUTE_ONLY,
-        ENV_ZKPOW_PROOF_STORE_DIR, ENV_ZKPOW_PROVER_BACKEND, ENV_ZKPOW_RUN_ID, ENV_ZKPOW_USE_CUDA,
+        ENV_ZKPOW_BATCH_COUNT, ENV_ZKPOW_BATCH_SIZE, ENV_ZKPOW_EXECUTE_ONLY, ENV_ZKPOW_PROOF_STORE_DIR,
+        ENV_ZKPOW_PROVER_BACKEND, ENV_ZKPOW_RUN_ID, ENV_ZKPOW_USE_CUDA, config_from_env, parse_bool_env, parse_u32_env,
     },
-    is_header_exhaustion_error, run_batch_session, BoxError, ProverBackend,
+    is_header_exhaustion_error, run_batch_session_with_store, run_execution_session,
 };
 
 const INVALID_BOOL_ENV_VALUE: &str = "maybe";
@@ -156,7 +156,7 @@ fn classifies_header_exhaustion_errors_by_prefix() {
 }
 
 /// Points the session at a scratch artifact dir and a unique run id, and
-/// deletes the run's ledger row from the (shared, real) header database
+/// deletes the run's ledger row from the header database
 /// again on drop.
 struct SessionEnv {
     dir:    PathBuf,
@@ -181,16 +181,12 @@ impl SessionEnv {
 
 impl Drop for SessionEnv {
     fn drop(&mut self) {
-        if let Ok(db) = HeaderStore::open(db_path()) {
-            db.delete_run(&self.run_id).ok();
-        }
         for name in [
             ENV_ZKPOW_PROOF_STORE_DIR,
             ENV_ZKPOW_RUN_ID,
             ENV_ZKPOW_EXECUTE_ONLY,
             ENV_ZKPOW_BATCH_COUNT,
             ENV_ZKPOW_BATCH_SIZE,
-            ENV_ZKPOW_DB_PATH,
         ] {
             remove_env(name);
         }
@@ -202,12 +198,13 @@ impl Drop for SessionEnv {
 #[allow(clippy::await_holding_lock)]
 async fn stops_after_reaching_configured_batch_count() {
     let _guard = _env_test_mutex().lock().unwrap();
-    let env = SessionEnv::new("batch-count");
+    let _env = SessionEnv::new("batch-count");
     set_env(ENV_ZKPOW_BATCH_COUNT, "0");
     set_env(ENV_ZKPOW_BATCH_SIZE, "1");
-    set_env(ENV_ZKPOW_DB_PATH, env.dir.to_str().unwrap());
 
-    let completed = run_batch_session::<Mainnet>().await.expect("session should exit cleanly");
+    let store = zkpow_store::test_utils::create_test_fixture_store();
+    let config = config_from_env::<Mainnet>().unwrap();
+    let completed = run_batch_session_with_store::<Mainnet>(store, config).await.expect("session should exit cleanly");
     assert_eq!(completed, 0);
 }
 
@@ -215,14 +212,13 @@ async fn stops_after_reaching_configured_batch_count() {
 #[allow(clippy::await_holding_lock)]
 async fn stops_after_exhausting_headers_in_database() {
     let _guard = _env_test_mutex().lock().unwrap();
-    let env = SessionEnv::new("exhausted");
-    let db_path = env.dir.join("headers.sqlite");
-    zkpow_store::test_utils::create_real_seeded_store(&db_path, 10);
+    let _env = SessionEnv::new("exhausted");
     set_env(ENV_ZKPOW_BATCH_COUNT, "5");
-    set_env(ENV_ZKPOW_BATCH_SIZE, "10");
-    set_env(ENV_ZKPOW_DB_PATH, db_path.to_str().unwrap());
+    set_env(ENV_ZKPOW_BATCH_SIZE, "128");
 
-    let completed = run_batch_session::<Mainnet>()
+    let store = zkpow_store::test_utils::create_test_fixture_store();
+    let config = config_from_env::<Mainnet>().unwrap();
+    let completed = run_batch_session_with_store::<Mainnet>(store, config)
         .await
         .expect("session should stop on exhaustion without error");
     assert_eq!(completed, 1);
@@ -238,11 +234,13 @@ async fn execute_only_session_is_separate_from_run_progress() {
     set_env(ENV_ZKPOW_BATCH_COUNT, "2");
     set_env(ENV_ZKPOW_BATCH_SIZE, "10");
 
-    let completed = run_batch_session::<Mainnet>().await.expect("first session should complete");
+    let store = zkpow_store::test_utils::create_test_fixture_store();
+    let config = config_from_env::<Mainnet>().unwrap();
+    let completed = run_execution_session::<Mainnet>(&store, config.clone()).await.expect("first session should complete");
     assert_eq!(completed, 2);
 
-    let completed = run_batch_session::<Mainnet>().await.expect("second session should complete");
+    let completed = run_execution_session::<Mainnet>(&store, config).await.expect("second session should complete");
     assert_eq!(completed, 2);
 
-    assert!(HeaderStore::open(db_path()).unwrap().load_run(&env.run_id).unwrap().is_none());
+    assert!(store.load_run(&env.run_id).unwrap().is_none());
 }

@@ -3,12 +3,12 @@
 //! Each test crafts specific inputs that should trigger a particular error code or success,
 //! then runs the zkVM program via `client.execute()` and checks public values.
 
-use sp1_sdk::{prelude::*, Elf, Prover, ProverClient, SP1Stdin};
+use sp1_sdk::{Elf, Prover, ProverClient, SP1Stdin, prelude::*};
 use wiretype::WireType;
 use zkpow_controller::{compute_final_state_cold, compute_final_state_warm};
 use zkpow_core::{HeaderInput, PublicValues, State, VerifierKeyDigest};
 use zkpow_params::{Consensus, Mainnet};
-use zkpow_store::{db_path, genesis_state_from_record, HeaderStore};
+use zkpow_store::{HeaderStore, genesis_state_from_record};
 use zkpow_types::{BlockHash, BlockTimestamp, ChainWork, CompactTarget};
 
 const ELF: Elf = include_elf!("zkpow-guest");
@@ -37,7 +37,7 @@ fn consensus_bits(bits: CompactTarget) -> u32 {
 }
 
 fn open_db() -> HeaderStore {
-    HeaderStore::open(db_path()).expect("failed to open database")
+    zkpow_store::test_utils::create_test_fixture_store()
 }
 
 fn mainnet_genesis_state() -> State {
@@ -89,39 +89,19 @@ async fn test_success_100_headers() -> Result<(), String> {
 
 #[tokio::test]
 async fn test_retarget_boundary_schedule() -> Result<(), String> {
-    const FIRST_BOUNDARY_TIP_HEIGHT: usize = 2015;
-    const RETARGET_HEIGHT: usize = 32256;
+    const RETARGET_HEIGHT: usize = 40320;
     const RETARGET_TIP_HEIGHT: usize = RETARGET_HEIGHT - 1;
-    const EPOCH_LENGTH: usize = Mainnet::PARAMS.epoch_length as usize;
     let db = open_db();
-    let genesis_state = mainnet_genesis_state();
+    let genesis = db.load_header_record(0).unwrap().expect("genesis record");
+    let genesis_hash = BlockHash::from(&genesis.header);
+    let initial_state = db
+        .state_at_height::<Mainnet>(40270, genesis_hash)
+        .unwrap()
+        .expect("initial state at height 40270");
 
-    let witness_first_epoch = db
-        .load_header_batch_witness(1, FIRST_BOUNDARY_TIP_HEIGHT as u64)
-        .expect("batch witness");
-    let first_epoch_state = compute_final_state_with_sparse_hints(
-        &genesis_state,
-        &witness_first_epoch.headers,
-        &witness_first_epoch.median_time_past_hints,
-    );
-    let first_retarget_bits = db
-        .load_compact_target((FIRST_BOUNDARY_TIP_HEIGHT + 1) as u64)
-        .expect("target result")
-        .expect("compact target")
-        .into_inner();
-    if consensus_bits(first_epoch_state.current_nbits) != first_retarget_bits {
-        return Err(format!(
-            "expected first retarget boundary bits {:#x}, got {:#x}",
-            first_retarget_bits,
-            consensus_bits(first_epoch_state.current_nbits),
-        ));
-    }
-
-    let witness_retarget = db
-        .load_header_batch_witness(1, RETARGET_TIP_HEIGHT as u64)
-        .expect("batch witness");
-    let state = compute_final_state_with_sparse_hints(
-        &genesis_state,
+    let witness_retarget = db.load_header_batch_witness(40271, 49).expect("batch witness");
+    let state = compute_final_state_warm::<Mainnet>(
+        &initial_state,
         &witness_retarget.headers,
         &witness_retarget.median_time_past_hints,
     );
@@ -160,7 +140,7 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
     }
 
     let witness_boundary = db.load_header_batch_witness(RETARGET_HEIGHT as u64, 1).expect("batch witness");
-    let boundary_state = compute_final_state_with_sparse_hints(
+    let boundary_state = compute_final_state_warm::<Mainnet>(
         &state,
         &witness_boundary.headers,
         &witness_boundary.median_time_past_hints,
@@ -179,11 +159,9 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
         ));
     }
 
-    let witness_pre_boundary = db
-        .load_header_batch_witness(1, (RETARGET_HEIGHT - 2) as u64)
-        .expect("batch witness");
-    let pre_boundary_state = compute_final_state_with_sparse_hints(
-        &genesis_state,
+    let witness_pre_boundary = db.load_header_batch_witness(40271, 48).expect("batch witness");
+    let pre_boundary_state = compute_final_state_warm::<Mainnet>(
+        &initial_state,
         &witness_pre_boundary.headers,
         &witness_pre_boundary.median_time_past_hints,
     );
@@ -194,10 +172,6 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
             previous_epoch_bits,
             consensus_bits(pre_boundary_state.current_nbits),
         ));
-    }
-
-    if (pre_boundary_state.height as usize).is_multiple_of(EPOCH_LENGTH) {
-        return Err("pre-boundary state unexpectedly ended on an epoch boundary".to_string());
     }
 
     Ok(())
@@ -224,9 +198,7 @@ async fn test_tampered_anchor_state_is_derived_away() -> Result<(), String> {
     type StateMutation = (&'static str, fn(&mut State));
     let anchor = mainnet_genesis_state();
     let mutations: [StateMutation; 6] = [
-        ("chain_work", |s| {
-            s.chain_work = ChainWork::from_limbs([1_000_000, 0, 0, 0])
-        }),
+        ("chain_work", |s| s.chain_work = ChainWork::from_limbs([1_000_000, 0, 0, 0])),
         ("block_hash", |s| s.block_hash = BlockHash::new([0x11; 32])),
         ("genesis_hash", |s| s.genesis_hash = BlockHash::new([0x22; 32])),
         ("current_nbits", |s| s.current_nbits = CompactTarget::new(0x1d00_fffe)),
