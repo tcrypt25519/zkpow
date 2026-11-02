@@ -54,7 +54,7 @@ pub(crate) fn sample_header() -> Header {
     Header {
         version:        1,
         prev_blockhash: BlockHash::new([0x11; 32]),
-        merkle_root:    [0x22; 32],
+        merkle_root:    MerkleRoot::new([0x22; 32]),
         timestamp:      ts(10),
         compact_target: CompactTarget::new(GENESIS_NBITS),
         nonce:          7,
@@ -159,7 +159,7 @@ pub(crate) fn headers_from_timestamps(timestamps: &[u32]) -> Vec<HeaderInput> {
         .iter()
         .map(|timestamp| HeaderInput {
             version:     1,
-            merkle_root: [0x22; 32],
+            merkle_root: MerkleRoot::new([0x22; 32]),
             timestamp:   ts(*timestamp),
             nonce:       7,
         })

@@ -58,7 +58,7 @@ fn ring_buffer_slot_overwrites_only_next_slot() {
     };
     let header = HeaderInput {
         version:     1,
-        merkle_root: [0x22; 32],
+        merkle_root: MerkleRoot::new([0x22; 32]),
         timestamp:   ts(999),
         nonce:       7,
     };
@@ -76,7 +76,7 @@ fn ordered_window_median_matches_sequential_across_median_window_wrap() {
     let headers: Vec<HeaderInput> = (1..=23)
         .map(|timestamp| HeaderInput {
             version:     1,
-            merkle_root: [timestamp as u8; 32],
+            merkle_root: MerkleRoot::new([timestamp as u8; 32]),
             timestamp:   ts(timestamp),
             nonce:       timestamp,
         })
@@ -110,7 +110,7 @@ fn hinted_apply_headers_matches_sorted_apply_headers_across_window_wrap() {
     let headers: Vec<HeaderInput> = (1..=23)
         .map(|timestamp| HeaderInput {
             version:     1,
-            merkle_root: [timestamp as u8; 32],
+            merkle_root: MerkleRoot::new([timestamp as u8; 32]),
             timestamp:   ts(timestamp),
             nonce:       timestamp,
         })
@@ -150,7 +150,7 @@ fn hinted_median_validation_accepts_duplicate_median_values() {
     };
     let headers = [HeaderInput {
         version:     1,
-        merkle_root: [0x22; 32],
+        merkle_root: MerkleRoot::new([0x22; 32]),
         timestamp:   ts(10),
         nonce:       7,
     }];

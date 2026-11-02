@@ -61,11 +61,15 @@ fn ordered_median_matches_naive_while_filling_and_across_wraps() {
 
 #[test]
 fn median_holds_for_even_and_single_slot_windows() {
-    assert_eq!(warm::<5>(&[10, 20, 30, 40, 50]).median(), Some(30));
-    assert_eq!(warm::<5>(&[10, 20, 30, 40, 50, 60, 70]).median(), Some(50));
-    assert_eq!(cold::<5>(&[10, 20, 30, 40]).median(), Some(30));
-    assert_eq!(warm::<4>(&[10, 20, 30, 40]).median(), Some(30));
-    assert_eq!(warm::<1>(&[10, 20]).median(), Some(20));
+    for (median, expected) in [
+        (warm::<5>(&[10, 20, 30, 40, 50]).median(), 30),
+        (warm::<5>(&[10, 20, 30, 40, 50, 60, 70]).median(), 50),
+        (cold::<5>(&[10, 20, 30, 40]).median(), 30),
+        (warm::<4>(&[10, 20, 30, 40]).median(), 30),
+        (warm::<1>(&[10, 20]).median(), 20),
+    ] {
+        assert_eq!(median, Some(expected));
+    }
 }
 
 #[test]
@@ -100,11 +104,15 @@ fn cold_decrease_persists_into_the_warm_ring_until_overwritten() {
 fn rank_check_accepts_unordered_median_and_rejects_neighbors() {
     let ring = warm::<11>(&[70, 10, 110, 30, 90, 50, 20, 100, 40, 80, 60]);
     assert_eq!(ring.median(), None);
-    assert_eq!(ring.is_value_median(60), Ok(()));
-    assert_eq!(ring.is_value_median(70), Err(NotMedian::TooNew));
-    assert_eq!(ring.is_value_median(50), Err(NotMedian::TooOld));
-    assert_eq!(ring.is_value_median(55), Err(NotMedian::TooOld));
-    assert_eq!(ring.is_value_median(65), Err(NotMedian::TooNew));
+    for (value, expected) in [
+        (60, Ok(())),
+        (70, Err(NotMedian::TooNew)),
+        (50, Err(NotMedian::TooOld)),
+        (55, Err(NotMedian::TooOld)),
+        (65, Err(NotMedian::TooNew)),
+    ] {
+        assert_eq!(ring.is_value_median(value), expected, "{value}");
+    }
 }
 
 #[test]
@@ -112,9 +120,9 @@ fn cold_unordered_median_uses_only_values_held() {
     let ring = cold::<5>(&[30, 10, 20]);
     assert_eq!(ring.median(), None);
     assert_eq!(ring.median_by_sort(), Some(20));
-    assert_eq!(ring.is_value_median(20), Ok(()));
-    assert_eq!(ring.is_value_median(10), Err(NotMedian::TooOld));
-    assert_eq!(ring.is_value_median(30), Err(NotMedian::TooNew));
+    for (value, expected) in [(20, Ok(())), (10, Err(NotMedian::TooOld)), (30, Err(NotMedian::TooNew))] {
+        assert_eq!(ring.is_value_median(value), expected, "{value}");
+    }
 }
 
 #[test]
@@ -127,44 +135,38 @@ fn zero_is_a_value_instead_of_an_empty_slot_sentinel() {
 
 #[test]
 fn warm_parts_round_trip_ordered_and_unordered_rings() {
-    let ordered = warm::<5>(&[10, 20, 30, 40, 50, 60, 70]);
-    let (values, next, len) = ordered.parts();
-    let rebuilt = Ring::<5, Warm>::from_parts(*values, next, len).unwrap();
-    assert_eq!(rebuilt, ordered);
-    assert_eq!(rebuilt.median(), Some(50));
-
-    let unordered = warm::<5>(&[10, 20, 30, 40, 50, 15, 60]);
-    let (values, next, len) = unordered.parts();
-    let rebuilt = Ring::<5, Warm>::from_parts(*values, next, len).unwrap();
-    assert_eq!(rebuilt, unordered);
-    assert_eq!(rebuilt.median(), None);
-    assert_eq!(rebuilt.is_value_median(40), Ok(()));
+    for (ring, median, value) in [
+        (warm::<5>(&[10, 20, 30, 40, 50, 60, 70]), Some(50), 50),
+        (warm::<5>(&[10, 20, 30, 40, 50, 15, 60]), None, 40),
+    ] {
+        let (values, next, len) = ring.parts();
+        let rebuilt = Ring::<5, Warm>::from_parts(*values, next, len).unwrap();
+        assert_eq!(rebuilt, ring);
+        assert_eq!(rebuilt.median(), median);
+        assert_eq!(rebuilt.is_value_median(value), Ok(()));
+    }
 }
 
 #[test]
 fn cold_parts_round_trip_ordered_and_unordered_rings() {
-    let ordered = cold::<5>(&[10, 20, 30]);
-    let (values, _, len) = ordered.parts();
-    let rebuilt = Ring::<5, Cold>::from_parts(*values, len).unwrap();
-    assert_eq!(rebuilt, ordered);
-    assert_eq!(rebuilt.median(), Some(20));
-
-    let unordered = cold::<5>(&[10, 30, 20]);
-    let (values, _, len) = unordered.parts();
-    let rebuilt = Ring::<5, Cold>::from_parts(*values, len).unwrap();
-    assert_eq!(rebuilt, unordered);
-    assert_eq!(rebuilt.median(), None);
+    for (ring, median) in [(cold::<5>(&[10, 20, 30]), Some(20)), (cold::<5>(&[10, 30, 20]), None)] {
+        let (values, _, len) = ring.parts();
+        let rebuilt = Ring::<5, Cold>::from_parts(*values, len).unwrap();
+        assert_eq!(rebuilt, ring);
+        assert_eq!(rebuilt.median(), median);
+    }
 }
 
 #[test]
 fn invalid_parts_are_rejected() {
-    assert_eq!(Ring::<5, Cold>::from_parts([0; 5], 5), Err(InvalidParts::NotCold));
-    assert_eq!(Ring::<5, Warm>::from_parts([0; 5], 0, 4), Err(InvalidParts::NotWarm));
-    assert_eq!(
-        Ring::<5, Warm>::from_parts([0; 5], 5, 5),
-        Err(InvalidParts::NextSlotOutOfBounds)
-    );
-    assert_eq!(cold::<5>(&[10, 20, 30, 40]).warm(), Err(InvalidParts::NotWarm));
+    for (error, expected) in [
+        (Ring::<5, Cold>::from_parts([0; 5], 5).err(), InvalidParts::NotCold),
+        (Ring::<5, Warm>::from_parts([0; 5], 0, 4).err(), InvalidParts::NotWarm),
+        (Ring::<5, Warm>::from_parts([0; 5], 5, 5).err(), InvalidParts::NextSlotOutOfBounds),
+        (cold::<5>(&[10, 20, 30, 40]).warm().err(), InvalidParts::NotWarm),
+    ] {
+        assert_eq!(error, Some(expected));
+    }
 }
 
 #[test]
@@ -201,36 +203,29 @@ fn window_constants_match_expected() {
 
 #[test]
 fn timestamp_slot_and_count_test() {
-    assert_eq!(timestamp_slot(0), 0);
-    assert_eq!(timestamp_slot(10), 10);
-    assert_eq!(timestamp_slot(11), 0);
-    assert_eq!(timestamp_slot(12), 1);
+    for (height, slot) in [(0, 0), (10, 10), (11, 0), (12, 1)] {
+        assert_eq!(timestamp_slot(height), slot, "{height}");
+    }
 
-    assert_eq!(timestamp_count(0), 1);
-    assert_eq!(timestamp_count(5), 6);
-    assert_eq!(timestamp_count(10), 11);
-    assert_eq!(timestamp_count(11), 11);
-    assert_eq!(timestamp_count(100), 11);
+    for (height, count) in [(0, 1), (5, 6), (10, 11), (11, 11), (100, 11)] {
+        assert_eq!(timestamp_count(height), count, "{height}");
+    }
 }
 
 #[test]
 fn has_ordered_timestamp_window_checks_run_length() {
-    assert!(!has_ordered_timestamp_window(0));
-    assert!(!has_ordered_timestamp_window(9));
-    assert!(has_ordered_timestamp_window(10));
-    assert!(has_ordered_timestamp_window(11));
-    assert!(has_ordered_timestamp_window(100));
+    for (run, expected) in [(0, false), (9, false), (10, true), (11, true), (100, true)] {
+        assert_eq!(has_ordered_timestamp_window(run), expected, "{run}");
+    }
 }
 
 #[test]
 fn advance_ordered_timestamp_run_increments_and_resets() {
     let mut run = 0u64;
-    run = advance_ordered_timestamp_run(run, 100, 100);
-    assert_eq!(run, 1);
-    run = advance_ordered_timestamp_run(run, 100, 101);
-    assert_eq!(run, 2);
-    run = advance_ordered_timestamp_run(run, 101, 100);
-    assert_eq!(run, 0);
+    for (previous, next, expected) in [(100, 100, 1), (100, 101, 2), (101, 100, 0)] {
+        run = advance_ordered_timestamp_run(run, previous, next);
+        assert_eq!(run, expected);
+    }
 }
 
 #[test]
@@ -256,17 +251,15 @@ fn ordered_median_timestamp_slot_calculation() {
 
 #[test]
 fn requires_median_hint_checks_window_and_order() {
-    // Before window is full: never requires hint
-    assert!(!requires_median_hint(0, 0));
-    assert!(!requires_median_hint(10, 0));
-    assert!(!requires_median_hint(10, 10));
-
-    // At or after full window:
-    // When ordered run >= 10: does not require hint
-    assert!(!requires_median_hint(11, 10));
-    assert!(!requires_median_hint(100, 10));
-
-    // When ordered run < 10: requires hint
-    assert!(requires_median_hint(11, 9));
-    assert!(requires_median_hint(100, 0));
+    for (height, run, expected) in [
+        (0, 0, false),
+        (10, 0, false),
+        (10, 10, false),
+        (11, 10, false),
+        (100, 10, false),
+        (11, 9, true),
+        (100, 0, true),
+    ] {
+        assert_eq!(requires_median_hint(height, run), expected, "height {height} run {run}");
+    }
 }

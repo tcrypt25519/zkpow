@@ -14,7 +14,7 @@ fn header_rejects_mocked_hash_exceeding_target() {
     let headers10: Vec<HeaderInput> = (1..=10)
         .map(|i| HeaderInput {
             version:     1,
-            merkle_root: [i as u8; 32],
+            merkle_root: MerkleRoot::new([i as u8; 32]),
             timestamp:   ts(i * 10),
             nonce:       i,
         })
@@ -36,7 +36,7 @@ fn rejected_header_reports_its_own_height_and_hash() {
     };
     let headers = [HeaderInput {
         version:     1,
-        merkle_root: [0x22; 32],
+        merkle_root: MerkleRoot::new([0x22; 32]),
         timestamp:   ts(1000),
         nonce:       7,
     }];
@@ -81,7 +81,7 @@ fn unmocked_chain_rejects_corrupted_nonce_at_height_1() {
         .iter()
         .map(|b| HeaderInput {
             version:     b.version,
-            merkle_root: b.merkle_root,
+            merkle_root: MerkleRoot::new(b.merkle_root),
             timestamp:   BlockTimestamp::new(b.timestamp),
             nonce:       b.nonce,
         })
@@ -133,7 +133,7 @@ fn unmocked_chain_rejects_parent_blockhash_mismatch() {
         .iter()
         .map(|b| HeaderInput {
             version:     b.version,
-            merkle_root: b.merkle_root,
+            merkle_root: MerkleRoot::new(b.merkle_root),
             timestamp:   BlockTimestamp::new(b.timestamp),
             nonce:       b.nonce,
         })

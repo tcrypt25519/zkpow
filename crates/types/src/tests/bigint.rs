@@ -34,23 +34,14 @@ fn u256_limb_access_and_mutation() {
 }
 
 #[test]
-fn u256_addition_with_carry_propagation() {
-    // Carry across limb 0 to limb 1
-    let a = u256::from_limbs([u64::MAX, 0, 0, 0]);
-    let b = u256::from_limbs([1, 0, 0, 0]);
-    assert_eq!(a + b, u256::from_limbs([0, 1, 0, 0]));
-
-    // Carry cascade through all 4 limbs
-    let c = u256::from_limbs([u64::MAX, u64::MAX, u64::MAX, 0]);
-    let d = u256::from_limbs([1, 0, 0, 0]);
-    assert_eq!(c + d, u256::from_limbs([0, 0, 0, 1]));
-}
-
-#[test]
-fn u256_addition_wrapping_at_256_bits() {
-    let max = u256::from_limbs([u64::MAX; 4]);
-    let one = u256::from_limbs([1, 0, 0, 0]);
-    assert_eq!(max + one, u256::from_limbs([0, 0, 0, 0]));
+fn u256_addition_carries_and_wraps() {
+    for (a, expected) in [
+        ([u64::MAX, 0, 0, 0], [0, 1, 0, 0]),
+        ([u64::MAX, u64::MAX, u64::MAX, 0], [0, 0, 0, 1]),
+        ([u64::MAX; 4], [0; 4]),
+    ] {
+        assert_eq!(u256::from_limbs(a) + u256::from_limbs([1, 0, 0, 0]), u256::from_limbs(expected), "{a:?}");
+    }
 }
 
 #[test]
@@ -75,10 +66,9 @@ fn u256_endian_byte_roundtrip() {
     assert_eq!(recovered, original);
 
     // Verify little-endian order of bytes
-    assert_eq!(bytes[0], 0xef);
-    assert_eq!(bytes[7], 0x01);
-    assert_eq!(bytes[8], 0x88);
-    assert_eq!(bytes[15], 0x11);
+    for (index, byte) in [(0, 0xef), (7, 0x01), (8, 0x88), (15, 0x11)] {
+        assert_eq!(bytes[index], byte, "{index}");
+    }
 }
 
 #[test]
@@ -96,14 +86,9 @@ fn u256_ordering_compares_most_significant_limbs_first() {
 
 #[test]
 fn u256_try_from_slice_validates_exact_length() {
-    let valid_bytes = [0x42u8; 32];
-    assert!(u256::try_from(valid_bytes.as_slice()).is_ok());
-
-    let short_bytes = [0x42u8; 31];
-    assert!(u256::try_from(short_bytes.as_slice()).is_err());
-
-    let long_bytes = [0x42u8; 33];
-    assert!(u256::try_from(long_bytes.as_slice()).is_err());
+    for (len, ok) in [(32, true), (31, false), (33, false)] {
+        assert_eq!(u256::try_from(&[0x42u8; 33][..len]).is_ok(), ok, "{len}");
+    }
 }
 
 #[test]
@@ -125,27 +110,16 @@ fn u256_from_words_matches_from_le_bytes() {
 
 #[test]
 fn u256_leading_zeros_and_bits_edge_cases() {
-    let zero = u256::from_limbs([0; 4]);
-    assert_eq!(zero.leading_zeros(), 256);
-    assert_eq!(zero.bits(), 0);
-
-    let one = u256::from_limbs([1, 0, 0, 0]);
-    assert_eq!(one.leading_zeros(), 255);
-    assert_eq!(one.bits(), 1);
-
-    let limb0_msb = u256::from_limbs([1 << 63, 0, 0, 0]);
-    assert_eq!(limb0_msb.leading_zeros(), 192);
-    assert_eq!(limb0_msb.bits(), 64);
-
-    let limb1_lsb = u256::from_limbs([0, 1, 0, 0]);
-    assert_eq!(limb1_lsb.leading_zeros(), 191);
-    assert_eq!(limb1_lsb.bits(), 65);
-
-    let max_u256 = u256::from_limbs([u64::MAX; 4]);
-    assert_eq!(max_u256.leading_zeros(), 0);
-    assert_eq!(max_u256.bits(), 256);
-
-    let msb_only = u256::from_limbs([0, 0, 0, 1 << 63]);
-    assert_eq!(msb_only.leading_zeros(), 0);
-    assert_eq!(msb_only.bits(), 256);
+    for (limbs, leading_zeros, bits) in [
+        ([0; 4], 256, 0),
+        ([1, 0, 0, 0], 255, 1),
+        ([1 << 63, 0, 0, 0], 192, 64),
+        ([0, 1, 0, 0], 191, 65),
+        ([u64::MAX; 4], 0, 256),
+        ([0, 0, 0, 1 << 63], 0, 256),
+    ] {
+        let value = u256::from_limbs(limbs);
+        assert_eq!(value.leading_zeros(), leading_zeros, "{limbs:?}");
+        assert_eq!(value.bits(), bits, "{limbs:?}");
+    }
 }

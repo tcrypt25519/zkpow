@@ -92,7 +92,7 @@ fn public_values_matches_committed_in_vm_state() {
         .iter()
         .map(|b| HeaderInput {
             version:     b.version,
-            merkle_root: b.merkle_root,
+            merkle_root: MerkleRoot::new(b.merkle_root),
             timestamp:   BlockTimestamp::new(b.timestamp),
             nonce:       b.nonce,
         })

@@ -282,44 +282,29 @@ async fn get_target_failure_rolls_back_pending_and_retry_succeeds() {
 fn run_id_validation_rejects_empty_absolute_parent_and_separators() {
     use crate::runtime::validate_run_id;
 
-    assert_eq!(validate_run_id("").unwrap_err().kind, crate::protocol::ErrorKind::BadRequest);
-    assert_eq!(validate_run_id("..").unwrap_err().kind, crate::protocol::ErrorKind::BadRequest);
-    assert_eq!(validate_run_id(".").unwrap_err().kind, crate::protocol::ErrorKind::BadRequest);
-    assert_eq!(
-        validate_run_id("/abs/path").unwrap_err().kind,
-        crate::protocol::ErrorKind::BadRequest
-    );
-    assert_eq!(
-        validate_run_id("../escape").unwrap_err().kind,
-        crate::protocol::ErrorKind::BadRequest
-    );
-    assert_eq!(
-        validate_run_id("nested/run").unwrap_err().kind,
-        crate::protocol::ErrorKind::BadRequest
-    );
-    assert_eq!(
-        validate_run_id("nested\\run").unwrap_err().kind,
-        crate::protocol::ErrorKind::BadRequest
-    );
-    assert_eq!(
-        validate_run_id("run\0id").unwrap_err().kind,
-        crate::protocol::ErrorKind::BadRequest
-    );
-    assert_eq!(
-        validate_run_id("run-0001").unwrap_err().kind,
-        crate::protocol::ErrorKind::BadRequest
-    );
-    assert_eq!(
-        validate_run_id("short").unwrap_err().kind,
-        crate::protocol::ErrorKind::BadRequest
-    );
-    assert_eq!(
-        validate_run_id("toolongrunid").unwrap_err().kind,
-        crate::protocol::ErrorKind::BadRequest
-    );
+    for id in [
+        "",
+        "..",
+        ".",
+        "/abs/path",
+        "../escape",
+        "nested/run",
+        "nested\\run",
+        "run\0id",
+        "run-0001",
+        "short",
+        "toolongrunid",
+    ] {
+        assert_eq!(
+            validate_run_id(id).unwrap_err().kind,
+            crate::protocol::ErrorKind::BadRequest,
+            "{id:?}"
+        );
+    }
 
-    assert!(validate_run_id("run00001").is_ok());
-    assert!(validate_run_id("RUN12345").is_ok());
+    for id in ["run00001", "RUN12345"] {
+        assert!(validate_run_id(id).is_ok(), "{id:?}");
+    }
 }
 
 #[tokio::test]

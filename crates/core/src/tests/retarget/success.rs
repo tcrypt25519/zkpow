@@ -116,7 +116,7 @@ fn assert_boundary_retargets_once<C: Consensus>() {
 
     let header = HeaderInput {
         version:     1,
-        merkle_root: [0x22; 32],
+        merkle_root: MerkleRoot::new([0x22; 32]),
         timestamp:   ts(1_000_700),
         nonce:       7,
     };
@@ -140,7 +140,7 @@ fn epoch_boundary_is_read_from_consensus_parameters() {
 
     let header = HeaderInput {
         version:     1,
-        merkle_root: [0x22; 32],
+        merkle_root: MerkleRoot::new([0x22; 32]),
         timestamp:   ts(1_000_700),
         nonce:       7,
     };

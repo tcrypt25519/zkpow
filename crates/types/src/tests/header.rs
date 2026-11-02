@@ -4,13 +4,13 @@ use alloc::string::ToString;
 use bytemuck::PodCastError;
 use zkvm_test::test;
 
-use crate::{BlockHash, BlockTimestamp, CompactTarget, Header};
+use crate::{BlockHash, BlockTimestamp, CompactTarget, Header, MerkleRoot};
 
 fn sample() -> Header {
     Header {
         version:        0x1122_3344,
         prev_blockhash: BlockHash::new([0x55; 32]),
-        merkle_root:    [0x66; 32],
+        merkle_root:    MerkleRoot::new([0x66; 32]),
         timestamp:      BlockTimestamp::new(0x7788_99aa),
         compact_target: CompactTarget::new(0x1d00_ffff),
         nonce:          0xdead_beef,
@@ -35,17 +35,12 @@ fn header_parse_rejects_invalid_slices() {
     let header = sample();
     let wire = header.as_bytes();
 
-    // Truncated by 1 byte
-    let short = &wire[..79];
-    assert!(matches!(Header::parse(short), Err(PodCastError::SizeMismatch)));
-
-    // Empty slice
-    assert!(matches!(Header::parse(&[]), Err(PodCastError::SizeMismatch)));
-
-    // Trailing slop (81 bytes)
     let mut slop = alloc::vec::Vec::from(wire);
     slop.push(0x00);
-    assert!(matches!(Header::parse(&slop), Err(PodCastError::SizeMismatch)));
+
+    for bytes in [&wire[..79], &[], &slop[..]] {
+        assert!(matches!(Header::parse(bytes), Err(PodCastError::SizeMismatch)), "{} bytes", bytes.len());
+    }
 }
 
 #[test]
@@ -53,12 +48,16 @@ fn header_wire_offsets_match_bitcoin_protocol() {
     let header = sample();
     let bytes = header.as_bytes();
 
-    assert_eq!(&bytes[0..4], &0x1122_3344u32.to_le_bytes());
-    assert_eq!(&bytes[4..36], &[0x55; 32]);
-    assert_eq!(&bytes[36..68], &[0x66; 32]);
-    assert_eq!(&bytes[68..72], &0x7788_99aau32.to_le_bytes());
-    assert_eq!(&bytes[72..76], &0x1d00_ffffu32.to_le_bytes());
-    assert_eq!(&bytes[76..80], &0xdead_beefu32.to_le_bytes());
+    for (range, expected) in [
+        (0..4, &0x1122_3344u32.to_le_bytes()[..]),
+        (4..36, &[0x55; 32]),
+        (36..68, &[0x66; 32]),
+        (68..72, &0x7788_99aau32.to_le_bytes()),
+        (72..76, &0x1d00_ffffu32.to_le_bytes()),
+        (76..80, &0xdead_beefu32.to_le_bytes()),
+    ] {
+        assert_eq!(&bytes[range.clone()], expected, "{range:?}");
+    }
 }
 
 /// Mainnet block 1, whose hash is `00000000839a8e...` in display order.
@@ -70,10 +69,10 @@ fn block_hash_is_sha256d_of_the_wire_bytes() {
             0x6f, 0xe2, 0x8c, 0x0a, 0xb6, 0xf1, 0xb3, 0x72, 0xc1, 0xa6, 0xa2, 0x46, 0xae, 0x63, 0xf7, 0x4f, 0x93, 0x1e,
             0x83, 0x65, 0xe1, 0x5a, 0x08, 0x9c, 0x68, 0xd6, 0x19, 0x00, 0x00, 0x00, 0x00, 0x00,
         ]),
-        merkle_root:    [
+        merkle_root:    MerkleRoot::new([
             0x98, 0x20, 0x51, 0xfd, 0x1e, 0x4b, 0xa7, 0x44, 0xbb, 0xbe, 0x68, 0x0e, 0x1f, 0xee, 0x14, 0x67, 0x7b, 0xa1,
             0xa3, 0xc3, 0x54, 0x0b, 0xf7, 0xb1, 0xcd, 0xb6, 0x06, 0xe8, 0x57, 0x23, 0x3e, 0x0e,
-        ],
+        ]),
         timestamp:      BlockTimestamp::new(1231469665),
         compact_target: CompactTarget::new(0x1d00ffff),
         nonce:          2573394689,

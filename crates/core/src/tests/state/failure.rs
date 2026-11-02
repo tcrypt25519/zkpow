@@ -13,7 +13,7 @@ fn cold_start_rejects_fewer_than_ten_headers() {
     let headers = vec![
         HeaderInput {
             version:     1,
-            merkle_root: [0; 32],
+            merkle_root: MerkleRoot::new([0; 32]),
             timestamp:   ts(100),
             nonce:       0,
         };
@@ -33,7 +33,7 @@ fn warm_apply_rejects_a_cold_state() {
     let mut state = test_state();
     let header = HeaderInput {
         version:     1,
-        merkle_root: [0; 32],
+        merkle_root: MerkleRoot::new([0; 32]),
         timestamp:   ts(100),
         nonce:       0,
     };
@@ -51,7 +51,7 @@ fn failure_height_reports_absolute_chain_height() {
     };
     let headers = [HeaderInput {
         version:     1,
-        merkle_root: [0x22; 32],
+        merkle_root: MerkleRoot::new([0x22; 32]),
         timestamp:   ts(1000),
         nonce:       7,
     }];
@@ -71,14 +71,14 @@ fn apply_headers_flushes_deferred_chain_work_before_failure() {
     let mut headers: Vec<HeaderInput> = (1..=11)
         .map(|i| HeaderInput {
             version:     1,
-            merkle_root: [i as u8; 32],
+            merkle_root: MerkleRoot::new([i as u8; 32]),
             timestamp:   ts(i * 10),
             nonce:       i,
         })
         .collect();
     headers.push(HeaderInput {
         version:     1,
-        merkle_root: [12; 32],
+        merkle_root: MerkleRoot::new([12; 32]),
         timestamp:   ts(0),
         nonce:       12,
     });
@@ -101,7 +101,7 @@ fn cold_batch_failure_flushes_chain_work_for_accepted_headers() {
     let mut headers: Vec<HeaderInput> = (1..=10)
         .map(|i| HeaderInput {
             version:     1,
-            merkle_root: [i as u8; 32],
+            merkle_root: MerkleRoot::new([i as u8; 32]),
             timestamp:   ts(i * 10),
             nonce:       i,
         })
@@ -125,14 +125,14 @@ fn apply_headers_failure_output_includes_flushed_chain_work() {
     let mut headers: Vec<HeaderInput> = (1..=11)
         .map(|i| HeaderInput {
             version:     1,
-            merkle_root: [i as u8; 32],
+            merkle_root: MerkleRoot::new([i as u8; 32]),
             timestamp:   ts(i * 10),
             nonce:       i,
         })
         .collect();
     headers.push(HeaderInput {
         version:     1,
-        merkle_root: [12; 32],
+        merkle_root: MerkleRoot::new([12; 32]),
         timestamp:   ts(0),
         nonce:       12,
     });

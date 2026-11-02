@@ -96,7 +96,7 @@ fn apply_headers_treats_height_zero_state_as_trusted_anchor() {
     let headers: Vec<HeaderInput> = (1..=10)
         .map(|i| HeaderInput {
             version:     1,
-            merkle_root: [i as u8; 32],
+            merkle_root: MerkleRoot::new([i as u8; 32]),
             timestamp:   ts(i * 10),
             nonce:       i,
         })
@@ -118,7 +118,7 @@ fn apply_headers_flushes_deferred_chain_work_on_success() {
     let headers: Vec<HeaderInput> = (1..=10)
         .map(|i| HeaderInput {
             version:     1,
-            merkle_root: [i as u8; 32],
+            merkle_root: MerkleRoot::new([i as u8; 32]),
             timestamp:   ts(i * 10),
             nonce:       i,
         })
@@ -143,7 +143,7 @@ fn apply_headers_flushes_deferred_chain_work_for_longer_run() {
     let headers: Vec<HeaderInput> = (1..=12)
         .map(|i| HeaderInput {
             version:     1,
-            merkle_root: [i as u8; 32],
+            merkle_root: MerkleRoot::new([i as u8; 32]),
             timestamp:   ts(i * 10),
             nonce:       i,
         })

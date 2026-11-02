@@ -26,7 +26,7 @@ fn header_and_new_header_round_trip_exact_wire_bytes() {
     let header: &Header = bytemuck::from_bytes(&header_bytes);
     assert_eq!(header.version, 0x1122_3344);
     assert_eq!(header.prev_blockhash, BlockHash::new([0x55; 32]));
-    assert_eq!(header.merkle_root, [0x66; 32]);
+    assert_eq!(*header.merkle_root, [0x66; 32]);
     assert_eq!(header.timestamp, BlockTimestamp::new(0x7788_99aa));
     assert_eq!(header.compact_target, CompactTarget::new(0x1d00_ffff));
     assert_eq!(header.nonce, 0xbbcc_ddee);
@@ -40,7 +40,7 @@ fn header_and_new_header_round_trip_exact_wire_bytes() {
 
     let new_header = HeaderInput::parse(&new_header_bytes).unwrap();
     assert_eq!(new_header.version, 0x1122_3344);
-    assert_eq!(new_header.merkle_root, [0x66; 32]);
+    assert_eq!(*new_header.merkle_root, [0x66; 32]);
     assert_eq!(new_header.timestamp, BlockTimestamp::new(0x7788_99aa));
     assert_eq!(new_header.nonce, 0xbbcc_ddee);
 }
@@ -81,7 +81,7 @@ fn header_version_field_is_not_constrained_by_pow() {
     let mut headers10: Vec<HeaderInput> = (1..=10)
         .map(|i| HeaderInput {
             version:     1,
-            merkle_root: [i as u8; 32],
+            merkle_root: MerkleRoot::new([i as u8; 32]),
             timestamp:   ts(i * 10),
             nonce:       i,
         })
@@ -121,7 +121,7 @@ fn unmocked_bitcoin_chain_verifies_first_50_blocks() {
         .iter()
         .map(|b| HeaderInput {
             version:     b.version,
-            merkle_root: b.merkle_root,
+            merkle_root: MerkleRoot::new(b.merkle_root),
             timestamp:   BlockTimestamp::new(b.timestamp),
             nonce:       b.nonce,
         })

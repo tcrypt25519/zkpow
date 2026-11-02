@@ -7,7 +7,7 @@ use std::{
 use bitcoin::consensus::{encode, Encodable};
 use zkpow_core::{calculate_next_work_required, check_proof_of_work, target_from_bits};
 use zkpow_params::{Consensus, ConsensusParams, Mainnet, WINDOW_MAX_INDEX, WINDOW_SIZE};
-use zkpow_types::{BlockHash, BlockTimestamp, BlockWork, CompactTarget, Header as CoreHeader, Target};
+use zkpow_types::{BlockHash, BlockTimestamp, BlockWork, CompactTarget, Header as CoreHeader, MerkleRoot, Target};
 
 use super::*;
 use crate::{
@@ -25,7 +25,7 @@ impl Consensus for TrivialConsensus {
         genesis:             CoreHeader {
             version:        1,
             prev_blockhash: BlockHash::new([0u8; 32]),
-            merkle_root:    [0u8; 32],
+            merkle_root:    MerkleRoot::new([0u8; 32]),
             timestamp:      BlockTimestamp::new(2_000_000_000),
             compact_target: CompactTarget::new(TRIVIAL_NBITS_A),
             nonce:          0,
@@ -43,7 +43,7 @@ fn make_header(prev: BlockHash, nbits: u32, timestamp: u32, nonce: u32) -> Heade
     Header::new(CoreHeader {
         version: 1,
         prev_blockhash: prev,
-        merkle_root: [0u8; 32],
+        merkle_root: MerkleRoot::new([0u8; 32]),
         timestamp: BlockTimestamp::new(timestamp),
         compact_target: CompactTarget::new(nbits),
         nonce,

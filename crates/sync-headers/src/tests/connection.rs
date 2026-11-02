@@ -13,9 +13,13 @@ fn command_names_round_trip_through_wire_fields() {
 
 #[test]
 fn unrecognized_wire_names_map_to_unknown() {
-    assert_eq!(Command::from_wire(&[b'x'; 12]), Command::Unknown);
-    assert_eq!(Command::from_wire(&[0; 12]), Command::Unknown);
-    assert_eq!(Command::from_wire(b"version\0\0\0\0x"), Command::Version);
+    for (wire, expected) in [
+        ([b'x'; 12], Command::Unknown),
+        ([0; 12], Command::Unknown),
+        (*b"version\0\0\0\0x", Command::Version),
+    ] {
+        assert_eq!(Command::from_wire(&wire), expected, "{wire:?}");
+    }
 }
 
 fn connection_with_frame(frame: &[u8]) -> PeerConnection {

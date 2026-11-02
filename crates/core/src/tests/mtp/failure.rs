@@ -14,7 +14,7 @@ fn header_rejects_timestamp_equal_to_median() {
     let headers10: Vec<HeaderInput> = (1..=10)
         .map(|i| HeaderInput {
             version:     1,
-            merkle_root: [i as u8; 32],
+            merkle_root: MerkleRoot::new([i as u8; 32]),
             timestamp:   ts(i * 10),
             nonce:       i,
         })
@@ -25,7 +25,7 @@ fn header_rejects_timestamp_equal_to_median() {
     let median = median_time_past(&state);
     let hdr = HeaderInput {
         version:     1,
-        merkle_root: [0x66; 32],
+        merkle_root: MerkleRoot::new([0x66; 32]),
         timestamp:   median,
         nonce:       1,
     };
@@ -118,7 +118,7 @@ fn hint_validation_rejects_wrong_rank_hint() {
     };
     let headers = [HeaderInput {
         version:     1,
-        merkle_root: [0x22; 32],
+        merkle_root: MerkleRoot::new([0x22; 32]),
         timestamp:   ts(12),
         nonce:       7,
     }];
@@ -143,7 +143,7 @@ fn hint_validation_rejects_claimed_median_older_than_half_window_zkvm() {
     };
     let headers = [HeaderInput {
         version:     1,
-        merkle_root: [0x22; 32],
+        merkle_root: MerkleRoot::new([0x22; 32]),
         timestamp:   ts(12),
         nonce:       7,
     }];
@@ -164,7 +164,7 @@ fn hint_validation_rejects_claimed_median_newer_than_half_window_zkvm() {
     };
     let headers = [HeaderInput {
         version:     1,
-        merkle_root: [0x22; 32],
+        merkle_root: MerkleRoot::new([0x22; 32]),
         timestamp:   ts(12),
         nonce:       7,
     }];
@@ -197,7 +197,7 @@ fn hint_validation_rejects_claimed_median_not_in_window_zkvm() {
     };
     let headers = [HeaderInput {
         version:     1,
-        merkle_root: [0x22; 32],
+        merkle_root: MerkleRoot::new([0x22; 32]),
         timestamp:   ts(120),
         nonce:       7,
     }];
@@ -218,7 +218,7 @@ fn hint_validation_rejects_leftover_trailing_median_hints_zkvm() {
     };
     let headers = [HeaderInput {
         version:     1,
-        merkle_root: [0x22; 32],
+        merkle_root: MerkleRoot::new([0x22; 32]),
         timestamp:   ts(12),
         nonce:       7,
     }];
@@ -259,7 +259,7 @@ fn unmocked_chain_rejects_timestamp_too_old_at_height_12() {
         .iter()
         .map(|b| HeaderInput {
             version:     b.version,
-            merkle_root: b.merkle_root,
+            merkle_root: MerkleRoot::new(b.merkle_root),
             timestamp:   BlockTimestamp::new(b.timestamp),
             nonce:       b.nonce,
         })
