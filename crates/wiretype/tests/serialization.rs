@@ -16,10 +16,10 @@ fn trait_output_types() {
     assert_eq!(bytes, 42u32.to_ne_bytes());
 
     let values = vec![value, Value { number: 17 }];
-    let expected = vec![42u32.to_ne_bytes(), 17u32.to_ne_bytes()];
-    let vector_bytes: Vec<[u8; Value::SIZE]> = encode(&values);
-    let slice_bytes: Vec<[u8; Value::SIZE]> = encode(values.as_slice());
-    let reference_bytes: Vec<[u8; Value::SIZE]> = encode(&values.as_slice());
+    let expected = [42u32.to_ne_bytes(), 17u32.to_ne_bytes()].concat();
+    let vector_bytes: Vec<u8> = encode(&values);
+    let slice_bytes: Vec<u8> = encode(values.as_slice());
+    let reference_bytes: Vec<u8> = encode(&values.as_slice());
     assert_eq!(vector_bytes, expected);
     assert_eq!(slice_bytes, expected);
     assert_eq!(reference_bytes, expected);
@@ -40,9 +40,11 @@ fn scalar_round_trip() {
 fn collection_round_trip() {
     let values = vec![Value { number: 1 }, Value { number: u32::MAX }];
     let slice = values.as_slice();
-    let expected: Vec<[u8; Value::SIZE]> = vec![1u32.to_ne_bytes(), u32::MAX.to_ne_bytes()];
+    let expected = [1u32.to_ne_bytes(), u32::MAX.to_ne_bytes()].concat();
     assert_eq!(values.to_bytes(), expected);
     assert_eq!(slice.to_bytes(), expected);
+    assert_eq!(slice.to_bytes(), slice.as_bytes());
+    assert_eq!(Vec::<Value>::parse(&values.to_bytes()), Ok(slice));
     assert_eq!(Vec::<Value>::parse(values.as_bytes()), Ok(slice));
     assert_eq!(<[Value]>::parse(slice.as_bytes()), Ok(slice));
     assert_eq!(<&[Value]>::parse(slice.as_bytes()), Ok(slice));

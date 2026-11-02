@@ -2,7 +2,7 @@ use bytemuck::{Pod, PodCastError};
 
 /// Conversion between wire values and their native memory representation.
 pub trait WireType {
-    /// A fixed-size byte array for a value, or a vector of those arrays for a collection.
+    /// A fixed-size byte array for a value, or a flat byte vector for a collection.
     type Bytes;
     /// The borrowed value returned by parsing; `[T]` for collections.
     type Inner: ?Sized;
@@ -16,11 +16,11 @@ impl<T> WireType for [T]
 where
     T: WireType<Inner = T> + Pod,
 {
-    type Bytes = Vec<T::Bytes>;
+    type Bytes = Vec<u8>;
     type Inner = [T];
 
     fn to_bytes(&self) -> Self::Bytes {
-        self.iter().map(T::to_bytes).collect()
+        self.as_bytes().to_vec()
     }
 
     fn as_bytes(&self) -> &[u8] {
