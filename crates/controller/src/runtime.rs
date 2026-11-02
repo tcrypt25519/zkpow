@@ -12,15 +12,17 @@ use std::{
 };
 
 use tokio::sync::Notify;
-use zkpow_core::{serialize_inputs, BlockHash, PublicValues, ReturnCode, State, VerifierKeyDigest};
+use zkpow_core::{PublicValues, ReturnCode, State, VerifierKeyDigest};
 use zkpow_params::Consensus;
 use zkpow_store::{HeaderStore, RunRecord};
+use wiretype::WireType;
+use zkpow_types::{BlockHash, RunId};
 
 use crate::{
     protocol::{Batch, ControllerError},
     storage::ArtifactStore,
     verify::ProofVerifier,
-    RunId, NO_HEADERS_REMAINING_PREFIX,
+    NO_HEADERS_REMAINING_PREFIX,
 };
 
 const DEFAULT_PULL_TIMEOUT: Duration = Duration::from_secs(600);
@@ -427,8 +429,8 @@ impl<C: Consensus> ControllerCore<C> {
             PublicValues::serialize(&expected_state, &self.verifier_key, ReturnCode::SUCCESS).to_vec();
         Ok(FetchedBatch {
             current_state,
-            header_bytes: serialize_inputs(&witness.headers),
-            median_hint_bytes: serialize_inputs(&witness.median_time_past_hints),
+            header_bytes: witness.headers.to_bytes(),
+            median_hint_bytes: witness.median_time_past_hints.to_bytes(),
             expected_state,
             expected_public_values,
             first_new_height,

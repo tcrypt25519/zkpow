@@ -2,7 +2,10 @@ use alloc::vec::Vec;
 
 use zkvm_test::zkvm_test;
 
-use crate::{tests::*, ApplyError, BlockHash, CompactTarget, HeaderInput, State, WINDOW_SIZE};
+use zkpow_mtp::WINDOW_SIZE;
+use zkpow_types::{BlockHash, ChainWork, CompactTarget};
+
+use crate::{tests::*, ApplyError, HeaderInput, State};
 
 #[zkvm_test]
 fn header_rejects_mocked_hash_exceeding_target() {

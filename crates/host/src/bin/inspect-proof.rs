@@ -2,14 +2,13 @@
 
 use hex::encode;
 use sp1_sdk::SP1ProofWithPublicValues;
-use zkpow_host::util;
+use zkpow_core::{PublicValues, State, VerifierKeyDigest};
 use zkpow_params::{Consensus, Mainnet};
-
-use crate::util::PublicValues;
+use zkpow_types::BlockHash;
 
 const DEFAULT_PROOF_FILE_NAME: &str = "zkpow-proof.bin";
 
-fn reverse_hash_display(hash: util::BlockHash) -> String {
+fn reverse_hash_display(hash: BlockHash) -> String {
     let mut hash_be = hash.into_inner();
     hash_be.reverse();
     encode(hash_be)
@@ -53,11 +52,11 @@ fn main() {
     println!("Public Values Size: {} bytes", pv.len());
 }
 
-fn display_verifier_key(verifier_key: util::VerifierKeyDigest) {
+fn display_verifier_key(verifier_key: VerifierKeyDigest) {
     println!("Verifier Key:     {}", hex::encode(verifier_key.to_bytes()));
 }
 
-fn display_state(state: &util::State) {
+fn display_state(state: &State) {
     println!("Genesis Hash:      {}", reverse_hash_display(state.genesis_hash));
     if state.genesis_hash == Mainnet::GENESIS_HASH {
         println!("                     ↳ mainnet ✓");

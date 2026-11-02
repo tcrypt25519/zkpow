@@ -6,6 +6,7 @@ description = "SQLite persistence for Bitcoin block headers"
 
 [dependencies]
 zkpow-core = { workspace = true }
+zkpow-mtp.workspace = true
 zkpow-sync-headers.workspace = true
 zkpow-params.workspace = true
 zkpow-types.workspace = true

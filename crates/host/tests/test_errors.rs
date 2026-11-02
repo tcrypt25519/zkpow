@@ -4,12 +4,12 @@
 //! then runs the zkVM program via `client.execute()` and checks public values.
 
 use sp1_sdk::{prelude::*, Elf, Prover, ProverClient, SP1Stdin};
-use zkpow_controller::db_path;
-use zkpow_host::{
-    util,
-    util::{PublicValues, VerifierKeyDigest},
-};
+use wiretype::WireType;
+use zkpow_controller::{compute_final_state_cold, compute_final_state_warm};
+use zkpow_core::{HeaderInput, PublicValues, State, VerifierKeyDigest};
 use zkpow_params::{Consensus, Mainnet};
+use zkpow_store::{db_path, genesis_state_from_record, HeaderStore};
+use zkpow_types::{BlockHash, BlockTimestamp, ChainWork, CompactTarget};
 
 const ELF: Elf = include_elf!("zkpow-guest");
 
@@ -23,7 +23,7 @@ async fn run_and_get_pv(stdin: SP1Stdin) -> Result<Vec<u8>, String> {
     Ok(public_values.to_vec())
 }
 
-fn expect_success(pv: &[u8]) -> Result<util::State, String> {
+fn expect_success(pv: &[u8]) -> Result<State, String> {
     let pv = PublicValues::parse(pv).map_err(|err| format!("failed to parse PV: {err}"))?;
     if pv.is_success() {
         Ok(pv.state)
@@ -32,43 +32,43 @@ fn expect_success(pv: &[u8]) -> Result<util::State, String> {
     }
 }
 
-fn consensus_bits(bits: util::CompactTarget) -> u32 {
+fn consensus_bits(bits: CompactTarget) -> u32 {
     bits.into_inner()
 }
 
-fn open_db() -> zkpow_controller::HeaderStore {
-    zkpow_controller::HeaderStore::open(db_path()).expect("failed to open database")
+fn open_db() -> HeaderStore {
+    HeaderStore::open(db_path()).expect("failed to open database")
 }
 
-fn mainnet_genesis_state() -> util::State {
+fn mainnet_genesis_state() -> State {
     let db = open_db();
     let genesis = db.load_header_record(0).unwrap().expect("genesis record");
-    zkpow_controller::genesis_state_from_record::<Mainnet>(genesis, Mainnet::GENESIS_HASH)
+    genesis_state_from_record::<Mainnet>(genesis, Mainnet::GENESIS_HASH)
 }
 
 fn build_stdin(
     verifier_key: VerifierKeyDigest,
-    state: &util::State,
-    headers: &[util::HeaderInput],
-    sparse_hints: &[util::BlockTimestamp],
+    state: &State,
+    headers: &[HeaderInput],
+    sparse_hints: &[BlockTimestamp],
 ) -> SP1Stdin {
     let mut stdin = SP1Stdin::new();
     stdin.write_vec(verifier_key.to_bytes().to_vec());
     stdin.write_vec(state.to_bytes().to_vec());
-    stdin.write_vec(util::serialize_inputs(headers));
-    stdin.write_vec(util::serialize_inputs(sparse_hints));
+    stdin.write_vec(headers.to_bytes());
+    stdin.write_vec(sparse_hints.to_bytes());
     stdin
 }
 
 fn compute_final_state_with_sparse_hints(
-    initial_state: &util::State,
-    headers: &[util::HeaderInput],
-    sparse_hints: &[util::BlockTimestamp],
-) -> util::State {
+    initial_state: &State,
+    headers: &[HeaderInput],
+    sparse_hints: &[BlockTimestamp],
+) -> State {
     if initial_state.height == 0 {
-        util::compute_final_state_cold::<Mainnet>(initial_state, headers, sparse_hints)
+        compute_final_state_cold::<Mainnet>(initial_state, headers, sparse_hints)
     } else {
-        util::compute_final_state_warm::<Mainnet>(initial_state, headers, sparse_hints)
+        compute_final_state_warm::<Mainnet>(initial_state, headers, sparse_hints)
     }
 }
 
@@ -208,7 +208,7 @@ async fn test_retarget_boundary_schedule() -> Result<(), String> {
 #[tokio::test]
 async fn test_tampered_anchor_state_is_derived_away() -> Result<(), String> {
     let witness = open_db().load_header_batch_witness(1, 10).expect("batch witness");
-    let run = |state: util::State| {
+    let run = |state: State| {
         let stdin = build_stdin(
             VerifierKeyDigest::default(),
             &state,
@@ -221,17 +221,17 @@ async fn test_tampered_anchor_state_is_derived_away() -> Result<(), String> {
     let canonical = run(mainnet_genesis_state()).await?;
     expect_success(&canonical)?;
 
-    type StateMutation = (&'static str, fn(&mut util::State));
+    type StateMutation = (&'static str, fn(&mut State));
     let anchor = mainnet_genesis_state();
     let mutations: [StateMutation; 6] = [
         ("chain_work", |s| {
-            s.chain_work = util::ChainWork::from_limbs([1_000_000, 0, 0, 0])
+            s.chain_work = ChainWork::from_limbs([1_000_000, 0, 0, 0])
         }),
-        ("block_hash", |s| s.block_hash = util::BlockHash::new([0x11; 32])),
-        ("genesis_hash", |s| s.genesis_hash = util::BlockHash::new([0x22; 32])),
-        ("current_nbits", |s| s.current_nbits = util::CompactTarget::new(0x1d00_fffe)),
-        ("epoch_timestamp", |s| s.epoch_timestamp = util::BlockTimestamp::default()),
-        ("anchor timestamp slot", |s| s.timestamps[0] = util::BlockTimestamp::new(1)),
+        ("block_hash", |s| s.block_hash = BlockHash::new([0x11; 32])),
+        ("genesis_hash", |s| s.genesis_hash = BlockHash::new([0x22; 32])),
+        ("current_nbits", |s| s.current_nbits = CompactTarget::new(0x1d00_fffe)),
+        ("epoch_timestamp", |s| s.epoch_timestamp = BlockTimestamp::default()),
+        ("anchor timestamp slot", |s| s.timestamps[0] = BlockTimestamp::new(1)),
     ];
 
     let mut leaked = Vec::new();

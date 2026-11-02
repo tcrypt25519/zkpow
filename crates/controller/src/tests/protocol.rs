@@ -1,6 +1,5 @@
-use zkpow_core::{HeaderInput, VerifierKeyDigest};
+use zkpow_core::{HeaderInput, State, VerifierKeyDigest};
 
-use super::*;
 use crate::protocol::{Batch, MEDIAN_HINT_SIZE};
 
 fn sample_batch() -> Batch {

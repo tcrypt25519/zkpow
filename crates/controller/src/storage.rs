@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 
-use crate::{BoxError, RunId};
+use zkpow_types::RunId;
+
+use crate::BoxError;
 
 pub trait ArtifactStore: Send + Sync {
     /// Target the host should upload `object` to.

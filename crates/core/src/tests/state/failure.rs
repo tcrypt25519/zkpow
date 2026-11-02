@@ -2,9 +2,10 @@ use alloc::{vec, vec::Vec};
 
 use zkvm_test::zkvm_test;
 
-use crate::{
-    block_work_from_target, tests::*, ApplyError, ChainWork, CompactTarget, ErrorCode, HeaderInput, State, WINDOW_SIZE,
-};
+use zkpow_mtp::WINDOW_SIZE;
+use zkpow_types::{ChainWork, CompactTarget};
+
+use crate::{block_work_from_target, tests::*, ApplyError, ErrorCode, HeaderInput, State};
 
 #[zkvm_test]
 fn cold_start_rejects_fewer_than_ten_headers() {

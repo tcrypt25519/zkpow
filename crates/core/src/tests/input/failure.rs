@@ -3,7 +3,9 @@ use alloc::vec;
 use bytemuck::PodCastError;
 use zkvm_test::zkvm_test;
 
-use crate::{cast_slice, serialize_inputs, BlockTimestamp, HeaderInput};
+use zkpow_types::BlockTimestamp;
+
+use crate::{cast_slice, serialize_inputs, HeaderInput};
 
 #[zkvm_test]
 fn header_hints_reject_truncated_payload_with_trailing_slop() {

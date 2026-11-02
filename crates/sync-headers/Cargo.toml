@@ -10,6 +10,7 @@ path = "src/lib.rs"
 
 [dependencies]
 zkpow-core.workspace = true
+zkpow-mtp.workspace = true
 zkpow-params.workspace = true
 zkpow-types.workspace = true
 bitcoin.workspace = true

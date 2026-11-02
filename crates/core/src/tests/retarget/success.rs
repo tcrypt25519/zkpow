@@ -1,10 +1,9 @@
-use zkpow_params::ShortEpoch;
+use zkpow_mtp::{timestamp_slot, WINDOW_SIZE};
+use zkpow_params::{Consensus, ShortEpoch};
+use zkpow_types::{CompactTarget, Target};
 use zkvm_test::zkvm_test;
 
-use crate::{
-    calculate_next_work_required, target_from_bits, target_to_bits, tests::*, CompactTarget, Consensus, HeaderInput,
-    Target,
-};
+use crate::{calculate_next_work_required, target_from_bits, target_to_bits, tests::*, HeaderInput};
 
 #[zkvm_test(max_cycles = 150_000)]
 fn target_to_bits_round_trips_genesis_target() {

@@ -1,8 +1,7 @@
 //! The header chain state transition and the consensus math it runs on.
 //!
 //! The value types live in `zkpow-types` and the network parameters in `zkpow-params`; this crate
-//! is generic over the latter. The types are re-exported here so consumers have a single import
-//! surface for a header chain's vocabulary.
+//! is generic over the latter.
 
 #![no_std]
 #![cfg_attr(all(test, target_os = "zkvm"), feature(custom_test_frameworks))]
@@ -11,12 +10,6 @@
 extern crate alloc;
 extern crate self as zkpow_core;
 
-
-pub use zkpow_mtp::{
-    advance_ordered_timestamp_run, has_ordered_timestamp_window, ordered_median_timestamp_slot, ordered_timestamp_run,
-    requires_median_hint, timestamp_count, timestamp_slot, WINDOW_LARGE_HALF_SIZE, WINDOW_MAX_INDEX, WINDOW_SIZE,
-    WINDOW_SMALL_HALF_SIZE,
-};
 use zkpow_params::Consensus;
 use zkpow_types::{
     u256, BlockHash, BlockTimestamp, BlockWork, CompactTarget, Header, MerkleRoot, NonMaxU256, Target, TargetTriplet,
@@ -35,8 +28,6 @@ mod errors;
 pub use errors::{ApplyError, ParseError, ReportableError};
 
 mod halt;
-mod input;
-
 
 /// Hashing lives on [`Header`]; this wrapper exists only so tests can substitute a hash without
 /// mining one. It must stay in this crate: `cfg(test)` is per-compilation-unit, so a mock in

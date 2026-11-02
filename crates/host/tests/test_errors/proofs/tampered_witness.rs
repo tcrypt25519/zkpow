@@ -28,7 +28,7 @@ async fn test_error_recursive_on_tampered_state_witness() -> Result<(), String> 
         compute_final_state_with_sparse_hints(&genesis_state, &witness1.headers, &witness1.median_time_past_hints);
 
     let mut tampered_state = state_at_10;
-    tampered_state.epoch_timestamp = util::BlockTimestamp::default();
+    tampered_state.epoch_timestamp = BlockTimestamp::default();
 
     let witness2 = open_db().load_header_batch_witness(11, 10).expect("batch witness");
     let mut stdin2 = build_stdin(

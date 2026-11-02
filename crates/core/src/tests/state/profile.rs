@@ -8,7 +8,9 @@ use core::mem::size_of;
 
 use zkvm_test::zkvm_test;
 
-use crate::{tests::*, BlockTimestamp, HeaderInput, State};
+use zkpow_types::BlockTimestamp;
+
+use crate::{tests::*, HeaderInput, State};
 
 /// Change this to profile more complete epochs (up to the fixture's capacity).
 const PROFILE_EPOCHS: usize = 1;

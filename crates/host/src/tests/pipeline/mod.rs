@@ -3,8 +3,9 @@ use std::{
     sync::{Mutex, OnceLock},
 };
 
-use zkpow_controller::{db_path, HeaderStore, ENV_ZKPOW_DB_PATH, NO_HEADERS_REMAINING_PREFIX};
+use zkpow_controller::NO_HEADERS_REMAINING_PREFIX;
 use zkpow_params::Mainnet;
+use zkpow_store::{db_path, HeaderStore, ENV_ZKPOW_DB_PATH};
 
 mod artifacts;
 mod diagnostics;

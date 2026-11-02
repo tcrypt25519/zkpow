@@ -13,6 +13,10 @@ mod state;
 
 /// The transition is generic over the network, so its tests drive it with the real ones.
 /// `ShortEpoch` differs from `Mainnet` only in `epoch_length`, which is what makes it useful here.
+use zkpow_mtp::{
+    advance_ordered_timestamp_run, has_ordered_timestamp_window, ordered_timestamp_run, timestamp_count, timestamp_slot,
+    WINDOW_SIZE,
+};
 use zkpow_params::Mainnet as TestConsensus;
 
 use super::*;

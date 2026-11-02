@@ -5,11 +5,9 @@ use std::{
 };
 
 use bitcoin::consensus::{encode, Encodable};
-use zkpow_core::{
-    calculate_next_work_required, check_proof_of_work, target_from_bits, BlockHash, BlockTimestamp, BlockWork,
-    CompactTarget, Header as CoreHeader, Target,
-};
+use zkpow_core::{calculate_next_work_required, check_proof_of_work, target_from_bits};
 use zkpow_params::{Consensus, ConsensusParams, Mainnet, WINDOW_MAX_INDEX, WINDOW_SIZE};
+use zkpow_types::{BlockHash, BlockTimestamp, BlockWork, CompactTarget, Header as CoreHeader, Target};
 
 use super::*;
 use crate::{
@@ -200,7 +198,7 @@ fn median_time_past_matches_hand_computed_values_through_a_wrap() {
 
     // At height 0 the count is 1, not 0: the anchor itself is a recorded
     // block with a known timestamp.
-    assert_eq!(zkpow_core::timestamp_count(anchor.height), 1);
+    assert_eq!(zkpow_mtp::timestamp_count(anchor.height), 1);
 
     // 1-second increments so the expected medians are easy to check by hand.
     let mut prev = anchor.hash;

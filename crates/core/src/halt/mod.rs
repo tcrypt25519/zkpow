@@ -12,7 +12,7 @@ pub use zkvm::{__invalid_hint_fmt, halt_invalid_hint};
 #[cfg(not(target_os = "zkvm"))]
 mod platform;
 #[cfg(not(target_os = "zkvm"))]
-pub use platform::{__invalid_hint_fmt, halt_invalid_hint};
+pub use platform::__invalid_hint_fmt;
 
 /// Halt with the invalid-hint exit code, optionally writing a formatted diagnostic first.
 ///

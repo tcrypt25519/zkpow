@@ -2,7 +2,10 @@ use alloc::vec::Vec;
 
 use zkvm_test::zkvm_test;
 
-use crate::{advance_ordered_timestamp_run, tests::*, timestamp_slot, CompactTarget, HeaderInput, State, WINDOW_SIZE};
+use zkpow_mtp::{advance_ordered_timestamp_run, timestamp_slot, WINDOW_SIZE};
+use zkpow_types::CompactTarget;
+
+use crate::{tests::*, HeaderInput, State};
 
 #[zkvm_test]
 fn ordered_window_median_accepts_strictly_increasing_timestamps() {

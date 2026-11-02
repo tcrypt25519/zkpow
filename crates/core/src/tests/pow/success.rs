@@ -2,7 +2,10 @@ use alloc::vec::Vec;
 
 use zkvm_test::zkvm_test;
 
-use crate::{check_proof_of_work, tests::*, BlockHash, ChainWork, Header, HeaderInput, State};
+use zkpow_mtp::WINDOW_SIZE;
+use zkpow_types::{BlockHash, ChainWork, Header};
+
+use crate::{check_proof_of_work, tests::*, HeaderInput, State};
 
 #[zkvm_test(max_cycles = 150_000)]
 fn proof_of_work_accepts_exact_target_boundary() {

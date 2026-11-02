@@ -1,6 +1,8 @@
 use zkvm_test::zkvm_test;
 
-use crate::{assert_hint, assert_hint_eq, assert_hint_ne, invalid_hint, BlockTimestamp, CompactTarget};
+use zkpow_types::{BlockTimestamp, CompactTarget};
+
+use crate::{assert_hint, assert_hint_eq, assert_hint_ne, invalid_hint};
 
 #[zkvm_test(should_panic(expected = "halt: invalid hint (3)"), exit_code = 3)]
 fn bare_invalid_hint_panics_off_target() {

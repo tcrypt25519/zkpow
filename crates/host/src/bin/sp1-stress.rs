@@ -24,7 +24,8 @@ use std::{
 use zkpow_host::{
     memory_monitor, observability,
     pipeline::input::{
-        ENV_ZKPOW_BATCH_COUNT, ENV_ZKPOW_BATCH_SIZE, ENV_ZKPOW_EXECUTE_ONLY, ENV_ZKPOW_PROOF_STORE_DIR, ENV_ZKPOW_RUN_ID,
+        ENV_ZKPOW_BATCH_COUNT, ENV_ZKPOW_BATCH_SIZE, ENV_ZKPOW_EXECUTE_ONLY, ENV_ZKPOW_PROOF_STORE_DIR,
+        ENV_ZKPOW_RUN_ID,
     },
 };
 
@@ -123,7 +124,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         memory_monitor::log_point("stress_session_end", "Stress session memory snapshot");
     }
 
-    zkpow_controller::HeaderStore::open(zkpow_controller::db_path())?.delete_run(&run_id)?;
+    zkpow_store::HeaderStore::open(zkpow_store::db_path())?.delete_run(&run_id)?;
     tracing::info!("SP1 stress test complete");
     Ok(())
 }

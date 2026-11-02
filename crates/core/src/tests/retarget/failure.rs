@@ -1,6 +1,8 @@
 use zkvm_test::zkvm_test;
 
-use crate::{calculate_next_work_required, tests::*, CompactTarget, Target};
+use zkpow_types::{CompactTarget, Target};
+
+use crate::{calculate_next_work_required, tests::*};
 
 #[zkvm_test]
 fn retarget_clamps_negative_and_zero_timespans() {

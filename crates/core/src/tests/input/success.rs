@@ -2,7 +2,9 @@ use alloc::{vec, vec::Vec};
 
 use zkvm_test::zkvm_test;
 
-use crate::{cast_slice, serialize_inputs, BlockTimestamp, HeaderInput};
+use zkpow_types::BlockTimestamp;
+
+use crate::{cast_slice, serialize_inputs, HeaderInput};
 
 #[zkvm_test]
 fn header_hints_round_trip_through_slice_cast() {

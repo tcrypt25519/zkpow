@@ -49,7 +49,7 @@ pub fn seeded_store_at(path: &Path, count: u32) -> (HeaderStore, BlockHash) {
     let mut headers = Vec::new();
     let mut prev_hash = genesis_hash;
     let mut cumulative_work = genesis.chainwork;
-    let mut window: Vec<u32> = tip.timestamps[..zkpow_core::timestamp_count(tip.height)].to_vec();
+    let mut window: Vec<u32> = tip.timestamps[..zkpow_mtp::timestamp_count(tip.height)].to_vec();
     let base_time = genesis.header.inner.timestamp.into_inner();
 
     for i in 1u32..=count {

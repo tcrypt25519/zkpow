@@ -19,22 +19,24 @@ pub mod verify;
 
 use std::time::Instant;
 
-use diagnostics::{clear_phase_timings, clear_shard_areas, collected_phase_timings, log_shard_areas, timed_sync};
-pub use diagnostics::{log_execution_report, PhaseTiming};
+use diagnostics::{
+    clear_phase_timings, clear_shard_areas, collected_phase_timings, log_execution_report, log_shard_areas, timed_sync,
+};
 use execution::execute_batch;
 use input::{build_stdin, config_from_env};
 use proof::{compressed::generate_compressed_proof, get_prepared_prover, PreparedProver};
 use sp1_sdk::{prelude::*, ProverClient, SP1ProofWithPublicValues};
-pub use zkpow_controller::NO_HEADERS_REMAINING_PREFIX;
+use wiretype::WireType;
 use zkpow_controller::{
     protocol::Batch,
     runtime::{ControllerConfig, ControllerRuntime},
     storage::{ArtifactStore, LocalArtifactStore},
     verify::ProofVerifier,
-    HeaderStore,
+    NO_HEADERS_REMAINING_PREFIX,
 };
 use zkpow_core::PublicValues;
 use zkpow_params::Consensus;
+use zkpow_store::HeaderStore;
 
 use crate::memory_monitor;
 
@@ -54,13 +56,13 @@ pub enum ProverBackend {
 pub struct ProofGenerationConfig {
     /// The IVC chain this host extends; the controller tracks progress per
     /// run id in its run ledger.
-    pub run_id: String,
+    pub run_id:           String,
     pub local_batch_size: u32,
-    pub batch_count: u32,
+    pub batch_count:      u32,
     /// The SQLite header database holding the run ledger and header content.
-    pub db_path: std::path::PathBuf,
-    pub execute_only: bool,
-    pub prover_backend: ProverBackend,
+    pub db_path:          std::path::PathBuf,
+    pub execute_only:     bool,
+    pub prover_backend:   ProverBackend,
 }
 
 pub(crate) fn is_header_exhaustion_error(err: &BoxError) -> bool {
@@ -108,7 +110,7 @@ fn build_local_controller<C: Consensus>(
 
 struct BatchCompletion {
     proof_upload: String,
-    proof_bytes: Vec<u8>,
+    proof_bytes:  Vec<u8>,
 }
 
 async fn run_execution_session<C: Consensus>(config: ProofGenerationConfig) -> Result<u32, BoxError> {
@@ -132,8 +134,8 @@ async fn run_execution_session<C: Consensus>(config: ProofGenerationConfig) -> R
         let stdin = build_stdin(
             zkpow_core::VerifierKeyDigest::default(),
             &state,
-            zkpow_core::serialize_inputs(&witness.headers),
-            zkpow_core::serialize_inputs(&witness.median_time_past_hints),
+            witness.headers.to_bytes(),
+            witness.median_time_past_hints.to_bytes(),
             None,
         )?;
         let started = Instant::now();

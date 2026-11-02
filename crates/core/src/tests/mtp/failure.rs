@@ -2,7 +2,10 @@ use alloc::vec::Vec;
 
 use zkvm_test::zkvm_test;
 
-use crate::{tests::*, BlockTimestamp, CompactTarget, HeaderInput, State, WINDOW_SIZE};
+use zkpow_mtp::WINDOW_SIZE;
+use zkpow_types::{BlockTimestamp, ChainWork, CompactTarget};
+
+use crate::{tests::*, HeaderInput, State};
 
 #[zkvm_test]
 fn header_rejects_timestamp_equal_to_median() {

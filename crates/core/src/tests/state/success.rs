@@ -3,10 +3,10 @@ use core::mem::{align_of, size_of};
 
 use zkvm_test::zkvm_test;
 
-use crate::{
-    block_work_from_target, target_from_bits, tests::*, BlockHash, BlockWork, ChainWork, CompactTarget, HeaderInput,
-    State,
-};
+use zkpow_mtp::{WINDOW_MAX_INDEX, WINDOW_SIZE};
+use zkpow_types::{BlockHash, BlockWork, ChainWork, CompactTarget};
+
+use crate::{block_work_from_target, target_from_bits, tests::*, HeaderInput, State};
 
 #[zkvm_test(max_cycles = 100_000)]
 fn state_and_header_fixed_sizes_match_protocol() {

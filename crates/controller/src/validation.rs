@@ -1,6 +1,7 @@
-use zkpow_core::{BlockTimestamp, Header, HeaderInput, State};
+use zkpow_core::{HeaderInput, State};
 use zkpow_params::Consensus;
 use zkpow_store::HeaderRecord;
+use zkpow_types::{BlockTimestamp, Header};
 
 /// Apply the cold start batch locally with its sparse median-time-past hints.
 pub fn compute_final_state_cold<C: Consensus>(

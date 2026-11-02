@@ -1,4 +1,7 @@
+use zkpow_mtp::requires_median_hint;
 use zkpow_params::Mainnet;
+use zkpow_store::{genesis_state_from_record, HeaderStore};
+use zkpow_types::BlockHash;
 
 use super::*;
 use crate::validation::header_to_input;

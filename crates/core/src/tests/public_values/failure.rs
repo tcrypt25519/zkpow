@@ -2,9 +2,10 @@ use alloc::{format, vec};
 
 use zkvm_test::zkvm_test;
 
+use zkpow_types::{BlockHash, ChainWork};
+
 use crate::{
-    tests::*, ApplyError, BlockHash, ChainWork, ErrorCode, ParseError, PublicValues, ReportableError, ReturnCode,
-    State, VerifierKeyDigest,
+    tests::*, ApplyError, ErrorCode, ParseError, PublicValues, ReportableError, ReturnCode, State, VerifierKeyDigest,
 };
 
 fn sample_state() -> State {

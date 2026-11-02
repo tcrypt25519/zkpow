@@ -6,7 +6,9 @@ use sp1_sdk::{prelude::*, CpuProver, MockProver, Prover, ProverClient, SP1Provin
 use tokio::sync::Mutex as AsyncMutex;
 
 use crate::pipeline::{
-    diagnostics::timed_async, execution::execute_batch, log_execution_report, BoxError, ProverBackend, ELF,
+    diagnostics::{log_execution_report, timed_async},
+    execution::execute_batch,
+    BoxError, ProverBackend, ELF,
 };
 
 static PREPARED_PROVER: OnceLock<AsyncMutex<Option<(PreparedProverConfig, PreparedProver)>>> = OnceLock::new();
@@ -45,8 +47,8 @@ impl PreparedProver {
     }
 
     /// Digest of the verifying key, as committed in every proof's public values.
-    pub(crate) fn verifier_key_digest(&self) -> crate::util::VerifierKeyDigest {
-        crate::util::VerifierKeyDigest::from_raw(self.verifying_key().hash_u32())
+    pub(crate) fn verifier_key_digest(&self) -> zkpow_core::VerifierKeyDigest {
+        zkpow_core::VerifierKeyDigest::from_raw(self.verifying_key().hash_u32())
     }
 
     /// Execute the batch and log its shard shape before proving it. SP1's prove API returns no

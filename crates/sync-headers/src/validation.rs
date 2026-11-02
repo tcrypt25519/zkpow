@@ -1,6 +1,6 @@
-use zkpow_core::{
-    advance_ordered_timestamp_run, calculate_next_work_required, check_proof_of_work, has_ordered_timestamp_window,
-    ordered_median_timestamp_slot, timestamp_slot,
+use zkpow_core::{calculate_next_work_required, check_proof_of_work};
+use zkpow_mtp::{
+    advance_ordered_timestamp_run, has_ordered_timestamp_window, ordered_median_timestamp_slot, timestamp_slot,
 };
 use zkpow_params::{Consensus, WINDOW_SIZE};
 use zkpow_types::BlockTimestamp;
@@ -56,7 +56,7 @@ pub fn connect_headers<C: Consensus>(anchor: &Tip, headers: &[Header]) -> Vec<Co
             break;
         }
 
-        let window_len = zkpow_core::timestamp_count(height);
+        let window_len = zkpow_mtp::timestamp_count(height);
         let mtp = if has_ordered_timestamp_window(ordered_timestamp_run) {
             timestamps[ordered_median_timestamp_slot(height)]
         } else {

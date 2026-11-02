@@ -3,15 +3,11 @@
 use std::path::PathBuf;
 
 use sp1_sdk::{prelude::*, SP1Proof};
+use zkpow_core::{State, VerifierKeyDigest};
 use zkpow_params::Consensus;
+use zkpow_store::ENV_ZKPOW_DB_PATH;
 
-use crate::{
-    pipeline::{BoxError, ProofGenerationConfig, ProverBackend},
-    util,
-    util::VerifierKeyDigest,
-};
-
-pub use zkpow_controller::ENV_ZKPOW_DB_PATH;
+use crate::pipeline::{BoxError, ProofGenerationConfig, ProverBackend};
 
 pub const ENV_ZKPOW_RUN_ID: &str = "ZKPOW_RUN_ID";
 pub const ENV_ZKPOW_BATCH_SIZE: &str = "ZKPOW_BATCH_SIZE";
@@ -25,9 +21,10 @@ pub const ENV_ZKPOW_USE_CUDA: &str = "ZKPOW_USE_CUDA";
 #[cfg(not(feature = "memory-diagnostics"))]
 pub(crate) const ENV_ZKPOW_MEMORY_LOGGING: &str = "ZKPOW_MEMORY_LOGGING";
 
+// TODO: This is an invalid run ID now
 const DEFAULT_RUN_ID: &str = "dev";
 const DEFAULT_PROOF_STORE_DIR: &str = "proof_store";
-const DEFAULT_BATCH_COUNT: u32 = 500;
+const DEFAULT_BATCH_COUNT: u32 = 2016;
 
 pub(crate) fn parse_bool_env(var_name: &'static str) -> Result<bool, BoxError> {
     parse_bool_env_or(var_name, false)
@@ -103,7 +100,7 @@ pub fn config_from_env<C: Consensus>() -> Result<ProofGenerationConfig, BoxError
         run_id: std::env::var(ENV_ZKPOW_RUN_ID).unwrap_or_else(|_| DEFAULT_RUN_ID.to_string()),
         local_batch_size,
         batch_count,
-        db_path: parse_path_env(ENV_ZKPOW_DB_PATH).unwrap_or_else(zkpow_controller::db_path),
+        db_path: parse_path_env(ENV_ZKPOW_DB_PATH).unwrap_or_else(zkpow_store::db_path),
         execute_only,
         prover_backend,
     })
@@ -118,7 +115,7 @@ pub fn proof_store_dir_from_env() -> PathBuf {
 /// The host pipes witness data through without reinterpreting it.
 pub fn build_stdin(
     verifier_key: VerifierKeyDigest,
-    state: &util::State,
+    state: &State,
     header_bytes: Vec<u8>,
     median_hint_bytes: Vec<u8>,
     previous_proof: Option<(SP1ProofWithPublicValues, &sp1_prover::SP1VerifyingKey)>,

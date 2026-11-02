@@ -4,8 +4,8 @@
 //! run in the same process, so the batch value is passed directly with no
 //! wire encoding.
 
-use zkpow_core::{BlockTimestamp, HeaderInput, State, VerifierKeyDigest};
-
+use zkpow_core::{HeaderInput, State, VerifierKeyDigest};
+use zkpow_types::BlockTimestamp;
 pub(crate) const MEDIAN_HINT_SIZE: usize = size_of::<BlockTimestamp>();
 
 /// Everything required to prove the next controller-selected batch.

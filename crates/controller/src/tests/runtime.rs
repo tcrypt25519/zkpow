@@ -8,6 +8,7 @@ use std::{
 
 use zkpow_core::{PublicValues, ReturnCode, VerifierKeyDigest};
 use zkpow_store::HeaderStore;
+use zkpow_types::BlockHash;
 
 use super::*;
 use crate::{
@@ -87,7 +88,7 @@ impl Harness {
         let nonce = unique_nonce();
         let root = std::env::temp_dir().join(format!("zkpow-runtime-{nonce}"));
         std::fs::create_dir_all(&root).unwrap();
-        let db_path = root.join(TEST_DATABASE_FILE);
+        let db_path = root.join("headers.sqlite");
         let (store, genesis_hash) = zkpow_store::test_utils::seeded_store_at(&db_path, 20);
         let mut config = ControllerConfig::new(genesis_hash, 2);
         config.pull_timeout = Duration::from_millis(100);
@@ -378,7 +379,7 @@ async fn guest_compatible_batch_size_advances_and_completes() {
     let nonce = unique_nonce();
     let root = std::env::temp_dir().join(format!("zkpow-runtime-batch10-{nonce}"));
     std::fs::create_dir_all(&root).unwrap();
-    let db_path = root.join(TEST_DATABASE_FILE);
+    let db_path = root.join("headers.sqlite");
     let (store, genesis_hash) = zkpow_store::test_utils::seeded_store_at(&db_path, 25);
     let mut config = ControllerConfig::new(genesis_hash, 10);
     config.pull_timeout = Duration::from_millis(100);

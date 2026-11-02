@@ -6,4 +6,3 @@ mod tests;
 pub mod memory_monitor;
 pub mod observability;
 pub mod pipeline;
-pub mod util;

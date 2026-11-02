@@ -2,7 +2,10 @@ use alloc::format;
 
 use zkvm_test::zkvm_test;
 
-use crate::{tests::*, BlockHash, ChainWork, HeaderInput, PublicValues, ReturnCode, State, VerifierKeyDigest};
+use zkpow_mtp::WINDOW_SIZE;
+use zkpow_types::{BlockHash, ChainWork};
+
+use crate::{tests::*, HeaderInput, PublicValues, ReturnCode, State, VerifierKeyDigest};
 
 fn sample_state() -> State {
     State {
