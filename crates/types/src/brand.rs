@@ -266,7 +266,7 @@ impl Target {
     }
 
     #[must_use]
-    pub fn into_inner_u256(&self) -> u256 {
+    pub fn into_inner_u256(self) -> u256 {
         self.0.into_inner()
     }
 }
@@ -293,8 +293,8 @@ impl core::ops::Mul<u32> for BlockWork {
     }
 }
 
-impl core::fmt::Display for BlockHash {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+impl fmt::Display for BlockHash {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut bytes = self.to_le_bytes();
         bytes.reverse();
         for byte in bytes {
