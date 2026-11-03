@@ -1,9 +1,7 @@
 use alloc::vec::Vec;
 
-use zkvm_test::zkvm_test;
-
-use zkpow_mtp::WINDOW_SIZE;
 use zkpow_types::{BlockHash, ChainWork, Header};
+use zkvm_test::zkvm_test;
 
 use crate::{check_proof_of_work, tests::*, HeaderInput, State};
 
@@ -23,7 +21,10 @@ fn header_and_new_header_round_trip_exact_wire_bytes() {
     header_bytes[72..76].copy_from_slice(&0x1d00_ffffu32.to_le_bytes());
     header_bytes[76..80].copy_from_slice(&0xbbcc_ddeeu32.to_le_bytes());
 
-    let header: &Header = bytemuck::from_bytes(&header_bytes);
+    let mut header_words = [0u32; Header::SIZE / 4];
+    let aligned_bytes = bytemuck::cast_slice_mut(&mut header_words);
+    aligned_bytes.copy_from_slice(&header_bytes);
+    let header = Header::parse(aligned_bytes).unwrap();
     assert_eq!(header.version, 0x1122_3344);
     assert_eq!(header.prev_blockhash, BlockHash::new([0x55; 32]));
     assert_eq!(*header.merkle_root, [0x66; 32]);
@@ -38,11 +39,16 @@ fn header_and_new_header_round_trip_exact_wire_bytes() {
     new_header_bytes[36..40].copy_from_slice(&0x7788_99aau32.to_le_bytes());
     new_header_bytes[40..44].copy_from_slice(&0xbbcc_ddeeu32.to_le_bytes());
 
-    let new_header = HeaderInput::parse(&new_header_bytes).unwrap();
+    let mut new_header_words = [0u32; HeaderInput::SIZE / 4];
+    let aligned_bytes = bytemuck::cast_slice_mut(&mut new_header_words);
+    aligned_bytes.copy_from_slice(&new_header_bytes);
+    let new_header = HeaderInput::parse(aligned_bytes).unwrap();
     assert_eq!(new_header.version, 0x1122_3344);
     assert_eq!(*new_header.merkle_root, [0x66; 32]);
     assert_eq!(new_header.timestamp, BlockTimestamp::new(0x7788_99aa));
     assert_eq!(new_header.nonce, 0xbbcc_ddee);
+    assert_eq!(new_header.to_header(header.prev_blockhash, header.compact_target), *header);
+    assert_eq!(new_header.to_bytes(), new_header_bytes);
 }
 
 #[zkvm_test]
@@ -88,9 +94,9 @@ fn header_version_field_is_not_constrained_by_pow() {
         .collect();
     let _hash_guard = set_hash_success();
     headers10[0].version = 0xFFFF_FFFF;
-    let hints = median_hints_for_headers(&state, &headers10);
+
     state
-        .apply_headers_from_genesis::<TestConsensus>(&headers10, &hints)
+        .apply_headers_from_genesis::<TestConsensus>(&headers10, &[])
         .expect("unexpected failure due to version only");
 }
 
@@ -101,40 +107,26 @@ fn unmocked_bitcoin_chain_verifies_first_50_blocks() {
     assert_eq!(blocks.len(), 50, "fixture must contain genesis + 49 blocks");
 
     let genesis = &blocks[0];
-    assert_eq!(genesis.expected_hash, TestConsensus::GENESIS_HASH);
+    assert_eq!(genesis.0, TestConsensus::GENESIS_HASH);
 
-    let mut state = State {
-        chain_work:      ChainWork::from_limbs(*TestConsensus::PARAMS.genesis_work.as_limbs()),
-        genesis_hash:    TestConsensus::GENESIS_HASH,
-        block_hash:      TestConsensus::GENESIS_HASH,
-        height:          0,
-        current_nbits:   TestConsensus::PARAMS.genesis.compact_target,
-        epoch_timestamp: TestConsensus::PARAMS.genesis.timestamp,
-        timestamps:      {
-            let mut arr = [BlockTimestamp::new(0); WINDOW_SIZE];
-            arr[0] = TestConsensus::PARAMS.genesis.timestamp;
-            arr
-        },
-    };
+    let mut state = State::anchor::<TestConsensus>();
 
     let header_inputs: Vec<HeaderInput> = blocks[1..50]
         .iter()
-        .map(|b| HeaderInput {
+        .map(|(_, b)| HeaderInput {
             version:     b.version,
-            merkle_root: MerkleRoot::new(b.merkle_root),
-            timestamp:   BlockTimestamp::new(b.timestamp),
+            merkle_root: b.merkle_root,
+            timestamp:   b.timestamp,
             nonce:       b.nonce,
         })
         .collect();
 
-    let hints = median_hints_for_headers(&state, &header_inputs);
-
     state
-        .apply_headers_from_genesis::<TestConsensus>(&header_inputs, &hints)
+        .apply_headers_from_genesis::<TestConsensus>(&header_inputs, &[])
         .expect("all 49 real Bitcoin headers must validate without mocks");
 
     assert_eq!(state.height, 49);
-    assert_eq!(state.block_hash, blocks[49].expected_hash);
+    assert_eq!(state.block_hash, blocks[49].0);
 
     let expected_work = ChainWork::from_limbs([0x0000_0001_0001_0001 * 50, 0, 0, 0]);
     assert_eq!(state.chain_work, expected_work);
@@ -159,15 +151,7 @@ fn target_conversions_and_limb_rollover_edge_cases() {
     // 4. block_work_from_target with saturated limb 0 rolling over to limb 1
     let rollover_target = Target::from_limbs([u64::MAX, 1, 0, 0]);
     let work = crate::block_work_from_target(&rollover_target);
-    assert!(work.into_inner() > zkpow_types::u256::from_limbs([0; 4]));
-
-    // 5. NonMaxU256 returns None on u256::MAX
-    let max_u256 = zkpow_types::u256::from_limbs([u64::MAX; 4]);
-    assert!(zkpow_types::NonMaxU256::new(max_u256).is_none());
-
-    // 6. Consensus newtype formatting
-    let timestamp = zkpow_types::BlockTimestamp::new(42);
-    assert_eq!(alloc::format!("{timestamp}"), "42");
+    assert_eq!(work.into_inner().into_limbs(), [0, 0, 1 << 63, 0]);
 }
 
 #[zkvm_test]

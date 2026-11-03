@@ -1,10 +1,8 @@
 use alloc::vec::Vec;
-use core::mem::{align_of, size_of};
+use core::mem::align_of;
 
-use zkvm_test::zkvm_test;
-
-use zkpow_mtp::{WINDOW_MAX_INDEX, WINDOW_SIZE};
 use zkpow_types::{BlockHash, BlockWork, ChainWork, CompactTarget};
+use zkvm_test::zkvm_test;
 
 use crate::{block_work_from_target, target_from_bits, tests::*, HeaderInput, State};
 
@@ -21,24 +19,36 @@ fn state_and_header_fixed_sizes_match_protocol() {
 
 #[zkvm_test]
 fn state_and_header_input_layout_and_offsets() {
-    assert_eq!(size_of::<State>(), 152);
-    assert_eq!(align_of::<State>(), 8);
-
-    assert_eq!(size_of::<HeaderInput>(), 44);
-    assert_eq!(align_of::<HeaderInput>(), 4);
-
-    let state = State {
+    let mut state = State {
         chain_work:      ChainWork::from_limbs([1, 2, 3, 4]),
         genesis_hash:    BlockHash::new([0x11; 32]),
         block_hash:      BlockHash::new([0x22; 32]),
         height:          42,
         current_nbits:   CompactTarget::new(0x1d00ffff),
         epoch_timestamp: BlockTimestamp::new(1000),
-        timestamps:      [BlockTimestamp::new(2000); WINDOW_SIZE],
+        timestamps:      Default::default(),
     };
+    state.timestamps.fill(ts(2000));
     let bytes = state.to_bytes();
-    assert_eq!(bytes.len(), 152);
-    let parsed: &State = bytemuck::from_bytes(&bytes);
+    assert_eq!(&bytes[0..8], &1u64.to_le_bytes());
+    assert_eq!(&bytes[8..16], &2u64.to_le_bytes());
+    assert_eq!(&bytes[16..24], &3u64.to_le_bytes());
+    assert_eq!(&bytes[24..32], &4u64.to_le_bytes());
+    assert_eq!(&bytes[32..64], &[0x11; 32]);
+    assert_eq!(&bytes[64..96], &[0x22; 32]);
+    assert_eq!(&bytes[96..100], &42u32.to_le_bytes());
+    assert_eq!(&bytes[100..104], &0x1d00ffffu32.to_le_bytes());
+    assert_eq!(&bytes[104..108], &1000u32.to_le_bytes());
+    assert!(bytes[108..]
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .all(|timestamp| *timestamp == 2000u32.to_le_bytes()));
+    // State's borrowed wire parser requires an eight-byte-aligned input.
+    let mut words = [0u64; State::SIZE / 8];
+    let aligned_bytes = bytemuck::cast_slice_mut(&mut words);
+    aligned_bytes.copy_from_slice(&bytes);
+    let parsed = State::parse(aligned_bytes).unwrap();
     assert_eq!(*parsed, state);
 }
 
@@ -53,7 +63,7 @@ fn anchor_state_derives_every_field_from_the_anchor_header() {
     assert_eq!(state.current_nbits, anchor.compact_target);
     assert_eq!(state.epoch_timestamp, anchor.timestamp);
     assert_eq!(state.timestamps[0], anchor.timestamp);
-    assert_eq!(state.timestamps[1..], [ts(0); WINDOW_MAX_INDEX]);
+    assert!(state.timestamps[1..].iter().all(|timestamp| *timestamp == ts(0)));
     let target = target_from_bits(anchor.compact_target);
     assert_eq!(state.chain_work, ChainWork::new(block_work_from_target(&target).into_inner()));
 }
@@ -101,9 +111,9 @@ fn apply_headers_treats_height_zero_state_as_trusted_anchor() {
             nonce:       i,
         })
         .collect();
-    let hints = median_hints_for_headers(&state, &headers);
+
     state
-        .apply_headers_from_genesis::<TestConsensus>(&headers, &hints)
+        .apply_headers_from_genesis::<TestConsensus>(&headers, &[])
         .expect("height-zero anchor should already be trusted");
 
     assert_eq!(state.height, 10);
@@ -124,16 +134,11 @@ fn apply_headers_flushes_deferred_chain_work_on_success() {
         })
         .collect();
 
-    let hints = median_hints_for_headers(&state, &headers);
     state
-        .apply_headers_from_genesis::<TestConsensus>(&headers, &hints)
+        .apply_headers_from_genesis::<TestConsensus>(&headers, &[])
         .expect("headers should validate");
 
-    let block_work = block_work_from_target(&GENESIS_TARGET);
-    let mut new_chain_work = block_work * 10u32;
-    new_chain_work += BlockWork::default();
-    let expected = ChainWork::default() + new_chain_work;
-    assert_eq!(state.chain_work, expected);
+    assert_eq!(state.chain_work, TestConsensus::PARAMS.genesis_work * 10);
 }
 
 #[zkvm_test]
@@ -149,15 +154,11 @@ fn apply_headers_flushes_deferred_chain_work_for_longer_run() {
         })
         .collect();
 
-    let hints = median_hints_for_headers(&state, &headers);
     state
-        .apply_headers_from_genesis::<TestConsensus>(&headers, &hints)
+        .apply_headers_from_genesis::<TestConsensus>(&headers, &[])
         .expect("validation should succeed");
 
-    let block_work = block_work_from_target(&GENESIS_TARGET);
-    let expected = block_work * 12;
-    let expected = ChainWork::default() + expected;
-    assert_eq!(state.chain_work, expected);
+    assert_eq!(state.chain_work, TestConsensus::PARAMS.genesis_work * 12);
 }
 
 #[zkvm_test]

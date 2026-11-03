@@ -1,8 +1,7 @@
 use alloc::{format, vec};
 
-use zkvm_test::zkvm_test;
-
 use zkpow_types::{BlockHash, ChainWork};
+use zkvm_test::zkvm_test;
 
 use crate::{
     tests::*, ApplyError, ErrorCode, ParseError, PublicValues, ReportableError, ReturnCode, State, VerifierKeyDigest,
@@ -54,6 +53,7 @@ fn public_values_failure_round_trips() {
         let public_values = PublicValues::new(sample_state(), sample_verifier_key(), ReturnCode::from(code));
         let bytes = public_values.to_bytes();
         let parsed = PublicValues::parse(&bytes).unwrap();
+        assert_eq!(parsed, public_values);
         assert!(parsed.is_failure());
         assert_eq!(parsed.validation_error_code(), Some(code));
         assert_eq!(parsed.return_code.into_u8(), code.get());

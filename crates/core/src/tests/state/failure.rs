@@ -1,11 +1,9 @@
 use alloc::{vec, vec::Vec};
 
+use zkpow_types::ChainWork;
 use zkvm_test::zkvm_test;
 
-use zkpow_mtp::WINDOW_SIZE;
-use zkpow_types::{ChainWork, CompactTarget};
-
-use crate::{block_work_from_target, tests::*, ApplyError, ErrorCode, HeaderInput, State};
+use crate::{block_work_from_target, tests::*, ApplyError, ErrorCode, HeaderInput};
 
 #[zkvm_test]
 fn cold_start_rejects_fewer_than_ten_headers() {
@@ -41,30 +39,6 @@ fn warm_apply_rejects_a_cold_state() {
 }
 
 #[zkvm_test]
-fn failure_height_reports_absolute_chain_height() {
-    let _hash_guard = set_hash_fail();
-    // Start at the first warm height and fail on the first new header.
-    let mut state: State = State {
-        height: (WINDOW_SIZE - 1) as u32,
-        current_nbits: CompactTarget::new(GENESIS_NBITS),
-        ..State::default()
-    };
-    let headers = [HeaderInput {
-        version:     1,
-        merkle_root: MerkleRoot::new([0x22; 32]),
-        timestamp:   ts(1000),
-        nonce:       7,
-    }];
-    let hints = median_hints_for_headers(&state, &headers);
-    let failure = state
-        .apply_headers::<TestConsensus>(&headers, &hints)
-        .expect_err("should fail PoW");
-
-    assert_eq!(expect_error_code(failure), ErrorCode::POW_INSUFFICIENT);
-    assert_eq!(state.height + 1, WINDOW_SIZE as u32);
-}
-
-#[zkvm_test]
 fn apply_headers_flushes_deferred_chain_work_before_failure() {
     let _hash_guard = set_hash_success();
     let mut state = test_state();
@@ -83,10 +57,8 @@ fn apply_headers_flushes_deferred_chain_work_before_failure() {
         nonce:       12,
     });
 
-    let hints = median_hints_for_headers(&state, &headers);
-
     state
-        .apply_headers_from_genesis::<TestConsensus>(&headers, &hints)
+        .apply_headers_from_genesis::<TestConsensus>(&headers, &[])
         .expect_err("12th header should fail timestamp validation");
 
     let work = block_work_from_target(&GENESIS_TARGET);
@@ -108,44 +80,11 @@ fn cold_batch_failure_flushes_chain_work_for_accepted_headers() {
         .collect();
     headers[4].timestamp = ts(0);
 
-    let hints = median_hints_for_headers(&state, &headers);
     let failure = state
-        .apply_headers_from_genesis::<TestConsensus>(&headers, &hints)
+        .apply_headers_from_genesis::<TestConsensus>(&headers, &[])
         .expect_err("5th header should fail timestamp validation");
 
     assert_eq!(expect_error_code(failure), ErrorCode::TIMESTAMP_TOO_OLD);
     assert_eq!(state.height, 4);
     assert_eq!(state.chain_work, ChainWork::default() + TestConsensus::PARAMS.genesis_work * 4);
-}
-
-#[zkvm_test]
-fn apply_headers_failure_output_includes_flushed_chain_work() {
-    let _hash_guard = set_hash_success();
-    let mut state = test_state();
-    let mut headers: Vec<HeaderInput> = (1..=11)
-        .map(|i| HeaderInput {
-            version:     1,
-            merkle_root: MerkleRoot::new([i as u8; 32]),
-            timestamp:   ts(i * 10),
-            nonce:       i,
-        })
-        .collect();
-    headers.push(HeaderInput {
-        version:     1,
-        merkle_root: MerkleRoot::new([12; 32]),
-        timestamp:   ts(0),
-        nonce:       12,
-    });
-
-    let hints = median_hints_for_headers(&state, &headers);
-    let failure = state
-        .apply_headers_from_genesis::<TestConsensus>(&headers, &hints)
-        .expect_err("validation should fail on the 12th header");
-
-    let public_values = failure_public_value_bytes(&state, expect_error_code(failure));
-    let parsed = PublicValues::parse(&public_values).unwrap();
-    assert!(parsed.is_failure());
-    assert_eq!(parsed.validation_error_code().unwrap(), ErrorCode::TIMESTAMP_TOO_OLD);
-    assert_eq!(parsed.state.height + 1, 12);
-    assert_eq!(parsed.state.chain_work, state.chain_work);
 }

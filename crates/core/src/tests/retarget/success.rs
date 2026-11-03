@@ -1,4 +1,3 @@
-use zkpow_mtp::{timestamp_slot, WINDOW_SIZE};
 use zkpow_params::{Consensus, ShortEpoch};
 use zkpow_types::{CompactTarget, Target};
 use zkvm_test::zkvm_test;
@@ -101,14 +100,11 @@ fn assert_boundary_retargets_once<C: Consensus>() {
     let mut state = test_state();
     state.height = epoch_length - 1;
     state.epoch_timestamp = ts(1_000_000);
-    state.timestamps = [ts(1_000_600); WINDOW_SIZE];
+    state.timestamps.fill(ts(1_000_600));
 
-    let (expected_nbits, ..) = calculate_next_work_required::<C>(
-        target_from_bits(state.current_nbits),
-        state.epoch_timestamp,
-        state.timestamps[timestamp_slot(state.height)],
-    )
-    .components();
+    let (expected_nbits, ..) =
+        calculate_next_work_required::<C>(target_from_bits(state.current_nbits), state.epoch_timestamp, ts(1_000_600))
+            .components();
     assert_ne!(
         expected_nbits, state.current_nbits,
         "test needs a boundary that actually changes nbits"
@@ -134,7 +130,7 @@ fn epoch_boundary_is_read_from_consensus_parameters() {
     let _hash_guard = set_hash_success();
     let mut state = test_state();
     state.epoch_timestamp = ts(1_000_000);
-    state.timestamps = [ts(1_000_600); WINDOW_SIZE];
+    state.timestamps.fill(ts(1_000_600));
     state.height = ShortEpoch::PARAMS.epoch_length - 1;
     let starting_nbits = state.current_nbits;
 
