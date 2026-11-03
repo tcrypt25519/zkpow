@@ -20,7 +20,7 @@
 pub mod errors;
 mod ring;
 
-use errors::InsufficientColdHeaders;
+use errors::{InsufficientColdHeaders, InvalidParts};
 pub use ring::{Cold, Ring, RingValues, Warm, Window, WindowValues};
 
 /// Number of previous block timestamps kept for median-time-past and ordered-window checks.
@@ -49,15 +49,53 @@ pub fn split_off_cold_headers<T>(headers: &[T]) -> Result<(&[T], &[T]), Insuffic
 
 /// The window slot written by the block at `height`.
 #[must_use]
-pub const fn timestamp_slot(height: u32) -> usize {
+const fn timestamp_slot(height: u32) -> usize {
     height as usize % WINDOW_SIZE
 }
 
 /// Slots filled once the block at `height` is recorded: `height + 1`, capped at the window size.
 #[must_use]
-pub const fn timestamp_count(height: u32) -> usize {
+const fn timestamp_count(height: u32) -> usize {
     let count = height as usize + 1;
     if count > WINDOW_SIZE { WINDOW_SIZE } else { count }
+}
+
+impl Window<Cold> {
+    /// Rebuild a cold consensus window from persisted slots at `height`.
+    pub fn from_height(values: WindowValues, height: u32) -> Result<Self, InvalidParts> {
+        Self::from_parts(values, timestamp_count(height))
+    }
+}
+
+impl Window<Warm> {
+    /// Rebuild a warm consensus window from persisted slots at `height`.
+    pub fn from_height(values: WindowValues, height: u32) -> Result<Self, InvalidParts> {
+        Self::from_parts(values, timestamp_slot(height.wrapping_add(1)), timestamp_count(height))
+    }
+}
+
+/// Read the timestamp recorded for `height` in the persisted window.
+#[must_use]
+pub fn timestamp_at<T: Copy>(timestamps: &[T; WINDOW_SIZE], height: u32) -> T {
+    timestamps[timestamp_slot(height)]
+}
+
+/// Record a timestamp in the window slot for its chain height.
+pub fn record_timestamp<T>(timestamps: &mut [T; WINDOW_SIZE], height: u32, timestamp: T) {
+    timestamps[timestamp_slot(height)] = timestamp;
+}
+
+/// The upper median of the populated slots, using the ordered run when available.
+#[must_use]
+pub fn median_timestamp<T: Copy + Ord>(timestamps: &[T; WINDOW_SIZE], height: u32, ordered_run: u64) -> T {
+    if has_ordered_timestamp_window(ordered_run) {
+        timestamps[ordered_median_timestamp_slot(height)]
+    } else {
+        let count = timestamp_count(height);
+        let mut sorted = *timestamps;
+        sorted[..count].sort_unstable();
+        sorted[count / 2]
+    }
 }
 
 /// Whether the run of nondecreasing links orders the entire window, pinning the median to a known slot.

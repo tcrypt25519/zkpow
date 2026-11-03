@@ -196,10 +196,6 @@ fn median_time_past_matches_hand_computed_values_through_a_wrap() {
     timestamps[0] = base;
     let anchor = Tip::new(BlockHash::new([0xCD; 32]), 0, chainwork, timestamps, 0, base, target_triplet);
 
-    // At height 0 the count is 1, not 0: the anchor itself is a recorded
-    // block with a known timestamp.
-    assert_eq!(zkpow_mtp::timestamp_count(anchor.height), 1);
-
     // 1-second increments so the expected medians are easy to check by hand.
     let mut prev = anchor.hash;
     let mut headers = Vec::with_capacity(15);

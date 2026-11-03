@@ -1,7 +1,5 @@
 use zkpow_core::{calculate_next_work_required, check_proof_of_work};
-use zkpow_mtp::{
-    advance_ordered_timestamp_run, has_ordered_timestamp_window, ordered_median_timestamp_slot, timestamp_slot,
-};
+use zkpow_mtp::{advance_ordered_timestamp_run, median_timestamp, record_timestamp, timestamp_at};
 use zkpow_params::{Consensus, WINDOW_SIZE};
 use zkpow_types::BlockTimestamp;
 
@@ -31,7 +29,7 @@ pub fn connect_headers<C: Consensus>(anchor: &Tip, headers: &[Header]) -> Vec<Co
         }
 
         let candidate_height = height + 1;
-        let previous_timestamp = timestamps[timestamp_slot(height)];
+        let previous_timestamp = timestamp_at(&timestamps, height);
 
         if candidate_height.is_multiple_of(C::PARAMS.epoch_length) {
             target_triplet = calculate_next_work_required::<C>(
@@ -56,14 +54,7 @@ pub fn connect_headers<C: Consensus>(anchor: &Tip, headers: &[Header]) -> Vec<Co
             break;
         }
 
-        let window_len = zkpow_mtp::timestamp_count(height);
-        let mtp = if has_ordered_timestamp_window(ordered_timestamp_run) {
-            timestamps[ordered_median_timestamp_slot(height)]
-        } else {
-            let mut sorted = timestamps;
-            sorted[..window_len].sort_unstable();
-            sorted[window_len / 2]
-        };
+        let mtp = median_timestamp(&timestamps, height, ordered_timestamp_run);
 
         if header.inner.timestamp.into_inner() <= mtp {
             tracing::debug!(%hash, timestamp = header.inner.timestamp.into_inner(), mtp, "timestamp not greater than MTP");
@@ -91,7 +82,7 @@ pub fn connect_headers<C: Consensus>(anchor: &Tip, headers: &[Header]) -> Vec<Co
         ));
         prev_hash = hash;
 
-        timestamps[timestamp_slot(height)] = header.inner.timestamp.into_inner();
+        record_timestamp(&mut timestamps, height, header.inner.timestamp.into_inner());
     }
 
     connected
@@ -104,7 +95,7 @@ pub fn tip_from_connected<C: Consensus>(anchor: &Tip, connected: &[ConnectedHead
     let mut timestamps = anchor.timestamps;
     let tail_start = connected.len().saturating_sub(WINDOW_SIZE);
     for ch in &connected[tail_start..] {
-        timestamps[timestamp_slot(ch.height)] = ch.header.inner.timestamp.into_inner();
+        record_timestamp(&mut timestamps, ch.height, ch.header.inner.timestamp.into_inner());
     }
 
     let epoch_length = C::PARAMS.epoch_length;

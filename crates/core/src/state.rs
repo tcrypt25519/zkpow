@@ -1,7 +1,7 @@
 #[cfg(not(target_endian = "little"))]
 compile_error!("zkpow wire types require a little-endian target");
 
-use zkpow_mtp::{self as mtp, errors::NotMedian, timestamp_count, timestamp_slot, Cold, Warm};
+use zkpow_mtp::{self as mtp, errors::NotMedian, Cold, Warm};
 use zkpow_params::Consensus;
 use zkpow_types::{BlockHash, BlockTimestamp, ChainWork, CompactTarget, Target, TargetTriplet};
 
@@ -24,7 +24,7 @@ pub struct State {
     pub current_nbits:   CompactTarget,
     /// Timestamp of the current epoch's first block; the next retarget measures from here.
     pub epoch_timestamp: BlockTimestamp,
-    /// The MTP window in the slot order defined by [`mtp::timestamp_slot`].
+    /// Persisted timestamp slots for reconstructing an [`mtp::Window`].
     pub timestamps:      mtp::WindowValues,
 }
 
@@ -209,14 +209,12 @@ impl State {
     }
 
     fn cold_mtp_ring(&self) -> mtp::Window<Cold> {
-        // let values = self.timestamps.map(BlockTimestamp::into_inner);
-        mtp::Window::<Cold>::from_parts(self.timestamps, timestamp_count(self.height))
+        mtp::Window::<Cold>::from_height(self.timestamps, self.height)
             .expect("apply_headers_from_genesis requires a cold MTP window")
     }
 
     fn warm_mtp_ring(&self) -> mtp::Window<Warm> {
-        let next = timestamp_slot(self.height.wrapping_add(1));
-        mtp::Window::<Warm>::from_parts(self.timestamps, next, timestamp_count(self.height))
+        mtp::Window::<Warm>::from_height(self.timestamps, self.height)
             .expect("apply_headers requires a full MTP window")
     }
 
