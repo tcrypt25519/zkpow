@@ -9,5 +9,6 @@ path = "src/lib.rs"
 
 [dependencies]
 zkpow-params.workspace=true
+zkpow-types.workspace=true
 
 [build-dependencies]

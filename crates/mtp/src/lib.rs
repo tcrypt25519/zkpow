@@ -21,7 +21,7 @@ pub mod errors;
 mod ring;
 
 use errors::InsufficientColdHeaders;
-pub use ring::{Cold, Ring, Warm, Window};
+pub use ring::{Cold, Ring, RingValues, Warm, Window, WindowValues};
 
 /// Number of previous block timestamps kept for median-time-past and ordered-window checks.
 pub const WINDOW_SIZE: usize = 11;

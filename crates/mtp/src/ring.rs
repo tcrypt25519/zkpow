@@ -1,5 +1,7 @@
 use core::{cmp::Ordering, marker::PhantomData};
 
+use zkpow_types::BlockTimestamp;
+
 use crate::{
     WINDOW_SIZE,
     errors::{InvalidParts, NotMedian},
@@ -7,6 +9,7 @@ use crate::{
 
 /// The consensus timestamp window.
 pub type Window<F = Cold> = Ring<WINDOW_SIZE, F>;
+pub type WindowValues = RingValues<WINDOW_SIZE>;
 
 /// The ring holds fewer timestamps than its capacity.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -16,20 +19,26 @@ pub struct Cold;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Warm;
 
+pub type RingValues<const N: usize> = [BlockTimestamp; N];
+
 /// The last `N` timestamps, oldest overwritten first. `ordered_run` is the length of the
 /// nondecreasing run ending at the newest value, capped at `N`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Ring<const N: usize, F = Cold> {
-    values:      [u32; N],
+    values:      RingValues<N>,
     next:        usize,
     len:         usize,
     ordered_run: usize,
-    last_value:  u32,
+    last_value:  BlockTimestamp,
     fill:        PhantomData<F>,
 }
 
 impl<const N: usize, F> Ring<N, F> {
-    fn push_value(&mut self, value: u32) {
+    pub const fn new_values() -> RingValues<N> {
+        [BlockTimestamp::new(0); N]
+    }
+
+    fn push_value(&mut self, value: BlockTimestamp) {
         if self.len == 0 || value >= self.last_value {
             if self.ordered_run < N {
                 self.ordered_run += 1;
@@ -63,8 +72,13 @@ impl<const N: usize, F> Ring<N, F> {
 
     /// Returns the backing slots, next write position, and number of values held.
     #[must_use]
-    pub const fn parts(&self) -> (&[u32; N], usize, usize) {
+    pub const fn parts(&self) -> (&RingValues<N>, usize, usize) {
         (&self.values, self.next, self.len)
+    }
+
+    #[must_use]
+    pub const fn values(&self) -> RingValues<N> {
+        self.values
     }
 }
 
@@ -74,7 +88,7 @@ impl<const N: usize> Ring<N, Cold> {
     /// # Panics
     ///
     /// Panics when the ring is already full; call [`Ring::warm`] instead.
-    pub fn push(&mut self, value: u32) {
+    pub fn push(&mut self, value: BlockTimestamp) {
         assert!(self.len < N, "a full cold ring must be warmed before pushing");
         self.push_value(value);
     }
@@ -85,20 +99,20 @@ impl<const N: usize> Ring<N, Cold> {
     ///
     /// Panics when `N` is zero.
     #[must_use]
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         assert!(N > 0, "a timestamp ring must have nonzero capacity");
         Self {
-            values:      [0; N],
+            values:      Ring::<N, Cold>::new_values(),
             next:        0,
             len:         0,
             ordered_run: 0,
-            last_value:  0,
+            last_value:  BlockTimestamp::new(0),
             fill:        PhantomData,
         }
     }
 
     /// Rebuilds a cold ring from its first `len` slots in chronological order.
-    pub fn from_parts(values: [u32; N], len: usize) -> Result<Self, InvalidParts> {
+    pub fn from_parts(values: RingValues<N>, len: usize) -> Result<Self, InvalidParts> {
         if len >= N {
             return Err(InvalidParts::NotCold);
         }
@@ -115,20 +129,20 @@ impl<const N: usize> Ring<N, Cold> {
 
     /// The upper median, or `None` while the ring is empty or holds a decrease.
     #[must_use]
-    pub fn median(&self) -> Option<u32> {
+    pub fn median(&self) -> Option<BlockTimestamp> {
         (self.len > 0 && self.ordered_run >= self.len).then(|| self.values[self.len / 2])
     }
 
     /// The upper median by sorting a copy of the values held, or `None` while empty.
     #[must_use]
-    pub fn median_by_sort(&self) -> Option<u32> {
+    pub fn median_by_sort(&self) -> Option<BlockTimestamp> {
         let mut sorted = self.values;
         sorted[..self.len].sort_unstable();
         (self.len > 0).then(|| sorted[self.len / 2])
     }
 
     /// Checks a claimed median by rank.
-    pub fn is_value_median(&self, claimed_median: u32) -> Result<(), NotMedian> {
+    pub fn is_value_median(&self, claimed_median: BlockTimestamp) -> Result<(), NotMedian> {
         rank_median(&self.values[..self.len], self.len / 2, claimed_median)
     }
 
@@ -169,7 +183,7 @@ impl<const N: usize> Ring<N, Warm> {
     };
 
     /// Rebuilds a warm ring from its slots and next write position, which is also the oldest slot.
-    pub fn from_parts(values: [u32; N], next: usize, len: usize) -> Result<Self, InvalidParts> {
+    pub fn from_parts(values: RingValues<N>, next: usize, len: usize) -> Result<Self, InvalidParts> {
         if len != N {
             return Err(InvalidParts::NotWarm);
         }
@@ -188,30 +202,30 @@ impl<const N: usize> Ring<N, Warm> {
     }
 
     /// Inserts a timestamp, overwriting the oldest slot.
-    pub fn push(&mut self, value: u32) {
+    pub fn push(&mut self, value: BlockTimestamp) {
         self.push_value(value);
     }
 
     /// The most recently pushed timestamp.
     #[must_use]
-    pub const fn newest(&self) -> u32 {
+    pub const fn newest(&self) -> BlockTimestamp {
         self.last_value
     }
 
     /// The upper median in constant time, or `None` while the window holds a decrease.
     #[must_use]
-    pub fn median(&self) -> Option<u32> {
+    pub fn median(&self) -> Option<BlockTimestamp> {
         (self.ordered_run >= N).then(|| self.values[Self::MEDIAN_SLOT[self.next]])
     }
 
     /// Checks a claimed median by rank.
-    pub fn is_value_median(&self, claimed_median: u32) -> Result<(), NotMedian> {
+    pub fn is_value_median(&self, claimed_median: BlockTimestamp) -> Result<(), NotMedian> {
         rank_median(&self.values, Self::WINDOW_SMALL_HALF_SIZE, claimed_median)
     }
 }
 
-fn ordered_run<'a>(values: impl Iterator<Item = &'a u32>) -> (usize, u32) {
-    let (mut run, mut last) = (0, 0);
+fn ordered_run<'a>(values: impl Iterator<Item = &'a BlockTimestamp>) -> (usize, BlockTimestamp) {
+    let (mut run, mut last) = (0, BlockTimestamp::new(0));
     for &value in values {
         run = if run == 0 || value >= last { run + 1 } else { 1 };
         last = value;
@@ -219,7 +233,7 @@ fn ordered_run<'a>(values: impl Iterator<Item = &'a u32>) -> (usize, u32) {
     (run, last)
 }
 
-fn rank_median(values: &[u32], half: usize, claimed_median: u32) -> Result<(), NotMedian> {
+fn rank_median(values: &[BlockTimestamp], half: usize, claimed_median: BlockTimestamp) -> Result<(), NotMedian> {
     let (mut less, mut equal) = (0, 0);
     for value in values {
         match value.cmp(&claimed_median) {

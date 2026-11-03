@@ -1,7 +1,7 @@
 #[cfg(not(target_endian = "little"))]
 compile_error!("zkpow wire types require a little-endian target");
 
-use zkpow_mtp::{self as mtp, errors::NotMedian, timestamp_count, timestamp_slot, Cold, Warm, WINDOW_SIZE};
+use zkpow_mtp::{self as mtp, errors::NotMedian, timestamp_count, timestamp_slot, Cold, Warm};
 use zkpow_params::Consensus;
 use zkpow_types::{BlockHash, BlockTimestamp, ChainWork, CompactTarget, Target, TargetTriplet};
 
@@ -24,8 +24,8 @@ pub struct State {
     pub current_nbits:   CompactTarget,
     /// Timestamp of the current epoch's first block; the next retarget measures from here.
     pub epoch_timestamp: BlockTimestamp,
-    /// The MTP window, slot `height % WINDOW_SIZE`.
-    pub timestamps:      [BlockTimestamp; WINDOW_SIZE],
+    /// The MTP window in the slot order defined by [`mtp::timestamp_slot`].
+    pub timestamps:      mtp::WindowValues,
 }
 
 impl State {
@@ -34,7 +34,7 @@ impl State {
     #[must_use]
     pub fn anchor<C: Consensus>() -> Self {
         let anchor = C::PARAMS.genesis;
-        let mut timestamps = [BlockTimestamp::new(0); WINDOW_SIZE];
+        let mut timestamps = mtp::Window::<Cold>::new_values();
         timestamps[0] = anchor.timestamp;
         let target = target_from_bits(anchor.compact_target);
         let block_work = block_work_from_target(&target);
@@ -103,18 +103,18 @@ impl State {
                 C::PARAMS.compact_target(),
                 &C::PARAMS.genesis_target,
                 new_header,
-                BlockTimestamp::new(median),
+                median,
                 &mut prev_hash_words,
             ) {
                 self.block_hash = BlockHash::new(zkpow_sha256::state_to_hash(&prev_hash_words));
-                self.store_timestamps(mtp.parts().0);
+                self.store_timestamps(&mtp);
                 self.chain_work += C::PARAMS.genesis_work * (self.height - start_height);
                 return Err(e);
             }
-            mtp.push(new_header.timestamp.into_inner());
+            mtp.push(new_header.timestamp);
         }
         self.block_hash = BlockHash::new(zkpow_sha256::state_to_hash(&prev_hash_words));
-        self.store_timestamps(mtp.parts().0);
+        self.store_timestamps(&mtp);
         self.chain_work += C::PARAMS.genesis_work * headers.len() as u32;
 
         Ok(mtp.warm().expect("the cold batch did not fill the MTP window"))
@@ -147,7 +147,7 @@ impl State {
 
         while header_iter.len() > 0 {
             let epoch_start_height = self.height;
-            let mut context: EpochManager<'_> = self.new_epoch_manager::<C>(BlockTimestamp::new(mtp.newest()));
+            let mut context: EpochManager<'_> = self.new_epoch_manager::<C>(mtp.newest());
             let epoch_len_remaining =
                 (C::PARAMS.epoch_length - ((epoch_start_height + 1) % C::PARAMS.epoch_length)) as usize;
 
@@ -156,12 +156,12 @@ impl State {
                 let (active_nbits, active_target, _) = context.target_triplet.components();
 
                 let claimed_median = match mtp.median() {
-                    Some(median) => BlockTimestamp::new(median),
+                    Some(median) => median,
                     None => {
                         let Some(claimed_median) = hint_iter.next() else {
                             crate::invalid_hint!("median_hint not available for application");
                         };
-                        match mtp.is_value_median(claimed_median.into_inner()) {
+                        match mtp.is_value_median(*claimed_median) {
                             Ok(()) => {},
                             Err(NotMedian::TooNew) => {
                                 crate::invalid_hint!(
@@ -186,16 +186,16 @@ impl State {
                     &mut prev_hash_words,
                 ) {
                     state.block_hash = BlockHash::new(zkpow_sha256::state_to_hash(&prev_hash_words));
-                    state.store_timestamps(mtp.parts().0);
+                    state.store_timestamps(&mtp);
                     return Err(e);
                 }
 
-                mtp.push(new_header.timestamp.into_inner());
+                mtp.push(new_header.timestamp);
             }
         }
 
         self.block_hash = BlockHash::new(zkpow_sha256::state_to_hash(&prev_hash_words));
-        self.store_timestamps(mtp.parts().0);
+        self.store_timestamps(&mtp);
 
         if let Some(median_time) = hint_iter.next() {
             crate::invalid_hint!("median_hint left over after application: {}", *median_time);
@@ -204,20 +204,19 @@ impl State {
         Ok(())
     }
 
-    fn store_timestamps(&mut self, values: &[u32; WINDOW_SIZE]) {
-        self.timestamps = values.map(BlockTimestamp::new);
+    fn store_timestamps<F>(&mut self, window: &mtp::Window<F>) {
+        self.timestamps = window.values();
     }
 
-    fn cold_mtp_ring(&self) -> mtp::Window {
-        let values = self.timestamps.map(BlockTimestamp::into_inner);
-        mtp::Window::<Cold>::from_parts(values, timestamp_count(self.height))
+    fn cold_mtp_ring(&self) -> mtp::Window<Cold> {
+        // let values = self.timestamps.map(BlockTimestamp::into_inner);
+        mtp::Window::<Cold>::from_parts(self.timestamps, timestamp_count(self.height))
             .expect("apply_headers_from_genesis requires a cold MTP window")
     }
 
     fn warm_mtp_ring(&self) -> mtp::Window<Warm> {
-        let values = self.timestamps.map(BlockTimestamp::into_inner);
         let next = timestamp_slot(self.height.wrapping_add(1));
-        mtp::Window::<Warm>::from_parts(values, next, timestamp_count(self.height))
+        mtp::Window::<Warm>::from_parts(self.timestamps, next, timestamp_count(self.height))
             .expect("apply_headers requires a full MTP window")
     }
 

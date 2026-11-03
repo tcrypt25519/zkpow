@@ -15,8 +15,6 @@ members = [
   "crates/worker",
   "crates/wiretype",
   "crates/wiretype_macro",
-  "crates/estring",
-  "crates/estring-macro",
 ]
 exclude = ["sp1"]
 resolver = "3"
@@ -39,8 +37,8 @@ wiretype = { path = "crates/wiretype" }
 wiretype-macro = { path = "crates/wiretype_macro" }
 sha256_const = { path = "crates/sha256_const" }
 
-# zkvm-test = { path = "/Users/tcrypt/code/github.com/tcrypt25519/zkvm-test/crates/zkvm-test" }
-zkvm-test = { git = "ssh://git@github.com/tcrypt25519/zkvm-test", branch = "main" }
+zkvm-test = { path = "/Users/tcrypt/code/github.com/tcrypt25519/zkvm-test/crates/zkvm-test" }
+# zkvm-test = { git = "ssThen why the fuck did you waste my time with that garbage? h://git@github.com/tcrypt25519/zkvm-test", branch = "main" }
 
 ##
 ## SP1

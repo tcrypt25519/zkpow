@@ -1250,26 +1250,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "estring"
-version = "0.1.0"
-dependencies = [
- "estring-macro",
- "strum 0.28.0",
- "strum_macros 0.28.0",
-]
-
-[[package]]
-name = "estring-macro"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "strum 0.28.0",
- "strum_macros 0.28.0",
- "syn 3.0.9",
-]
-
-[[package]]
 name = "eventsource-stream"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6488,6 +6468,7 @@ name = "zkpow-mtp"
 version = "0.1.0"
 dependencies = [
  "zkpow-params",
+ "zkpow-types",
 ]
 
 [[package]]
