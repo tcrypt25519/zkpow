@@ -13,7 +13,6 @@ _Auto-generated from `crates/host/src/pipeline/execution.rs`._
 | `crate::pipeline::BoxError` | `BoxError` |
 | `crate::pipeline::ELF` | `ELF` |
 | `crate::pipeline::diagnostics::timed_async` | `timed_async` |
-| `crate::util::PublicValues` | `PublicValues` |
 | `sp1_sdk::ExecutionReport` | `ExecutionReport` |
 | `sp1_sdk::prelude::*` | `*` |
 

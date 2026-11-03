@@ -1,3 +1,5 @@
+> ⚠️ **Stale:** Source no longer found in codebase. Run `llm-wiki lint` to audit.
+
 # success Module
 
 **Path:** `crates/core/src/tests/input/success.rs`

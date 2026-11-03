@@ -11,13 +11,13 @@ _Auto-generated from `crates/core/src/tests/pow/success.rs`._
 | Source | Symbols |
 |--------|---------|
 | `alloc::vec::Vec` | `Vec` |
-| `crate::BlockHash` | `BlockHash` |
-| `crate::ChainWork` | `ChainWork` |
-| `crate::Header` | `Header` |
 | `crate::HeaderInput` | `HeaderInput` |
 | `crate::State` | `State` |
 | `crate::check_proof_of_work` | `check_proof_of_work` |
 | `crate::tests::*` | `*` |
+| `zkpow_types::BlockHash` | `BlockHash` |
+| `zkpow_types::ChainWork` | `ChainWork` |
+| `zkpow_types::Header` | `Header` |
 | `zkvm_test::zkvm_test` | `zkvm_test` |
 
 ## Local dependency map
@@ -29,4 +29,4 @@ _Auto-generated from `crates/core/src/tests/pow/success.rs`._
 
 | Language | Used packages | Undeclared packages |
 |---|---:|---:|
-| rust | 1 | 0 |
+| rust | 2 | 0 |

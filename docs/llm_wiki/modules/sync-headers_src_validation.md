@@ -14,15 +14,15 @@ _Auto-generated from `crates/sync-headers/src/validation.rs`._
 | `crate::types::Header` | `Header` |
 | `crate::types::Tip` | `Tip` |
 | `crate::types::expand_target` | `expand_target` |
-| `zkpow_core::BlockTimestamp` | `BlockTimestamp` |
-| `zkpow_core::advance_ordered_timestamp_run` | `advance_ordered_timestamp_run` |
 | `zkpow_core::calculate_next_work_required` | `calculate_next_work_required` |
 | `zkpow_core::check_proof_of_work` | `check_proof_of_work` |
-| `zkpow_core::has_ordered_timestamp_window` | `has_ordered_timestamp_window` |
-| `zkpow_core::ordered_median_timestamp_slot` | `ordered_median_timestamp_slot` |
-| `zkpow_core::timestamp_slot` | `timestamp_slot` |
+| `zkpow_mtp::advance_ordered_timestamp_run` | `advance_ordered_timestamp_run` |
+| `zkpow_mtp::median_timestamp` | `median_timestamp` |
+| `zkpow_mtp::record_timestamp` | `record_timestamp` |
+| `zkpow_mtp::timestamp_at` | `timestamp_at` |
 | `zkpow_params::Consensus` | `Consensus` |
 | `zkpow_params::WINDOW_SIZE` | `WINDOW_SIZE` |
+| `zkpow_types::BlockTimestamp` | `BlockTimestamp` |
 
 ## Local dependency map
 
@@ -33,7 +33,7 @@ _Auto-generated from `crates/sync-headers/src/validation.rs`._
 
 | Language | Used packages | Undeclared packages |
 |---|---:|---:|
-| rust | 2 | 0 |
+| rust | 4 | 0 |
 
 ## Functions
 

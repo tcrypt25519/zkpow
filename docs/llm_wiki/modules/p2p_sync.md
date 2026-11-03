@@ -21,8 +21,8 @@ Coordinates peer selection, connection retries, and header-batch callbacks. The 
 | `std::net::SocketAddr` | `SocketAddr` |
 | `std::thread` | `thread` |
 | `std::time::Duration` | `Duration` |
-| `zkpow_core::BlockHash` | `BlockHash` |
 | `zkpow_params::Consensus` | `Consensus` |
+| `zkpow_types::BlockHash` | `BlockHash` |
 
 ## Local dependency map
 

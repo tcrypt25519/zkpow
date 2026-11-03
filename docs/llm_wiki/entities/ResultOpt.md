@@ -1,6 +1,6 @@
 # ResultOpt
 
-**Location:** `crates/store/src/db.rs:46`
+**Location:** `crates/store/src/db.rs:36`
 **Kind:** Type alias
 **Bases:** —
 **Module:** [src_db](../modules/src_db.md)

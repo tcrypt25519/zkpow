@@ -1,3 +1,5 @@
+> ⚠️ **Stale:** Source no longer found in codebase. Run `llm-wiki lint` to audit.
+
 # input Module
 
 **Path:** `crates/core/src/input.rs`

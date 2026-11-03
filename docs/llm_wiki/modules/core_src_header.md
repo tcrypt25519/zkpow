@@ -10,15 +10,22 @@ Defines [`HeaderInput`](../entities/HeaderInput.md), the four header fields a pr
 
 | Source | Symbols |
 |--------|---------|
-| `crate::BlockHash` | `BlockHash` |
-| `crate::BlockTimestamp` | `BlockTimestamp` |
-| `crate::CompactTarget` | `CompactTarget` |
-| `crate::Header` | `Header` |
+| `zkpow_types::BlockHash` | `BlockHash` |
+| `zkpow_types::BlockTimestamp` | `BlockTimestamp` |
+| `zkpow_types::CompactTarget` | `CompactTarget` |
+| `zkpow_types::Header` | `Header` |
+| `zkpow_types::MerkleRoot` | `MerkleRoot` |
 
 ## Local dependency map
 
 <!-- Auto-generated local dependency summary. Do not edit by hand. -->
 *No internal module dependencies detected.*
+
+### External packages
+
+| Language | Used packages | Undeclared packages |
+|---|---:|---:|
+| rust | 1 | 0 |
 
 ## Classes
 

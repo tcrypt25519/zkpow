@@ -11,10 +11,10 @@ _Auto-generated from `crates/core/src/tests/state/profile.rs`._
 | Source | Symbols |
 |--------|---------|
 | `core::mem::size_of` | `size_of` |
-| `crate::BlockTimestamp` | `BlockTimestamp` |
 | `crate::HeaderInput` | `HeaderInput` |
 | `crate::State` | `State` |
 | `crate::tests::*` | `*` |
+| `zkpow_types::BlockTimestamp` | `BlockTimestamp` |
 | `zkvm_test::zkvm_test` | `zkvm_test` |
 
 ## Local dependency map
@@ -26,4 +26,4 @@ _Auto-generated from `crates/core/src/tests/state/profile.rs`._
 
 | Language | Used packages | Undeclared packages |
 |---|---:|---:|
-| rust | 1 | 0 |
+| rust | 2 | 0 |

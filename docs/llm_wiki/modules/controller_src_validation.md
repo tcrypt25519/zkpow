@@ -10,12 +10,12 @@ _Auto-generated from `crates/controller/src/validation.rs`._
 
 | Source | Symbols |
 |--------|---------|
-| `zkpow_core::BlockTimestamp` | `BlockTimestamp` |
-| `zkpow_core::Header` | `Header` |
 | `zkpow_core::HeaderInput` | `HeaderInput` |
 | `zkpow_core::State` | `State` |
 | `zkpow_params::Consensus` | `Consensus` |
 | `zkpow_store::HeaderRecord` | `HeaderRecord` |
+| `zkpow_types::BlockTimestamp` | `BlockTimestamp` |
+| `zkpow_types::Header` | `Header` |
 
 ## Local dependency map
 
@@ -26,7 +26,7 @@ _Auto-generated from `crates/controller/src/validation.rs`._
 
 | Language | Used packages | Undeclared packages |
 |---|---:|---:|
-| rust | 3 | 0 |
+| rust | 4 | 0 |
 
 ## Functions
 

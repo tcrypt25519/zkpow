@@ -26,7 +26,7 @@ _Auto-generated from `crates/controller/src/tests/runtime.rs`._
 | `zkpow_core::PublicValues` | `PublicValues` |
 | `zkpow_core::ReturnCode` | `ReturnCode` |
 | `zkpow_core::VerifierKeyDigest` | `VerifierKeyDigest` |
-| `zkpow_store::HeaderStore` | `HeaderStore` |
+| `zkpow_params::Consensus` | `Consensus` |
 
 ## Local dependency map
 

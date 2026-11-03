@@ -21,6 +21,7 @@ Crate root of `zkpow-params`, a `no_std` crate between `zkpow-types` and `zkpow-
 | `zkpow_types::BlockWork` | `BlockWork` |
 | `zkpow_types::CompactTarget` | `CompactTarget` |
 | `zkpow_types::Header` | `Header` |
+| `zkpow_types::MerkleRoot` | `MerkleRoot` |
 | `zkpow_types::Target` | `Target` |
 
 ## Local dependency map

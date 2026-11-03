@@ -17,13 +17,14 @@ Failures from `headers.db` access: a column of the wrong width, a `rusqlite` err
 |------|-------|-------------|
 | `ConversionError` | — | — |
 | `RusqliteError` | — | — |
-| `BytemuckDeserializeError` | — | — |
+| `FromSqlError` | — | — |
+| `PodCastError` | — | — |
 
 ## Methods
 
 | Method | Signature | Decorators | Description |
 |--------|-----------|------------|-------------|
-| `from` | `(err: Error) -> Self` | — | — |
+| `from` | `(err: PodCastError) -> Self` | — | — |
 
 ## Relationships
 
@@ -35,24 +36,21 @@ flowchart LR
     n2["ControllerError (crates/controller/src/protocol.rs)"]
     n3["RunIdError (crates/types/src/run_id.rs)"]
     n4["Error.from (crates/store/src/db.rs)"]
-    n5["into (crates/store/src/db.rs)"]
     n0 --> n1
     n2 --> n0
     n3 --> n0
     n4 --> n0
-    n5 --> n0
     click n0 "../modules/src_db.md"
     click n2 "../modules/src_protocol.md"
     click n3 "../modules/src_run_id.md"
     click n4 "../modules/src_db.md"
-    click n5 "../modules/src_db.md"
 ```
 
 ### Summary
 
 | Module | Methods | Attributes |
 |---|---:|---|
-| [src_db](../modules/src_db.md) | 1 | `BytemuckDeserializeError`, `ConversionError`, `RusqliteError` |
+| [src_db](../modules/src_db.md) | 1 | `ConversionError`, `FromSqlError`, `PodCastError`, `RusqliteError` |
 
 ### Structure
 
@@ -67,4 +65,3 @@ flowchart LR
 | Reference | Kind | Source | Call sites |
 |---|---|---|---:|
 | `Error.from` | type_reference | [src_db](../modules/src_db.md) | — |
-| `into` | type_reference | [src_db](../modules/src_db.md) | — |

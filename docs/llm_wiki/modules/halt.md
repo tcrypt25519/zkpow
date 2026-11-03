@@ -10,12 +10,12 @@ _Auto-generated from `crates/core/src/tests/halt.rs`._
 
 | Source | Symbols |
 |--------|---------|
-| `crate::BlockTimestamp` | `BlockTimestamp` |
-| `crate::CompactTarget` | `CompactTarget` |
 | `crate::assert_hint` | `assert_hint` |
 | `crate::assert_hint_eq` | `assert_hint_eq` |
 | `crate::assert_hint_ne` | `assert_hint_ne` |
 | `crate::invalid_hint` | `invalid_hint` |
+| `zkpow_types::BlockTimestamp` | `BlockTimestamp` |
+| `zkpow_types::CompactTarget` | `CompactTarget` |
 | `zkvm_test::zkvm_test` | `zkvm_test` |
 
 ## Local dependency map
@@ -27,4 +27,4 @@ _Auto-generated from `crates/core/src/tests/halt.rs`._
 
 | Language | Used packages | Undeclared packages |
 |---|---:|---:|
-| rust | 1 | 0 |
+| rust | 2 | 0 |

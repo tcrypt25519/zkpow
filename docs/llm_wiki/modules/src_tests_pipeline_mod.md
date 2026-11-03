@@ -23,14 +23,12 @@ _Auto-generated from `crates/host/src/tests/pipeline/mod.rs`._
 | `crate::pipeline::input::parse_bool_env` | `parse_bool_env` |
 | `crate::pipeline::input::parse_u32_env` | `parse_u32_env` |
 | `crate::pipeline::is_header_exhaustion_error` | `is_header_exhaustion_error` |
-| `crate::pipeline::run_batch_session` | `run_batch_session` |
+| `crate::pipeline::run_batch_session_with_store` | `run_batch_session_with_store` |
+| `crate::pipeline::run_execution_session` | `run_execution_session` |
 | `std::path::PathBuf` | `PathBuf` |
 | `std::sync::Mutex` | `Mutex` |
 | `std::sync::OnceLock` | `OnceLock` |
-| `zkpow_controller::ENV_ZKPOW_DB_PATH` | `ENV_ZKPOW_DB_PATH` |
-| `zkpow_controller::HeaderStore` | `HeaderStore` |
 | `zkpow_controller::NO_HEADERS_REMAINING_PREFIX` | `NO_HEADERS_REMAINING_PREFIX` |
-| `zkpow_controller::db_path` | `db_path` |
 | `zkpow_params::Mainnet` | `Mainnet` |
 
 ## Local dependency map

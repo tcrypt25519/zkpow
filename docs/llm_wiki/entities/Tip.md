@@ -1,6 +1,6 @@
 # Tip
 
-**Location:** `crates/sync-headers/src/types.rs:26`
+**Location:** `crates/sync-headers/src/types.rs:25`
 **Kind:** Class
 **Bases:** —
 **Module:** [src_types](../modules/src_types.md)

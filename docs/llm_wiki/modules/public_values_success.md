@@ -11,14 +11,13 @@ _Auto-generated from `crates/core/src/tests/public_values/success.rs`._
 | Source | Symbols |
 |--------|---------|
 | `alloc::format` | `format` |
-| `crate::BlockHash` | `BlockHash` |
-| `crate::ChainWork` | `ChainWork` |
-| `crate::HeaderInput` | `HeaderInput` |
 | `crate::PublicValues` | `PublicValues` |
 | `crate::ReturnCode` | `ReturnCode` |
 | `crate::State` | `State` |
 | `crate::VerifierKeyDigest` | `VerifierKeyDigest` |
 | `crate::tests::*` | `*` |
+| `zkpow_types::BlockHash` | `BlockHash` |
+| `zkpow_types::ChainWork` | `ChainWork` |
 | `zkvm_test::zkvm_test` | `zkvm_test` |
 
 ## Local dependency map
@@ -30,4 +29,4 @@ _Auto-generated from `crates/core/src/tests/public_values/success.rs`._
 
 | Language | Used packages | Undeclared packages |
 |---|---:|---:|
-| rust | 1 | 0 |
+| rust | 2 | 0 |

@@ -26,10 +26,11 @@ Frames Bitcoin P2P messages, completes the version handshake, and requests heade
 | `strum_macros::EnumCount` | `EnumCount` |
 | `strum_macros::EnumIter` | `EnumIter` |
 | `strum_macros::EnumString` | `EnumString` |
-| `zkpow_core::BlockHash` | `BlockHash` |
-| `zkpow_core::BlockTimestamp` | `BlockTimestamp` |
-| `zkpow_core::CompactTarget` | `CompactTarget` |
-| `zkpow_core::Header` | `Header` |
+| `zkpow_types::BlockHash` | `BlockHash` |
+| `zkpow_types::BlockTimestamp` | `BlockTimestamp` |
+| `zkpow_types::CompactTarget` | `CompactTarget` |
+| `zkpow_types::Header` | `Header` |
+| `zkpow_types::MerkleRoot` | `MerkleRoot` |
 
 ## Local dependency map
 

@@ -12,8 +12,8 @@ _Auto-generated from `crates/controller/src/tests/protocol.rs`._
 |--------|---------|
 | `crate::protocol::Batch` | `Batch` |
 | `crate::protocol::MEDIAN_HINT_SIZE` | `MEDIAN_HINT_SIZE` |
-| `super::*` | `*` |
 | `zkpow_core::HeaderInput` | `HeaderInput` |
+| `zkpow_core::State` | `State` |
 | `zkpow_core::VerifierKeyDigest` | `VerifierKeyDigest` |
 
 ## Local dependency map

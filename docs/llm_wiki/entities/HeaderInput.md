@@ -17,7 +17,7 @@ extended and `compact_target` from the active epoch, so a prover cannot choose e
 | Name | Type | Default | Description |
 |------|------|---------|-------------|
 | `version` | `u32` | *required* | — |
-| `merkle_root` | `[u8 ; 32]` | *required* | — |
+| `merkle_root` | `MerkleRoot` | *required* | — |
 | `timestamp` | `BlockTimestamp` | *required* | — |
 | `nonce` | `u32` | *required* | — |
 

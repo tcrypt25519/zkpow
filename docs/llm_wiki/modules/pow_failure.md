@@ -12,12 +12,11 @@ _Auto-generated from `crates/core/src/tests/pow/failure.rs`._
 |--------|---------|
 | `alloc::vec::Vec` | `Vec` |
 | `crate::ApplyError` | `ApplyError` |
-| `crate::BlockHash` | `BlockHash` |
-| `crate::CompactTarget` | `CompactTarget` |
 | `crate::HeaderInput` | `HeaderInput` |
 | `crate::State` | `State` |
-| `crate::WINDOW_SIZE` | `WINDOW_SIZE` |
 | `crate::tests::*` | `*` |
+| `zkpow_types::BlockHash` | `BlockHash` |
+| `zkpow_types::CompactTarget` | `CompactTarget` |
 | `zkvm_test::zkvm_test` | `zkvm_test` |
 
 ## Local dependency map
@@ -29,4 +28,4 @@ _Auto-generated from `crates/core/src/tests/pow/failure.rs`._
 
 | Language | Used packages | Undeclared packages |
 |---|---:|---:|
-| rust | 1 | 0 |
+| rust | 2 | 0 |

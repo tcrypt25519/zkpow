@@ -13,26 +13,23 @@ Defines [`State`](../entities/State.md), the chain state a proof attests to: cum
 | Source | Symbols |
 |--------|---------|
 | `crate::ApplyError` | `ApplyError` |
-| `crate::BlockHash` | `BlockHash` |
-| `crate::BlockTimestamp` | `BlockTimestamp` |
-| `crate::ChainWork` | `ChainWork` |
-| `crate::CompactTarget` | `CompactTarget` |
 | `crate::HeaderInput` | `HeaderInput` |
-| `crate::Target` | `Target` |
-| `crate::TargetTriplet` | `TargetTriplet` |
 | `crate::block_work_from_target` | `block_work_from_target` |
 | `crate::calculate_next_work_required` | `calculate_next_work_required` |
 | `crate::check_proof_of_work_words` | `check_proof_of_work_words` |
 | `crate::hash_header_input` | `hash_header_input` |
 | `crate::target_from_bits` | `target_from_bits` |
 | `zkpow_mtp::Cold` | `Cold` |
-| `zkpow_mtp::WINDOW_SIZE` | `WINDOW_SIZE` |
 | `zkpow_mtp::Warm` | `Warm` |
 | `zkpow_mtp::errors::NotMedian` | `NotMedian` |
 | `zkpow_mtp::self` | `self` |
-| `zkpow_mtp::timestamp_count` | `timestamp_count` |
-| `zkpow_mtp::timestamp_slot` | `timestamp_slot` |
 | `zkpow_params::Consensus` | `Consensus` |
+| `zkpow_types::BlockHash` | `BlockHash` |
+| `zkpow_types::BlockTimestamp` | `BlockTimestamp` |
+| `zkpow_types::ChainWork` | `ChainWork` |
+| `zkpow_types::CompactTarget` | `CompactTarget` |
+| `zkpow_types::Target` | `Target` |
+| `zkpow_types::TargetTriplet` | `TargetTriplet` |
 
 ## Local dependency map
 
@@ -43,7 +40,7 @@ Defines [`State`](../entities/State.md), the chain state a proof attests to: cum
 
 | Language | Used packages | Undeclared packages |
 |---|---:|---:|
-| rust | 2 | 0 |
+| rust | 3 | 0 |
 
 ## Classes
 

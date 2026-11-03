@@ -126,3 +126,19 @@ Peer-sync failures now carry only their cause. Accepted progress stays in the sh
 - Pages deprecated: 0
 - Semantic fields preserved: 0
 - Moved entities: none
+
+## 2026-11-03
+
+### Wiki sync
+- Source: `.`
+- Generator version: `2.3.2`
+- Source selection profile: `.llm-wiki/source-selection.json`
+- Source selection fingerprint: `sha256:f24d3dfaea0e90b588e9fb1b5923d3a49fda035f817c90caf26e5efd1e6bbd4d`
+- Source snapshot digest: `sha256:ac1e9d09f7f3232e742c2279a042fd664e66aef2bbae55ac1f5f7f138ac9afde`
+- Pages created: 4
+- Pages updated: 87
+- Pages metadata-only: 2
+- Pages skipped (unchanged): 102
+- Pages deprecated: 8
+- Semantic fields preserved: 14
+- Moved entities: `WireType` (crates/wiretype/src/lib.rs → crates/wiretype/src/implementation.rs)

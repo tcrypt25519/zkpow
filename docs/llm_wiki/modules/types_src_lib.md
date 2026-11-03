@@ -17,12 +17,12 @@ _Auto-generated from `crates/types/src/lib.rs`._
 | `brand::BlockWork` | `BlockWork` |
 | `brand::ChainWork` | `ChainWork` |
 | `brand::CompactTarget` | `CompactTarget` |
+| `brand::MerkleRoot` | `MerkleRoot` |
 | `brand::Target` | `Target` |
 | `header::Header` | `Header` |
 | `run_id::RunId` | `RunId` |
 | `run_id::RunIdError` | `RunIdError` |
 | `target_triplet::TargetTriplet` | `TargetTriplet` |
-| `wiretype::wiretype` | `wiretype` |
 
 ## Local dependency map
 
@@ -33,4 +33,4 @@ _Auto-generated from `crates/types/src/lib.rs`._
 
 | Language | Used packages | Undeclared packages |
 |---|---:|---:|
-| rust | 6 | 5 |
+| rust | 5 | 5 |

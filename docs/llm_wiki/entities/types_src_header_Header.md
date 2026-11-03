@@ -15,7 +15,7 @@ A Bitcoin block header
 |------|------|---------|-------------|
 | `version` | `u32` | *required* | — |
 | `prev_blockhash` | `BlockHash` | *required* | — |
-| `merkle_root` | `[u8 ; 32]` | *required* | — |
+| `merkle_root` | `MerkleRoot` | *required* | — |
 | `timestamp` | `BlockTimestamp` | *required* | — |
 | `compact_target` | `CompactTarget` | *required* | — |
 | `nonce` | `u32` | *required* | — |

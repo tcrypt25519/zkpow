@@ -1,6 +1,6 @@
 # Warm
 
-**Location:** `crates/mtp/src/ring.rs:17`
+**Location:** `crates/mtp/src/ring.rs:20`
 **Kind:** Class
 **Bases:** —
 **Module:** [ring](../modules/ring.md)

@@ -18,18 +18,18 @@
     "by_kind": {
       "api-contracts": 0,
       "dependencies": 1,
-      "entities": 64,
+      "entities": 66,
       "flows": 2,
       "guides": 0,
       "index": 1,
       "infrastructure": 3,
       "load-order": 1,
       "log": 1,
-      "modules": 124,
+      "modules": 126,
       "workflows": 0
     },
     "dependency_architecture": 2,
-    "total": 197
+    "total": 201
   },
   "dependency_pages": {
     "count": 2,
@@ -316,6 +316,7 @@
         "entities/ResultOpt.md",
         "entities/ReturnCode.md",
         "entities/Ring.md",
+        "entities/RingValues.md",
         "entities/RunId.md",
         "entities/RunIdError.md",
         "entities/RunRecord.md",
@@ -332,6 +333,7 @@
         "entities/VersionMessage.md",
         "entities/Warm.md",
         "entities/Window.md",
+        "entities/WindowValues.md",
         "entities/WireType.md",
         "entities/WorkerConfig.md",
         "flows/process-generate-epoch-profile-fixture.md",
@@ -345,6 +347,7 @@
         "modules/build.md",
         "modules/bytes.md",
         "modules/cli_src_main.md",
+        "modules/collection_requires_wiretype.md",
         "modules/compressed.md",
         "modules/consensus.md",
         "modules/controller_src_lib.md",
@@ -356,20 +359,17 @@
         "modules/core_src_lib.md",
         "modules/core_src_tests_mod.md",
         "modules/error.md",
-        "modules/estring-macro_src_lib.md",
-        "modules/estring_src_lib.md",
         "modules/execution.md",
         "modules/failed_proof.md",
         "modules/generate-epoch-profile-fixture.md",
         "modules/guest_src_main.md",
         "modules/halt.md",
-        "modules/hash.md",
         "modules/host_src_lib.md",
         "modules/host_src_main.md",
         "modules/host_src_pipeline_mod.md",
         "modules/host_src_tests_mod.md",
-        "modules/input_failure.md",
-        "modules/input_success.md",
+        "modules/implementation.md",
+        "modules/input.md",
         "modules/inspect-proof.md",
         "modules/jobs.md",
         "modules/memory_monitor.md",
@@ -383,7 +383,6 @@
         "modules/p2p_sync.md",
         "modules/params_src_lib.md",
         "modules/params_src_tests_mod.md",
-        "modules/pipeline_input.md",
         "modules/pipeline_verify.md",
         "modules/platform.md",
         "modules/pow_failure.md",
@@ -407,7 +406,6 @@
         "modules/src_config.md",
         "modules/src_connection.md",
         "modules/src_db.md",
-        "modules/src_input.md",
         "modules/src_peers.md",
         "modules/src_pipeline_artifacts.md",
         "modules/src_pipeline_diagnostics.md",
@@ -417,7 +415,6 @@
         "modules/src_runtime.md",
         "modules/src_storage.md",
         "modules/src_tests_header.md",
-        "modules/src_tests_input_mod.md",
         "modules/src_tests_mtp_mod.md",
         "modules/src_tests_pipeline_mod.md",
         "modules/src_tests_pow_mod.md",
@@ -459,7 +456,6 @@
         "modules/types_src_lib.md",
         "modules/types_src_tests_mod.md",
         "modules/ui.md",
-        "modules/util.md",
         "modules/wiretype_macro_src_lib.md",
         "modules/wiretype_src_lib.md",
         "modules/worker_src_lib.md",
@@ -1041,6 +1037,18 @@
       "title": "Ring"
     },
     {
+      "canonical_path": "entities/RingValues.md",
+      "id": "RingValues",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/RingValues",
+      "outgoing_internal_links": [
+        "modules/ring.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/mtp/src/ring.rs",
+      "title": "RingValues"
+    },
+    {
       "canonical_path": "entities/RunId.md",
       "id": "RunId",
       "kind": "entities",
@@ -1237,15 +1245,27 @@
       "title": "Window"
     },
     {
+      "canonical_path": "entities/WindowValues.md",
+      "id": "WindowValues",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/WindowValues",
+      "outgoing_internal_links": [
+        "modules/ring.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/mtp/src/ring.rs",
+      "title": "WindowValues"
+    },
+    {
       "canonical_path": "entities/WireType.md",
       "id": "WireType",
       "kind": "entities",
       "mcp_uri": "llm-wiki://entities/WireType",
       "outgoing_internal_links": [
-        "modules/wiretype_src_lib.md"
+        "modules/implementation.md"
       ],
       "role": "semantic",
-      "source_path": "crates/wiretype/src/lib.rs",
+      "source_path": "crates/wiretype/src/implementation.rs",
       "title": "WireType"
     },
     {
@@ -1299,6 +1319,16 @@
       "role": "semantic",
       "source_path": "crates/cli/src/main.rs",
       "title": "main Module"
+    },
+    {
+      "canonical_path": "modules/collection_requires_wiretype.md",
+      "id": "collection_requires_wiretype",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/collection_requires_wiretype",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/wiretype/tests/ui/collection_requires_wiretype.rs",
+      "title": "collection_requires_wiretype Module"
     },
     {
       "canonical_path": "modules/compressed.md",
@@ -1438,7 +1468,7 @@
       "mcp_uri": "llm-wiki://modules/estring-macro_src_lib",
       "outgoing_internal_links": [],
       "role": "semantic",
-      "source_path": "crates/estring-macro/src/lib.rs",
+      "source_path": null,
       "title": "lib Module"
     },
     {
@@ -1448,7 +1478,7 @@
       "mcp_uri": "llm-wiki://modules/estring_src_lib",
       "outgoing_internal_links": [],
       "role": "semantic",
-      "source_path": "crates/estring/src/lib.rs",
+      "source_path": null,
       "title": "lib Module"
     },
     {
@@ -1508,7 +1538,7 @@
       "mcp_uri": "llm-wiki://modules/hash",
       "outgoing_internal_links": [],
       "role": "semantic",
-      "source_path": "crates/host/src/util/hash.rs",
+      "source_path": null,
       "title": "hash Module"
     },
     {
@@ -1556,13 +1586,35 @@
       "title": "mod Module"
     },
     {
+      "canonical_path": "modules/implementation.md",
+      "id": "implementation",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/implementation",
+      "outgoing_internal_links": [
+        "entities/WireType.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/wiretype/src/implementation.rs",
+      "title": "implementation Module"
+    },
+    {
+      "canonical_path": "modules/input.md",
+      "id": "input",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/input",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/host/src/pipeline/input.rs",
+      "title": "input Module"
+    },
+    {
       "canonical_path": "modules/input_failure.md",
       "id": "input_failure",
       "kind": "modules",
       "mcp_uri": "llm-wiki://modules/input_failure",
       "outgoing_internal_links": [],
       "role": "semantic",
-      "source_path": "crates/core/src/tests/input/failure.rs",
+      "source_path": null,
       "title": "failure Module"
     },
     {
@@ -1572,7 +1624,7 @@
       "mcp_uri": "llm-wiki://modules/input_success",
       "outgoing_internal_links": [],
       "role": "semantic",
-      "source_path": "crates/core/src/tests/input/success.rs",
+      "source_path": null,
       "title": "success Module"
     },
     {
@@ -1717,16 +1769,6 @@
       "title": "mod Module"
     },
     {
-      "canonical_path": "modules/pipeline_input.md",
-      "id": "pipeline_input",
-      "kind": "modules",
-      "mcp_uri": "llm-wiki://modules/pipeline_input",
-      "outgoing_internal_links": [],
-      "role": "semantic",
-      "source_path": "crates/host/src/pipeline/input.rs",
-      "title": "input Module"
-    },
-    {
       "canonical_path": "modules/pipeline_verify.md",
       "id": "pipeline_verify",
       "kind": "modules",
@@ -1852,8 +1894,10 @@
       "outgoing_internal_links": [
         "entities/Cold.md",
         "entities/Ring.md",
+        "entities/RingValues.md",
         "entities/Warm.md",
-        "entities/Window.md"
+        "entities/Window.md",
+        "entities/WindowValues.md"
       ],
       "role": "semantic",
       "source_path": "crates/mtp/src/ring.rs",
@@ -1996,7 +2040,7 @@
       "mcp_uri": "llm-wiki://modules/src_input",
       "outgoing_internal_links": [],
       "role": "semantic",
-      "source_path": "crates/core/src/input.rs",
+      "source_path": null,
       "title": "input Module"
     },
     {
@@ -2115,7 +2159,7 @@
       "mcp_uri": "llm-wiki://modules/src_tests_input_mod",
       "outgoing_internal_links": [],
       "role": "semantic",
-      "source_path": "crates/core/src/tests/input/mod.rs",
+      "source_path": null,
       "title": "mod Module"
     },
     {
@@ -2557,7 +2601,7 @@
       "mcp_uri": "llm-wiki://modules/util",
       "outgoing_internal_links": [],
       "role": "semantic",
-      "source_path": "crates/host/src/util.rs",
+      "source_path": null,
       "title": "util Module"
     },
     {
@@ -2679,6 +2723,7 @@
         "modules/build.md",
         "modules/bytes.md",
         "modules/cli_src_main.md",
+        "modules/collection_requires_wiretype.md",
         "modules/compressed.md",
         "modules/consensus.md",
         "modules/controller_src_lib.md",
@@ -2690,20 +2735,17 @@
         "modules/core_src_lib.md",
         "modules/core_src_tests_mod.md",
         "modules/error.md",
-        "modules/estring-macro_src_lib.md",
-        "modules/estring_src_lib.md",
         "modules/execution.md",
         "modules/failed_proof.md",
         "modules/generate-epoch-profile-fixture.md",
         "modules/guest_src_main.md",
         "modules/halt.md",
-        "modules/hash.md",
         "modules/host_src_lib.md",
         "modules/host_src_main.md",
         "modules/host_src_pipeline_mod.md",
         "modules/host_src_tests_mod.md",
-        "modules/input_failure.md",
-        "modules/input_success.md",
+        "modules/implementation.md",
+        "modules/input.md",
         "modules/inspect-proof.md",
         "modules/jobs.md",
         "modules/memory_monitor.md",
@@ -2717,7 +2759,6 @@
         "modules/p2p_sync.md",
         "modules/params_src_lib.md",
         "modules/params_src_tests_mod.md",
-        "modules/pipeline_input.md",
         "modules/pipeline_verify.md",
         "modules/platform.md",
         "modules/pow_failure.md",
@@ -2741,7 +2782,6 @@
         "modules/src_config.md",
         "modules/src_connection.md",
         "modules/src_db.md",
-        "modules/src_input.md",
         "modules/src_peers.md",
         "modules/src_pipeline_artifacts.md",
         "modules/src_pipeline_diagnostics.md",
@@ -2751,7 +2791,6 @@
         "modules/src_runtime.md",
         "modules/src_storage.md",
         "modules/src_tests_header.md",
-        "modules/src_tests_input_mod.md",
         "modules/src_tests_mtp_mod.md",
         "modules/src_tests_pipeline_mod.md",
         "modules/src_tests_pow_mod.md",
@@ -2793,7 +2832,6 @@
         "modules/types_src_lib.md",
         "modules/types_src_tests_mod.md",
         "modules/ui.md",
-        "modules/util.md",
         "modules/wiretype_macro_src_lib.md",
         "modules/wiretype_src_lib.md",
         "modules/worker_src_lib.md",
@@ -2815,6 +2853,7 @@
         "modules/build.md",
         "modules/bytes.md",
         "modules/cli_src_main.md",
+        "modules/collection_requires_wiretype.md",
         "modules/compressed.md",
         "modules/consensus.md",
         "modules/controller_src_lib.md",
@@ -2826,20 +2865,17 @@
         "modules/core_src_lib.md",
         "modules/core_src_tests_mod.md",
         "modules/error.md",
-        "modules/estring-macro_src_lib.md",
-        "modules/estring_src_lib.md",
         "modules/execution.md",
         "modules/failed_proof.md",
         "modules/generate-epoch-profile-fixture.md",
         "modules/guest_src_main.md",
         "modules/halt.md",
-        "modules/hash.md",
         "modules/host_src_lib.md",
         "modules/host_src_main.md",
         "modules/host_src_pipeline_mod.md",
         "modules/host_src_tests_mod.md",
-        "modules/input_failure.md",
-        "modules/input_success.md",
+        "modules/implementation.md",
+        "modules/input.md",
         "modules/inspect-proof.md",
         "modules/jobs.md",
         "modules/memory_monitor.md",
@@ -2853,7 +2889,6 @@
         "modules/p2p_sync.md",
         "modules/params_src_lib.md",
         "modules/params_src_tests_mod.md",
-        "modules/pipeline_input.md",
         "modules/pipeline_verify.md",
         "modules/platform.md",
         "modules/pow_failure.md",
@@ -2877,7 +2912,6 @@
         "modules/src_config.md",
         "modules/src_connection.md",
         "modules/src_db.md",
-        "modules/src_input.md",
         "modules/src_peers.md",
         "modules/src_pipeline_artifacts.md",
         "modules/src_pipeline_diagnostics.md",
@@ -2887,7 +2921,6 @@
         "modules/src_runtime.md",
         "modules/src_storage.md",
         "modules/src_tests_header.md",
-        "modules/src_tests_input_mod.md",
         "modules/src_tests_mtp_mod.md",
         "modules/src_tests_pipeline_mod.md",
         "modules/src_tests_pow_mod.md",
@@ -2929,7 +2962,6 @@
         "modules/types_src_lib.md",
         "modules/types_src_tests_mod.md",
         "modules/ui.md",
-        "modules/util.md",
         "modules/wiretype_macro_src_lib.md",
         "modules/wiretype_src_lib.md",
         "modules/worker_src_lib.md",
@@ -2942,5 +2974,5 @@
     }
   ],
   "schema_version": "llm-wiki-surface-index/v1",
-  "source_hash": "sha256:b3ec62981dd1118f6997756de086ae01671f1baa148f7b885caf6f13631e81d5"
+  "source_hash": "sha256:135ade98a2c2415b1092fd76a5902583c93a00d69feedba7f2cac354ba2fe6fe"
 }

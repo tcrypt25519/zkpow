@@ -11,13 +11,10 @@ _Auto-generated from `crates/core/src/tests/mtp/success.rs`._
 | Source | Symbols |
 |--------|---------|
 | `alloc::vec::Vec` | `Vec` |
-| `crate::CompactTarget` | `CompactTarget` |
 | `crate::HeaderInput` | `HeaderInput` |
 | `crate::State` | `State` |
-| `crate::WINDOW_SIZE` | `WINDOW_SIZE` |
-| `crate::advance_ordered_timestamp_run` | `advance_ordered_timestamp_run` |
 | `crate::tests::*` | `*` |
-| `crate::timestamp_slot` | `timestamp_slot` |
+| `zkpow_types::CompactTarget` | `CompactTarget` |
 | `zkvm_test::zkvm_test` | `zkvm_test` |
 
 ## Local dependency map
@@ -29,4 +26,4 @@ _Auto-generated from `crates/core/src/tests/mtp/success.rs`._
 
 | Language | Used packages | Undeclared packages |
 |---|---:|---:|
-| rust | 1 | 0 |
+| rust | 2 | 0 |

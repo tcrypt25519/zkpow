@@ -6,8 +6,8 @@ This page is an exhaustive reference inventory of the selected source. Task-orie
 
 | Surface | Count | Start here |
 |---|---:|---|
-| Entities | 64 | [Open section](#entities) |
-| Modules | 124 | [Open section](#modules) |
+| Entities | 66 | [Open section](#entities) |
+| Modules | 118 | [Open section](#modules) |
 | Workflows | 0 | No pages |
 | Guides | 0 | No pages |
 | Entry-point flows | 2 | [Open section](#entry-point-flows) |
@@ -62,6 +62,7 @@ This page is an exhaustive reference inventory of the selected source. Task-orie
 - [ResultOpt](entities/ResultOpt.md)
 - [ReturnCode](entities/ReturnCode.md)
 - [Ring](entities/Ring.md)
+- [RingValues](entities/RingValues.md)
 - [RunId](entities/RunId.md)
 - [RunIdError](entities/RunIdError.md)
 - [RunRecord](entities/RunRecord.md)
@@ -75,6 +76,7 @@ This page is an exhaustive reference inventory of the selected source. Task-orie
 - [VersionMessage](entities/VersionMessage.md)
 - [Warm](entities/Warm.md)
 - [Window](entities/Window.md)
+- [WindowValues](entities/WindowValues.md)
 - [WireType](entities/WireType.md)
 - [WorkerConfig](entities/WorkerConfig.md)
 - [controller_src_lib_BoxError](entities/controller_src_lib_BoxError.md)
@@ -89,6 +91,7 @@ This page is an exhaustive reference inventory of the selected source. Task-orie
 - [build](modules/build.md) - `crates/host/build.rs`
 - [bytes](modules/bytes.md) - `crates/types/src/tests/bytes.rs`
 - [cli_src_main](modules/cli_src_main.md) - `crates/cli/src/main.rs`
+- [collection_requires_wiretype](modules/collection_requires_wiretype.md) - `crates/wiretype/tests/ui/collection_requires_wiretype.rs`
 - [compressed](modules/compressed.md) - `crates/host/src/pipeline/proof/compressed.rs`
 - [consensus](modules/consensus.md) - `crates/params/src/consensus.rs`
 - [controller_src_lib](modules/controller_src_lib.md) - `crates/controller/src/lib.rs`
@@ -100,20 +103,17 @@ This page is an exhaustive reference inventory of the selected source. Task-orie
 - [core_src_lib](modules/core_src_lib.md) - `crates/core/src/lib.rs`
 - [core_src_tests_mod](modules/core_src_tests_mod.md) - `crates/core/src/tests/mod.rs`
 - [error](modules/error.md) - `crates/sync-headers/src/error.rs`
-- [estring-macro_src_lib](modules/estring-macro_src_lib.md) - `crates/estring-macro/src/lib.rs`
-- [estring_src_lib](modules/estring_src_lib.md) - `crates/estring/src/lib.rs`
 - [execution](modules/execution.md) - `crates/host/src/pipeline/execution.rs`
 - [failed_proof](modules/failed_proof.md) - `crates/host/tests/test_errors/proofs/failed_proof.rs`
 - [generate-epoch-profile-fixture](modules/generate-epoch-profile-fixture.md) - Export real mainnet HeaderInput records for the opt-in zkVM epoch profile.
 - [guest_src_main](modules/guest_src_main.md) - `crates/guest/src/main.rs`
 - [halt](modules/halt.md) - `crates/core/src/tests/halt.rs`
-- [hash](modules/hash.md) - `crates/host/src/util/hash.rs`
 - [host_src_lib](modules/host_src_lib.md) - `crates/host/src/lib.rs`
 - [host_src_main](modules/host_src_main.md) - `crates/host/src/main.rs`
 - [host_src_pipeline_mod](modules/host_src_pipeline_mod.md) - `crates/host/src/pipeline/mod.rs`
 - [host_src_tests_mod](modules/host_src_tests_mod.md) - `crates/host/src/tests/mod.rs`
-- [input_failure](modules/input_failure.md) - `crates/core/src/tests/input/failure.rs`
-- [input_success](modules/input_success.md) - `crates/core/src/tests/input/success.rs`
+- [implementation](modules/implementation.md) - `crates/wiretype/src/implementation.rs`
+- [input](modules/input.md) - `crates/host/src/pipeline/input.rs`
 - [inspect-proof](modules/inspect-proof.md) - `crates/host/src/bin/inspect-proof.rs`
 - [jobs](modules/jobs.md) - `crates/worker/src/jobs.rs`
 - [memory_monitor](modules/memory_monitor.md) - `crates/host/src/memory_monitor.rs`
@@ -127,7 +127,6 @@ This page is an exhaustive reference inventory of the selected source. Task-orie
 - [p2p_sync](modules/p2p_sync.md) - `crates/sync-headers/src/p2p_sync.rs`
 - [params_src_lib](modules/params_src_lib.md) - `crates/params/src/lib.rs`
 - [params_src_tests_mod](modules/params_src_tests_mod.md) - `crates/params/src/tests/mod.rs`
-- [pipeline_input](modules/pipeline_input.md) - `crates/host/src/pipeline/input.rs`
 - [pipeline_verify](modules/pipeline_verify.md) - `crates/host/src/pipeline/verify.rs`
 - [platform](modules/platform.md) - `crates/core/src/halt/platform.rs`
 - [pow_failure](modules/pow_failure.md) - `crates/core/src/tests/pow/failure.rs`
@@ -151,7 +150,6 @@ This page is an exhaustive reference inventory of the selected source. Task-orie
 - [src_config](modules/src_config.md) - `crates/worker/src/config.rs`
 - [src_connection](modules/src_connection.md) - `crates/sync-headers/src/connection.rs`
 - [src_db](modules/src_db.md) - `crates/store/src/db.rs`
-- [src_input](modules/src_input.md) - `crates/core/src/input.rs`
 - [src_peers](modules/src_peers.md) - `crates/sync-headers/src/peers.rs`
 - [src_pipeline_artifacts](modules/src_pipeline_artifacts.md) - `crates/host/src/pipeline/artifacts.rs`
 - [src_pipeline_diagnostics](modules/src_pipeline_diagnostics.md) - `crates/host/src/pipeline/diagnostics.rs`
@@ -161,7 +159,6 @@ This page is an exhaustive reference inventory of the selected source. Task-orie
 - [src_runtime](modules/src_runtime.md) - `crates/controller/src/runtime.rs`
 - [src_storage](modules/src_storage.md) - `crates/controller/src/storage.rs`
 - [src_tests_header](modules/src_tests_header.md) - `crates/types/src/tests/header.rs`
-- [src_tests_input_mod](modules/src_tests_input_mod.md) - `crates/core/src/tests/input/mod.rs`
 - [src_tests_mtp_mod](modules/src_tests_mtp_mod.md) - `crates/core/src/tests/mtp/mod.rs`
 - [src_tests_pipeline_mod](modules/src_tests_pipeline_mod.md) - `crates/host/src/tests/pipeline/mod.rs`
 - [src_tests_pow_mod](modules/src_tests_pow_mod.md) - `crates/core/src/tests/pow/mod.rs`
@@ -203,7 +200,6 @@ This page is an exhaustive reference inventory of the selected source. Task-orie
 - [types_src_lib](modules/types_src_lib.md) - `crates/types/src/lib.rs`
 - [types_src_tests_mod](modules/types_src_tests_mod.md) - `crates/types/src/tests/mod.rs`
 - [ui](modules/ui.md) - `crates/wiretype/tests/ui.rs`
-- [util](modules/util.md) - `crates/host/src/util.rs`
 - [wiretype_macro_src_lib](modules/wiretype_macro_src_lib.md) - `crates/wiretype_macro/src/lib.rs`
 - [wiretype_src_lib](modules/wiretype_src_lib.md) - `crates/wiretype/src/lib.rs`
 - [worker_src_lib](modules/worker_src_lib.md) - `crates/worker/src/lib.rs`

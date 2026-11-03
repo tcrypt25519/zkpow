@@ -1,6 +1,6 @@
 # LocalArtifactStore
 
-**Location:** `crates/controller/src/storage.rs:14`
+**Location:** `crates/controller/src/storage.rs:16`
 **Kind:** Class
 **Bases:** `ArtifactStore`
 **Module:** [src_storage](../modules/src_storage.md)

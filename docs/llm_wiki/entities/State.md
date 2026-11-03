@@ -21,7 +21,7 @@ reflects the updated chain only after the batch commits.
 | `height` | `u32` | *required* | — |
 | `current_nbits` | `CompactTarget` | *required* | — |
 | `epoch_timestamp` | `BlockTimestamp` | *required* | — |
-| `timestamps` | `[BlockTimestamp ; WINDOW_SIZE]` | *required* | — |
+| `timestamps` | `mtp::WindowValues` | *required* | — |
 
 ## Methods
 

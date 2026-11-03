@@ -16,6 +16,7 @@ _Auto-generated from `crates/types/src/tests/header.rs`._
 | `crate::BlockTimestamp` | `BlockTimestamp` |
 | `crate::CompactTarget` | `CompactTarget` |
 | `crate::Header` | `Header` |
+| `crate::MerkleRoot` | `MerkleRoot` |
 | `zkvm_test::test` | `test` |
 
 ## Local dependency map

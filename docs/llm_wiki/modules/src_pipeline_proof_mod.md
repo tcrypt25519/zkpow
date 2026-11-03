@@ -14,16 +14,12 @@ _Auto-generated from `crates/host/src/pipeline/proof/mod.rs`._
 | `crate::pipeline::ELF` | `ELF` |
 | `crate::pipeline::ProverBackend` | `ProverBackend` |
 | `crate::pipeline::diagnostics::timed_async` | `timed_async` |
-| `crate::pipeline::execution::execute_batch` | `execute_batch` |
-| `crate::pipeline::log_execution_report` | `log_execution_report` |
-| `sp1_sdk::CpuProver` | `CpuProver` |
-| `sp1_sdk::MockProver` | `MockProver` |
 | `sp1_sdk::Prover` | `Prover` |
 | `sp1_sdk::ProverClient` | `ProverClient` |
-| `sp1_sdk::SP1ProvingKey` | `SP1ProvingKey` |
+| `sp1_sdk::env::EnvProver` | `EnvProver` |
+| `sp1_sdk::env::EnvProvingKey` | `EnvProvingKey` |
 | `sp1_sdk::prelude::*` | `*` |
 | `std::sync::OnceLock` | `OnceLock` |
-| `std::time::Instant` | `Instant` |
 | `tokio::sync::Mutex` | `Mutex` |
 
 ## Local dependency map

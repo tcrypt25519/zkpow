@@ -13,6 +13,7 @@ _Auto-generated from `crates/types/src/header.rs`._
 | `crate::brand::BlockHash` | `BlockHash` |
 | `crate::brand::BlockTimestamp` | `BlockTimestamp` |
 | `crate::brand::CompactTarget` | `CompactTarget` |
+| `crate::brand::MerkleRoot` | `MerkleRoot` |
 
 ## Local dependency map
 

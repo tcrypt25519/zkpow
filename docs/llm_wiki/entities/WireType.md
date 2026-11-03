@@ -1,9 +1,9 @@
 # WireType
 
-**Location:** `crates/wiretype/src/lib.rs:4`
+**Location:** `crates/wiretype/src/implementation.rs:4`
 **Kind:** Class
 **Bases:** —
-**Module:** [wiretype_src_lib](../modules/wiretype_src_lib.md)
+**Module:** [implementation](../modules/implementation.md)
 
 ## Description
 
@@ -17,8 +17,9 @@ Byte view of a run of `Pod + Zeroable` values. `to_bytes` borrows them as bytes,
 
 | Method | Signature | Decorators | Description |
 |--------|-----------|------------|-------------|
-| `to_bytes` | `() -> &[u8]` | — | — |
-| `parse` | `(bytes: &[u8]) -> Result<&[T], PodCastError >` | — | — |
+| `to_bytes` | `() -> Self::Bytes` | — | — |
+| `as_bytes` | `() -> &[u8]` | — | — |
+| `parse` | `(bytes: &[u8]) -> Result<&Self::Inner, PodCastError >` | — | — |
 
 ## Relationships
 
@@ -29,4 +30,4 @@ Byte view of a run of `Pod + Zeroable` values. `to_bytes` borrows them as bytes,
 
 | Module | Methods | Attributes |
 |---|---:|---|
-| [wiretype_src_lib](../modules/wiretype_src_lib.md) | 2 | — |
+| [implementation](../modules/implementation.md) | 3 | — |

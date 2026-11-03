@@ -36,14 +36,10 @@ flowchart TD
 | [platform](modules/platform.md) | 0 | 0 |
 | [zkvm](modules/zkvm.md) | 0 | 0 |
 | [core_src_header](modules/core_src_header.md) | 0 | 0 |
-| [src_input](modules/src_input.md) | 0 | 0 |
 | [core_src_lib](modules/core_src_lib.md) | 0 | 0 |
 | [public_values](modules/public_values.md) | 0 | 0 |
 | [state](modules/state.md) | 0 | 0 |
 | [halt](modules/halt.md) | 0 | 0 |
-| [input_failure](modules/input_failure.md) | 0 | 0 |
-| [src_tests_input_mod](modules/src_tests_input_mod.md) | 0 | 0 |
-| [input_success](modules/input_success.md) | 0 | 0 |
 | [core_src_tests_mod](modules/core_src_tests_mod.md) | 0 | 0 |
 | [mtp_failure](modules/mtp_failure.md) | 0 | 0 |
 | [src_tests_mtp_mod](modules/src_tests_mtp_mod.md) | 0 | 0 |
@@ -61,8 +57,6 @@ flowchart TD
 | [src_tests_state_mod](modules/src_tests_state_mod.md) | 0 | 0 |
 | [profile](modules/profile.md) | 0 | 0 |
 | [state_success](modules/state_success.md) | 0 | 0 |
-| [estring-macro_src_lib](modules/estring-macro_src_lib.md) | 0 | 0 |
-| [estring_src_lib](modules/estring_src_lib.md) | 0 | 0 |
 | [guest_src_main](modules/guest_src_main.md) | 0 | 0 |
 | [build](modules/build.md) | 0 | 0 |
 | [inspect-proof](modules/inspect-proof.md) | 0 | 0 |
@@ -74,7 +68,7 @@ flowchart TD
 | [src_pipeline_artifacts](modules/src_pipeline_artifacts.md) | 0 | 0 |
 | [src_pipeline_diagnostics](modules/src_pipeline_diagnostics.md) | 0 | 0 |
 | [execution](modules/execution.md) | 0 | 0 |
-| [pipeline_input](modules/pipeline_input.md) | 0 | 0 |
+| [input](modules/input.md) | 0 | 0 |
 | [host_src_pipeline_mod](modules/host_src_pipeline_mod.md) | 0 | 0 |
 | [compressed](modules/compressed.md) | 0 | 0 |
 | [src_pipeline_proof_mod](modules/src_pipeline_proof_mod.md) | 0 | 0 |
@@ -83,8 +77,6 @@ flowchart TD
 | [tests_pipeline_artifacts](modules/tests_pipeline_artifacts.md) | 0 | 0 |
 | [tests_pipeline_diagnostics](modules/tests_pipeline_diagnostics.md) | 0 | 0 |
 | [src_tests_pipeline_mod](modules/src_tests_pipeline_mod.md) | 0 | 0 |
-| [util](modules/util.md) | 0 | 0 |
-| [hash](modules/hash.md) | 0 | 0 |
 | [test_errors](modules/test_errors.md) | 0 | 0 |
 | [failed_proof](modules/failed_proof.md) | 0 | 0 |
 | [tests_test_errors_proofs_mod](modules/tests_test_errors_proofs_mod.md) | 0 | 0 |
@@ -130,10 +122,12 @@ flowchart TD
 | [src_tests_header](modules/src_tests_header.md) | 0 | 0 |
 | [types_src_tests_mod](modules/types_src_tests_mod.md) | 0 | 0 |
 | [tests_run_id](modules/tests_run_id.md) | 0 | 0 |
+| [implementation](modules/implementation.md) | 0 | 0 |
 | [wiretype_src_lib](modules/wiretype_src_lib.md) | 0 | 0 |
 | [serialization](modules/serialization.md) | 0 | 0 |
 | [ui](modules/ui.md) | 0 | 0 |
 | [arguments](modules/arguments.md) | 0 | 0 |
+| [collection_requires_wiretype](modules/collection_requires_wiretype.md) | 0 | 0 |
 | [not_pod](modules/not_pod.md) | 0 | 0 |
 | [wiretype_macro_src_lib](modules/wiretype_macro_src_lib.md) | 0 | 0 |
 | [src_config](modules/src_config.md) | 0 | 0 |
@@ -148,9 +142,9 @@ flowchart TD
 
 ### rust
 
-- **Used:** `bigint`, `bitcoin`, `brand`, `bytemuck`, `clap`, `config`, `connection`, `consensus`, `db`, `diagnostics`, `error`, `errors`, `execution`, `hash`, `header`, `hex`, `input`, `jobs`, `peers`, `platform`, `proc_macro`, `proof`, `public_values`, `quote`, `rand`, `ring`, `run_id`, `rusqlite`, `sha2`, `sha256_const`, `sp1_lib`, `sp1_sdk`, `sp1_zkvm`, `state`, `strum`, `strum_macros`, `syn`, `sync_headers`, `target_triplet`, `test_utils`, `thiserror`, `tokio`, `tracing`, `tracing_appender`, `tracing_subscriber`, `types`, `validation`, `wiretype`, `wiretype_macro`, `zkpow_controller`, `zkpow_core`, `zkpow_host`, `zkpow_mtp`, `zkpow_params`, `zkpow_store`, `zkpow_types`, `zkvm`, `zkvm_test`
-- ⚠️ **Undeclared:** `bigint`, `brand`, `config`, `connection`, `consensus`, `db`, `diagnostics`, `error`, `errors`, `execution`, `hash`, `header`, `input`, `jobs`, `peers`, `platform`, `proc_macro`, `proof`, `public_values`, `ring`, `run_id`, `state`, `sync_headers`, `target_triplet`, `test_utils`, `types`, `validation`, `zkpow_host`, `zkvm`
-- **Unused (declared, not imported):** `console_subscriber`, `estring_macro`, `num_bigint`, `postcard`, `proc_macro2`, `rkyv`, `sp1_derive`, `sp1_prover`, `zkpow_sha256`, `zkpow_sync_headers`, `zkpow_worker`
+- **Used:** `bigint`, `bitcoin`, `brand`, `bytemuck`, `clap`, `config`, `connection`, `consensus`, `db`, `diagnostics`, `error`, `errors`, `execution`, `header`, `hex`, `implementation`, `input`, `jobs`, `peers`, `platform`, `proc_macro`, `proof`, `public_values`, `quote`, `rand`, `ring`, `run_id`, `rusqlite`, `sha2`, `sha256_const`, `sp1_lib`, `sp1_sdk`, `sp1_zkvm`, `state`, `strum`, `strum_macros`, `syn`, `sync_headers`, `target_triplet`, `thiserror`, `tokio`, `tracing`, `tracing_appender`, `tracing_subscriber`, `types`, `validation`, `wiretype`, `wiretype_macro`, `zkpow_controller`, `zkpow_core`, `zkpow_host`, `zkpow_mtp`, `zkpow_params`, `zkpow_store`, `zkpow_types`, `zkvm`, `zkvm_test`
+- ⚠️ **Undeclared:** `bigint`, `brand`, `config`, `connection`, `consensus`, `db`, `diagnostics`, `error`, `errors`, `execution`, `header`, `implementation`, `input`, `jobs`, `peers`, `platform`, `proc_macro`, `proof`, `public_values`, `ring`, `run_id`, `state`, `sync_headers`, `target_triplet`, `types`, `validation`, `zkpow_host`, `zkvm`
+- **Unused (declared, not imported):** `console_subscriber`, `num_bigint`, `postcard`, `proc_macro2`, `rkyv`, `sp1_derive`, `sp1_prover`, `zkpow_sha256`, `zkpow_sync_headers`, `zkpow_worker`
 
 ## Notes
 

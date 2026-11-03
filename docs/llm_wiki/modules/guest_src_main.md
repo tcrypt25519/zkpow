@@ -14,7 +14,6 @@ _Auto-generated from `crates/guest/src/main.rs`._
 | `bytemuck::PodCastError` | `PodCastError` |
 | `bytemuck::self` | `self` |
 | `sp1_zkvm::lib::read_vec_raw` | `read_vec_raw` |
-| `zkpow_core::BlockTimestamp` | `BlockTimestamp` |
 | `zkpow_core::HeaderInput` | `HeaderInput` |
 | `zkpow_core::PublicValues` | `PublicValues` |
 | `zkpow_core::ReportableError` | `ReportableError` |
@@ -22,6 +21,7 @@ _Auto-generated from `crates/guest/src/main.rs`._
 | `zkpow_core::State` | `State` |
 | `zkpow_core::VerifierKeyDigest` | `VerifierKeyDigest` |
 | `zkpow_params::Mainnet` | `Mainnet` |
+| `zkpow_types::BlockTimestamp` | `BlockTimestamp` |
 
 ## Local dependency map
 
@@ -32,7 +32,7 @@ _Auto-generated from `crates/guest/src/main.rs`._
 
 | Language | Used packages | Undeclared packages |
 |---|---:|---:|
-| rust | 4 | 0 |
+| rust | 5 | 0 |
 
 ## Functions
 

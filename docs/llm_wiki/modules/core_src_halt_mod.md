@@ -10,8 +10,7 @@ Halting on a bad prover hint. Inside the zkVM this exits with code 3, distinct f
 
 | Source | Symbols |
 |--------|---------|
-| `platform::__invalid_hint_fmt` | `__invalid_hint_fmt` |
-| `platform::halt_invalid_hint` | `halt_invalid_hint` |
+| `platform::*` | `*` |
 | `zkvm::__invalid_hint_fmt` | `__invalid_hint_fmt` |
 | `zkvm::halt_invalid_hint` | `halt_invalid_hint` |
 

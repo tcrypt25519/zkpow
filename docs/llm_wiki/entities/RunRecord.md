@@ -1,6 +1,6 @@
 # RunRecord
 
-**Location:** `crates/store/src/db.rs:516`
+**Location:** `crates/store/src/db.rs:500`
 **Kind:** Class
 **Bases:** —
 **Module:** [src_db](../modules/src_db.md)

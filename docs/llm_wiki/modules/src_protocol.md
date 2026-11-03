@@ -10,10 +10,10 @@ _Auto-generated from `crates/controller/src/protocol.rs`._
 
 | Source | Symbols |
 |--------|---------|
-| `zkpow_core::BlockTimestamp` | `BlockTimestamp` |
 | `zkpow_core::HeaderInput` | `HeaderInput` |
 | `zkpow_core::State` | `State` |
 | `zkpow_core::VerifierKeyDigest` | `VerifierKeyDigest` |
+| `zkpow_types::BlockTimestamp` | `BlockTimestamp` |
 
 ## Local dependency map
 
@@ -24,7 +24,7 @@ _Auto-generated from `crates/controller/src/protocol.rs`._
 
 | Language | Used packages | Undeclared packages |
 |---|---:|---:|
-| rust | 1 | 0 |
+| rust | 2 | 0 |
 
 ## Classes
 

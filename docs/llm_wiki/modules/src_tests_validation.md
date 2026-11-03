@@ -20,12 +20,6 @@ _Auto-generated from `crates/sync-headers/src/tests/validation.rs`._
 | `std::net::TcpListener` | `TcpListener` |
 | `std::thread` | `thread` |
 | `super::*` | `*` |
-| `zkpow_core::BlockHash` | `BlockHash` |
-| `zkpow_core::BlockTimestamp` | `BlockTimestamp` |
-| `zkpow_core::BlockWork` | `BlockWork` |
-| `zkpow_core::CompactTarget` | `CompactTarget` |
-| `zkpow_core::Header` | `Header` |
-| `zkpow_core::Target` | `Target` |
 | `zkpow_core::calculate_next_work_required` | `calculate_next_work_required` |
 | `zkpow_core::check_proof_of_work` | `check_proof_of_work` |
 | `zkpow_core::target_from_bits` | `target_from_bits` |
@@ -34,6 +28,13 @@ _Auto-generated from `crates/sync-headers/src/tests/validation.rs`._
 | `zkpow_params::Mainnet` | `Mainnet` |
 | `zkpow_params::WINDOW_MAX_INDEX` | `WINDOW_MAX_INDEX` |
 | `zkpow_params::WINDOW_SIZE` | `WINDOW_SIZE` |
+| `zkpow_types::BlockHash` | `BlockHash` |
+| `zkpow_types::BlockTimestamp` | `BlockTimestamp` |
+| `zkpow_types::BlockWork` | `BlockWork` |
+| `zkpow_types::CompactTarget` | `CompactTarget` |
+| `zkpow_types::Header` | `Header` |
+| `zkpow_types::MerkleRoot` | `MerkleRoot` |
+| `zkpow_types::Target` | `Target` |
 
 ## Local dependency map
 
@@ -44,4 +45,4 @@ _Auto-generated from `crates/sync-headers/src/tests/validation.rs`._
 
 | Language | Used packages | Undeclared packages |
 |---|---:|---:|
-| rust | 3 | 0 |
+| rust | 4 | 0 |

@@ -1,6 +1,6 @@
 # BoxError
 
-**Location:** `crates/controller/src/lib.rs:33`
+**Location:** `crates/controller/src/lib.rs:28`
 **Kind:** Type alias
 **Bases:** —
 **Module:** [controller_src_lib](../modules/controller_src_lib.md)

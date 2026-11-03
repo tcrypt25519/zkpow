@@ -11,11 +11,8 @@ _Auto-generated from `crates/core/src/tests/mtp/failure.rs`._
 | Source | Symbols |
 |--------|---------|
 | `alloc::vec::Vec` | `Vec` |
-| `crate::BlockTimestamp` | `BlockTimestamp` |
-| `crate::CompactTarget` | `CompactTarget` |
 | `crate::HeaderInput` | `HeaderInput` |
 | `crate::State` | `State` |
-| `crate::WINDOW_SIZE` | `WINDOW_SIZE` |
 | `crate::tests::*` | `*` |
 | `zkvm_test::zkvm_test` | `zkvm_test` |
 

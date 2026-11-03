@@ -1,6 +1,6 @@
 # ControllerConfig
 
-**Location:** `crates/controller/src/runtime.rs:29`
+**Location:** `crates/controller/src/runtime.rs:31`
 **Kind:** Class
 **Bases:** —
 **Module:** [src_runtime](../modules/src_runtime.md)

@@ -10,11 +10,7 @@ Fixed-layout wire encoding. Re-exports the `#[wiretype]` attribute macro from `w
 
 | Source | Symbols |
 |--------|---------|
-| `bytemuck::Pod` | `Pod` |
-| `bytemuck::PodCastError` | `PodCastError` |
-| `bytemuck::Zeroable` | `Zeroable` |
-| `bytemuck::cast_slice` | `cast_slice` |
-| `bytemuck::try_cast_slice` | `try_cast_slice` |
+| `implementation::WireType` | `WireType` |
 | `wiretype_macro::wiretype` | `wiretype` |
 
 ## Local dependency map
@@ -26,17 +22,4 @@ Fixed-layout wire encoding. Re-exports the `#[wiretype]` attribute macro from `w
 
 | Language | Used packages | Undeclared packages |
 |---|---:|---:|
-| rust | 2 | 0 |
-
-## Classes
-
-| Class | Kind | Line | Bases / Target | Description |
-|-------|------|------|----------------|-------------|
-| [WireType](../entities/WireType.md) | Class | 4 | — | — |
-
-## Functions
-
-| Function | Signature | Decorators | Description |
-|----------|-----------|------------|-------------|
-| `to_bytes` | `() -> &[u8]` | — | — |
-| `parse` | `(bytes: &[u8]) -> Result<&[T], PodCastError >` | — | — |
+| rust | 2 | 1 |

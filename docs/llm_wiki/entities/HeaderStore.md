@@ -1,6 +1,6 @@
 # HeaderStore
 
-**Location:** `crates/store/src/db.rs:104`
+**Location:** `crates/store/src/db.rs:87`
 **Kind:** Class
 **Bases:** —
 **Module:** [src_db](../modules/src_db.md)

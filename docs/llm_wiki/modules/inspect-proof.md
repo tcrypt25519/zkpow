@@ -10,12 +10,14 @@ _Auto-generated from `crates/host/src/bin/inspect-proof.rs`._
 
 | Source | Symbols |
 |--------|---------|
-| `crate::util::PublicValues` | `PublicValues` |
 | `hex::encode` | `encode` |
 | `sp1_sdk::SP1ProofWithPublicValues` | `SP1ProofWithPublicValues` |
-| `zkpow_host::util` | `util` |
+| `zkpow_core::PublicValues` | `PublicValues` |
+| `zkpow_core::State` | `State` |
+| `zkpow_core::VerifierKeyDigest` | `VerifierKeyDigest` |
 | `zkpow_params::Consensus` | `Consensus` |
 | `zkpow_params::Mainnet` | `Mainnet` |
+| `zkpow_types::BlockHash` | `BlockHash` |
 
 ## Local dependency map
 
@@ -26,4 +28,4 @@ _Auto-generated from `crates/host/src/bin/inspect-proof.rs`._
 
 | Language | Used packages | Undeclared packages |
 |---|---:|---:|
-| rust | 4 | 1 |
+| rust | 5 | 0 |

@@ -1,6 +1,6 @@
 # PublicValues
 
-**Location:** `crates/core/src/public_values.rs:200`
+**Location:** `crates/core/src/public_values.rs:202`
 **Kind:** Class
 **Bases:** —
 **Module:** [public_values](../modules/public_values.md)

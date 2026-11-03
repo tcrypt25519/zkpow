@@ -16,34 +16,19 @@ Holds the target and work math: compact `bits` conversion both ways, proof-of-wo
 | `errors::ParseError` | `ParseError` |
 | `errors::ReportableError` | `ReportableError` |
 | `header::HeaderInput` | `HeaderInput` |
-| `input::cast_slice` | `cast_slice` |
-| `input::serialize_inputs` | `serialize_inputs` |
 | `public_values::ErrorCode` | `ErrorCode` |
 | `public_values::PublicValues` | `PublicValues` |
 | `public_values::ReturnCode` | `ReturnCode` |
 | `public_values::VerifierKeyDigest` | `VerifierKeyDigest` |
 | `state::State` | `State` |
-| `zkpow_mtp::WINDOW_LARGE_HALF_SIZE` | `WINDOW_LARGE_HALF_SIZE` |
-| `zkpow_mtp::WINDOW_MAX_INDEX` | `WINDOW_MAX_INDEX` |
-| `zkpow_mtp::WINDOW_SIZE` | `WINDOW_SIZE` |
-| `zkpow_mtp::WINDOW_SMALL_HALF_SIZE` | `WINDOW_SMALL_HALF_SIZE` |
-| `zkpow_mtp::advance_ordered_timestamp_run` | `advance_ordered_timestamp_run` |
-| `zkpow_mtp::has_ordered_timestamp_window` | `has_ordered_timestamp_window` |
-| `zkpow_mtp::ordered_median_timestamp_slot` | `ordered_median_timestamp_slot` |
-| `zkpow_mtp::ordered_timestamp_run` | `ordered_timestamp_run` |
-| `zkpow_mtp::requires_median_hint` | `requires_median_hint` |
-| `zkpow_mtp::timestamp_count` | `timestamp_count` |
-| `zkpow_mtp::timestamp_slot` | `timestamp_slot` |
 | `zkpow_params::Consensus` | `Consensus` |
 | `zkpow_types::BlockHash` | `BlockHash` |
 | `zkpow_types::BlockTimestamp` | `BlockTimestamp` |
 | `zkpow_types::BlockWork` | `BlockWork` |
-| `zkpow_types::ChainWork` | `ChainWork` |
 | `zkpow_types::CompactTarget` | `CompactTarget` |
 | `zkpow_types::Header` | `Header` |
+| `zkpow_types::MerkleRoot` | `MerkleRoot` |
 | `zkpow_types::NonMaxU256` | `NonMaxU256` |
-| `zkpow_types::RunId` | `RunId` |
-| `zkpow_types::RunIdError` | `RunIdError` |
 | `zkpow_types::Target` | `Target` |
 | `zkpow_types::TargetTriplet` | `TargetTriplet` |
 | `zkpow_types::u256` | `u256` |
@@ -57,7 +42,7 @@ Holds the target and work math: compact `bits` conversion both ways, proof-of-wo
 
 | Language | Used packages | Undeclared packages |
 |---|---:|---:|
-| rust | 8 | 5 |
+| rust | 6 | 4 |
 
 ## Functions
 

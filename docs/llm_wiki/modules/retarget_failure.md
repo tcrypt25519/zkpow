@@ -10,10 +10,10 @@ _Auto-generated from `crates/core/src/tests/retarget/failure.rs`._
 
 | Source | Symbols |
 |--------|---------|
-| `crate::CompactTarget` | `CompactTarget` |
-| `crate::Target` | `Target` |
 | `crate::calculate_next_work_required` | `calculate_next_work_required` |
 | `crate::tests::*` | `*` |
+| `zkpow_types::CompactTarget` | `CompactTarget` |
+| `zkpow_types::Target` | `Target` |
 | `zkvm_test::zkvm_test` | `zkvm_test` |
 
 ## Local dependency map
@@ -25,4 +25,4 @@ _Auto-generated from `crates/core/src/tests/retarget/failure.rs`._
 
 | Language | Used packages | Undeclared packages |
 |---|---:|---:|
-| rust | 1 | 0 |
+| rust | 2 | 0 |

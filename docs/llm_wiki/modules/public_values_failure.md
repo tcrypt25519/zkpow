@@ -13,8 +13,6 @@ _Auto-generated from `crates/core/src/tests/public_values/failure.rs`._
 | `alloc::format` | `format` |
 | `alloc::vec` | `vec` |
 | `crate::ApplyError` | `ApplyError` |
-| `crate::BlockHash` | `BlockHash` |
-| `crate::ChainWork` | `ChainWork` |
 | `crate::ErrorCode` | `ErrorCode` |
 | `crate::ParseError` | `ParseError` |
 | `crate::PublicValues` | `PublicValues` |
@@ -23,6 +21,8 @@ _Auto-generated from `crates/core/src/tests/public_values/failure.rs`._
 | `crate::State` | `State` |
 | `crate::VerifierKeyDigest` | `VerifierKeyDigest` |
 | `crate::tests::*` | `*` |
+| `zkpow_types::BlockHash` | `BlockHash` |
+| `zkpow_types::ChainWork` | `ChainWork` |
 | `zkvm_test::zkvm_test` | `zkvm_test` |
 
 ## Local dependency map
@@ -34,4 +34,4 @@ _Auto-generated from `crates/core/src/tests/public_values/failure.rs`._
 
 | Language | Used packages | Undeclared packages |
 |---|---:|---:|
-| rust | 1 | 0 |
+| rust | 2 | 0 |

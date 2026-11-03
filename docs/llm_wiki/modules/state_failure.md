@@ -13,14 +13,11 @@ _Auto-generated from `crates/core/src/tests/state/failure.rs`._
 | `alloc::vec` | `vec` |
 | `alloc::vec::Vec` | `Vec` |
 | `crate::ApplyError` | `ApplyError` |
-| `crate::ChainWork` | `ChainWork` |
-| `crate::CompactTarget` | `CompactTarget` |
 | `crate::ErrorCode` | `ErrorCode` |
 | `crate::HeaderInput` | `HeaderInput` |
-| `crate::State` | `State` |
-| `crate::WINDOW_SIZE` | `WINDOW_SIZE` |
 | `crate::block_work_from_target` | `block_work_from_target` |
 | `crate::tests::*` | `*` |
+| `zkpow_types::ChainWork` | `ChainWork` |
 | `zkvm_test::zkvm_test` | `zkvm_test` |
 
 ## Local dependency map
@@ -32,4 +29,4 @@ _Auto-generated from `crates/core/src/tests/state/failure.rs`._
 
 | Language | Used packages | Undeclared packages |
 |---|---:|---:|
-| rust | 1 | 0 |
+| rust | 2 | 0 |

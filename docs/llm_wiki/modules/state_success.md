@@ -12,16 +12,15 @@ _Auto-generated from `crates/core/src/tests/state/success.rs`._
 |--------|---------|
 | `alloc::vec::Vec` | `Vec` |
 | `core::mem::align_of` | `align_of` |
-| `core::mem::size_of` | `size_of` |
-| `crate::BlockHash` | `BlockHash` |
-| `crate::BlockWork` | `BlockWork` |
-| `crate::ChainWork` | `ChainWork` |
-| `crate::CompactTarget` | `CompactTarget` |
 | `crate::HeaderInput` | `HeaderInput` |
 | `crate::State` | `State` |
 | `crate::block_work_from_target` | `block_work_from_target` |
 | `crate::target_from_bits` | `target_from_bits` |
 | `crate::tests::*` | `*` |
+| `zkpow_types::BlockHash` | `BlockHash` |
+| `zkpow_types::BlockWork` | `BlockWork` |
+| `zkpow_types::ChainWork` | `ChainWork` |
+| `zkpow_types::CompactTarget` | `CompactTarget` |
 | `zkvm_test::zkvm_test` | `zkvm_test` |
 
 ## Local dependency map
@@ -33,4 +32,4 @@ _Auto-generated from `crates/core/src/tests/state/success.rs`._
 
 | Language | Used packages | Undeclared packages |
 |---|---:|---:|
-| rust | 1 | 0 |
+| rust | 2 | 0 |

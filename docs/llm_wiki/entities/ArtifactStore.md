@@ -1,6 +1,6 @@
 # ArtifactStore
 
-**Location:** `crates/controller/src/storage.rs:5`
+**Location:** `crates/controller/src/storage.rs:7`
 **Kind:** Class
 **Bases:** `Send`, `Sync`
 **Module:** [src_storage](../modules/src_storage.md)
