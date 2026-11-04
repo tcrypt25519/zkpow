@@ -8,8 +8,8 @@ use bytemuck::PodCastError;
 use rusqlite::{params, Connection, OptionalExtension};
 use sync_headers::{ConnectedHeader, Tip};
 use zkpow_core::{HeaderInput, State, VerifierKeyDigest};
-use zkpow_mtp::requires_median_hint;
-use zkpow_params::{Consensus, WINDOW_SIZE};
+use zkpow_mtp::{requires_median_hint, WINDOW_SIZE};
+use zkpow_params::Consensus;
 use zkpow_types::{BlockHash, BlockTimestamp, ChainWork, CompactTarget, Header, MerkleRoot};
 
 pub const SQLITE_MEMORY_DATABASE: &str = ":memory:";

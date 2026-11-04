@@ -168,6 +168,15 @@ impl<const N: usize> Default for Ring<N, Cold> {
     }
 }
 
+fn ordered_run<'a>(values: impl Iterator<Item = &'a BlockTimestamp>) -> (usize, BlockTimestamp) {
+    let (mut run, mut last) = (0, BlockTimestamp::new(0));
+    for &value in values {
+        run = if run == 0 || value >= last { run + 1 } else { 1 };
+        last = value;
+    }
+    (run, last)
+}
+
 impl<const N: usize> Ring<N, Warm> {
     const WINDOW_SMALL_HALF_SIZE: usize = N / 2;
 
@@ -222,15 +231,6 @@ impl<const N: usize> Ring<N, Warm> {
     pub fn is_value_median(&self, claimed_median: BlockTimestamp) -> Result<(), NotMedian> {
         rank_median(&self.values, Self::WINDOW_SMALL_HALF_SIZE, claimed_median)
     }
-}
-
-fn ordered_run<'a>(values: impl Iterator<Item = &'a BlockTimestamp>) -> (usize, BlockTimestamp) {
-    let (mut run, mut last) = (0, BlockTimestamp::new(0));
-    for &value in values {
-        run = if run == 0 || value >= last { run + 1 } else { 1 };
-        last = value;
-    }
-    (run, last)
 }
 
 fn rank_median(values: &[BlockTimestamp], half: usize, claimed_median: BlockTimestamp) -> Result<(), NotMedian> {

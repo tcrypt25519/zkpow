@@ -1,43 +1,36 @@
 use zkpow_core::{calculate_next_work_required, check_proof_of_work};
 use zkpow_mtp::{advance_ordered_timestamp_run, median_timestamp, record_timestamp, timestamp_at};
-use zkpow_params::{Consensus, WINDOW_SIZE};
+use zkpow_params::Consensus;
 use zkpow_types::BlockTimestamp;
 
-use crate::types::{expand_target, ConnectedHeader, Header, Tip};
+use crate::types::{ConnectedHeader, Header, Tip};
 
-/// Validate and link `headers` onto `anchor`: linkage, PoW against the active target, and the
-/// timestamp-above-MTP rule. Stops at the first failure and returns the connected prefix.
-pub fn connect_headers<C: Consensus>(anchor: &Tip, headers: &[Header]) -> Vec<ConnectedHeader> {
+/// Append the valid header prefix to `tip` and return its connected headers.
+pub fn connect_headers<C: Consensus>(tip: &mut Tip, headers: &[Header]) -> Vec<ConnectedHeader> {
     let mut connected = Vec::with_capacity(headers.len());
-    let mut height = anchor.height;
-    let mut prev_hash = anchor.hash;
-    let mut cumulative_work = anchor.chainwork;
-    let mut timestamps = anchor.timestamps;
-    let mut ordered_timestamp_run = anchor.ordered_timestamp_run;
-    let mut epoch_timestamp = anchor.epoch_timestamp;
-
-    let mut target_triplet = anchor.target_triplet;
 
     for header in headers {
-        if header.prev_blockhash() != prev_hash {
+        if header.prev_blockhash() != tip.hash {
             tracing::debug!(
-                expected = %prev_hash,
+                expected = %tip.hash,
                 got = %header.prev_blockhash(),
                 "chain broken: prev_hash mismatch"
             );
             break;
         }
 
-        let candidate_height = height + 1;
-        let previous_timestamp = timestamp_at(&timestamps, height);
+        let candidate_height = tip.height + 1;
+        let previous_timestamp = timestamp_at(&tip.timestamps, tip.height);
 
-        if candidate_height.is_multiple_of(C::PARAMS.epoch_length) {
-            target_triplet = calculate_next_work_required::<C>(
-                target_triplet.target(),
-                BlockTimestamp::new(epoch_timestamp),
+        let target_triplet = if candidate_height.is_multiple_of(C::PARAMS.epoch_length) {
+            calculate_next_work_required::<C>(
+                tip.target_triplet.target(),
+                BlockTimestamp::new(tip.epoch_timestamp),
                 BlockTimestamp::new(previous_timestamp),
-            );
-        }
+            )
+        } else {
+            tip.target_triplet
+        };
 
         if header.inner.compact_target != target_triplet.compact_target() {
             tracing::debug!(
@@ -54,20 +47,21 @@ pub fn connect_headers<C: Consensus>(anchor: &Tip, headers: &[Header]) -> Vec<Co
             break;
         }
 
-        let mtp = median_timestamp(&timestamps, height, ordered_timestamp_run);
+        let mtp = median_timestamp(&tip.timestamps, tip.height, tip.ordered_timestamp_run);
 
         if header.inner.timestamp.into_inner() <= mtp {
             tracing::debug!(%hash, timestamp = header.inner.timestamp.into_inner(), mtp, "timestamp not greater than MTP");
             break;
         }
 
-        cumulative_work += target_triplet.block_work();
-        height = candidate_height;
-        if height.is_multiple_of(C::PARAMS.epoch_length) {
-            epoch_timestamp = header.inner.timestamp.into_inner();
+        tip.chainwork += target_triplet.block_work();
+        tip.height = candidate_height;
+        tip.target_triplet = target_triplet;
+        if tip.height.is_multiple_of(C::PARAMS.epoch_length) {
+            tip.epoch_timestamp = header.inner.timestamp.into_inner();
         }
-        ordered_timestamp_run = advance_ordered_timestamp_run(
-            ordered_timestamp_run,
+        tip.ordered_timestamp_run = advance_ordered_timestamp_run(
+            tip.ordered_timestamp_run,
             previous_timestamp,
             header.inner.timestamp.into_inner(),
         );
@@ -75,48 +69,14 @@ pub fn connect_headers<C: Consensus>(anchor: &Tip, headers: &[Header]) -> Vec<Co
         connected.push(ConnectedHeader::new(
             header.clone(),
             hash,
-            height,
-            cumulative_work,
+            tip.height,
+            tip.chainwork,
             mtp,
-            ordered_timestamp_run,
+            tip.ordered_timestamp_run,
         ));
-        prev_hash = hash;
-
-        record_timestamp(&mut timestamps, height, header.inner.timestamp.into_inner());
+        tip.hash = hash;
+        record_timestamp(&mut tip.timestamps, tip.height, header.inner.timestamp.into_inner());
     }
 
     connected
-}
-
-/// The tip after appending `connected` to `anchor`. Panics when `connected` is empty.
-pub fn tip_from_connected<C: Consensus>(anchor: &Tip, connected: &[ConnectedHeader]) -> Tip {
-    let last = connected.last().expect("non-empty slice");
-
-    let mut timestamps = anchor.timestamps;
-    let tail_start = connected.len().saturating_sub(WINDOW_SIZE);
-    for ch in &connected[tail_start..] {
-        record_timestamp(&mut timestamps, ch.height, ch.header.inner.timestamp.into_inner());
-    }
-
-    let epoch_length = C::PARAMS.epoch_length;
-    let epoch_start = (last.height / epoch_length) * epoch_length;
-    let (epoch_timestamp, target_triplet) = if epoch_start <= anchor.height {
-        (anchor.epoch_timestamp, anchor.target_triplet)
-    } else {
-        let idx = (epoch_start - anchor.height - 1) as usize;
-        (
-            connected[idx].header.inner.timestamp.into_inner(),
-            expand_target(last.header.inner.compact_target),
-        )
-    };
-
-    Tip::new(
-        last.block_hash,
-        last.height,
-        last.chainwork,
-        timestamps,
-        last.ordered_timestamp_run,
-        epoch_timestamp,
-        target_triplet,
-    )
 }

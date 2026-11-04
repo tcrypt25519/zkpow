@@ -16,4 +16,8 @@ zkpow-store.workspace = true
 zkpow-types.workspace = true
 clap.workspace = true
 tracing.workspace = true
+rand.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
+
+[dev-dependencies]
+sha2.workspace = true

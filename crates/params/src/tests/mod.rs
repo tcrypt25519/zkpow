@@ -4,7 +4,7 @@ use alloc::string::ToString;
 use zkpow_types::ChainWork;
 use zkvm_test::test;
 
-use super::*;
+use super::{networks::*, *};
 
 /// The genesis hash is derived from the header, so this is what pins both the header bytes and the
 /// const SHA-256 to reality.
