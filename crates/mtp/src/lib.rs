@@ -98,6 +98,21 @@ pub fn median_timestamp<T: Copy + Ord>(timestamps: &[T; WINDOW_SIZE], height: u3
     }
 }
 
+/*
+
+If the timestamp array was a struct:
+- It can hold the value currently called `timestamp_count``
+    - It's like a slice, but can't be sliced or shrunk
+    - Grows with each new entry until it saturates
+    - Nothing external needs to calculate or ask how many entries it has
+    - The concern about how many timestamps there are is fully encapsulated
+    - This was the original point of this mpt creates before the retarded AI faggots ruined it
+    - In all likelihood they would ruin that too, and keep pushing the project futher and further into the abyss
+- Also maintain the run-count
+- It would almost be like something developed in a real software engineering project
+
+*/
+
 /// Whether the run of nondecreasing links orders the entire window, pinning the median to a known slot.
 #[must_use]
 pub const fn has_ordered_timestamp_window(ordered_timestamp_run: u64) -> bool {

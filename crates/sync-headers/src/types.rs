@@ -5,6 +5,7 @@ use zkpow_core::{block_work_from_target, target_from_bits};
 use zkpow_mtp::WINDOW_SIZE;
 use zkpow_params::Consensus;
 use zkpow_types::{BlockHash, ChainWork, CompactTarget, Header as CoreHeader, TargetTriplet};
+
 /// Network selection for Bitcoin consensus.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, EnumCount)]
 #[strum(serialize_all = "snake_case", ascii_case_insensitive)]

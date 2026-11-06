@@ -40,14 +40,12 @@ impl<const N: usize, F> Ring<N, F> {
 
     fn push_value(&mut self, value: BlockTimestamp) {
         if self.len == 0 || value >= self.last_value {
-            if self.ordered_run < N {
-                self.ordered_run += 1;
-            }
+            self.ordered_run += 1;
+            b
         } else {
             self.ordered_run = 1;
         }
         self.last_value = value;
-
         self.values[self.next] = value;
         self.next += 1;
         if self.next == N {
@@ -112,7 +110,8 @@ impl<const N: usize> Ring<N, Cold> {
     }
 
     /// Rebuilds a cold ring from its first `len` slots in chronological order.
-    pub fn from_parts(values: RingValues<N>, len: usize) -> Result<Self, InvalidParts> {
+    pub fn from_parts(values: RingValues<N>, height: usize) -> Result<Self, InvalidParts> {
+        let len = height + 1;
         if len >= N {
             return Err(InvalidParts::NotCold);
         }
@@ -192,10 +191,12 @@ impl<const N: usize> Ring<N, Warm> {
     };
 
     /// Rebuilds a warm ring from its slots and next write position, which is also the oldest slot.
-    pub fn from_parts(values: RingValues<N>, next: usize, len: usize) -> Result<Self, InvalidParts> {
+    pub fn from_parts(values: RingValues<N>, height: u32) -> Result<Self, InvalidParts> {
+        let len = height + 1;
         if len != N {
             return Err(InvalidParts::NotWarm);
         }
+        let next = timestamp_slot(height);
         if next >= N {
             return Err(InvalidParts::NextSlotOutOfBounds);
         }

@@ -153,23 +153,15 @@ fn sync_from_peers<C: Consensus>(
                 },
             };
 
+            let limit = max_headers.saturating_sub(synced) as usize;
+            let headers = headers.iter().take(limit);
+            // TODO: Don't assume we're done just because a peer sent us 0 headers
             if headers.is_empty() {
                 peers.mark_connected(&peer);
                 return Ok(tip);
             }
 
-            let limit = if max_headers == 0 {
-                headers.len()
-            } else {
-                headers.len().min((max_headers - synced) as usize)
-            };
-            let connected = connect_headers::<C>(&mut tip, &headers[..limit]);
-            if !connected.is_empty() {
-                store.bulk_insert(&connected)?;
-                synced += connected.len() as u32;
-                tracing::info!(height = tip.height, %synced, "Headers synced");
-            }
-
+            let connected = connect_headers::<C>(&mut tip, headers);
             if connected.len() != limit {
                 tracing::warn!(%peer, accepted = connected.len(), received = limit, "Invalid headers");
                 last_peer_error = Some(format!(
@@ -177,6 +169,11 @@ fn sync_from_peers<C: Consensus>(
                     connected.len()
                 ));
                 break;
+            }
+            if !connected.is_empty() {
+                store.bulk_insert(&connected)?;
+                synced += connected.len() as u32;
+                tracing::info!(height = tip.height, %synced, "Headers synced");
             }
         }
 

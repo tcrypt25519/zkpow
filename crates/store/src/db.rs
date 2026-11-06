@@ -187,6 +187,7 @@ impl HeaderStore {
                     let (row_height, timestamp) = row?;
                     timestamps[row_height as usize % WINDOW_SIZE] = timestamp;
                 }
+                let bytes: &[u8] = vec![].as_slice();
 
                 Ok(Some(Tip::new(
                     hash,
