@@ -20,9 +20,9 @@ SQLite access to `headers.db`; every reader and writer in the workspace goes thr
 | `zkpow_core::HeaderInput` | `HeaderInput` |
 | `zkpow_core::State` | `State` |
 | `zkpow_core::VerifierKeyDigest` | `VerifierKeyDigest` |
-| `zkpow_mtp::requires_median_hint` | `requires_median_hint` |
+| `zkpow_mtp::WINDOW_SIZE` | `WINDOW_SIZE` |
+| `zkpow_mtp::Window` | `Window` |
 | `zkpow_params::Consensus` | `Consensus` |
-| `zkpow_params::WINDOW_SIZE` | `WINDOW_SIZE` |
 | `zkpow_types::BlockHash` | `BlockHash` |
 | `zkpow_types::BlockTimestamp` | `BlockTimestamp` |
 | `zkpow_types::ChainWork` | `ChainWork` |
@@ -48,10 +48,10 @@ SQLite access to `headers.db`; every reader and writer in the workspace goes thr
 | [Error](../entities/Error.md) | Enum | 18 | `From` | — |
 | [Result](../entities/Result.md) | Type alias | 35 | — | — |
 | [ResultOpt](../entities/ResultOpt.md) | Type alias | 36 | — | — |
-| [HeaderStore](../entities/HeaderStore.md) | Class | 87 | — | The SQLite header store. |
-| [RunRecord](../entities/RunRecord.md) | Class | 500 | — | One IVC chain's verified progress, keyed by `run_id` in the `runs` table. |
-| [HeaderRecord](../entities/HeaderRecord.md) | Class | 511 | — | A single `headers` row, decoded into typed fields. |
-| [HeaderBatchWitness](../entities/HeaderBatchWitness.md) | Class | 521 | — | The SP1 stdin witness for a batch: the new headers plus their median-time-past hints. |
+| [HeaderStore](../entities/HeaderStore.md) | Class | 79 | — | The SQLite header store. |
+| [RunRecord](../entities/RunRecord.md) | Class | 463 | — | One IVC chain's verified progress, keyed by `run_id` in the `runs` table. |
+| [HeaderRecord](../entities/HeaderRecord.md) | Class | 474 | — | A single `headers` row, decoded into typed fields. |
+| [HeaderBatchWitness](../entities/HeaderBatchWitness.md) | Class | 483 | — | The SP1 stdin witness for a batch: the new headers plus their median-time-past hints. |
 
 ## Functions
 

@@ -29,7 +29,7 @@ reflects the updated chain only after the batch commits.
 |--------|-----------|------------|-------------|
 | `anchor` | `() -> Self` | — | The state that follows the network's anchor header, derived from that header's own |
 | `apply_headers_from_genesis` | `(headers: &[HeaderInput], median_hints: &[BlockTimestamp]) -> Result<(), ApplyError >` | — | Apply the cold start batch. This is executed exactly once for a chain, applying the first `window_size - 1` |
-| `apply_headers` | `(headers: &[HeaderInput], median_hints: &[BlockTimestamp]) -> Result<(), ApplyError >` | — | Apply headers while assuming the MTP window is full. The caller is responsible for only |
+| `apply_headers` | `(headers: &[HeaderInput], median_hints: &[BlockTimestamp]) -> Result<(), ApplyError >` | — | Apply headers using the current MTP window, including incomplete windows. |
 
 ## Relationships
 

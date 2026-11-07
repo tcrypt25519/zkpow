@@ -88,6 +88,9 @@ flowchart TD
 | [tests](modules/tests.md) | 0 | 0 |
 | [consensus](modules/consensus.md) | 0 | 0 |
 | [params_src_lib](modules/params_src_lib.md) | 0 | 0 |
+| [mainnet](modules/mainnet.md) | 0 | 0 |
+| [params_src_networks_mod](modules/params_src_networks_mod.md) | 0 | 0 |
+| [short_epoch](modules/short_epoch.md) | 0 | 0 |
 | [params_src_tests_mod](modules/params_src_tests_mod.md) | 0 | 0 |
 | [sha256_src_lib](modules/sha256_src_lib.md) | 0 | 0 |
 | [sha256_src_tests_mod](modules/sha256_src_tests_mod.md) | 0 | 0 |
@@ -101,7 +104,6 @@ flowchart TD
 | [error](modules/error.md) | 0 | 0 |
 | [sync-headers_src_lib](modules/sync-headers_src_lib.md) | 0 | 0 |
 | [msg](modules/msg.md) | 0 | 0 |
-| [p2p_sync](modules/p2p_sync.md) | 0 | 0 |
 | [src_peers](modules/src_peers.md) | 0 | 0 |
 | [tests_connection](modules/tests_connection.md) | 0 | 0 |
 | [sync-headers_src_tests_mod](modules/sync-headers_src_tests_mod.md) | 0 | 0 |
@@ -142,8 +144,8 @@ flowchart TD
 
 ### rust
 
-- **Used:** `bigint`, `bitcoin`, `brand`, `bytemuck`, `clap`, `config`, `connection`, `consensus`, `db`, `diagnostics`, `error`, `errors`, `execution`, `header`, `hex`, `implementation`, `input`, `jobs`, `peers`, `platform`, `proc_macro`, `proof`, `public_values`, `quote`, `rand`, `ring`, `run_id`, `rusqlite`, `sha2`, `sha256_const`, `sp1_lib`, `sp1_sdk`, `sp1_zkvm`, `state`, `strum`, `strum_macros`, `syn`, `sync_headers`, `target_triplet`, `thiserror`, `tokio`, `tracing`, `tracing_appender`, `tracing_subscriber`, `types`, `validation`, `wiretype`, `wiretype_macro`, `zkpow_controller`, `zkpow_core`, `zkpow_host`, `zkpow_mtp`, `zkpow_params`, `zkpow_store`, `zkpow_types`, `zkvm`, `zkvm_test`
-- ⚠️ **Undeclared:** `bigint`, `brand`, `config`, `connection`, `consensus`, `db`, `diagnostics`, `error`, `errors`, `execution`, `header`, `implementation`, `input`, `jobs`, `peers`, `platform`, `proc_macro`, `proof`, `public_values`, `ring`, `run_id`, `state`, `sync_headers`, `target_triplet`, `types`, `validation`, `zkpow_host`, `zkvm`
+- **Used:** `bigint`, `bitcoin`, `brand`, `bytemuck`, `clap`, `config`, `connection`, `consensus`, `db`, `diagnostics`, `error`, `errors`, `execution`, `header`, `hex`, `implementation`, `input`, `jobs`, `mainnet`, `networks`, `peers`, `platform`, `proc_macro`, `proof`, `public_values`, `quote`, `rand`, `ring`, `run_id`, `rusqlite`, `sha2`, `sha256_const`, `short_epoch`, `sp1_lib`, `sp1_sdk`, `sp1_zkvm`, `state`, `strum`, `strum_macros`, `syn`, `sync_headers`, `target_triplet`, `thiserror`, `tokio`, `tracing`, `tracing_appender`, `tracing_subscriber`, `types`, `validation`, `wiretype`, `wiretype_macro`, `zkpow_controller`, `zkpow_core`, `zkpow_host`, `zkpow_mtp`, `zkpow_params`, `zkpow_store`, `zkpow_types`, `zkvm`, `zkvm_test`
+- ⚠️ **Undeclared:** `bigint`, `brand`, `config`, `connection`, `consensus`, `db`, `diagnostics`, `error`, `errors`, `execution`, `header`, `implementation`, `input`, `jobs`, `mainnet`, `networks`, `peers`, `platform`, `proc_macro`, `proof`, `public_values`, `ring`, `run_id`, `short_epoch`, `state`, `sync_headers`, `target_triplet`, `types`, `validation`, `zkpow_host`, `zkvm`
 - **Unused (declared, not imported):** `console_subscriber`, `num_bigint`, `postcard`, `proc_macro2`, `rkyv`, `sp1_derive`, `sp1_prover`, `zkpow_sha256`, `zkpow_sync_headers`, `zkpow_worker`
 
 ## Notes

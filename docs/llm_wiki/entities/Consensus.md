@@ -1,6 +1,6 @@
 # Consensus
 
-**Location:** `crates/params/src/consensus.rs:92`
+**Location:** `crates/params/src/consensus.rs:77`
 **Kind:** Class
 **Bases:** —
 **Module:** [consensus](../modules/consensus.md)
@@ -24,13 +24,13 @@ read every parameter as a compile-time constant.
 ```mermaid
 flowchart LR
     n0["Consensus (crates/params/src/consensus.rs)"]
-    n1["Mainnet (crates/params/src/lib.rs)"]
-    n2["ShortEpoch (crates/params/src/lib.rs)"]
+    n1["Mainnet (crates/params/src/networks/mainnet.rs)"]
+    n2["ShortEpoch (crates/params/src/networks/short_epoch.rs)"]
     n1 --> n0
     n2 --> n0
     click n0 "../modules/consensus.md"
-    click n1 "../modules/params_src_lib.md"
-    click n2 "../modules/params_src_lib.md"
+    click n1 "../modules/mainnet.md"
+    click n2 "../modules/short_epoch.md"
 ```
 
 ### Summary
@@ -43,5 +43,5 @@ flowchart LR
 
 | Kind | Entity | Module |
 |---|---|---|
-| Subclass | `Mainnet` | [params_src_lib](../modules/params_src_lib.md) |
-| Subclass | `ShortEpoch` | [params_src_lib](../modules/params_src_lib.md) |
+| Subclass | `Mainnet` | [mainnet](../modules/mainnet.md) |
+| Subclass | `ShortEpoch` | [short_epoch](../modules/short_epoch.md) |

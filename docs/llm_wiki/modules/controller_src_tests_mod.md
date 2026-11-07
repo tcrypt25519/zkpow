@@ -12,7 +12,7 @@ _Auto-generated from `crates/controller/src/tests/mod.rs`._
 |--------|---------|
 | `crate::validation::header_to_input` | `header_to_input` |
 | `super::*` | `*` |
-| `zkpow_mtp::requires_median_hint` | `requires_median_hint` |
+| `zkpow_mtp::Window` | `Window` |
 | `zkpow_params::Mainnet` | `Mainnet` |
 | `zkpow_store::HeaderStore` | `HeaderStore` |
 | `zkpow_store::genesis_state_from_record` | `genesis_state_from_record` |

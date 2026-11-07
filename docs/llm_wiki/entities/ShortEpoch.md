@@ -1,18 +1,13 @@
 # ShortEpoch
 
-**Location:** `crates/params/src/lib.rs:60`
+**Location:** `crates/params/src/networks/short_epoch.rs:9`
 **Kind:** Class
 **Bases:** `Consensus`
-**Module:** [params_src_lib](../modules/params_src_lib.md)
+**Module:** [short_epoch](../modules/short_epoch.md)
 
 ## Description
 
-A synthetic network that differs from [`Mainnet`] only in `epoch_length`, so tests can cross a
-retarget boundary cheaply and prove the transition reads the boundary from the parameters
-rather than assuming 2016.
-
-Not Bitcoin's regtest: real regtest shares mainnet's epoch length, which is exactly what makes
-it useless here. Feature-gated so it cannot be reached from a production build.
+_Auto-generated from `ShortEpoch` in `crates/params/src/networks/short_epoch.rs`._
 
 ## Attributes
 
@@ -27,10 +22,10 @@ it useless here. Feature-gated so it cannot be reached from a production build.
 <!-- Auto-generated relationship summary. Do not edit by hand. -->
 ```mermaid
 flowchart LR
-    n0["ShortEpoch (crates/params/src/lib.rs)"]
+    n0["ShortEpoch (crates/params/src/networks/short_epoch.rs)"]
     n1["Consensus (crates/params/src/consensus.rs)"]
     n0 --> n1
-    click n0 "../modules/params_src_lib.md"
+    click n0 "../modules/short_epoch.md"
     click n1 "../modules/consensus.md"
 ```
 
@@ -38,7 +33,7 @@ flowchart LR
 
 | Module | Methods | Attributes |
 |---|---:|---|
-| [params_src_lib](../modules/params_src_lib.md) | 0 | — |
+| [short_epoch](../modules/short_epoch.md) | 0 | — |
 
 ### Structure
 

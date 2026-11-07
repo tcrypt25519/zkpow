@@ -12,10 +12,7 @@ Crate root of `zkpow-params`, a `no_std` crate between `zkpow-types` and `zkpow-
 |--------|---------|
 | `consensus::Consensus` | `Consensus` |
 | `consensus::ConsensusParams` | `ConsensusParams` |
-| `consensus::WINDOW_LARGE_HALF_SIZE` | `WINDOW_LARGE_HALF_SIZE` |
-| `consensus::WINDOW_MAX_INDEX` | `WINDOW_MAX_INDEX` |
-| `consensus::WINDOW_SIZE` | `WINDOW_SIZE` |
-| `consensus::WINDOW_SMALL_HALF_SIZE` | `WINDOW_SMALL_HALF_SIZE` |
+| `networks::*` | `*` |
 | `zkpow_types::BlockHash` | `BlockHash` |
 | `zkpow_types::BlockTimestamp` | `BlockTimestamp` |
 | `zkpow_types::BlockWork` | `BlockWork` |
@@ -33,11 +30,4 @@ Crate root of `zkpow-params`, a `no_std` crate between `zkpow-types` and `zkpow-
 
 | Language | Used packages | Undeclared packages |
 |---|---:|---:|
-| rust | 2 | 1 |
-
-## Classes
-
-| Class | Kind | Line | Bases / Target | Description |
-|-------|------|------|----------------|-------------|
-| [Mainnet](../entities/Mainnet.md) | Class | 47 | `Consensus` | Bitcoin mainnet. |
-| [ShortEpoch](../entities/ShortEpoch.md) | Class | 60 | `Consensus` | A synthetic network that differs from [`Mainnet`] only in `epoch_length`, so tests can cross a |
+| rust | 3 | 2 |

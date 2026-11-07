@@ -13,16 +13,12 @@ _Auto-generated from `crates/sync-headers/src/validation.rs`._
 | `crate::types::ConnectedHeader` | `ConnectedHeader` |
 | `crate::types::Header` | `Header` |
 | `crate::types::Tip` | `Tip` |
-| `crate::types::expand_target` | `expand_target` |
 | `zkpow_core::calculate_next_work_required` | `calculate_next_work_required` |
 | `zkpow_core::check_proof_of_work` | `check_proof_of_work` |
-| `zkpow_mtp::advance_ordered_timestamp_run` | `advance_ordered_timestamp_run` |
-| `zkpow_mtp::median_timestamp` | `median_timestamp` |
-| `zkpow_mtp::record_timestamp` | `record_timestamp` |
-| `zkpow_mtp::timestamp_at` | `timestamp_at` |
 | `zkpow_params::Consensus` | `Consensus` |
-| `zkpow_params::WINDOW_SIZE` | `WINDOW_SIZE` |
+| `zkpow_types::BlockHash` | `BlockHash` |
 | `zkpow_types::BlockTimestamp` | `BlockTimestamp` |
+| `zkpow_types::TargetTriplet` | `TargetTriplet` |
 
 ## Local dependency map
 
@@ -33,11 +29,16 @@ _Auto-generated from `crates/sync-headers/src/validation.rs`._
 
 | Language | Used packages | Undeclared packages |
 |---|---:|---:|
-| rust | 4 | 0 |
+| rust | 3 | 0 |
+
+## Classes
+
+| Class | Kind | Line | Bases / Target | Description |
+|-------|------|------|----------------|-------------|
+| [ValidationError](../entities/ValidationError.md) | Enum | 7 | — | — |
 
 ## Functions
 
 | Function | Signature | Decorators | Description |
 |----------|-----------|------------|-------------|
-| `connect_headers` | `(anchor: &Tip, headers: &[Header]) -> Vec<ConnectedHeader >` | — | Validate and link `headers` onto `anchor`: linkage, PoW against the active target, and the |
-| `tip_from_connected` | `(anchor: &Tip, connected: &[ConnectedHeader]) -> Tip` | — | The tip after appending `connected` to `anchor`. Panics when `connected` is empty. |
+| `connect_headers` | `(tip: &mut Tip, headers: impl IntoIterator<Item = &'a Header >) -> Vec<ConnectedHeader >` | — | Append the valid header prefix to `tip` and return its connected headers. |

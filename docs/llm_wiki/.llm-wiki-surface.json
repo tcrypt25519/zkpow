@@ -18,18 +18,18 @@
     "by_kind": {
       "api-contracts": 0,
       "dependencies": 1,
-      "entities": 66,
+      "entities": 67,
       "flows": 2,
       "guides": 0,
       "index": 1,
       "infrastructure": 3,
       "load-order": 1,
       "log": 1,
-      "modules": 126,
+      "modules": 129,
       "workflows": 0
     },
     "dependency_architecture": 2,
-    "total": 201
+    "total": 205
   },
   "dependency_pages": {
     "count": 2,
@@ -274,7 +274,6 @@
         "entities/ArtifactStore.md",
         "entities/Batch.md",
         "entities/Bucket.md",
-        "entities/Cold.md",
         "entities/Command.md",
         "entities/ConnectedHeader.md",
         "entities/ConnectionError.md",
@@ -294,7 +293,6 @@
         "entities/HeaderStore.md",
         "entities/host_src_pipeline_mod_BoxError.md",
         "entities/InsufficientColdHeaders.md",
-        "entities/InvalidParts.md",
         "entities/LocalArtifactStore.md",
         "entities/Mainnet.md",
         "entities/Network.md",
@@ -324,14 +322,13 @@
         "entities/src_types_Header.md",
         "entities/StageSample.md",
         "entities/State.md",
-        "entities/SyncHeadersError.md",
         "entities/TargetTriplet.md",
         "entities/Tip.md",
         "entities/types_src_header_Header.md",
         "entities/u256.md",
+        "entities/ValidationError.md",
         "entities/VerifierKeyDigest.md",
         "entities/VersionMessage.md",
-        "entities/Warm.md",
         "entities/Window.md",
         "entities/WindowValues.md",
         "entities/WireType.md",
@@ -372,6 +369,7 @@
         "modules/input.md",
         "modules/inspect-proof.md",
         "modules/jobs.md",
+        "modules/mainnet.md",
         "modules/memory_monitor.md",
         "modules/msg.md",
         "modules/mtp_failure.md",
@@ -380,8 +378,8 @@
         "modules/mtp_success.md",
         "modules/not_pod.md",
         "modules/observability.md",
-        "modules/p2p_sync.md",
         "modules/params_src_lib.md",
+        "modules/params_src_networks_mod.md",
         "modules/params_src_tests_mod.md",
         "modules/pipeline_verify.md",
         "modules/platform.md",
@@ -400,6 +398,7 @@
         "modules/sha256_const_src_tests_mod.md",
         "modules/sha256_src_lib.md",
         "modules/sha256_src_tests_mod.md",
+        "modules/short_epoch.md",
         "modules/sp1-stress.md",
         "modules/src_bigint.md",
         "modules/src_brand.md",
@@ -533,7 +532,7 @@
         "modules/ring.md"
       ],
       "role": "semantic",
-      "source_path": "crates/mtp/src/ring.rs",
+      "source_path": null,
       "title": "Cold"
     },
     {
@@ -579,7 +578,8 @@
       "mcp_uri": "llm-wiki://entities/Consensus",
       "outgoing_internal_links": [
         "modules/consensus.md",
-        "modules/params_src_lib.md"
+        "modules/mainnet.md",
+        "modules/short_epoch.md"
       ],
       "role": "semantic",
       "source_path": "crates/params/src/consensus.rs",
@@ -777,7 +777,7 @@
         "modules/mtp_src_errors.md"
       ],
       "role": "semantic",
-      "source_path": "crates/mtp/src/errors.rs",
+      "source_path": null,
       "title": "InvalidParts"
     },
     {
@@ -799,10 +799,10 @@
       "mcp_uri": "llm-wiki://entities/Mainnet",
       "outgoing_internal_links": [
         "modules/consensus.md",
-        "modules/params_src_lib.md"
+        "modules/mainnet.md"
       ],
       "role": "semantic",
-      "source_path": "crates/params/src/lib.rs",
+      "source_path": "crates/params/src/networks/mainnet.rs",
       "title": "Mainnet"
     },
     {
@@ -1092,10 +1092,10 @@
       "mcp_uri": "llm-wiki://entities/ShortEpoch",
       "outgoing_internal_links": [
         "modules/consensus.md",
-        "modules/params_src_lib.md"
+        "modules/short_epoch.md"
       ],
       "role": "semantic",
-      "source_path": "crates/params/src/lib.rs",
+      "source_path": "crates/params/src/networks/short_epoch.rs",
       "title": "ShortEpoch"
     },
     {
@@ -1144,7 +1144,7 @@
         "modules/error.md"
       ],
       "role": "semantic",
-      "source_path": "crates/sync-headers/src/error.rs",
+      "source_path": null,
       "title": "SyncHeadersError"
     },
     {
@@ -1196,6 +1196,18 @@
       "title": "u256"
     },
     {
+      "canonical_path": "entities/ValidationError.md",
+      "id": "ValidationError",
+      "kind": "entities",
+      "mcp_uri": "llm-wiki://entities/ValidationError",
+      "outgoing_internal_links": [
+        "modules/sync-headers_src_validation.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/sync-headers/src/validation.rs",
+      "title": "ValidationError"
+    },
+    {
       "canonical_path": "entities/VerifierKeyDigest.md",
       "id": "VerifierKeyDigest",
       "kind": "entities",
@@ -1229,7 +1241,7 @@
         "modules/ring.md"
       ],
       "role": "semantic",
-      "source_path": "crates/mtp/src/ring.rs",
+      "source_path": null,
       "title": "Warm"
     },
     {
@@ -1454,8 +1466,7 @@
       "kind": "modules",
       "mcp_uri": "llm-wiki://modules/error",
       "outgoing_internal_links": [
-        "entities/ConnectionError.md",
-        "entities/SyncHeadersError.md"
+        "entities/ConnectionError.md"
       ],
       "role": "semantic",
       "source_path": "crates/sync-headers/src/error.rs",
@@ -1648,6 +1659,18 @@
       "title": "jobs Module"
     },
     {
+      "canonical_path": "modules/mainnet.md",
+      "id": "mainnet",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/mainnet",
+      "outgoing_internal_links": [
+        "entities/Mainnet.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/params/src/networks/mainnet.rs",
+      "title": "mainnet Module"
+    },
+    {
       "canonical_path": "modules/memory_monitor.md",
       "id": "memory_monitor",
       "kind": "modules",
@@ -1686,7 +1709,6 @@
       "mcp_uri": "llm-wiki://modules/mtp_src_errors",
       "outgoing_internal_links": [
         "entities/InsufficientColdHeaders.md",
-        "entities/InvalidParts.md",
         "entities/NotMedian.md"
       ],
       "role": "semantic",
@@ -1742,7 +1764,7 @@
         "entities/SyncHeadersError.md"
       ],
       "role": "semantic",
-      "source_path": "crates/sync-headers/src/p2p_sync.rs",
+      "source_path": null,
       "title": "p2p_sync Module"
     },
     {
@@ -1757,6 +1779,16 @@
       "role": "semantic",
       "source_path": "crates/params/src/lib.rs",
       "title": "lib Module"
+    },
+    {
+      "canonical_path": "modules/params_src_networks_mod.md",
+      "id": "params_src_networks_mod",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/params_src_networks_mod",
+      "outgoing_internal_links": [],
+      "role": "semantic",
+      "source_path": "crates/params/src/networks/mod.rs",
+      "title": "mod Module"
     },
     {
       "canonical_path": "modules/params_src_tests_mod.md",
@@ -1892,10 +1924,8 @@
       "kind": "modules",
       "mcp_uri": "llm-wiki://modules/ring",
       "outgoing_internal_links": [
-        "entities/Cold.md",
         "entities/Ring.md",
         "entities/RingValues.md",
-        "entities/Warm.md",
         "entities/Window.md",
         "entities/WindowValues.md"
       ],
@@ -1954,6 +1984,18 @@
       "role": "semantic",
       "source_path": "crates/sha256/src/tests/mod.rs",
       "title": "mod Module"
+    },
+    {
+      "canonical_path": "modules/short_epoch.md",
+      "id": "short_epoch",
+      "kind": "modules",
+      "mcp_uri": "llm-wiki://modules/short_epoch",
+      "outgoing_internal_links": [
+        "entities/ShortEpoch.md"
+      ],
+      "role": "semantic",
+      "source_path": "crates/params/src/networks/short_epoch.rs",
+      "title": "short_epoch Module"
     },
     {
       "canonical_path": "modules/sp1-stress.md",
@@ -2352,7 +2394,9 @@
       "id": "sync-headers_src_validation",
       "kind": "modules",
       "mcp_uri": "llm-wiki://modules/sync-headers_src_validation",
-      "outgoing_internal_links": [],
+      "outgoing_internal_links": [
+        "entities/ValidationError.md"
+      ],
       "role": "semantic",
       "source_path": "crates/sync-headers/src/validation.rs",
       "title": "validation Module"
@@ -2748,6 +2792,7 @@
         "modules/input.md",
         "modules/inspect-proof.md",
         "modules/jobs.md",
+        "modules/mainnet.md",
         "modules/memory_monitor.md",
         "modules/msg.md",
         "modules/mtp_failure.md",
@@ -2756,8 +2801,8 @@
         "modules/mtp_success.md",
         "modules/not_pod.md",
         "modules/observability.md",
-        "modules/p2p_sync.md",
         "modules/params_src_lib.md",
+        "modules/params_src_networks_mod.md",
         "modules/params_src_tests_mod.md",
         "modules/pipeline_verify.md",
         "modules/platform.md",
@@ -2776,6 +2821,7 @@
         "modules/sha256_const_src_tests_mod.md",
         "modules/sha256_src_lib.md",
         "modules/sha256_src_tests_mod.md",
+        "modules/short_epoch.md",
         "modules/sp1-stress.md",
         "modules/src_bigint.md",
         "modules/src_brand.md",
@@ -2878,6 +2924,7 @@
         "modules/input.md",
         "modules/inspect-proof.md",
         "modules/jobs.md",
+        "modules/mainnet.md",
         "modules/memory_monitor.md",
         "modules/msg.md",
         "modules/mtp_failure.md",
@@ -2886,8 +2933,8 @@
         "modules/mtp_success.md",
         "modules/not_pod.md",
         "modules/observability.md",
-        "modules/p2p_sync.md",
         "modules/params_src_lib.md",
+        "modules/params_src_networks_mod.md",
         "modules/params_src_tests_mod.md",
         "modules/pipeline_verify.md",
         "modules/platform.md",
@@ -2906,6 +2953,7 @@
         "modules/sha256_const_src_tests_mod.md",
         "modules/sha256_src_lib.md",
         "modules/sha256_src_tests_mod.md",
+        "modules/short_epoch.md",
         "modules/sp1-stress.md",
         "modules/src_bigint.md",
         "modules/src_brand.md",
@@ -2974,5 +3022,5 @@
     }
   ],
   "schema_version": "llm-wiki-surface-index/v1",
-  "source_hash": "sha256:135ade98a2c2415b1092fd76a5902583c93a00d69feedba7f2cac354ba2fe6fe"
+  "source_hash": "sha256:98b43284ab0d2876693fc68093ab33de41d41bcb2454d95f5547cb3b5922a210"
 }

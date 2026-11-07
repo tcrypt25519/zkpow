@@ -1,9 +1,9 @@
 # Mainnet
 
-**Location:** `crates/params/src/lib.rs:47`
+**Location:** `crates/params/src/networks/mainnet.rs:5`
 **Kind:** Class
 **Bases:** `Consensus`
-**Module:** [params_src_lib](../modules/params_src_lib.md)
+**Module:** [mainnet](../modules/mainnet.md)
 
 ## Description
 
@@ -22,10 +22,10 @@ Bitcoin mainnet.
 <!-- Auto-generated relationship summary. Do not edit by hand. -->
 ```mermaid
 flowchart LR
-    n0["Mainnet (crates/params/src/lib.rs)"]
+    n0["Mainnet (crates/params/src/networks/mainnet.rs)"]
     n1["Consensus (crates/params/src/consensus.rs)"]
     n0 --> n1
-    click n0 "../modules/params_src_lib.md"
+    click n0 "../modules/mainnet.md"
     click n1 "../modules/consensus.md"
 ```
 
@@ -33,7 +33,7 @@ flowchart LR
 
 | Module | Methods | Attributes |
 |---|---:|---|
-| [params_src_lib](../modules/params_src_lib.md) | 0 | — |
+| [mainnet](../modules/mainnet.md) | 0 | — |
 
 ### Structure
 

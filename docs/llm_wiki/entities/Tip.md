@@ -1,6 +1,6 @@
 # Tip
 
-**Location:** `crates/sync-headers/src/types.rs:25`
+**Location:** `crates/sync-headers/src/types.rs:27`
 **Kind:** Class
 **Bases:** —
 **Module:** [src_types](../modules/src_types.md)
@@ -18,8 +18,7 @@ The tip of the best known chain.
 | `hash` | `BlockHash` | *required* | — |
 | `height` | `u32` | *required* | — |
 | `chainwork` | `ChainWork` | *required* | — |
-| `timestamps` | `[u32 ; WINDOW_SIZE]` | *required* | — |
-| `ordered_timestamp_run` | `u64` | *required* | — |
+| `timestamps` | `Window` | *required* | — |
 | `epoch_timestamp` | `u32` | *required* | — |
 | `target_triplet` | `TargetTriplet` | *required* | — |
 
@@ -27,7 +26,7 @@ The tip of the best known chain.
 
 | Method | Signature | Decorators | Description |
 |--------|-----------|------------|-------------|
-| `new` | `(hash: BlockHash, height: u32, chainwork: ChainWork, timestamps: [u32 ; WINDOW_SIZE], ordered_timestamp_run: u64, epoch_timestamp: u32, target_triplet: TargetTriplet) -> Self` | — | — |
+| `new` | `(hash: BlockHash, height: u32, chainwork: ChainWork, timestamps: Window, epoch_timestamp: u32, target_triplet: TargetTriplet) -> Self` | — | — |
 | `genesis` | `(hash: BlockHash) -> Self` | — | — |
 
 ## Relationships
@@ -39,4 +38,4 @@ The tip of the best known chain.
 
 | Module | Methods | Attributes |
 |---|---:|---|
-| [src_types](../modules/src_types.md) | 2 | `chainwork`, `epoch_timestamp`, `hash`, `height`, `ordered_timestamp_run`, `target_triplet`, `timestamps` |
+| [src_types](../modules/src_types.md) | 2 | `chainwork`, `epoch_timestamp`, `hash`, `height`, `target_triplet`, `timestamps` |

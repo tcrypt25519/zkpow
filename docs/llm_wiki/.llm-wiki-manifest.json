@@ -1,8 +1,8 @@
 {
   "artifact_hashes": {
-    "evaluated_envelope_hash": "sha256:5c189901233e4d3dd63732e09a119fc474f5b86550a166560cd7ae5fe3552384",
-    "knowledge_index_hash": "sha256:61f7337ce6979d4020b90324e4f1301d739fddc5ce52cdccc6866c358993152e",
-    "surface_index_hash": "sha256:aa1258a84200b3b8d4c5e383b2450327fba67c544d9f6a8d5b2dbc9d794f1da4"
+    "evaluated_envelope_hash": "sha256:67fa08aa3923129ec06268125bcc589db4fe3f0d254189e14bdfd8303c2d687f",
+    "knowledge_index_hash": "sha256:e203053544c53f601cd63a84573b24aed9ec3ea4d512e56815cdae5d86f16579",
+    "surface_index_hash": "sha256:d22978d8e6a2a9cf1b55d01c4398b5daf7f210e2745afa5056938e9079370382"
   },
   "evidence_baselines": {
     "entities/ApplyError.md": {
@@ -45,16 +45,6 @@
       },
       "state": "known"
     },
-    "entities/Cold.md": {
-      "basis": {
-        "concept_observation_hash": "sha256:f5b25d08ae0a1f9449a92f92423ec35baf93a619184b3a5310c0fefa860d695a",
-        "extractor_ref": "llm-wiki/extractor/rust",
-        "scope": "entity",
-        "source_content_hash": "sha256:3d8d9cc7e6ed0c7309689267972b2c15613bb53f594e1e31ccadaa2e4e706a8d",
-        "source_path": "crates/mtp/src/ring.rs"
-      },
-      "state": "known"
-    },
     "entities/Command.md": {
       "basis": {
         "concept_observation_hash": "sha256:619a07e4106833b0263701cee81d7838e8c4f3ce8d90f20e452c02dbb428c87c",
@@ -67,10 +57,10 @@
     },
     "entities/ConnectedHeader.md": {
       "basis": {
-        "concept_observation_hash": "sha256:56f50512971d4ad593afee442be3e3367dc415dedbed1984502c37c782875068",
+        "concept_observation_hash": "sha256:19ee91ea9099c0563529ad26fd2921f1b159f1bfd62b697cd0b4c77e0fac5323",
         "extractor_ref": "llm-wiki/extractor/rust",
         "scope": "entity",
-        "source_content_hash": "sha256:f67832f49859c93d8e7b68ee1fd7c9486b679530dd2b2ac3a522ab283c344434",
+        "source_content_hash": "sha256:b0c0224fa496f35fac85325a5542372812dafe217d89856fcd00417058396a2e",
         "source_path": "crates/sync-headers/src/types.rs"
       },
       "state": "known"
@@ -80,7 +70,7 @@
         "concept_observation_hash": "sha256:e57d01a6791548e098a082c824fda26468ab8a6acde86f59312118c7f44872da",
         "extractor_ref": "llm-wiki/extractor/rust",
         "scope": "entity",
-        "source_content_hash": "sha256:9cb7f6026e248ae858dcf88a4461638080cea3ecdf3c586582c2b86feb185424",
+        "source_content_hash": "sha256:2dce8105131aa7f26923a76f67c1cc6cd763ab095d2308635fd5b33564c7018a",
         "source_path": "crates/sync-headers/src/error.rs"
       },
       "state": "known"
@@ -90,7 +80,7 @@
         "concept_observation_hash": "sha256:5b57a2cab897205833da5d7c71d174e78398592c33fdb9c573412e26ece3ef52",
         "extractor_ref": "llm-wiki/extractor/rust",
         "scope": "entity",
-        "source_content_hash": "sha256:78466c75c246137651660609b52e5602c5dc685da67f4974e84a61feacc6e7ea",
+        "source_content_hash": "sha256:53948e10bf0c65a0808e6c7dec3fec6c3bbdb48076fccaf8aa635208d7bc911d",
         "source_path": "crates/params/src/consensus.rs"
       },
       "state": "known"
@@ -100,7 +90,7 @@
         "concept_observation_hash": "sha256:e033ab0ede59f0191a7aaef305985dda11d589fba07fff949b8abd9d1e6bc05c",
         "extractor_ref": "llm-wiki/extractor/rust",
         "scope": "entity",
-        "source_content_hash": "sha256:78466c75c246137651660609b52e5602c5dc685da67f4974e84a61feacc6e7ea",
+        "source_content_hash": "sha256:53948e10bf0c65a0808e6c7dec3fec6c3bbdb48076fccaf8aa635208d7bc911d",
         "source_path": "crates/params/src/consensus.rs"
       },
       "state": "known"
@@ -140,7 +130,7 @@
         "concept_observation_hash": "sha256:459915c516946c77759747610cc8cbd4f1086835c4325fb804c83d045c2e92c1",
         "extractor_ref": "llm-wiki/extractor/rust",
         "scope": "entity",
-        "source_content_hash": "sha256:f18a6459f8dcb14a058a314cfaf9295ac2e054125253b2fbc26d197f23a1cd82",
+        "source_content_hash": "sha256:bf42623caa39ec010f59416fdc1c74bb3f43467b328608fced4fb1cce51bfc17",
         "source_path": "crates/store/src/db.rs"
       },
       "state": "known"
@@ -170,7 +160,7 @@
         "concept_observation_hash": "sha256:b079f45686fc9358dd8d909ad6a9f5a326b905c9e01698edc42b4d95bc798690",
         "extractor_ref": "llm-wiki/extractor/rust",
         "scope": "entity",
-        "source_content_hash": "sha256:f18a6459f8dcb14a058a314cfaf9295ac2e054125253b2fbc26d197f23a1cd82",
+        "source_content_hash": "sha256:bf42623caa39ec010f59416fdc1c74bb3f43467b328608fced4fb1cce51bfc17",
         "source_path": "crates/store/src/db.rs"
       },
       "state": "known"
@@ -197,10 +187,10 @@
     },
     "entities/HeaderRecord.md": {
       "basis": {
-        "concept_observation_hash": "sha256:3f1d0889ee64b2b4a7e3d373f68e63cd9178b9ab6f9933644e1005de63f1b168",
+        "concept_observation_hash": "sha256:d374e5a37472009e7a803bb3ad7b41522b6dfeafb47d0d510a24a935e3916dc4",
         "extractor_ref": "llm-wiki/extractor/rust",
         "scope": "entity",
-        "source_content_hash": "sha256:f18a6459f8dcb14a058a314cfaf9295ac2e054125253b2fbc26d197f23a1cd82",
+        "source_content_hash": "sha256:bf42623caa39ec010f59416fdc1c74bb3f43467b328608fced4fb1cce51bfc17",
         "source_path": "crates/store/src/db.rs"
       },
       "state": "known"
@@ -210,7 +200,7 @@
         "concept_observation_hash": "sha256:c2dbe1cf871017d42f0f6715bc79a32e3f0ed386fbbbc13066ebbe8543d8859e",
         "extractor_ref": "llm-wiki/extractor/rust",
         "scope": "entity",
-        "source_content_hash": "sha256:f18a6459f8dcb14a058a314cfaf9295ac2e054125253b2fbc26d197f23a1cd82",
+        "source_content_hash": "sha256:bf42623caa39ec010f59416fdc1c74bb3f43467b328608fced4fb1cce51bfc17",
         "source_path": "crates/store/src/db.rs"
       },
       "state": "known"
@@ -220,17 +210,7 @@
         "concept_observation_hash": "sha256:e0e9e29cf77d6340078b01ad4e2c38cfa45a768ce924cff27f28b284ce793dca",
         "extractor_ref": "llm-wiki/extractor/rust",
         "scope": "entity",
-        "source_content_hash": "sha256:524fa1f4255cf236ac809f4ba29d305fc9c6f62678f897acad47d51ed262fd85",
-        "source_path": "crates/mtp/src/errors.rs"
-      },
-      "state": "known"
-    },
-    "entities/InvalidParts.md": {
-      "basis": {
-        "concept_observation_hash": "sha256:0321d8b64b7bc542ab1e90c74bfc6ef78c51d9d32e825ea04ccf00a597f4f7db",
-        "extractor_ref": "llm-wiki/extractor/rust",
-        "scope": "entity",
-        "source_content_hash": "sha256:524fa1f4255cf236ac809f4ba29d305fc9c6f62678f897acad47d51ed262fd85",
+        "source_content_hash": "sha256:97048fc21b6c9b4326ae07394471623e3a3eb2fbbe7c2a904d46d974778a5439",
         "source_path": "crates/mtp/src/errors.rs"
       },
       "state": "known"
@@ -250,8 +230,8 @@
         "concept_observation_hash": "sha256:e4ad040d7d726cb7997070cb88fa6729daebe1530d4364a02bca47bef0563979",
         "extractor_ref": "llm-wiki/extractor/rust",
         "scope": "entity",
-        "source_content_hash": "sha256:52032f1a760ac242ae9a4926ef502f099748ba8745e342d80e4db18149a1fa7b",
-        "source_path": "crates/params/src/lib.rs"
+        "source_content_hash": "sha256:23ba0cb248a5b43f7718878a8e636368a10c4573cc94103c46f35f7811eb42df",
+        "source_path": "crates/params/src/networks/mainnet.rs"
       },
       "state": "known"
     },
@@ -260,7 +240,7 @@
         "concept_observation_hash": "sha256:ff86057ebbfc708c0629e046a73f37887a723fa2f865ddc2a5f8bcc821a6695f",
         "extractor_ref": "llm-wiki/extractor/rust",
         "scope": "entity",
-        "source_content_hash": "sha256:f67832f49859c93d8e7b68ee1fd7c9486b679530dd2b2ac3a522ab283c344434",
+        "source_content_hash": "sha256:b0c0224fa496f35fac85325a5542372812dafe217d89856fcd00417058396a2e",
         "source_path": "crates/sync-headers/src/types.rs"
       },
       "state": "known"
@@ -277,10 +257,10 @@
     },
     "entities/NotMedian.md": {
       "basis": {
-        "concept_observation_hash": "sha256:4f405404c2fd09b5887a8c6f85333603a113a2c6807558bf81e027a41b5cb676",
+        "concept_observation_hash": "sha256:d2b31f29ed163cf03456b38062cb6af9b3b5b2e433fe7c89401e152ec410fa27",
         "extractor_ref": "llm-wiki/extractor/rust",
         "scope": "entity",
-        "source_content_hash": "sha256:524fa1f4255cf236ac809f4ba29d305fc9c6f62678f897acad47d51ed262fd85",
+        "source_content_hash": "sha256:97048fc21b6c9b4326ae07394471623e3a3eb2fbbe7c2a904d46d974778a5439",
         "source_path": "crates/mtp/src/errors.rs"
       },
       "state": "known"
@@ -410,7 +390,7 @@
         "concept_observation_hash": "sha256:b5a6e1aa5263ec6dfdf2c68b042535fc1aeeeaf0b08fed869b3483eee17b8582",
         "extractor_ref": "llm-wiki/extractor/rust",
         "scope": "entity",
-        "source_content_hash": "sha256:f18a6459f8dcb14a058a314cfaf9295ac2e054125253b2fbc26d197f23a1cd82",
+        "source_content_hash": "sha256:bf42623caa39ec010f59416fdc1c74bb3f43467b328608fced4fb1cce51bfc17",
         "source_path": "crates/store/src/db.rs"
       },
       "state": "known"
@@ -420,7 +400,7 @@
         "concept_observation_hash": "sha256:02d7525d92886882dcf40f3aef8ddb5af2c32c92fe201dda56fe9a1a59ef89df",
         "extractor_ref": "llm-wiki/extractor/rust",
         "scope": "entity",
-        "source_content_hash": "sha256:f18a6459f8dcb14a058a314cfaf9295ac2e054125253b2fbc26d197f23a1cd82",
+        "source_content_hash": "sha256:bf42623caa39ec010f59416fdc1c74bb3f43467b328608fced4fb1cce51bfc17",
         "source_path": "crates/store/src/db.rs"
       },
       "state": "known"
@@ -437,10 +417,10 @@
     },
     "entities/Ring.md": {
       "basis": {
-        "concept_observation_hash": "sha256:58f07594211da85b61f012b8ed883cb5196ffea49266fab51ed8f07cc97f27af",
+        "concept_observation_hash": "sha256:016e079b41e75686c2151761400ef54aeef475e3599325bbad5ca045d6a34230",
         "extractor_ref": "llm-wiki/extractor/rust",
         "scope": "entity",
-        "source_content_hash": "sha256:3d8d9cc7e6ed0c7309689267972b2c15613bb53f594e1e31ccadaa2e4e706a8d",
+        "source_content_hash": "sha256:1a4c5dc7ff78c01bdda819e285564dc30fb7bd946e1e70c0d6da77e4586a435b",
         "source_path": "crates/mtp/src/ring.rs"
       },
       "state": "known"
@@ -450,7 +430,7 @@
         "concept_observation_hash": "sha256:4605309fbb7306b389aa58c157b200b7098882f0249be1aff953e041dacd4c80",
         "extractor_ref": "llm-wiki/extractor/rust",
         "scope": "entity",
-        "source_content_hash": "sha256:3d8d9cc7e6ed0c7309689267972b2c15613bb53f594e1e31ccadaa2e4e706a8d",
+        "source_content_hash": "sha256:1a4c5dc7ff78c01bdda819e285564dc30fb7bd946e1e70c0d6da77e4586a435b",
         "source_path": "crates/mtp/src/ring.rs"
       },
       "state": "known"
@@ -480,7 +460,7 @@
         "concept_observation_hash": "sha256:9cf18a7c578a8a98fe0535d634a28310a206a6954e6bec9c046ab21ba5c0d198",
         "extractor_ref": "llm-wiki/extractor/rust",
         "scope": "entity",
-        "source_content_hash": "sha256:f18a6459f8dcb14a058a314cfaf9295ac2e054125253b2fbc26d197f23a1cd82",
+        "source_content_hash": "sha256:bf42623caa39ec010f59416fdc1c74bb3f43467b328608fced4fb1cce51bfc17",
         "source_path": "crates/store/src/db.rs"
       },
       "state": "known"
@@ -490,8 +470,8 @@
         "concept_observation_hash": "sha256:0cb19203015b88505c560175b47420071576baed5a6bd801e49dc2efc26c31f1",
         "extractor_ref": "llm-wiki/extractor/rust",
         "scope": "entity",
-        "source_content_hash": "sha256:52032f1a760ac242ae9a4926ef502f099748ba8745e342d80e4db18149a1fa7b",
-        "source_path": "crates/params/src/lib.rs"
+        "source_content_hash": "sha256:72143a75c08eb7dff6b9db31e36e5e4e1aae26234eee8d51c661ea3b5c9e5726",
+        "source_path": "crates/params/src/networks/short_epoch.rs"
       },
       "state": "known"
     },
@@ -510,18 +490,8 @@
         "concept_observation_hash": "sha256:8ba2a83e93e2296cc8ccec4ea1bd5213390b546e470eb56b4d49f44896cd6070",
         "extractor_ref": "llm-wiki/extractor/rust",
         "scope": "entity",
-        "source_content_hash": "sha256:d49f2ca4638a51a4cbcc2b9fe255029a1951006f025bfdcadeae3dcd57d40670",
+        "source_content_hash": "sha256:18dfef95ef8c018d4292cbe4057f1aa0a46deb95e747ce6777d4280ac7baf45d",
         "source_path": "crates/core/src/state.rs"
-      },
-      "state": "known"
-    },
-    "entities/SyncHeadersError.md": {
-      "basis": {
-        "concept_observation_hash": "sha256:79005c6330d468a441a73c57e2ac53dece6a09e7ead175f581220e788090c55b",
-        "extractor_ref": "llm-wiki/extractor/rust",
-        "scope": "entity",
-        "source_content_hash": "sha256:9cb7f6026e248ae858dcf88a4461638080cea3ecdf3c586582c2b86feb185424",
-        "source_path": "crates/sync-headers/src/error.rs"
       },
       "state": "known"
     },
@@ -537,11 +507,21 @@
     },
     "entities/Tip.md": {
       "basis": {
-        "concept_observation_hash": "sha256:4593594aa99a9b1646215c69a097ca495953016708c5e32d5b4c23dce66fbd7c",
+        "concept_observation_hash": "sha256:4f9a6d832ec42efeb91a57de724ad7d486c3e5285f1cabd419f76294335f81bc",
         "extractor_ref": "llm-wiki/extractor/rust",
         "scope": "entity",
-        "source_content_hash": "sha256:f67832f49859c93d8e7b68ee1fd7c9486b679530dd2b2ac3a522ab283c344434",
+        "source_content_hash": "sha256:b0c0224fa496f35fac85325a5542372812dafe217d89856fcd00417058396a2e",
         "source_path": "crates/sync-headers/src/types.rs"
+      },
+      "state": "known"
+    },
+    "entities/ValidationError.md": {
+      "basis": {
+        "concept_observation_hash": "sha256:cdf83b3375b2f54b1ba9acaade0d4deb1fd70e4513772b0c686396e235ee1ff7",
+        "extractor_ref": "llm-wiki/extractor/rust",
+        "scope": "entity",
+        "source_content_hash": "sha256:c09598321db246308d3a13b2ddf90f95dcc2cf16ffcde18ec15fc399d2c61ee3",
+        "source_path": "crates/sync-headers/src/validation.rs"
       },
       "state": "known"
     },
@@ -565,22 +545,12 @@
       },
       "state": "known"
     },
-    "entities/Warm.md": {
-      "basis": {
-        "concept_observation_hash": "sha256:9c4cceb85fcaaaca52255b413014733abf18cc3a35f620a67894dbe71f4764cd",
-        "extractor_ref": "llm-wiki/extractor/rust",
-        "scope": "entity",
-        "source_content_hash": "sha256:3d8d9cc7e6ed0c7309689267972b2c15613bb53f594e1e31ccadaa2e4e706a8d",
-        "source_path": "crates/mtp/src/ring.rs"
-      },
-      "state": "known"
-    },
     "entities/Window.md": {
       "basis": {
-        "concept_observation_hash": "sha256:40349660775f1699b31e6874db27bfb1e0ce95431d577ad1ad702c630b82ec8e",
+        "concept_observation_hash": "sha256:87c0cf8809ebdfb1df5e49bcf5b0d1fe261fd4d04729a64c1b66f14c9615c852",
         "extractor_ref": "llm-wiki/extractor/rust",
         "scope": "entity",
-        "source_content_hash": "sha256:3d8d9cc7e6ed0c7309689267972b2c15613bb53f594e1e31ccadaa2e4e706a8d",
+        "source_content_hash": "sha256:1a4c5dc7ff78c01bdda819e285564dc30fb7bd946e1e70c0d6da77e4586a435b",
         "source_path": "crates/mtp/src/ring.rs"
       },
       "state": "known"
@@ -590,7 +560,7 @@
         "concept_observation_hash": "sha256:3e0f39c03c5455bc85b64d0900c1091f0a294ee82ae3fe5c07fd1c779e50d3f9",
         "extractor_ref": "llm-wiki/extractor/rust",
         "scope": "entity",
-        "source_content_hash": "sha256:3d8d9cc7e6ed0c7309689267972b2c15613bb53f594e1e31ccadaa2e4e706a8d",
+        "source_content_hash": "sha256:1a4c5dc7ff78c01bdda819e285564dc30fb7bd946e1e70c0d6da77e4586a435b",
         "source_path": "crates/mtp/src/ring.rs"
       },
       "state": "known"
@@ -640,7 +610,7 @@
         "concept_observation_hash": "sha256:3330625c1132b561c8db230f1175c1df166d3e8c9afaa29445438769c83d9497",
         "extractor_ref": "llm-wiki/extractor/rust",
         "scope": "entity",
-        "source_content_hash": "sha256:f67832f49859c93d8e7b68ee1fd7c9486b679530dd2b2ac3a522ab283c344434",
+        "source_content_hash": "sha256:b0c0224fa496f35fac85325a5542372812dafe217d89856fcd00417058396a2e",
         "source_path": "crates/sync-headers/src/types.rs"
       },
       "state": "known"
@@ -697,10 +667,10 @@
     },
     "modules/cli_src_main.md": {
       "basis": {
-        "concept_observation_hash": "sha256:9a6fc62080f87ce71bd85ffe9ba1da698c67b0703d405e25b886bd5128373be4",
+        "concept_observation_hash": "sha256:c3d29e01819c9e1daa4342e62c3203986512aec6001bb9b3621ceb5c59e1a329",
         "extractor_ref": "llm-wiki/extractor/rust",
         "scope": "module",
-        "source_content_hash": "sha256:d9494b400ee20413a61743d2ae5bec5f517b2168ebdba39700d5c4ae84b4e578",
+        "source_content_hash": "sha256:8fcdcf9f4ebea6c34b51b94e6e9e61f94e24a50712c053a437cb019d9288baee",
         "source_path": "crates/cli/src/main.rs"
       },
       "state": "known"
@@ -730,7 +700,7 @@
         "concept_observation_hash": "sha256:ef09f7b4783f53ca67857da0a04c242e7824e4e09439ce11caf7e12679a0c75c",
         "extractor_ref": "llm-wiki/extractor/rust",
         "scope": "module",
-        "source_content_hash": "sha256:78466c75c246137651660609b52e5602c5dc685da67f4974e84a61feacc6e7ea",
+        "source_content_hash": "sha256:53948e10bf0c65a0808e6c7dec3fec6c3bbdb48076fccaf8aa635208d7bc911d",
         "source_path": "crates/params/src/consensus.rs"
       },
       "state": "known"
@@ -747,10 +717,10 @@
     },
     "modules/controller_src_tests_mod.md": {
       "basis": {
-        "concept_observation_hash": "sha256:b4c62e07e59acad710ed774e014119820e6924dbc2ca79d31355137a5baf77bd",
+        "concept_observation_hash": "sha256:b2b9a83693cdcb1c8be17994484c2e96fb6cfca267a7639f799c1798d3b8b2dc",
         "extractor_ref": "llm-wiki/extractor/rust",
         "scope": "module",
-        "source_content_hash": "sha256:82faeb280a79083575704076ac5d1921f746e41f2c07b985cfffe33ecf18aed1",
+        "source_content_hash": "sha256:d006c32d62a2a1709b96ccbd83863ccd2ec4ae3f0ca6f14fae9f1c5a99b0f412",
         "source_path": "crates/controller/src/tests/mod.rs"
       },
       "state": "known"
@@ -817,10 +787,10 @@
     },
     "modules/error.md": {
       "basis": {
-        "concept_observation_hash": "sha256:d576caf4c5fcb67bdf6e249524d73d03bc5560004529a9138e3265801677d010",
+        "concept_observation_hash": "sha256:e8aee33b47ac2c787d0a2af42d7929eae343fd02bee3415d2197811a6331e403",
         "extractor_ref": "llm-wiki/extractor/rust",
         "scope": "module",
-        "source_content_hash": "sha256:9cb7f6026e248ae858dcf88a4461638080cea3ecdf3c586582c2b86feb185424",
+        "source_content_hash": "sha256:2dce8105131aa7f26923a76f67c1cc6cd763ab095d2308635fd5b33564c7018a",
         "source_path": "crates/sync-headers/src/error.rs"
       },
       "state": "known"
@@ -955,6 +925,16 @@
       },
       "state": "known"
     },
+    "modules/mainnet.md": {
+      "basis": {
+        "concept_observation_hash": "sha256:eb3e7099496480945e791b224611f6ce46bb631f3eb6da81a026db4abf98e541",
+        "extractor_ref": "llm-wiki/extractor/rust",
+        "scope": "module",
+        "source_content_hash": "sha256:23ba0cb248a5b43f7718878a8e636368a10c4573cc94103c46f35f7811eb42df",
+        "source_path": "crates/params/src/networks/mainnet.rs"
+      },
+      "state": "known"
+    },
     "modules/memory_monitor.md": {
       "basis": {
         "concept_observation_hash": "sha256:948f72657538174b39cbe213f149fd895bb4f6a5af7182532cb590f11c092013",
@@ -987,20 +967,20 @@
     },
     "modules/mtp_src_errors.md": {
       "basis": {
-        "concept_observation_hash": "sha256:145042ce77f7530c46faa260f5a89665590c82cf6d0e1618b69b1eadb481cd41",
+        "concept_observation_hash": "sha256:d45b5823ad010e2ac2e35c9a4fdd67d66d74b08ea3eb9a0fd3ced2212b634e7e",
         "extractor_ref": "llm-wiki/extractor/rust",
         "scope": "module",
-        "source_content_hash": "sha256:524fa1f4255cf236ac809f4ba29d305fc9c6f62678f897acad47d51ed262fd85",
+        "source_content_hash": "sha256:97048fc21b6c9b4326ae07394471623e3a3eb2fbbe7c2a904d46d974778a5439",
         "source_path": "crates/mtp/src/errors.rs"
       },
       "state": "known"
     },
     "modules/mtp_src_lib.md": {
       "basis": {
-        "concept_observation_hash": "sha256:d1827f9683cf29e7d89e2974f5c85c98cdb91cb54b7588ef3d45f4ceb29d9d89",
+        "concept_observation_hash": "sha256:54d3ebb4308532e5b9f6e1f1020e8dccd88086fd1811833ae49f8755ceea22a5",
         "extractor_ref": "llm-wiki/extractor/rust",
         "scope": "module",
-        "source_content_hash": "sha256:426f96f5e905d521c729e5389cab93a349d71d38e3e0e688eb9f041afa05125f",
+        "source_content_hash": "sha256:deb9ae3036e00701a8ec47beb01ab6f8d39280d31065aa0d18c52e76f44c119d",
         "source_path": "crates/mtp/src/lib.rs"
       },
       "state": "known"
@@ -1035,32 +1015,32 @@
       },
       "state": "known"
     },
-    "modules/p2p_sync.md": {
+    "modules/params_src_lib.md": {
       "basis": {
-        "concept_observation_hash": "sha256:7c73398e99ace298aa9bc722133aebb6cd6beb4801e7265650368bda8b66d162",
+        "concept_observation_hash": "sha256:76dad0ad431889153d14101657675a01c485314fa8fd1cb3fd11596c78392366",
         "extractor_ref": "llm-wiki/extractor/rust",
         "scope": "module",
-        "source_content_hash": "sha256:f94c29b4b5392a7a42a90925eaa9fe9d012d089b2a6ed7682bc68a6b6499e1e0",
-        "source_path": "crates/sync-headers/src/p2p_sync.rs"
+        "source_content_hash": "sha256:9336ff20bfcccf8c8d4fa4dfe114a09a8004eaa60868706d45d146a544b5b73b",
+        "source_path": "crates/params/src/lib.rs"
       },
       "state": "known"
     },
-    "modules/params_src_lib.md": {
+    "modules/params_src_networks_mod.md": {
       "basis": {
-        "concept_observation_hash": "sha256:db90352206f9a737e4e463462863d23cefecd0a6cfb28ff8ab10e29a017975e1",
+        "concept_observation_hash": "sha256:7e03f0a2b85b766008e86bd437c9141a182d73d441db5d102b9940c802ce7cfd",
         "extractor_ref": "llm-wiki/extractor/rust",
         "scope": "module",
-        "source_content_hash": "sha256:52032f1a760ac242ae9a4926ef502f099748ba8745e342d80e4db18149a1fa7b",
-        "source_path": "crates/params/src/lib.rs"
+        "source_content_hash": "sha256:28acdee69d553282e7937864d77d47166c428fa74fe0a3cd9a107388ecac7522",
+        "source_path": "crates/params/src/networks/mod.rs"
       },
       "state": "known"
     },
     "modules/params_src_tests_mod.md": {
       "basis": {
-        "concept_observation_hash": "sha256:91ac35c5cd4e560339be83a4465be2b7e476a84de8999697e764d6bbc216afe3",
+        "concept_observation_hash": "sha256:ba428b336a5f89e0b7d0103f465b3cc37302e8efab64b36c52ead50093ab206c",
         "extractor_ref": "llm-wiki/extractor/rust",
         "scope": "module",
-        "source_content_hash": "sha256:0c30dd0e303805823ce681ffbcd990390d8f627ccc950baace1e7cc1c9d9785c",
+        "source_content_hash": "sha256:5babac8a43bf8eaad4e309d062f6136994c8dd186b17dd3931d46a8b94703919",
         "source_path": "crates/params/src/tests/mod.rs"
       },
       "state": "known"
@@ -1177,10 +1157,10 @@
     },
     "modules/ring.md": {
       "basis": {
-        "concept_observation_hash": "sha256:16bfc6931cdc837e61c27c2bf9bc1e167e425412e10b1d27751ef8f49bc4764c",
+        "concept_observation_hash": "sha256:8d459deda7faba8815e54f0b9bf4111dab1198c2327f964ccead545235fcce23",
         "extractor_ref": "llm-wiki/extractor/rust",
         "scope": "module",
-        "source_content_hash": "sha256:3d8d9cc7e6ed0c7309689267972b2c15613bb53f594e1e31ccadaa2e4e706a8d",
+        "source_content_hash": "sha256:1a4c5dc7ff78c01bdda819e285564dc30fb7bd946e1e70c0d6da77e4586a435b",
         "source_path": "crates/mtp/src/ring.rs"
       },
       "state": "known"
@@ -1235,6 +1215,16 @@
       },
       "state": "known"
     },
+    "modules/short_epoch.md": {
+      "basis": {
+        "concept_observation_hash": "sha256:1290f7f7c5c943515420517e66f621cee075d7e25e49549c7685bf99fbf5f3cf",
+        "extractor_ref": "llm-wiki/extractor/rust",
+        "scope": "module",
+        "source_content_hash": "sha256:72143a75c08eb7dff6b9db31e36e5e4e1aae26234eee8d51c661ea3b5c9e5726",
+        "source_path": "crates/params/src/networks/short_epoch.rs"
+      },
+      "state": "known"
+    },
     "modules/sp1-stress.md": {
       "basis": {
         "concept_observation_hash": "sha256:0377b0bd200371adc2688fcccdd91ef164f1626394da709ca16161cfc8fc501f",
@@ -1257,10 +1247,10 @@
     },
     "modules/src_brand.md": {
       "basis": {
-        "concept_observation_hash": "sha256:65298f6d50d93d0214f0ba4670137d649d1f385e5d8ddd9975fdbd3860247b9d",
+        "concept_observation_hash": "sha256:6ab87cb85179c7acbf07f016e77dfa2700ca1ce7b93895a2026328629062bd38",
         "extractor_ref": "llm-wiki/extractor/rust",
         "scope": "module",
-        "source_content_hash": "sha256:1abd0fc1d048c04d2472d39ad86e9431832917a6f4b82af190d854aa03cecf0c",
+        "source_content_hash": "sha256:e649ffb8d3f24540c85fb531eb2fcc72b7f3b87e1865880c787a0107b01a6214",
         "source_path": "crates/types/src/brand.rs"
       },
       "state": "known"
@@ -1287,10 +1277,10 @@
     },
     "modules/src_db.md": {
       "basis": {
-        "concept_observation_hash": "sha256:9102a3891f26114b8f6ce57f4a3f2ee268986da1e702d5735d1d3b1e58e55e76",
+        "concept_observation_hash": "sha256:60bd9e3f3097424516d1ecacf45ca6368dde0c03ec7d08361105ba46ae9ec303",
         "extractor_ref": "llm-wiki/extractor/rust",
         "scope": "module",
-        "source_content_hash": "sha256:f18a6459f8dcb14a058a314cfaf9295ac2e054125253b2fbc26d197f23a1cd82",
+        "source_content_hash": "sha256:bf42623caa39ec010f59416fdc1c74bb3f43467b328608fced4fb1cce51bfc17",
         "source_path": "crates/store/src/db.rs"
       },
       "state": "known"
@@ -1447,20 +1437,20 @@
     },
     "modules/src_tests_validation.md": {
       "basis": {
-        "concept_observation_hash": "sha256:b82276137b0794954789d73e2d790dc318f3b7aebc516e63ed7ebba76817e741",
+        "concept_observation_hash": "sha256:2ec5ea25df1a012e0de543ca718843f564fdfcb65c24daa3180d7fd59ec49150",
         "extractor_ref": "llm-wiki/extractor/rust",
         "scope": "module",
-        "source_content_hash": "sha256:050b2d23cadd745691087b53e92fe191fa0eee706ded2854e7f6009275ea29c5",
+        "source_content_hash": "sha256:fba4c22b18ee8781efff5744aa775e96680e12528599120d64429b225bd047e0",
         "source_path": "crates/sync-headers/src/tests/validation.rs"
       },
       "state": "known"
     },
     "modules/src_types.md": {
       "basis": {
-        "concept_observation_hash": "sha256:49a377348dfff363665ad648cd8fdbbfe493205233ef309f6366b5401989950b",
+        "concept_observation_hash": "sha256:7ade807ffed64c13655a7d33bfb8ebb4111b28c352a2f7511a32f61c80c68a60",
         "extractor_ref": "llm-wiki/extractor/rust",
         "scope": "module",
-        "source_content_hash": "sha256:f67832f49859c93d8e7b68ee1fd7c9486b679530dd2b2ac3a522ab283c344434",
+        "source_content_hash": "sha256:b0c0224fa496f35fac85325a5542372812dafe217d89856fcd00417058396a2e",
         "source_path": "crates/sync-headers/src/types.rs"
       },
       "state": "known"
@@ -1477,30 +1467,30 @@
     },
     "modules/state.md": {
       "basis": {
-        "concept_observation_hash": "sha256:5548030dc3c54bbde7dd37a6e7d16d22abb32b3cdc1b8411483012e7e76f8162",
+        "concept_observation_hash": "sha256:7a23da67426e50f9900d048b508a7f5e1f8811791ae77ee3c82b31debdf962a5",
         "extractor_ref": "llm-wiki/extractor/rust",
         "scope": "module",
-        "source_content_hash": "sha256:d49f2ca4638a51a4cbcc2b9fe255029a1951006f025bfdcadeae3dcd57d40670",
+        "source_content_hash": "sha256:18dfef95ef8c018d4292cbe4057f1aa0a46deb95e747ce6777d4280ac7baf45d",
         "source_path": "crates/core/src/state.rs"
       },
       "state": "known"
     },
     "modules/state_failure.md": {
       "basis": {
-        "concept_observation_hash": "sha256:dd4dab60f26be2310b2b24984571afed16961c4d854fb70b69ecba7a87135484",
+        "concept_observation_hash": "sha256:feba180d3267b9ae25e1cdfbc3e3963f63d94b474c9b67c23dbb5ea35138d0e7",
         "extractor_ref": "llm-wiki/extractor/rust",
         "scope": "module",
-        "source_content_hash": "sha256:75378f816f324905242670032868288ba7c3c76117ae6a8f2e3d290888e6c9a5",
+        "source_content_hash": "sha256:5a48d3a54a72e4dcff027f718a7936586bffff09aeeea31b00f15858dd0fb76a",
         "source_path": "crates/core/src/tests/state/failure.rs"
       },
       "state": "known"
     },
     "modules/state_success.md": {
       "basis": {
-        "concept_observation_hash": "sha256:76ef13a5d0939651e3f9f3176986616e739eb65480b69f4582b4528fea1c1155",
+        "concept_observation_hash": "sha256:90c9fb2fa0e2f58bab4d433fa3f7c1ff72bf434cdb5d8793ed9f50218d460693",
         "extractor_ref": "llm-wiki/extractor/rust",
         "scope": "module",
-        "source_content_hash": "sha256:cf02a1bebd71af39ab07d4dcb50cff4a1222aab0f1a320d6537332ce848326cf",
+        "source_content_hash": "sha256:1a2bdd857892c4a74a475dad047295b4875bbf0f133b3f7fc438911f81d25394",
         "source_path": "crates/core/src/tests/state/success.rs"
       },
       "state": "known"
@@ -1537,10 +1527,10 @@
     },
     "modules/sync-headers_src_lib.md": {
       "basis": {
-        "concept_observation_hash": "sha256:e926706457b4e8b7a706abbb79f3bb800256268fb45d2de2549c02f70d930f61",
+        "concept_observation_hash": "sha256:db6a1d82608a1b5c9315a549b7a177759dadd2fb52df2298f98630edd3fa4310",
         "extractor_ref": "llm-wiki/extractor/rust",
         "scope": "module",
-        "source_content_hash": "sha256:89192189782e588c3356b163453349b23a5897a4722ab5b3d80b2f5a04d92855",
+        "source_content_hash": "sha256:d1c61bb3df88a344ccc7bbc653fba3d3c362ac0b8734149d273f1b0bbe3d9aae",
         "source_path": "crates/sync-headers/src/lib.rs"
       },
       "state": "known"
@@ -1557,10 +1547,10 @@
     },
     "modules/sync-headers_src_validation.md": {
       "basis": {
-        "concept_observation_hash": "sha256:c162670145dfc34d87b8b64b7fbe9581c59716e2fd482bc195b958caf597cf51",
+        "concept_observation_hash": "sha256:7e29625b459e521a42fd49ffaaea55342f6580fb8fd34bc88c60645ba8e87028",
         "extractor_ref": "llm-wiki/extractor/rust",
         "scope": "module",
-        "source_content_hash": "sha256:1e534b79b5b11a0fac068f7cedaf2664552a1960f722013b78e80f827c91fb55",
+        "source_content_hash": "sha256:c09598321db246308d3a13b2ddf90f95dcc2cf16ffcde18ec15fc399d2c61ee3",
         "source_path": "crates/sync-headers/src/validation.rs"
       },
       "state": "known"
@@ -1607,10 +1597,10 @@
     },
     "modules/tests.md": {
       "basis": {
-        "concept_observation_hash": "sha256:16a0d704c2056e16b10a814596f8d9246aa7fb544e5ebf5a617aea69cbdcb577",
+        "concept_observation_hash": "sha256:b8d65b4dba8e0c7125e8b2893f2d3275ba74e3414a453f7a361763f38e0123b3",
         "extractor_ref": "llm-wiki/extractor/rust",
         "scope": "module",
-        "source_content_hash": "sha256:14791abcf5c649cf99e04a41070d09cc5eacdbeb259c2b7506f97e758854c78d",
+        "source_content_hash": "sha256:877139d17eed81385eb0c81547038224b76be7e6bf119cb64920786b70fd9005",
         "source_path": "crates/mtp/src/tests.rs"
       },
       "state": "known"
@@ -1657,10 +1647,10 @@
     },
     "modules/tests_db.md": {
       "basis": {
-        "concept_observation_hash": "sha256:e79435454b46a0f94835239aef44b8861b87b7e4753ce1d89c7d334ac23fff92",
+        "concept_observation_hash": "sha256:82cec65b7867f066249da372949e7279e8c6019b58a43203b88556b24fb45242",
         "extractor_ref": "llm-wiki/extractor/rust",
         "scope": "module",
-        "source_content_hash": "sha256:818808b0c367601a6cba150f47d267253d9cb65f9dfcf41d06adf6d6c2bcedf4",
+        "source_content_hash": "sha256:d5a8ffbeb213f81cc566e8cf3023b3e05c8481cc52edb4ff3e391094a06b2724",
         "source_path": "crates/store/src/tests/db.rs"
       },
       "state": "known"
@@ -1911,13 +1901,13 @@
       "assets_hash": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
       "generation_options_hash": "sha256:963c315eb4f1d2b1fb73b2343d545b0268798643b4c9f247f8c3633bcff03442",
       "implementation_hash": "sha256:8596ac03b2791b3f863633ddcc0a10d922ff01511b2c5b163d4667763eafd5c0",
-      "inventory_hash": "sha256:62279f275f20786a831c771c4f6450a803625b210b715ac1ab3f423ae7de015a",
-      "lifecycle_hash": "sha256:ceb75f9fe97060f1a38b6fb24156937e85c053c4d16644588edce8d61410953c",
-      "markdown_snapshot_hash": "sha256:8865b6b29badb55e7e07ce39728af12b03cd365f53f5e770f66fb88b725a8124",
-      "observation_inputs_hash": "sha256:155da73d3b6943d6067eaff50b166a830ea17c40a99006d2f1d2a5127933e390",
+      "inventory_hash": "sha256:f9445f3d2c6f4feb076535f4a1f2a32ac14b1d8bb5602693b4a218fba585832e",
+      "lifecycle_hash": "sha256:e68d6b387009b47b1ab9dbb8b7ec340326eaa2fbbc11105b2b36dc5f8b79f611",
+      "markdown_snapshot_hash": "sha256:3ace398b98364ec98d09d20226aef6566f7e6ba59d4124fe9636f7a90a448ac0",
+      "observation_inputs_hash": "sha256:c61926aab795e6ea1c2931824b7862269d2ae9a356a76af6ad7fa80a3a2f0542",
       "repository_hash": "sha256:a0026ee4774300c8226d14f5cd8f683181a5cf8f3ddc93067872aed6014398e8",
       "schema_version": "llm-wiki-knowledge-reuse/v1",
-      "source_snapshot_hash": "sha256:ac1e9d09f7f3232e742c2279a042fd664e66aef2bbae55ac1f5f7f138ac9afde"
+      "source_snapshot_hash": "sha256:71615c73e42b759c698dea5351f536c3762f80fc6f4886b89b63a06d15bda632"
     },
     "llm-wiki/generation-options/v1": {
       "data_flow_enabled": true,
@@ -2096,7 +2086,7 @@
       "entity_name": "Mainnet",
       "occurrence": 1,
       "scope": "entity",
-      "source_path": "crates/params/src/lib.rs"
+      "source_path": "crates/params/src/networks/mainnet.rs"
     },
     "entities/Network.md": {
       "entity_name": "Network",
@@ -2240,7 +2230,7 @@
       "entity_name": "ShortEpoch",
       "occurrence": 1,
       "scope": "entity",
-      "source_path": "crates/params/src/lib.rs"
+      "source_path": "crates/params/src/networks/short_epoch.rs"
     },
     "entities/StageSample.md": {
       "entity_name": "StageSample",
@@ -2271,6 +2261,12 @@
       "occurrence": 1,
       "scope": "entity",
       "source_path": "crates/sync-headers/src/types.rs"
+    },
+    "entities/ValidationError.md": {
+      "entity_name": "ValidationError",
+      "occurrence": 1,
+      "scope": "entity",
+      "source_path": "crates/sync-headers/src/validation.rs"
     },
     "entities/VerifierKeyDigest.md": {
       "entity_name": "VerifierKeyDigest",
@@ -2480,6 +2476,10 @@
       "scope": "module",
       "source_path": "crates/worker/src/jobs.rs"
     },
+    "modules/mainnet.md": {
+      "scope": "module",
+      "source_path": "crates/params/src/networks/mainnet.rs"
+    },
     "modules/memory_monitor.md": {
       "scope": "module",
       "source_path": "crates/host/src/memory_monitor.rs"
@@ -2519,6 +2519,10 @@
     "modules/params_src_lib.md": {
       "scope": "module",
       "source_path": "crates/params/src/lib.rs"
+    },
+    "modules/params_src_networks_mod.md": {
+      "scope": "module",
+      "source_path": "crates/params/src/networks/mod.rs"
     },
     "modules/params_src_tests_mod.md": {
       "scope": "module",
@@ -2591,6 +2595,10 @@
     "modules/sha256_src_tests_mod.md": {
       "scope": "module",
       "source_path": "crates/sha256/src/tests/mod.rs"
+    },
+    "modules/short_epoch.md": {
+      "scope": "module",
+      "source_path": "crates/params/src/networks/short_epoch.rs"
     },
     "modules/sp1-stress.md": {
       "scope": "module",
@@ -2862,10 +2870,10 @@
           "functions": {}
         }
       },
-      "hash": "sha256:d9494b400ee20413a61743d2ae5bec5f517b2168ebdba39700d5c4ae84b4e578",
+      "hash": "sha256:8fcdcf9f4ebea6c34b51b94e6e9e61f94e24a50712c053a437cb019d9288baee",
       "language": "rust",
       "module_page": "cli_src_main",
-      "semantic_hash": "sha256:be6998807b3e1297f4957698fac21a782a3dede7dc6ee3be04705443d344de61"
+      "semantic_hash": "sha256:752c48f6348687be985e67fa8baf156e08e9ade04ae86816518a6676578a21f0"
     },
     "crates/controller/src/lib.rs": {
       "entities": [
@@ -3124,10 +3132,10 @@
           "functions": {}
         }
       },
-      "hash": "sha256:82faeb280a79083575704076ac5d1921f746e41f2c07b985cfffe33ecf18aed1",
+      "hash": "sha256:d006c32d62a2a1709b96ccbd83863ccd2ec4ae3f0ca6f14fae9f1c5a99b0f412",
       "language": "rust",
       "module_page": "controller_src_tests_mod",
-      "semantic_hash": "sha256:0d762492d6ed65d1f0d84bbd5182ecf0eb66606e34e93c059c650234aed562b1"
+      "semantic_hash": "sha256:66adcb517a298d5584ee3946e1fbe5e952d9a00c41342430983691f4bcae1404"
     },
     "crates/controller/src/tests/protocol.rs": {
       "entities": [],
@@ -3581,7 +3589,7 @@
             "description": "The canonical chain state the prover attests to and each batch of transitions starts\nfrom. While a batch is being applied it still describes the last committed header; it\nreflects the updated chain only after the batch commits.",
             "methods": {
               "anchor": "The state that follows the network's anchor header, derived from that header's own",
-              "apply_headers": "Apply headers while assuming the MTP window is full. The caller is responsible for only",
+              "apply_headers": "Apply headers using the current MTP window, including incomplete windows.",
               "apply_headers_from_genesis": "Apply the cold start batch. This is executed exactly once for a chain, applying the first `window_size - 1`"
             }
           }
@@ -3596,10 +3604,10 @@
           }
         }
       },
-      "hash": "sha256:d49f2ca4638a51a4cbcc2b9fe255029a1951006f025bfdcadeae3dcd57d40670",
+      "hash": "sha256:18dfef95ef8c018d4292cbe4057f1aa0a46deb95e747ce6777d4280ac7baf45d",
       "language": "rust",
       "module_page": "state",
-      "semantic_hash": "sha256:a7551636e318cf4df382ea6c2ab72dc8ebc12bc1e1718d2031fd61b797d0d1ac"
+      "semantic_hash": "sha256:ad36db8981bd99fc9c123b1d658819cea75f6a9b348a29adf35cb45ab1261f41"
     },
     "crates/core/src/tests/halt.rs": {
       "entities": [],
@@ -3851,10 +3859,10 @@
           "functions": {}
         }
       },
-      "hash": "sha256:75378f816f324905242670032868288ba7c3c76117ae6a8f2e3d290888e6c9a5",
+      "hash": "sha256:5a48d3a54a72e4dcff027f718a7936586bffff09aeeea31b00f15858dd0fb76a",
       "language": "rust",
       "module_page": "state_failure",
-      "semantic_hash": "sha256:b88ce82a8570725140d1769a9c1d0e0c0f6317b7a89ab78307b291dd525dbd14"
+      "semantic_hash": "sha256:3d93cde478e70341e506a9a6aed4c101629bc7ef14564b1861b1849a5e963736"
     },
     "crates/core/src/tests/state/mod.rs": {
       "entities": [],
@@ -3902,10 +3910,10 @@
           "functions": {}
         }
       },
-      "hash": "sha256:cf02a1bebd71af39ab07d4dcb50cff4a1222aab0f1a320d6537332ce848326cf",
+      "hash": "sha256:1a2bdd857892c4a74a475dad047295b4875bbf0f133b3f7fc438911f81d25394",
       "language": "rust",
       "module_page": "state_success",
-      "semantic_hash": "sha256:84c281542f0dcf329e9f09664e7ec34f54e45f8fc02f5ec3625715e2954dcd08"
+      "semantic_hash": "sha256:9f2a46028010e3f95344b98adf185a1fe4a616a9202372cabd8f16e4c5f16cbf"
     },
     "crates/guest/src/main.rs": {
       "entities": [],
@@ -4490,7 +4498,6 @@
     "crates/mtp/src/errors.rs": {
       "entities": [
         "NotMedian",
-        "InvalidParts",
         "InsufficientColdHeaders"
       ],
       "entity_page_occurrences": [
@@ -4500,11 +4507,6 @@
           "page": "NotMedian"
         },
         {
-          "name": "InvalidParts",
-          "occurrence": 1,
-          "page": "InvalidParts"
-        },
-        {
           "name": "InsufficientColdHeaders",
           "occurrence": 1,
           "page": "InsufficientColdHeaders"
@@ -4512,7 +4514,6 @@
       ],
       "entity_pages": {
         "InsufficientColdHeaders": "InsufficientColdHeaders",
-        "InvalidParts": "InvalidParts",
         "NotMedian": "NotMedian"
       },
       "generated_semantics": {
@@ -4529,17 +4530,9 @@
               "required": "—"
             }
           },
-          "InvalidParts": {
-            "attributes": {
-              "NextSlotOutOfBounds": "—",
-              "NotCold": "—",
-              "NotWarm": "—"
-            },
-            "description": "Why persisted ring parts could not be rebuilt in the requested fill state.",
-            "methods": {}
-          },
           "NotMedian": {
             "attributes": {
+              "MissingHint": "—",
               "TooNew": "—",
               "TooOld": "—"
             },
@@ -4552,17 +4545,16 @@
         "module": {
           "classes": {
             "InsufficientColdHeaders": "Why a header slice cannot be split into the cold prefix and warm remainder.",
-            "InvalidParts": "Why persisted ring parts could not be rebuilt in the requested fill state.",
             "NotMedian": "Why a claimed median is not the window's median."
           },
           "description": "_Auto-generated from `crates/mtp/src/errors.rs`._",
           "functions": {}
         }
       },
-      "hash": "sha256:524fa1f4255cf236ac809f4ba29d305fc9c6f62678f897acad47d51ed262fd85",
+      "hash": "sha256:97048fc21b6c9b4326ae07394471623e3a3eb2fbbe7c2a904d46d974778a5439",
       "language": "rust",
       "module_page": "mtp_src_errors",
-      "semantic_hash": "sha256:36c7cc5359b598960510d3d31df9ac57de1c81da1ab0b0db61ca438c294c406f"
+      "semantic_hash": "sha256:129db3879c934ee9b72cad31c9a054466ee8c87fc8305864249a57f6ee211212"
     },
     "crates/mtp/src/lib.rs": {
       "entities": [],
@@ -4574,29 +4566,19 @@
           "classes": {},
           "description": "_Auto-generated from `crates/mtp/src/lib.rs`._",
           "functions": {
-            "advance_ordered_timestamp_run": "Extend the run of nondecreasing links by one, or reset it to zero on a decrease.",
-            "has_ordered_timestamp_window": "Whether the run of nondecreasing links orders the entire window, pinning the median to a known slot.",
-            "median_timestamp": "The upper median of the populated slots, using the ordered run when available.",
-            "ordered_median_timestamp_slot": "The slot holding the median while the window ending at `height` is fully ordered.",
-            "ordered_timestamp_run": "Recount the nondecreasing links by walking the window backwards from the slot of `height`.",
-            "record_timestamp": "Record a timestamp in the window slot for its chain height.",
-            "requires_median_hint": "Whether the block at `height` needs a prover-supplied median: its window is full but not",
-            "split_off_cold_headers": "Splits headers into the prefix that fills an empty consensus window and the warm remainder.",
-            "timestamp_at": "Read the timestamp recorded for `height` in the persisted window."
+            "split_off_cold_headers": "Splits headers into the prefix that fills an empty consensus window and the warm remainder."
           }
         }
       },
-      "hash": "sha256:426f96f5e905d521c729e5389cab93a349d71d38e3e0e688eb9f041afa05125f",
+      "hash": "sha256:deb9ae3036e00701a8ec47beb01ab6f8d39280d31065aa0d18c52e76f44c119d",
       "language": "rust",
       "module_page": "mtp_src_lib",
-      "semantic_hash": "sha256:f295d2da85d7558642421c45340d4f19c7ebfd705d4f080416edefd46e8e8d17"
+      "semantic_hash": "sha256:4f2006a830122cccfa91b780baa9578b824cce45be21999f1b8789d57b505f0d"
     },
     "crates/mtp/src/ring.rs": {
       "entities": [
         "Window",
         "WindowValues",
-        "Cold",
-        "Warm",
         "RingValues",
         "Ring"
       ],
@@ -4612,16 +4594,6 @@
           "page": "WindowValues"
         },
         {
-          "name": "Cold",
-          "occurrence": 1,
-          "page": "Cold"
-        },
-        {
-          "name": "Warm",
-          "occurrence": 1,
-          "page": "Warm"
-        },
-        {
           "name": "RingValues",
           "occurrence": 1,
           "page": "RingValues"
@@ -4633,23 +4605,15 @@
         }
       ],
       "entity_pages": {
-        "Cold": "Cold",
         "Ring": "Ring",
         "RingValues": "RingValues",
-        "Warm": "Warm",
         "Window": "Window",
         "WindowValues": "WindowValues"
       },
       "generated_semantics": {
         "entities": {
-          "Cold": {
-            "attributes": {},
-            "description": "The ring holds fewer timestamps than its capacity.",
-            "methods": {}
-          },
           "Ring": {
             "attributes": {
-              "fill": "—",
               "last_value": "—",
               "len": "—",
               "next": "—",
@@ -4659,19 +4623,16 @@
             "description": "The last `N` timestamps, oldest overwritten first. `ordered_run` is the length of the\nnondecreasing run ending at the newest value, capped at `N`.",
             "methods": {
               "default": "—",
-              "from_parts": "Rebuilds a warm ring from its slots and next write position, which is also the oldest slot.",
-              "is_empty": "Whether the ring contains no timestamps.",
-              "is_value_median": "Checks a claimed median by rank.",
-              "len": "The number of timestamps currently held.",
-              "median": "The upper median in constant time, or `None` while the window holds a decrease.",
+              "from_height": "—",
+              "from_timestamps": "—",
+              "median": "—",
               "median_by_sort": "The upper median by sorting a copy of the values held, or `None` while empty.",
+              "median_with_hint": "—",
               "new": "Creates an empty ring.",
-              "new_values": "—",
               "newest": "The most recently pushed timestamp.",
-              "parts": "Returns the backing slots, next write position, and number of values held.",
               "push": "Inserts a timestamp, overwriting the oldest slot.",
-              "values": "—",
-              "warm": "Converts to a warm ring once every slot holds a timestamp."
+              "requires_median_hint": "—",
+              "values": "—"
             }
           },
           "RingValues": {
@@ -4679,17 +4640,10 @@
             "description": "_Auto-generated from `RingValues` in `crates/mtp/src/ring.rs`._",
             "methods": {}
           },
-          "Warm": {
-            "attributes": {},
-            "description": "Every slot in the ring holds a timestamp.",
-            "methods": {}
-          },
           "Window": {
             "attributes": {},
             "description": "The consensus timestamp window.",
-            "methods": {
-              "from_height": "Rebuild a warm consensus window from persisted slots at `height`."
-            }
+            "methods": {}
           },
           "WindowValues": {
             "attributes": {},
@@ -4699,21 +4653,21 @@
         },
         "module": {
           "classes": {
-            "Cold": "The ring holds fewer timestamps than its capacity.",
             "Ring": "The last `N` timestamps, oldest overwritten first. `ordered_run` is the length of the",
             "RingValues": "—",
-            "Warm": "Every slot in the ring holds a timestamp.",
             "Window": "The consensus timestamp window.",
             "WindowValues": "—"
           },
           "description": "_Auto-generated from `crates/mtp/src/ring.rs`._",
-          "functions": {}
+          "functions": {
+            "next": "—"
+          }
         }
       },
-      "hash": "sha256:3d8d9cc7e6ed0c7309689267972b2c15613bb53f594e1e31ccadaa2e4e706a8d",
+      "hash": "sha256:1a4c5dc7ff78c01bdda819e285564dc30fb7bd946e1e70c0d6da77e4586a435b",
       "language": "rust",
       "module_page": "ring",
-      "semantic_hash": "sha256:198acec0001b414c0bb0078bfcf9b1483a06cea768f4fb895355e98bfe373733"
+      "semantic_hash": "sha256:4d2182c8835f75797802e2d04bb43241cd4cb6300385881603190e360d5b55a9"
     },
     "crates/mtp/src/tests.rs": {
       "entities": [],
@@ -4727,10 +4681,10 @@
           "functions": {}
         }
       },
-      "hash": "sha256:14791abcf5c649cf99e04a41070d09cc5eacdbeb259c2b7506f97e758854c78d",
+      "hash": "sha256:877139d17eed81385eb0c81547038224b76be7e6bf119cb64920786b70fd9005",
       "language": "rust",
       "module_page": "tests",
-      "semantic_hash": "sha256:b367b247c02b0e42edfc2b79ac4d4e01763b539d46e5e58d5f3c481f565efcd4"
+      "semantic_hash": "sha256:af7739774492d2a03bec2869d89689b8ea11df9bcbf3c3a5c09aca7ac09de579"
     },
     "crates/params/src/consensus.rs": {
       "entities": [
@@ -4792,31 +4746,41 @@
           "functions": {}
         }
       },
-      "hash": "sha256:78466c75c246137651660609b52e5602c5dc685da67f4974e84a61feacc6e7ea",
+      "hash": "sha256:53948e10bf0c65a0808e6c7dec3fec6c3bbdb48076fccaf8aa635208d7bc911d",
       "language": "rust",
       "module_page": "consensus",
       "semantic_hash": "sha256:e06431d21aff3418b71171b9d693ca63a0ec39908fed571681934f08eb6f509e"
     },
     "crates/params/src/lib.rs": {
+      "entities": [],
+      "entity_page_occurrences": [],
+      "entity_pages": {},
+      "generated_semantics": {
+        "entities": {},
+        "module": {
+          "classes": {},
+          "description": "_Auto-generated from `crates/params/src/lib.rs`._",
+          "functions": {}
+        }
+      },
+      "hash": "sha256:9336ff20bfcccf8c8d4fa4dfe114a09a8004eaa60868706d45d146a544b5b73b",
+      "language": "rust",
+      "module_page": "params_src_lib",
+      "semantic_hash": "sha256:9603ddce1a8eee670a129d921250ddc9111e673dadab696a92cd89770902ffad"
+    },
+    "crates/params/src/networks/mainnet.rs": {
       "entities": [
-        "Mainnet",
-        "ShortEpoch"
+        "Mainnet"
       ],
       "entity_page_occurrences": [
         {
           "name": "Mainnet",
           "occurrence": 1,
           "page": "Mainnet"
-        },
-        {
-          "name": "ShortEpoch",
-          "occurrence": 1,
-          "page": "ShortEpoch"
         }
       ],
       "entity_pages": {
-        "Mainnet": "Mainnet",
-        "ShortEpoch": "ShortEpoch"
+        "Mainnet": "Mainnet"
       },
       "generated_semantics": {
         "entities": {
@@ -4824,26 +4788,72 @@
             "attributes": {},
             "description": "Bitcoin mainnet.",
             "methods": {}
+          }
+        },
+        "module": {
+          "classes": {
+            "Mainnet": "Bitcoin mainnet."
           },
+          "description": "_Auto-generated from `crates/params/src/networks/mainnet.rs`._",
+          "functions": {}
+        }
+      },
+      "hash": "sha256:23ba0cb248a5b43f7718878a8e636368a10c4573cc94103c46f35f7811eb42df",
+      "language": "rust",
+      "module_page": "mainnet",
+      "semantic_hash": "sha256:8af453acddeaefcb954fffe3bda64cbd8355f416e24cdb0fa988c34c131110ea"
+    },
+    "crates/params/src/networks/mod.rs": {
+      "entities": [],
+      "entity_page_occurrences": [],
+      "entity_pages": {},
+      "generated_semantics": {
+        "entities": {},
+        "module": {
+          "classes": {},
+          "description": "_Auto-generated from `crates/params/src/networks/mod.rs`._",
+          "functions": {}
+        }
+      },
+      "hash": "sha256:28acdee69d553282e7937864d77d47166c428fa74fe0a3cd9a107388ecac7522",
+      "language": "rust",
+      "module_page": "params_src_networks_mod",
+      "semantic_hash": "sha256:a88a1fecc4c2aa47b144a068ec976b09e898966a4912f4e0166e963c72815deb"
+    },
+    "crates/params/src/networks/short_epoch.rs": {
+      "entities": [
+        "ShortEpoch"
+      ],
+      "entity_page_occurrences": [
+        {
+          "name": "ShortEpoch",
+          "occurrence": 1,
+          "page": "ShortEpoch"
+        }
+      ],
+      "entity_pages": {
+        "ShortEpoch": "ShortEpoch"
+      },
+      "generated_semantics": {
+        "entities": {
           "ShortEpoch": {
             "attributes": {},
-            "description": "A synthetic network that differs from [`Mainnet`] only in `epoch_length`, so tests can cross a\nretarget boundary cheaply and prove the transition reads the boundary from the parameters\nrather than assuming 2016.\n\nNot Bitcoin's regtest: real regtest shares mainnet's epoch length, which is exactly what makes\nit useless here. Feature-gated so it cannot be reached from a production build.",
+            "description": "_Auto-generated from `ShortEpoch` in `crates/params/src/networks/short_epoch.rs`._",
             "methods": {}
           }
         },
         "module": {
           "classes": {
-            "Mainnet": "Bitcoin mainnet.",
-            "ShortEpoch": "A synthetic network that differs from [`Mainnet`] only in `epoch_length`, so tests can cross a"
+            "ShortEpoch": "—"
           },
-          "description": "_Auto-generated from `crates/params/src/lib.rs`._",
+          "description": "_Auto-generated from `crates/params/src/networks/short_epoch.rs`._",
           "functions": {}
         }
       },
-      "hash": "sha256:52032f1a760ac242ae9a4926ef502f099748ba8745e342d80e4db18149a1fa7b",
+      "hash": "sha256:72143a75c08eb7dff6b9db31e36e5e4e1aae26234eee8d51c661ea3b5c9e5726",
       "language": "rust",
-      "module_page": "params_src_lib",
-      "semantic_hash": "sha256:6a40d5cb9e1a191532275e7136839881d90ee1d3a808b596ea86da5cf74fd683"
+      "module_page": "short_epoch",
+      "semantic_hash": "sha256:2e16eabb5090567ec2e432059cfdd48746bdd2abf259012a8cad1d8f911803c7"
     },
     "crates/params/src/tests/mod.rs": {
       "entities": [],
@@ -4857,10 +4867,10 @@
           "functions": {}
         }
       },
-      "hash": "sha256:0c30dd0e303805823ce681ffbcd990390d8f627ccc950baace1e7cc1c9d9785c",
+      "hash": "sha256:5babac8a43bf8eaad4e309d062f6136994c8dd186b17dd3931d46a8b94703919",
       "language": "rust",
       "module_page": "params_src_tests_mod",
-      "semantic_hash": "sha256:374abc9790cfe5cb5b9692df134b3f8d1e83537b1d4a1ad093bc09bccee51c1b"
+      "semantic_hash": "sha256:1afa89322c5f239b4a8052444a641a1bd33f74bb5f06186dc445c1c70e35d71a"
     },
     "crates/sha256/src/lib.rs": {
       "entities": [],
@@ -5050,8 +5060,7 @@
               "chain_work": "—",
               "header": "—",
               "height": "—",
-              "median_time_past": "—",
-              "ordered_timestamp_run": "—"
+              "median_time_past": "—"
             },
             "description": "A single `headers` row, decoded into typed fields.",
             "methods": {}
@@ -5115,10 +5124,10 @@
           }
         }
       },
-      "hash": "sha256:f18a6459f8dcb14a058a314cfaf9295ac2e054125253b2fbc26d197f23a1cd82",
+      "hash": "sha256:bf42623caa39ec010f59416fdc1c74bb3f43467b328608fced4fb1cce51bfc17",
       "language": "rust",
       "module_page": "src_db",
-      "semantic_hash": "sha256:f472ede215be93c5ba3b45d16f44d12bd66ac46913248dac485d83dc524f021c"
+      "semantic_hash": "sha256:79002f63fe4b3e64b982bc24ddfcdb762abd6ba279b55ecfc5c9a6b631c5b867"
     },
     "crates/store/src/lib.rs": {
       "entities": [],
@@ -5151,10 +5160,10 @@
           "functions": {}
         }
       },
-      "hash": "sha256:818808b0c367601a6cba150f47d267253d9cb65f9dfcf41d06adf6d6c2bcedf4",
+      "hash": "sha256:d5a8ffbeb213f81cc566e8cf3023b3e05c8481cc52edb4ff3e391094a06b2724",
       "language": "rust",
       "module_page": "tests_db",
-      "semantic_hash": "sha256:74de1a978f11280cc54a93b4cb228a30a2cca879c66ee131f02d29130ee56022"
+      "semantic_hash": "sha256:327a7f837f5207bdd057f93a41e5462223efba5b4dc02f114e1b8dd628d798ee"
     },
     "crates/store/src/tests/mod.rs": {
       "entities": [],
@@ -5288,24 +5297,17 @@
     },
     "crates/sync-headers/src/error.rs": {
       "entities": [
-        "ConnectionError",
-        "SyncHeadersError"
+        "ConnectionError"
       ],
       "entity_page_occurrences": [
         {
           "name": "ConnectionError",
           "occurrence": 1,
           "page": "ConnectionError"
-        },
-        {
-          "name": "SyncHeadersError",
-          "occurrence": 1,
-          "page": "SyncHeadersError"
         }
       ],
       "entity_pages": {
-        "ConnectionError": "ConnectionError",
-        "SyncHeadersError": "SyncHeadersError"
+        "ConnectionError": "ConnectionError"
       },
       "generated_semantics": {
         "entities": {
@@ -5327,34 +5329,20 @@
             "methods": {
               "from": "—"
             }
-          },
-          "SyncHeadersError": {
-            "attributes": {
-              "Callback": "—",
-              "Connect": "—",
-              "NoCandidates": "—",
-              "Peer": "—"
-            },
-            "description": "The outcome of a sync-headers run: either we reached the tip or we hit\nan error partway through.\n\nIn both cases the caller gets back the last known good tip so that\nanother attempt can resume from there.\n\nThe `E` type parameter is the error type returned by the caller's header\nprocessing callback.",
-            "methods": {
-              "is_recoverable": "Whether the caller should try another peer and retry.",
-              "latest_tip": "—"
-            }
           }
         },
         "module": {
           "classes": {
-            "ConnectionError": "Transport, wire-format, and protocol failures reported by a peer connection.",
-            "SyncHeadersError": "The outcome of a sync-headers run: either we reached the tip or we hit"
+            "ConnectionError": "Transport, wire-format, and protocol failures reported by a peer connection."
           },
           "description": "_Auto-generated from `crates/sync-headers/src/error.rs`._",
           "functions": {}
         }
       },
-      "hash": "sha256:9cb7f6026e248ae858dcf88a4461638080cea3ecdf3c586582c2b86feb185424",
+      "hash": "sha256:2dce8105131aa7f26923a76f67c1cc6cd763ab095d2308635fd5b33564c7018a",
       "language": "rust",
       "module_page": "error",
-      "semantic_hash": "sha256:6a19b907fef5923df40148d2858f88d966f3fac454d254e75e0a8afc134b1b8b"
+      "semantic_hash": "sha256:33ff90cb42896392a61c2e93a6eb12599ca91311c7c229f77cc537c66499775d"
     },
     "crates/sync-headers/src/lib.rs": {
       "entities": [],
@@ -5368,10 +5356,10 @@
           "functions": {}
         }
       },
-      "hash": "sha256:89192189782e588c3356b163453349b23a5897a4722ab5b3d80b2f5a04d92855",
+      "hash": "sha256:d1c61bb3df88a344ccc7bbc653fba3d3c362ac0b8734149d273f1b0bbe3d9aae",
       "language": "rust",
       "module_page": "sync-headers_src_lib",
-      "semantic_hash": "sha256:9de4a15d2de285d318214feb5a979aaca6c52a2232e4f448bfefe613def85377"
+      "semantic_hash": "sha256:2009654fb0afdd447aaf1e36b5704a7cd01674f2589a8fbfd5f93f9338900bdf"
     },
     "crates/sync-headers/src/msg.rs": {
       "entities": [],
@@ -5389,25 +5377,6 @@
       "language": "rust",
       "module_page": "msg",
       "semantic_hash": "sha256:3c94daa5e289760bd433715f0361d00441ad186ad44c6144f969b0c76c720681"
-    },
-    "crates/sync-headers/src/p2p_sync.rs": {
-      "entities": [],
-      "entity_page_occurrences": [],
-      "entity_pages": {},
-      "generated_semantics": {
-        "entities": {},
-        "module": {
-          "classes": {},
-          "description": "_Auto-generated from `crates/sync-headers/src/p2p_sync.rs`._",
-          "functions": {
-            "sync": "Sync headers from the Bitcoin P2P network, passing each batch to a callback."
-          }
-        }
-      },
-      "hash": "sha256:f94c29b4b5392a7a42a90925eaa9fe9d012d089b2a6ed7682bc68a6b6499e1e0",
-      "language": "rust",
-      "module_page": "p2p_sync",
-      "semantic_hash": "sha256:eda26fbafcd09400b68fb13d0c7719b65630b9d8b34d386e37fa85b0ec080832"
     },
     "crates/sync-headers/src/peers.rs": {
       "entities": [
@@ -5576,10 +5545,10 @@
           "functions": {}
         }
       },
-      "hash": "sha256:050b2d23cadd745691087b53e92fe191fa0eee706ded2854e7f6009275ea29c5",
+      "hash": "sha256:fba4c22b18ee8781efff5744aa775e96680e12528599120d64429b225bd047e0",
       "language": "rust",
       "module_page": "src_tests_validation",
-      "semantic_hash": "sha256:dfff9bac48a9f1543a829e58e2bf1b238337f7a0438b3e6461b06e6501a446d3"
+      "semantic_hash": "sha256:6e2cce916cd4f04caaa1c9dacf3fbf0db8029ad009cf78cb335f82bcb5771bc1"
     },
     "crates/sync-headers/src/types.rs": {
       "entities": [
@@ -5624,8 +5593,7 @@
               "chainwork": "—",
               "header": "—",
               "height": "—",
-              "median_time_past": "—",
-              "ordered_timestamp_run": "—"
+              "median_time_past": "—"
             },
             "description": "A header linked onto the chain, with the chain values derived at its height.",
             "methods": {
@@ -5662,7 +5630,6 @@
               "epoch_timestamp": "—",
               "hash": "—",
               "height": "—",
-              "ordered_timestamp_run": "—",
               "target_triplet": "—",
               "timestamps": "—"
             },
@@ -5686,30 +5653,52 @@
           }
         }
       },
-      "hash": "sha256:f67832f49859c93d8e7b68ee1fd7c9486b679530dd2b2ac3a522ab283c344434",
+      "hash": "sha256:b0c0224fa496f35fac85325a5542372812dafe217d89856fcd00417058396a2e",
       "language": "rust",
       "module_page": "src_types",
-      "semantic_hash": "sha256:64dbd9439a10d163fb51502cbb4404a760ab3dfdc954837bc22052a0b0d56e44"
+      "semantic_hash": "sha256:820786ea610978cec28de0ac292f11fdc48270da6b462abe1beb8ff7d25484a6"
     },
     "crates/sync-headers/src/validation.rs": {
-      "entities": [],
-      "entity_page_occurrences": [],
-      "entity_pages": {},
+      "entities": [
+        "ValidationError"
+      ],
+      "entity_page_occurrences": [
+        {
+          "name": "ValidationError",
+          "occurrence": 1,
+          "page": "ValidationError"
+        }
+      ],
+      "entity_pages": {
+        "ValidationError": "ValidationError"
+      },
       "generated_semantics": {
-        "entities": {},
+        "entities": {
+          "ValidationError": {
+            "attributes": {
+              "ChainBroken": "—",
+              "CompactTargetMismatch": "—",
+              "ProofOfWorkFailed": "—",
+              "TimestampNotGreater": "—"
+            },
+            "description": "_Auto-generated from `ValidationError` in `crates/sync-headers/src/validation.rs`._",
+            "methods": {}
+          }
+        },
         "module": {
-          "classes": {},
+          "classes": {
+            "ValidationError": "—"
+          },
           "description": "_Auto-generated from `crates/sync-headers/src/validation.rs`._",
           "functions": {
-            "connect_headers": "Validate and link `headers` onto `anchor`: linkage, PoW against the active target, and the",
-            "tip_from_connected": "The tip after appending `connected` to `anchor`. Panics when `connected` is empty."
+            "connect_headers": "Append the valid header prefix to `tip` and return its connected headers."
           }
         }
       },
-      "hash": "sha256:1e534b79b5b11a0fac068f7cedaf2664552a1960f722013b78e80f827c91fb55",
+      "hash": "sha256:c09598321db246308d3a13b2ddf90f95dcc2cf16ffcde18ec15fc399d2c61ee3",
       "language": "rust",
       "module_page": "sync-headers_src_validation",
-      "semantic_hash": "sha256:4029e7a3a7f5bf5848f15e7c2d48043dd0a303aa3ce4675c0e77f77adfca4531"
+      "semantic_hash": "sha256:98e4cb09f2815e283485fe931d698481ff27cafc21b86dd1155ccc6d0139566d"
     },
     "crates/types/src/bigint.rs": {
       "entities": [
@@ -5804,10 +5793,10 @@
           }
         }
       },
-      "hash": "sha256:1abd0fc1d048c04d2472d39ad86e9431832917a6f4b82af190d854aa03cecf0c",
+      "hash": "sha256:e649ffb8d3f24540c85fb531eb2fcc72b7f3b87e1865880c787a0107b01a6214",
       "language": "rust",
       "module_page": "src_brand",
-      "semantic_hash": "sha256:d3d428002e5b9ba7af6c861d7af6076f42e9bd1531ad97dd9ab60ce8fcc62f43"
+      "semantic_hash": "sha256:e19d9611c556deac8df4b07be4615bbd04ca1dbde3c088a9089a1aebc1ba660b"
     },
     "crates/types/src/header.rs": {
       "entities": [
@@ -6444,6 +6433,46 @@
     }
   },
   "tombstones": {
+    "entities/Cold.md": {
+      "last_valid_basis": {
+        "concept_observation_hash": "sha256:f5b25d08ae0a1f9449a92f92423ec35baf93a619184b3a5310c0fefa860d695a",
+        "extractor_ref": "llm-wiki/extractor/rust",
+        "scope": "entity",
+        "source_content_hash": "sha256:d0e7ddb5d8ba0f27873bfcecd7abfa1a2287781583aac985641b29f690cc7383",
+        "source_path": "crates/mtp/src/ring.rs"
+      },
+      "reason": "source-missing"
+    },
+    "entities/InvalidParts.md": {
+      "last_valid_basis": {
+        "concept_observation_hash": "sha256:0321d8b64b7bc542ab1e90c74bfc6ef78c51d9d32e825ea04ccf00a597f4f7db",
+        "extractor_ref": "llm-wiki/extractor/rust",
+        "scope": "entity",
+        "source_content_hash": "sha256:4b661315cd59da68db52eb29eb9e023d73cf233b3d0559ba4555809f63691574",
+        "source_path": "crates/mtp/src/errors.rs"
+      },
+      "reason": "source-missing"
+    },
+    "entities/SyncHeadersError.md": {
+      "last_valid_basis": {
+        "concept_observation_hash": "sha256:79005c6330d468a441a73c57e2ac53dece6a09e7ead175f581220e788090c55b",
+        "extractor_ref": "llm-wiki/extractor/rust",
+        "scope": "entity",
+        "source_content_hash": "sha256:9cb7f6026e248ae858dcf88a4461638080cea3ecdf3c586582c2b86feb185424",
+        "source_path": "crates/sync-headers/src/error.rs"
+      },
+      "reason": "source-missing"
+    },
+    "entities/Warm.md": {
+      "last_valid_basis": {
+        "concept_observation_hash": "sha256:9c4cceb85fcaaaca52255b413014733abf18cc3a35f620a67894dbe71f4764cd",
+        "extractor_ref": "llm-wiki/extractor/rust",
+        "scope": "entity",
+        "source_content_hash": "sha256:d0e7ddb5d8ba0f27873bfcecd7abfa1a2287781583aac985641b29f690cc7383",
+        "source_path": "crates/mtp/src/ring.rs"
+      },
+      "reason": "source-missing"
+    },
     "modules/estring-macro_src_lib.md": {
       "last_valid_basis": {
         "concept_observation_hash": "sha256:802458bc8fddc2302228d760a209b231d442ad9b46c5028519a60fc356d6a4eb",
@@ -6491,6 +6520,16 @@
         "scope": "module",
         "source_content_hash": "sha256:3549a178f8b4e9269f30bbde7c4a3f44ff7fc0edc1a718cbc89761b15f7a4a8b",
         "source_path": "crates/core/src/tests/input/success.rs"
+      },
+      "reason": "source-missing"
+    },
+    "modules/p2p_sync.md": {
+      "last_valid_basis": {
+        "concept_observation_hash": "sha256:7c73398e99ace298aa9bc722133aebb6cd6beb4801e7265650368bda8b66d162",
+        "extractor_ref": "llm-wiki/extractor/rust",
+        "scope": "module",
+        "source_content_hash": "sha256:f94c29b4b5392a7a42a90925eaa9fe9d012d089b2a6ed7682bc68a6b6499e1e0",
+        "source_path": "crates/sync-headers/src/p2p_sync.rs"
       },
       "reason": "source-missing"
     },

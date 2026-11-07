@@ -23,11 +23,11 @@ _Auto-generated from `crates/sync-headers/src/tests/validation.rs`._
 | `zkpow_core::calculate_next_work_required` | `calculate_next_work_required` |
 | `zkpow_core::check_proof_of_work` | `check_proof_of_work` |
 | `zkpow_core::target_from_bits` | `target_from_bits` |
+| `zkpow_mtp::WINDOW_SIZE` | `WINDOW_SIZE` |
+| `zkpow_mtp::Window` | `Window` |
 | `zkpow_params::Consensus` | `Consensus` |
 | `zkpow_params::ConsensusParams` | `ConsensusParams` |
 | `zkpow_params::Mainnet` | `Mainnet` |
-| `zkpow_params::WINDOW_MAX_INDEX` | `WINDOW_MAX_INDEX` |
-| `zkpow_params::WINDOW_SIZE` | `WINDOW_SIZE` |
 | `zkpow_types::BlockHash` | `BlockHash` |
 | `zkpow_types::BlockTimestamp` | `BlockTimestamp` |
 | `zkpow_types::BlockWork` | `BlockWork` |
@@ -45,4 +45,4 @@ _Auto-generated from `crates/sync-headers/src/tests/validation.rs`._
 
 | Language | Used packages | Undeclared packages |
 |---|---:|---:|
-| rust | 4 | 0 |
+| rust | 5 | 0 |

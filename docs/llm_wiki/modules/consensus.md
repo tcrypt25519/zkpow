@@ -33,5 +33,5 @@ Defines [`ConsensusParams`](../entities/ConsensusParams.md), the independent val
 
 | Class | Kind | Line | Bases / Target | Description |
 |-------|------|------|----------------|-------------|
-| [ConsensusParams](../entities/ConsensusParams.md) | Class | 24 | — | The parameters that define a network. |
-| [Consensus](../entities/Consensus.md) | Class | 92 | — | Binds one parameter set to a type, so consensus code can be generic over the network and still |
+| [ConsensusParams](../entities/ConsensusParams.md) | Class | 9 | — | The parameters that define a network. |
+| [Consensus](../entities/Consensus.md) | Class | 77 | — | Binds one parameter set to a type, so consensus code can be generic over the network and still |

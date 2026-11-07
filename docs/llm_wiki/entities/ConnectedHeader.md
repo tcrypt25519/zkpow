@@ -1,6 +1,6 @@
 # ConnectedHeader
 
-**Location:** `crates/sync-headers/src/types.rs:113`
+**Location:** `crates/sync-headers/src/types.rs:107`
 **Kind:** Class
 **Bases:** —
 **Module:** [src_types](../modules/src_types.md)
@@ -18,7 +18,6 @@ A header linked onto the chain, with the chain values derived at its height.
 | `header` | `Header` | *required* | — |
 | `block_hash` | `BlockHash` | *required* | — |
 | `chainwork` | `ChainWork` | *required* | — |
-| `ordered_timestamp_run` | `u64` | *required* | — |
 | `height` | `u32` | *required* | — |
 | `median_time_past` | `u32` | *required* | — |
 
@@ -26,7 +25,7 @@ A header linked onto the chain, with the chain values derived at its height.
 
 | Method | Signature | Decorators | Description |
 |--------|-----------|------------|-------------|
-| `new` | `(header: Header, block_hash: BlockHash, height: u32, chainwork: ChainWork, median_time_past: u32, ordered_timestamp_run: u64) -> Self` | — | — |
+| `new` | `(header: Header, block_hash: BlockHash, height: u32, chainwork: ChainWork, median_time_past: u32) -> Self` | — | — |
 | `block_hash` | `() -> BlockHash` | — | — |
 | `prev_blockhash` | `() -> BlockHash` | — | — |
 
@@ -39,4 +38,4 @@ A header linked onto the chain, with the chain values derived at its height.
 
 | Module | Methods | Attributes |
 |---|---:|---|
-| [src_types](../modules/src_types.md) | 3 | `block_hash`, `chainwork`, `header`, `height`, `median_time_past`, `ordered_timestamp_run` |
+| [src_types](../modules/src_types.md) | 3 | `block_hash`, `chainwork`, `header`, `height`, `median_time_past` |

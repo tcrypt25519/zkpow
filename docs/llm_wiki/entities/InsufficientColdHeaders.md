@@ -1,6 +1,6 @@
 # InsufficientColdHeaders
 
-**Location:** `crates/mtp/src/errors.rs:29`
+**Location:** `crates/mtp/src/errors.rs:23`
 **Kind:** Class
 **Bases:** `fmt::Display`
 **Module:** [mtp_src_errors](../modules/mtp_src_errors.md)

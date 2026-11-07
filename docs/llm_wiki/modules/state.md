@@ -19,8 +19,6 @@ Defines [`State`](../entities/State.md), the chain state a proof attests to: cum
 | `crate::check_proof_of_work_words` | `check_proof_of_work_words` |
 | `crate::hash_header_input` | `hash_header_input` |
 | `crate::target_from_bits` | `target_from_bits` |
-| `zkpow_mtp::Cold` | `Cold` |
-| `zkpow_mtp::Warm` | `Warm` |
 | `zkpow_mtp::errors::NotMedian` | `NotMedian` |
 | `zkpow_mtp::self` | `self` |
 | `zkpow_params::Consensus` | `Consensus` |

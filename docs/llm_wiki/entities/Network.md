@@ -1,6 +1,6 @@
 # Network
 
-**Location:** `crates/sync-headers/src/types.rs:11`
+**Location:** `crates/sync-headers/src/types.rs:13`
 **Kind:** Enum
 **Bases:** —
 **Module:** [src_types](../modules/src_types.md)

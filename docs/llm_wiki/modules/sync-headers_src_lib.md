@@ -13,7 +13,6 @@ _Auto-generated from `crates/sync-headers/src/lib.rs`._
 | `connection::Command` | `Command` |
 | `connection::PeerConnection` | `PeerConnection` |
 | `error::ConnectionError` | `ConnectionError` |
-| `error::SyncHeadersError` | `SyncHeadersError` |
 | `peers::PeerEntry` | `PeerEntry` |
 | `peers::PeerStatus` | `PeerStatus` |
 | `peers::PeerStore` | `PeerStore` |
@@ -23,7 +22,6 @@ _Auto-generated from `crates/sync-headers/src/lib.rs`._
 | `types::Tip` | `Tip` |
 | `types::expand_target` | `expand_target` |
 | `validation::connect_headers` | `connect_headers` |
-| `validation::tip_from_connected` | `tip_from_connected` |
 
 ## Local dependency map
 

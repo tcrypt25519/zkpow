@@ -15,6 +15,7 @@ Why a claimed median is not the window's median.
 
 | Name | Declared value | Description |
 |------|-------|-------------|
+| `MissingHint` | — | — |
 | `TooNew` | — | — |
 | `TooOld` | — | — |
 
@@ -39,7 +40,7 @@ flowchart LR
 
 | Module | Methods | Attributes |
 |---|---:|---|
-| [mtp_src_errors](../modules/mtp_src_errors.md) | 1 | `TooNew`, `TooOld` |
+| [mtp_src_errors](../modules/mtp_src_errors.md) | 1 | `MissingHint`, `TooNew`, `TooOld` |
 
 ### Structure
 

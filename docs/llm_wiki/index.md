@@ -6,8 +6,8 @@ This page is an exhaustive reference inventory of the selected source. Task-orie
 
 | Surface | Count | Start here |
 |---|---:|---|
-| Entities | 66 | [Open section](#entities) |
-| Modules | 118 | [Open section](#modules) |
+| Entities | 63 | [Open section](#entities) |
+| Modules | 120 | [Open section](#modules) |
 | Workflows | 0 | No pages |
 | Guides | 0 | No pages |
 | Entry-point flows | 2 | [Open section](#entry-point-flows) |
@@ -22,7 +22,6 @@ This page is an exhaustive reference inventory of the selected source. Task-orie
 - [ArtifactStore](entities/ArtifactStore.md)
 - [Batch](entities/Batch.md)
 - [Bucket](entities/Bucket.md)
-- [Cold](entities/Cold.md)
 - [Command](entities/Command.md)
 - [ConnectedHeader](entities/ConnectedHeader.md)
 - [ConnectionError](entities/ConnectionError.md)
@@ -40,7 +39,6 @@ This page is an exhaustive reference inventory of the selected source. Task-orie
 - [HeaderRecord](entities/HeaderRecord.md)
 - [HeaderStore](entities/HeaderStore.md)
 - [InsufficientColdHeaders](entities/InsufficientColdHeaders.md)
-- [InvalidParts](entities/InvalidParts.md)
 - [LocalArtifactStore](entities/LocalArtifactStore.md)
 - [Mainnet](entities/Mainnet.md)
 - [Network](entities/Network.md)
@@ -69,12 +67,11 @@ This page is an exhaustive reference inventory of the selected source. Task-orie
 - [ShortEpoch](entities/ShortEpoch.md)
 - [StageSample](entities/StageSample.md)
 - [State](entities/State.md)
-- [SyncHeadersError](entities/SyncHeadersError.md)
 - [TargetTriplet](entities/TargetTriplet.md)
 - [Tip](entities/Tip.md)
+- [ValidationError](entities/ValidationError.md)
 - [VerifierKeyDigest](entities/VerifierKeyDigest.md)
 - [VersionMessage](entities/VersionMessage.md)
-- [Warm](entities/Warm.md)
 - [Window](entities/Window.md)
 - [WindowValues](entities/WindowValues.md)
 - [WireType](entities/WireType.md)
@@ -116,6 +113,7 @@ This page is an exhaustive reference inventory of the selected source. Task-orie
 - [input](modules/input.md) - `crates/host/src/pipeline/input.rs`
 - [inspect-proof](modules/inspect-proof.md) - `crates/host/src/bin/inspect-proof.rs`
 - [jobs](modules/jobs.md) - `crates/worker/src/jobs.rs`
+- [mainnet](modules/mainnet.md) - `crates/params/src/networks/mainnet.rs`
 - [memory_monitor](modules/memory_monitor.md) - `crates/host/src/memory_monitor.rs`
 - [msg](modules/msg.md) - `crates/sync-headers/src/msg.rs`
 - [mtp_failure](modules/mtp_failure.md) - `crates/core/src/tests/mtp/failure.rs`
@@ -124,8 +122,8 @@ This page is an exhaustive reference inventory of the selected source. Task-orie
 - [mtp_success](modules/mtp_success.md) - `crates/core/src/tests/mtp/success.rs`
 - [not_pod](modules/not_pod.md) - `crates/wiretype/tests/ui/not_pod.rs`
 - [observability](modules/observability.md) - `crates/host/src/observability.rs`
-- [p2p_sync](modules/p2p_sync.md) - `crates/sync-headers/src/p2p_sync.rs`
 - [params_src_lib](modules/params_src_lib.md) - `crates/params/src/lib.rs`
+- [params_src_networks_mod](modules/params_src_networks_mod.md) - `crates/params/src/networks/mod.rs`
 - [params_src_tests_mod](modules/params_src_tests_mod.md) - `crates/params/src/tests/mod.rs`
 - [pipeline_verify](modules/pipeline_verify.md) - `crates/host/src/pipeline/verify.rs`
 - [platform](modules/platform.md) - `crates/core/src/halt/platform.rs`
@@ -144,6 +142,7 @@ This page is an exhaustive reference inventory of the selected source. Task-orie
 - [sha256_const_src_tests_mod](modules/sha256_const_src_tests_mod.md) - `crates/sha256_const/src/tests/mod.rs`
 - [sha256_src_lib](modules/sha256_src_lib.md) - `crates/sha256/src/lib.rs`
 - [sha256_src_tests_mod](modules/sha256_src_tests_mod.md) - `crates/sha256/src/tests/mod.rs`
+- [short_epoch](modules/short_epoch.md) - `crates/params/src/networks/short_epoch.rs`
 - [sp1-stress](modules/sp1-stress.md) - `crates/host/src/bin/sp1-stress.rs`
 - [src_bigint](modules/src_bigint.md) - `crates/types/src/bigint.rs`
 - [src_brand](modules/src_brand.md) - `crates/types/src/brand.rs`

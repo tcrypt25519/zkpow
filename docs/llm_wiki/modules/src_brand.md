@@ -38,4 +38,4 @@ _Auto-generated from `crates/types/src/brand.rs`._
 | `add` | `(rhs: BlockWork) -> Self::Output` | — | — |
 | `add_assign` | `(rhs: BlockWork)` | — | — |
 | `mul` | `(rhs: u32) -> Self::Output` | — | — |
-| `fmt` | `(f: &mut core::fmt::Formatter<'_ >) -> core::fmt::Result` | — | — |
+| `fmt` | `(f: &mut fmt::Formatter<'_ >) -> fmt::Result` | — | — |

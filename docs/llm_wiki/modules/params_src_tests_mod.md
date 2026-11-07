@@ -12,6 +12,7 @@ _Auto-generated from `crates/params/src/tests/mod.rs`._
 |--------|---------|
 | `alloc::string::ToString` | `ToString` |
 | `super::*` | `*` |
+| `super::networks::*` | `*` |
 | `zkpow_types::ChainWork` | `ChainWork` |
 | `zkvm_test::test` | `test` |
 

@@ -1,6 +1,6 @@
 # ConsensusParams
 
-**Location:** `crates/params/src/consensus.rs:24`
+**Location:** `crates/params/src/consensus.rs:9`
 **Kind:** Class
 **Bases:** —
 **Module:** [consensus](../modules/consensus.md)

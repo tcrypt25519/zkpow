@@ -11,9 +11,7 @@ _Auto-generated from `crates/mtp/src/ring.rs`._
 | Source | Symbols |
 |--------|---------|
 | `core::cmp::Ordering` | `Ordering` |
-| `core::marker::PhantomData` | `PhantomData` |
 | `crate::WINDOW_SIZE` | `WINDOW_SIZE` |
-| `crate::errors::InvalidParts` | `InvalidParts` |
 | `crate::errors::NotMedian` | `NotMedian` |
 | `zkpow_types::BlockTimestamp` | `BlockTimestamp` |
 
@@ -32,9 +30,13 @@ _Auto-generated from `crates/mtp/src/ring.rs`._
 
 | Class | Kind | Line | Bases / Target | Description |
 |-------|------|------|----------------|-------------|
-| [Window](../entities/Window.md) | Type alias | 11 | — | The consensus timestamp window. |
-| [WindowValues](../entities/WindowValues.md) | Type alias | 12 | — | — |
-| [Cold](../entities/Cold.md) | Class | 16 | — | The ring holds fewer timestamps than its capacity. |
-| [Warm](../entities/Warm.md) | Class | 20 | — | Every slot in the ring holds a timestamp. |
-| [RingValues](../entities/RingValues.md) | Type alias | 22 | — | — |
-| [Ring](../entities/Ring.md) | Class | 27 | `Default` | The last `N` timestamps, oldest overwritten first. `ordered_run` is the length of the |
+| [Window](../entities/Window.md) | Type alias | 8 | — | The consensus timestamp window. |
+| [WindowValues](../entities/WindowValues.md) | Type alias | 9 | — | — |
+| [RingValues](../entities/RingValues.md) | Type alias | 10 | — | — |
+| [Ring](../entities/Ring.md) | Class | 15 | `Default` | The last `N` timestamps, oldest overwritten first. `ordered_run` is the length of the |
+
+## Functions
+
+| Function | Signature | Decorators | Description |
+|----------|-----------|------------|-------------|
+| `next` | `() -> Option<Self::Item >` | — | — |

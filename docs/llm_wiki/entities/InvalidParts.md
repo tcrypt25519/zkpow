@@ -1,6 +1,6 @@
 # InvalidParts
 
-**Location:** `crates/mtp/src/errors.rs:21`
+**Location:** `crates/mtp/src/errors.rs:23`
 **Kind:** Enum
 **Bases:** —
 **Module:** [mtp_src_errors](../modules/mtp_src_errors.md)

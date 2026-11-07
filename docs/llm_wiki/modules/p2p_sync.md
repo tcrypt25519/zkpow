@@ -1,3 +1,5 @@
+> ⚠️ **Stale:** Source no longer found in codebase. Run `llm-wiki lint` to audit.
+
 # p2p_sync Module
 
 **Path:** `crates/sync-headers/src/p2p_sync.rs`

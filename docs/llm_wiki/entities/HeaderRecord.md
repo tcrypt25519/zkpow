@@ -1,6 +1,6 @@
 # HeaderRecord
 
-**Location:** `crates/store/src/db.rs:511`
+**Location:** `crates/store/src/db.rs:474`
 **Kind:** Class
 **Bases:** —
 **Module:** [src_db](../modules/src_db.md)
@@ -19,7 +19,6 @@ A single `headers` row, decoded into typed fields.
 | `header` | `Header` | *required* | — |
 | `chain_work` | `ChainWork` | *required* | — |
 | `median_time_past` | `BlockTimestamp` | *required* | — |
-| `ordered_timestamp_run` | `u64` | *required* | — |
 
 ## Methods
 
@@ -47,7 +46,7 @@ flowchart LR
 
 | Module | Methods | Attributes |
 |---|---:|---|
-| [src_db](../modules/src_db.md) | 0 | `chain_work`, `header`, `height`, `median_time_past`, `ordered_timestamp_run` |
+| [src_db](../modules/src_db.md) | 0 | `chain_work`, `header`, `height`, `median_time_past` |
 
 ### References
 

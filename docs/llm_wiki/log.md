@@ -142,3 +142,99 @@ Peer-sync failures now carry only their cause. Accepted progress stays in the sh
 - Pages deprecated: 8
 - Semantic fields preserved: 14
 - Moved entities: `WireType` (crates/wiretype/src/lib.rs → crates/wiretype/src/implementation.rs)
+
+## 2026-11-05
+
+### Wiki sync
+- Source: `.`
+- Generator version: `2.3.2`
+- Source selection profile: `.llm-wiki/source-selection.json`
+- Source selection fingerprint: `sha256:f24d3dfaea0e90b588e9fb1b5923d3a49fda035f817c90caf26e5efd1e6bbd4d`
+- Source snapshot digest: `sha256:c36ef0f556e308c2f6165c173c96391800469b7478e6ee1db5eeb7d963c97e72`
+- Pages created: 4
+- Pages updated: 31
+- Pages metadata-only: 0
+- Pages skipped (unchanged): 159
+- Pages deprecated: 1
+- Semantic fields preserved: 4
+- Moved entities: `Mainnet` (crates/params/src/lib.rs → crates/params/src/networks/mainnet.rs), `ShortEpoch` (crates/params/src/lib.rs → crates/params/src/networks/short_epoch.rs)
+
+## 2026-11-05
+
+### Wiki sync
+- Source: `.`
+- Generator version: `2.3.2`
+- Source selection profile: `.llm-wiki/source-selection.json`
+- Source selection fingerprint: `sha256:f24d3dfaea0e90b588e9fb1b5923d3a49fda035f817c90caf26e5efd1e6bbd4d`
+- Source snapshot digest: `sha256:fd134faeafe9a3a41b014d3b83fb6b7fb03fc0a6a849083fe92c11b29d01a889`
+- Pages created: 0
+- Pages updated: 3
+- Pages metadata-only: 0
+- Pages skipped (unchanged): 188
+- Pages deprecated: 0
+- Semantic fields preserved: 1
+- Moved entities: none
+
+## 2026-11-05
+
+### Wiki sync
+- Source: `.`
+- Generator version: `2.3.2`
+- Source selection profile: `.llm-wiki/source-selection.json`
+- Source selection fingerprint: `sha256:f24d3dfaea0e90b588e9fb1b5923d3a49fda035f817c90caf26e5efd1e6bbd4d`
+- Source snapshot digest: `sha256:6201338e8634950ccab13b88d5bcfcb171eacbedcbe4f71199d2ca7352a42f0b`
+- Pages created: 0
+- Pages updated: 1
+- Pages metadata-only: 0
+- Pages skipped (unchanged): 190
+- Pages deprecated: 0
+- Semantic fields preserved: 0
+- Moved entities: none
+
+## 2026-11-05
+
+### Wiki sync
+- Source: `.`
+- Generator version: `2.3.2`
+- Source selection profile: `.llm-wiki/source-selection.json`
+- Source selection fingerprint: `sha256:f24d3dfaea0e90b588e9fb1b5923d3a49fda035f817c90caf26e5efd1e6bbd4d`
+- Source snapshot digest: `sha256:ba1bc777e0683085c45577b3c5b3d4bd8f9212195c8777b0419e3c7679d59c45`
+- Pages created: 0
+- Pages updated: 31
+- Pages metadata-only: 2
+- Pages skipped (unchanged): 159
+- Pages deprecated: 0
+- Semantic fields preserved: 6
+- Moved entities: none
+
+## 2026-11-05
+
+### Wiki sync
+- Source: `.`
+- Generator version: `2.3.2`
+- Source selection profile: `.llm-wiki/source-selection.json`
+- Source selection fingerprint: `sha256:f24d3dfaea0e90b588e9fb1b5923d3a49fda035f817c90caf26e5efd1e6bbd4d`
+- Source snapshot digest: `sha256:0816c2d5d971dcabcf2e75c1f7c5036ab3fd35d8dcb5bd5911440bdea2de2413`
+- Pages created: 0
+- Pages updated: 7
+- Pages metadata-only: 5
+- Pages skipped (unchanged): 178
+- Pages deprecated: 0
+- Semantic fields preserved: 5
+- Moved entities: none
+
+## 2026-11-05
+
+### Wiki sync
+- Source: `.`
+- Generator version: `2.3.2`
+- Source selection profile: `.llm-wiki/source-selection.json`
+- Source selection fingerprint: `sha256:f24d3dfaea0e90b588e9fb1b5923d3a49fda035f817c90caf26e5efd1e6bbd4d`
+- Source snapshot digest: `sha256:71615c73e42b759c698dea5351f536c3762f80fc6f4886b89b63a06d15bda632`
+- Pages created: 0
+- Pages updated: 6
+- Pages metadata-only: 0
+- Pages skipped (unchanged): 183
+- Pages deprecated: 0
+- Semantic fields preserved: 3
+- Moved entities: none
