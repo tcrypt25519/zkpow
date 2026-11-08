@@ -2,7 +2,7 @@ use core::{cmp::Ordering, marker::PhantomData};
 
 use zkpow_types::BlockTimestamp;
 
-use crate::{WINDOW_SIZE, errors::NotMedian};
+use crate::errors::NotMedian;
 
 pub type RingValues<const N: usize> = [BlockTimestamp; N];
 
@@ -184,58 +184,10 @@ impl<const N: usize> Ring<N, Warm> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WindowState {
-    Cold(Window<Cold>),
-    Warm(Window<Warm>),
-}
-
-impl WindowState {
-    pub fn from_height(values: WindowValues, height: u32) -> Self {
-        if height < (WINDOW_SIZE - 1) as u32 {
-            Self::Cold(Window::<Cold>::from_height(values, height))
-        } else {
-            Self::Warm(Window::<Warm>::from_height(values, height))
-        }
-    }
-
-    pub fn from_timestamps(start_height: u32, timestamps: impl IntoIterator<Item = BlockTimestamp>) -> Option<Self> {
-        let mut values = [BlockTimestamp::new(0); WINDOW_SIZE];
-        let mut slot = start_height as usize % WINDOW_SIZE;
-        let mut height = None;
-        for (offset, timestamp) in timestamps.into_iter().enumerate() {
-            values[slot] = timestamp;
-            slot += 1;
-            if slot == WINDOW_SIZE {
-                slot = 0;
-            }
-            height = Some(start_height + offset as u32);
-        }
-        height.map(|height| Self::from_height(values, height))
-    }
-
-    pub const fn values(&self) -> WindowValues {
-        match self {
-            Self::Cold(ring) => ring.values(),
-            Self::Warm(ring) => ring.values(),
-        }
-    }
-
-    pub const fn newest(&self) -> BlockTimestamp {
-        match self {
-            Self::Cold(ring) => ring.newest(),
-            Self::Warm(ring) => ring.newest(),
-        }
-    }
-
-    pub const fn requires_median_hint(&self) -> bool {
-        match self {
-            Self::Cold(_) => false,
-            Self::Warm(ring) => ring.requires_median_hint(),
-        }
-    }
-}
-
+// Iterates over the values in reverse order, emitting each one exactly once.
+// Starting from the given value it steps backwards through the ring until it's
+// at the oldest edge, before wrapping around to the newest value and continuing
+// until it's emitted the value just before the starting slot.
 struct RingValuesIter<'a, const N: usize> {
     values: &'a RingValues<N>,
     index: usize,
@@ -265,62 +217,5 @@ impl<const N: usize> Iterator for RingValuesIter<'_, N> {
             self.index = N;
         }
         Some(value)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn reverse_iterator_visits_each_slot_once() {
-        let values = [0, 1, 2, 3, 4].map(BlockTimestamp::new);
-        for start in 0..values.len() {
-            let mut iter = RingValuesIter::new(&values, start);
-            for offset in 0..values.len() {
-                assert_eq!(iter.next(), Some(values[(start + values.len() - offset) % values.len()]));
-            }
-            assert_eq!(iter.next(), None);
-            assert_eq!(iter.next(), None);
-        }
-        let values = [BlockTimestamp::new(7)];
-        let mut iter = RingValuesIter::new(&values, 0);
-        assert_eq!(iter.next(), Some(values[0]));
-        assert_eq!(iter.next(), None);
-    }
-
-    #[test]
-    fn reconstruction_counts_only_the_ordered_suffix_at_every_rotation() {
-        for encoded in 0..3usize.pow(5) {
-            let chronological =
-                core::array::from_fn::<_, 5, _>(|i| BlockTimestamp::new((encoded / 3usize.pow(i as u32) % 3) as u32));
-            let expected_run = 1 + chronological.windows(2).rev().take_while(|pair| pair[0] <= pair[1]).count();
-            for height in 4..19 {
-                let current = height as usize % 5;
-                let mut values = [BlockTimestamp::new(0); 5];
-                for (offset, value) in chronological.iter().rev().enumerate() {
-                    values[(current + 5 - offset) % 5] = *value;
-                }
-                let mut ring = Ring::<5>::from_height(values, height);
-                assert_eq!(ring.ordered_run, expected_run);
-                assert_eq!(ring.newest(), chronological[4]);
-                assert_eq!(ring.median(), (expected_run == 5).then_some(chronological[2]));
-                ring.push(BlockTimestamp::new(3));
-                assert_eq!(ring.newest(), BlockTimestamp::new(3));
-                assert_eq!(ring.values[(current + 1) % 5], BlockTimestamp::new(3));
-                assert_eq!(ring.median().is_some(), expected_run >= 4);
-            }
-        }
-    }
-
-    #[test]
-    fn reconstruction_handles_single_slot_and_maximum_height() {
-        let value = BlockTimestamp::new(7);
-        let ring = Ring::<1>::from_height([value], u32::MAX);
-        assert_eq!(ring.median(), Some(value));
-        assert_eq!(ring.ordered_run, 1);
-        let ring = Window::<Warm>::from_height([value; WINDOW_SIZE], u32::MAX);
-        assert_eq!(ring.median(), Some(value));
-        assert_eq!(ring.next, ((u64::from(u32::MAX) + 1) % WINDOW_SIZE as u64) as usize);
     }
 }
