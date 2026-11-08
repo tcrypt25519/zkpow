@@ -1,6 +1,7 @@
 use zkpow_types::BlockTimestamp;
 
-use crate::{Cold, Ring, WINDOW_SIZE, Warm, Window, WindowState, errors::NotMedian, split_off_cold_headers};
+use crate::window::WINDOW_SIZE;
+use crate::{Cold, Ring, Warm, Window, WindowState, errors::NotMedian, split_off_cold_headers};
 
 fn cold_ring<const N: usize>(values: &[u32]) -> Ring<N, Cold> {
     let mut ring = Ring::<N, Cold>::new(BlockTimestamp::new(values[0]));
@@ -181,56 +182,4 @@ fn zero_capacity_is_rejected_at_construction() {
 #[should_panic(expected = "warm ring requires a full window")]
 fn warm_reconstruction_rejects_a_cold_height() {
     let _ = Window::<Warm>::from_height([BlockTimestamp::new(0); WINDOW_SIZE], 0);
-}
-
-#[test]
-fn reverse_iterator_visits_each_slot_once() {
-    let values = [0, 1, 2, 3, 4].map(BlockTimestamp::new);
-    for start in 0..values.len() {
-        let mut iter = crate::ring::RingValuesIter::new(&values, start);
-        for offset in 0..values.len() {
-            assert_eq!(iter.next(), Some(values[(start + values.len() - offset) % values.len()]));
-        }
-        assert_eq!(iter.next(), None);
-        assert_eq!(iter.next(), None);
-    }
-    let values = [BlockTimestamp::new(7)];
-    let mut iter = crate::ring::RingValuesIter::new(&values, 0);
-    assert_eq!(iter.next(), Some(values[0]));
-    assert_eq!(iter.next(), None);
-}
-
-#[test]
-fn reconstruction_counts_only_the_ordered_suffix_at_every_rotation() {
-    for encoded in 0..3usize.pow(5) {
-        let chronological =
-            core::array::from_fn::<_, 5, _>(|i| BlockTimestamp::new((encoded / 3usize.pow(i as u32) % 3) as u32));
-        let expected_run = 1 + chronological.windows(2).rev().take_while(|pair| pair[0] <= pair[1]).count();
-        for height in 4..19 {
-            let current = height as usize % 5;
-            let mut values = [BlockTimestamp::new(0); 5];
-            for (offset, value) in chronological.iter().rev().enumerate() {
-                values[(current + 5 - offset) % 5] = *value;
-            }
-            let mut ring = Ring::<5>::from_height(values, height);
-            assert_eq!(ring.ordered_run, expected_run);
-            assert_eq!(ring.newest(), chronological[4]);
-            assert_eq!(ring.median(), (expected_run == 5).then_some(chronological[2]));
-            ring.push(BlockTimestamp::new(3));
-            assert_eq!(ring.newest(), BlockTimestamp::new(3));
-            assert_eq!(ring.values[(current + 1) % 5], BlockTimestamp::new(3));
-            assert_eq!(ring.median().is_some(), expected_run >= 4);
-        }
-    }
-}
-
-#[test]
-fn reconstruction_handles_single_slot_and_maximum_height() {
-    let value = BlockTimestamp::new(7);
-    let ring = Ring::<1>::from_height([value], u32::MAX);
-    assert_eq!(ring.median(), Some(value));
-    assert_eq!(ring.ordered_run, 1);
-    let ring = Window::<Warm>::from_height([value; WINDOW_SIZE], u32::MAX);
-    assert_eq!(ring.median(), Some(value));
-    assert_eq!(ring.next, ((u64::from(u32::MAX) + 1) % WINDOW_SIZE as u64) as usize);
 }

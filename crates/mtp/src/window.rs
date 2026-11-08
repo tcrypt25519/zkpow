@@ -1,9 +1,12 @@
-use crate::{Cold, Ring, RingValues, WINDOW_SIZE, Warm};
+use crate::{Cold, Ring, RingValues, Warm};
 use zkpow_types::BlockTimestamp;
 
+/// Number of previous block timestamps kept for median-time-past and ordered-window checks.
+pub const WINDOW_SIZE: usize = 11;
+
 /// The consensus timestamp window.
-pub type Window<F = Warm> = Ring<{ crate::WINDOW_SIZE }, F>;
-pub type WindowValues = RingValues<{ crate::WINDOW_SIZE }>;
+pub type Window<F = Warm> = Ring<{ WINDOW_SIZE }, F>;
+pub type WindowValues = RingValues<{ WINDOW_SIZE }>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WindowState {

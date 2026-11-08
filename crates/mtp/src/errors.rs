@@ -28,7 +28,7 @@ pub struct InsufficientColdHeaders {
 impl InsufficientColdHeaders {
     pub(crate) fn new(actual: usize) -> Self {
         Self {
-            required: crate::WINDOW_SIZE - 1,
+            required: crate::window::WINDOW_SIZE - 1,
             actual,
         }
     }
