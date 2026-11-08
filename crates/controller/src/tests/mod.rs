@@ -1,6 +1,6 @@
-use zkpow_mtp::requires_median_hint;
+use zkpow_mtp::WindowState;
 use zkpow_params::Mainnet;
-use zkpow_store::{genesis_state_from_record, HeaderStore};
+use zkpow_store::{HeaderStore, genesis_state_from_record};
 use zkpow_types::BlockHash;
 
 use super::*;
@@ -67,11 +67,9 @@ fn applying_headers_one_at_a_time_matches_db_claims() {
     assert_eq!(state.block_hash, BlockHash::from(&tenth_record.header));
     assert_eq!(state.genesis_hash, genesis_hash);
 
-    let mut previous_ordered_run = tenth_record.ordered_timestamp_run;
-
     for record in remaining_records {
         let header = header_to_input(&record.header);
-        let needs_hint = requires_median_hint(record.height, previous_ordered_run);
+        let needs_hint = WindowState::from_height(state.timestamps, state.height).requires_median_hint();
         let hints = if needs_hint {
             core::slice::from_ref(&record.median_time_past)
         } else {
@@ -86,7 +84,6 @@ fn applying_headers_one_at_a_time_matches_db_claims() {
         assert_eq!(state.chain_work, record.chain_work);
         assert_eq!(state.block_hash, BlockHash::from(&record.header));
         assert_eq!(state.genesis_hash, genesis_hash);
-        previous_ordered_run = record.ordered_timestamp_run;
     }
 }
 

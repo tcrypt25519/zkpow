@@ -2,10 +2,10 @@ use std::{net::SocketAddr, thread, time::Duration};
 
 use clap::{Args, Parser, Subcommand};
 use sync_headers::{
-    connect_headers, ConnectedHeader, ConnectionError, Header, Network, PeerConnection, PeerStore, Tip,
+    ConnectedHeader, ConnectionError, Header, Network, PeerConnection, PeerStore, Tip, connect_headers,
 };
 use zkpow_params::{Consensus, Mainnet};
-use zkpow_store::{HeaderStore, DEFAULT_DB_FILE_NAME};
+use zkpow_store::{DEFAULT_DB_FILE_NAME, HeaderStore};
 use zkpow_types::{BlockHash, ChainWork};
 
 #[derive(Parser, Debug)]
@@ -122,7 +122,7 @@ fn sync_from_peers<C: Consensus>(
             None => {
                 return Err(last_peer_error
                     .unwrap_or_else(|| "no candidate peers available".to_string())
-                    .into())
+                    .into());
             },
         };
 
@@ -153,8 +153,12 @@ fn sync_from_peers<C: Consensus>(
                 },
             };
 
-            let limit = max_headers.saturating_sub(synced) as usize;
-            let headers = headers.iter().take(limit);
+            let limit = if max_headers == 0 {
+                headers.len()
+            } else {
+                headers.len().min((max_headers - synced) as usize)
+            };
+            let headers = &headers[..limit];
             // TODO: Don't assume we're done just because a peer sent us 0 headers
             if headers.is_empty() {
                 peers.mark_connected(&peer);
@@ -162,6 +166,11 @@ fn sync_from_peers<C: Consensus>(
             }
 
             let connected = connect_headers::<C>(&mut tip, headers);
+            if !connected.is_empty() {
+                store.bulk_insert(&connected)?;
+                synced += connected.len() as u32;
+                tracing::info!(height = tip.height, %synced, "Headers synced");
+            }
             if connected.len() != limit {
                 tracing::warn!(%peer, accepted = connected.len(), received = limit, "Invalid headers");
                 last_peer_error = Some(format!(
@@ -169,11 +178,6 @@ fn sync_from_peers<C: Consensus>(
                     connected.len()
                 ));
                 break;
-            }
-            if !connected.is_empty() {
-                store.bulk_insert(&connected)?;
-                synced += connected.len() as u32;
-                tracing::info!(height = tip.height, %synced, "Headers synced");
             }
         }
 
@@ -197,7 +201,7 @@ fn genesis_connected_header<C: Consensus>() -> ConnectedHeader {
     let header = Header::new(C::PARAMS.genesis);
     let block_hash = header.block_hash();
     let chainwork = ChainWork::from_limbs(C::PARAMS.genesis_work.into_inner().into_limbs());
-    ConnectedHeader::new(header, block_hash, 0, chainwork, 0, 0)
+    ConnectedHeader::new(header, block_hash, 0, chainwork, 0)
 }
 
 #[cfg(test)]
@@ -324,6 +328,34 @@ mod tests {
     }
 
     #[test]
+    fn sync_honors_unlimited_and_capped_header_counts() {
+        for limit in [0, 1] {
+            let mut store = HeaderStore::open(SQLITE_MEMORY_DATABASE).unwrap();
+            store.insert_genesis(&genesis_connected_header::<TestConsensus>()).unwrap();
+            let anchor = Tip::genesis::<TestConsensus>(TestConsensus::GENESIS_HASH);
+            let first = mine_header(anchor.hash, 2_000_000_001);
+            let second = mine_header(first.block_hash(), 2_000_000_002);
+            let mut batches = vec![vec![first, second]];
+            if limit == 0 {
+                batches.push(vec![]);
+            }
+            let (address, server) = serve_headers(batches);
+            let mut peers = PeerStore::default();
+            peers.add_peer(address);
+            let tip =
+                sync_from_peers::<TestConsensus>(Network::Mainnet, anchor, limit, &mut peers, &mut store).unwrap();
+            server.join().unwrap();
+            let expected = if limit == 0 { 2 } else { 1 };
+            assert_eq!(tip.height, expected);
+            assert_eq!(store.header_count().unwrap(), u64::from(expected) + 1);
+            assert_eq!(
+                store.get_best_tip::<TestConsensus>().unwrap().unwrap().timestamps,
+                tip.timestamps
+            );
+        }
+    }
+
+    #[test]
     fn sync_persists_valid_prefix_and_resumes_from_its_window() {
         let mut store = HeaderStore::open(SQLITE_MEMORY_DATABASE).unwrap();
         store.insert_genesis(&genesis_connected_header::<TestConsensus>()).unwrap();
@@ -342,7 +374,7 @@ mod tests {
         let saved = store.get_best_tip::<TestConsensus>().unwrap().unwrap();
         assert_eq!(saved.height, 1);
         assert_eq!(saved.hash, first.block_hash());
-        assert_eq!(saved.timestamps[1], first.inner.timestamp.into_inner());
+        assert_eq!(saved.timestamps.newest(), first.inner.timestamp);
 
         let (good_addr, good_server) = serve_headers(vec![vec![second], vec![third.clone()]]);
         peers.add_peer(good_addr);
@@ -350,7 +382,7 @@ mod tests {
         good_server.join().unwrap();
         assert_eq!(tip.height, 3);
         assert_eq!(tip.hash, third.block_hash());
-        assert_eq!(tip.timestamps[3], third.inner.timestamp.into_inner());
+        assert_eq!(tip.timestamps.newest(), third.inner.timestamp);
         assert_eq!(store.header_count().unwrap(), 4);
     }
 }

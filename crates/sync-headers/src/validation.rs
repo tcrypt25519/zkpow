@@ -1,7 +1,7 @@
 use zkpow_core::{calculate_next_work_required, check_proof_of_work};
-use zkpow_mtp::{advance_ordered_timestamp_run, median_timestamp, record_timestamp, timestamp_at};
+use zkpow_mtp::{Window, WindowState};
 use zkpow_params::Consensus;
-use zkpow_types::BlockTimestamp;
+use zkpow_types::{BlockHash, BlockTimestamp, TargetTriplet};
 
 use crate::types::{ConnectedHeader, Header, Tip};
 
@@ -13,33 +13,65 @@ pub enum ValidationError {
 }
 
 /// Append the valid header prefix to `tip` and return its connected headers.
-pub fn connect_headers<C: Consensus>(tip: &mut Tip, headers: impl Iterator<Item = Header>) -> Vec<ConnectedHeader> {
+pub fn connect_headers<'a, C: Consensus>(
+    tip: &mut Tip,
+    headers: impl IntoIterator<Item = &'a Header>,
+) -> Vec<ConnectedHeader> {
     let mut connected = Vec::new();
+    let mut headers = headers.into_iter();
+    let mut ring = match tip.timestamps {
+        WindowState::Cold(mut ring) => {
+            let cold_headers = ring.take_cold_headers(tip.height, headers.by_ref());
+            if !connect_batch::<C, _>(tip, &mut ring, cold_headers, &mut connected, |ring, height| ring.median(height))
+            {
+                tip.timestamps = WindowState::Cold(ring);
+                return connected;
+            }
+            let Some(warm) = ring.warm() else {
+                tip.timestamps = WindowState::Cold(ring);
+                return connected;
+            };
+            warm
+        },
+        WindowState::Warm(ring) => ring,
+    };
+    connect_batch::<C, _>(tip, &mut ring, headers, &mut connected, |ring, _| ring.median_by_sort());
+    tip.timestamps = WindowState::Warm(ring);
+    connected
+}
 
+fn connect_batch<'a, C: Consensus, F>(
+    tip: &mut Tip,
+    ring: &mut Window<F>,
+    headers: impl Iterator<Item = &'a Header>,
+    connected: &mut Vec<ConnectedHeader>,
+    median: impl Fn(&Window<F>, u32) -> BlockTimestamp,
+) -> bool {
     for header in headers {
-        validate_header::<C>(tip, &header)?;
-
+        let Ok((hash, target_triplet, mtp)) =
+            validate_header::<C>(tip, header, ring.newest(), || median(ring, tip.height + 1))
+        else {
+            return false;
+        };
+        ring.push(header.inner.timestamp);
         tip.chainwork += target_triplet.block_work();
         tip.height += 1;
         tip.target_triplet = target_triplet;
         if tip.height.is_multiple_of(C::PARAMS.epoch_length) {
             tip.epoch_timestamp = header.inner.timestamp.into_inner();
         }
-        tip.ordered_timestamp_run = advance_ordered_timestamp_run(
-            tip.ordered_timestamp_run,
-            tip.timestamps(),
-            header.inner.timestamp.into_inner(),
-        );
-
-        let connected_header =
-            ConnectedHeader::new(header.clone(), hash, tip.height, tip.chainwork, mtp, tip.ordered_timestamp_run);
+        connected.push(ConnectedHeader::new(header.clone(), hash, tip.height, tip.chainwork, mtp));
         tip.hash = hash;
-        record_timestamp(&mut tip.timestamps, tip.height, header.inner.timestamp.into_inner());
     }
-    connected
+    true
 }
 
-pub fn validate_header<C: Consensus>(tip: &mut Tip, header: &Header) -> Result<(), ValidationError> {
+fn validate_header<C: Consensus>(
+    tip: &Tip,
+    header: &Header,
+    previous_timestamp: BlockTimestamp,
+    median: impl FnOnce() -> BlockTimestamp,
+) -> Result<(BlockHash, TargetTriplet, u32), ValidationError> {
     if header.prev_blockhash() != tip.hash {
         tracing::debug!(
             expected = %tip.hash,
@@ -50,13 +82,12 @@ pub fn validate_header<C: Consensus>(tip: &mut Tip, header: &Header) -> Result<(
     }
 
     let candidate_height = tip.height + 1;
-    let previous_timestamp = timestamp_at(&tip.timestamps, tip.height);
 
     let target_triplet = if candidate_height.is_multiple_of(C::PARAMS.epoch_length) {
         calculate_next_work_required::<C>(
             tip.target_triplet.target(),
             BlockTimestamp::new(tip.epoch_timestamp),
-            BlockTimestamp::new(previous_timestamp),
+            previous_timestamp,
         )
     } else {
         tip.target_triplet
@@ -77,7 +108,7 @@ pub fn validate_header<C: Consensus>(tip: &mut Tip, header: &Header) -> Result<(
         return Err(ValidationError::ProofOfWorkFailed);
     }
 
-    let mtp = median_timestamp(&tip.timestamps, tip.height, tip.ordered_timestamp_run);
+    let mtp = median().into_inner();
 
     if header.inner.timestamp.into_inner() <= mtp {
         tracing::debug!(%hash, timestamp = header.inner.timestamp.into_inner(), mtp, "timestamp not greater than MTP");
@@ -86,5 +117,5 @@ pub fn validate_header<C: Consensus>(tip: &mut Tip, header: &Header) -> Result<(
 
     // hash, target_triple,
 
-    Ok(())
+    Ok((hash, target_triplet, mtp))
 }

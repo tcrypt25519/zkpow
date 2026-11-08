@@ -3,7 +3,7 @@ use alloc::{vec, vec::Vec};
 use zkpow_types::ChainWork;
 use zkvm_test::zkvm_test;
 
-use crate::{block_work_from_target, tests::*, ApplyError, ErrorCode, HeaderInput};
+use crate::{ApplyError, ErrorCode, HeaderInput, block_work_from_target, tests::*};
 
 #[zkvm_test]
 fn cold_start_rejects_fewer_than_ten_headers() {
@@ -26,7 +26,7 @@ fn cold_start_rejects_fewer_than_ten_headers() {
 
 #[cfg(not(target_os = "zkvm"))]
 #[test]
-#[should_panic(expected = "apply_headers requires a full MTP window")]
+#[should_panic(expected = "a warm ring requires a full window")]
 fn warm_apply_rejects_a_cold_state() {
     let mut state = test_state();
     let header = HeaderInput {

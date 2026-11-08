@@ -1,18 +1,17 @@
 //! Median time past over a ring of block timestamps.
 //!
-//! A [`Ring`] is [`Cold`] while it fills and [`Warm`] once every slot holds a timestamp. The warm
-//! ring reads its median off a compile-time slot table. Ordering is tracked at runtime, so
-//! [`Ring::median`] is `None` while the window holds a chronological decrease.
+//! Cold rings sort their height-derived prefix. Warm rings use every slot and track timestamp
+//! order internally. Ordered windows read their median off a compile-time slot table; unordered
+//! windows use a checked hint or, with the `sort` feature, a sorted copy.
 //!
 //! ```
-//! use zkpow_mtp::Window;
+//! use zkpow_mtp::{Cold, Window};
 //!
-//! let mut ring = Window::new();
-//! for value in 0..11 {
-//!     ring.push(value);
+//! let mut ring = Window::<Cold>::new(zkpow_types::BlockTimestamp::new(0));
+//! for value in 1..11 {
+//!     ring.push(zkpow_types::BlockTimestamp::new(value));
 //! }
-//! let ring = ring.warm().unwrap();
-//! assert_eq!(ring.median(), Some(5));
+//! assert_eq!(ring.warm().unwrap().median(), Some(zkpow_types::BlockTimestamp::new(5)));
 //! ```
 
 #![no_std]
@@ -20,23 +19,15 @@
 pub mod errors;
 mod ring;
 
-use errors::{InsufficientColdHeaders, InvalidParts};
-pub use ring::{Cold, Ring, RingValues, Warm, Window, WindowValues};
+use errors::InsufficientColdHeaders;
+pub use ring::{Cold, Ring, RingValues, Warm, Window, WindowState, WindowValues};
 
 /// Number of previous block timestamps kept for median-time-past and ordered-window checks.
 pub const WINDOW_SIZE: usize = 11;
 
-/// Half the window, rounded down; the number of timestamps that may sit below the median.
-pub const WINDOW_SMALL_HALF_SIZE: usize = WINDOW_SIZE / 2;
-
-/// Half the window, rounded up; the number of timestamps that may sit above the median.
-pub const WINDOW_LARGE_HALF_SIZE: usize = WINDOW_SIZE.div_ceil(2);
-
-/// Maximum index in the sliding window.
-pub const WINDOW_MAX_INDEX: usize = WINDOW_SIZE - 1;
-
 #[cfg(test)]
 mod tests;
+mod window;
 
 /// Splits headers into the prefix that fills an empty consensus window and the warm remainder.
 pub fn split_off_cold_headers<T>(headers: &[T]) -> Result<(&[T], &[T]), InsufficientColdHeaders> {
@@ -45,116 +36,4 @@ pub fn split_off_cold_headers<T>(headers: &[T]) -> Result<(&[T], &[T]), Insuffic
         return Err(InsufficientColdHeaders::new(headers.len()));
     }
     Ok(headers.split_at(required))
-}
-
-/// The window slot written by the block at `height`.
-#[must_use]
-const fn timestamp_slot(height: u32) -> usize {
-    height as usize % WINDOW_SIZE
-}
-
-/// Slots filled once the block at `height` is recorded: `height + 1`, capped at the window size.
-#[must_use]
-const fn timestamp_count(height: u32) -> usize {
-    let count = height as usize + 1;
-    if count > WINDOW_SIZE { WINDOW_SIZE } else { count }
-}
-
-impl Window<Cold> {
-    /// Rebuild a cold consensus window from persisted slots at `height`.
-    pub fn from_height(values: WindowValues, height: u32) -> Result<Self, InvalidParts> {
-        Self::from_parts(values, timestamp_count(height))
-    }
-}
-
-impl Window<Warm> {
-    /// Rebuild a warm consensus window from persisted slots at `height`.
-    pub fn from_height(values: WindowValues, height: u32) -> Result<Self, InvalidParts> {
-        Self::from_parts(values, timestamp_slot(height.wrapping_add(1)), timestamp_count(height))
-    }
-}
-
-/// Read the timestamp recorded for `height` in the persisted window.
-#[must_use]
-pub fn timestamp_at<T: Copy>(timestamps: &[T; WINDOW_SIZE], height: u32) -> T {
-    timestamps[timestamp_slot(height)]
-}
-
-/// Record a timestamp in the window slot for its chain height.
-pub fn record_timestamp<T>(timestamps: &mut [T; WINDOW_SIZE], height: u32, timestamp: T) {
-    timestamps[timestamp_slot(height)] = timestamp;
-}
-
-/// The upper median of the populated slots, using the ordered run when available.
-#[must_use]
-pub fn median_timestamp<T: Copy + Ord>(timestamps: &[T; WINDOW_SIZE], height: u32, ordered_run: u64) -> T {
-    if has_ordered_timestamp_window(ordered_run) {
-        timestamps[ordered_median_timestamp_slot(height)]
-    } else {
-        let count = timestamp_count(height);
-        let mut sorted = *timestamps;
-        sorted[..count].sort_unstable();
-        sorted[count / 2]
-    }
-}
-
-/*
-
-If the timestamp array was a struct:
-- It can hold the value currently called `timestamp_count``
-    - It's like a slice, but can't be sliced or shrunk
-    - Grows with each new entry until it saturates
-    - Nothing external needs to calculate or ask how many entries it has
-    - The concern about how many timestamps there are is fully encapsulated
-    - This was the original point of this mpt creates before the retarded AI faggots ruined it
-    - In all likelihood they would ruin that too, and keep pushing the project futher and further into the abyss
-- Also maintain the run-count
-- It would almost be like something developed in a real software engineering project
-
-*/
-
-/// Whether the run of nondecreasing links orders the entire window, pinning the median to a known slot.
-#[must_use]
-pub const fn has_ordered_timestamp_window(ordered_timestamp_run: u64) -> bool {
-    ordered_timestamp_run >= WINDOW_MAX_INDEX as u64
-}
-
-/// Extend the run of nondecreasing links by one, or reset it to zero on a decrease.
-#[must_use]
-pub const fn advance_ordered_timestamp_run(ordered_timestamp_run: u64, previous_timestamp: u32, timestamp: u32) -> u64 {
-    if timestamp >= previous_timestamp {
-        ordered_timestamp_run.saturating_add(1)
-    } else {
-        0
-    }
-}
-
-/// Recount the nondecreasing links by walking the window backwards from the slot of `height`.
-#[must_use]
-pub fn ordered_timestamp_run<T: PartialOrd>(timestamps: &[T; WINDOW_SIZE], height: u32) -> u64 {
-    let count = timestamp_count(height);
-    let mut run = 0;
-    let mut newer = &timestamps[timestamp_slot(height)];
-    for offset in 1..count {
-        let older = &timestamps[timestamp_slot(height + (WINDOW_SIZE - offset) as u32)];
-        if older > newer {
-            break;
-        }
-        run += 1;
-        newer = older;
-    }
-    run
-}
-
-/// The slot holding the median while the window ending at `height` is fully ordered.
-#[must_use]
-pub const fn ordered_median_timestamp_slot(height: u32) -> usize {
-    timestamp_slot(height + WINDOW_LARGE_HALF_SIZE as u32)
-}
-
-/// Whether the block at `height` needs a prover-supplied median: its window is full but not
-/// provably ordered.
-#[must_use]
-pub const fn requires_median_hint(height: u64, previous_ordered_timestamp_run: u64) -> bool {
-    height >= WINDOW_SIZE as u64 && !has_ordered_timestamp_window(previous_ordered_timestamp_run)
 }

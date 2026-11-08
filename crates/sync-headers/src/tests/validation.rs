@@ -4,15 +4,15 @@ use std::{
     thread,
 };
 
-use bitcoin::consensus::{encode, Encodable};
+use bitcoin::consensus::{Encodable, encode};
 use zkpow_core::{calculate_next_work_required, check_proof_of_work, target_from_bits};
-use zkpow_mtp::{WINDOW_MAX_INDEX, WINDOW_SIZE};
+use zkpow_mtp::{Cold, WINDOW_SIZE, Window, WindowState};
 use zkpow_params::{Consensus, ConsensusParams, Mainnet};
 use zkpow_types::{BlockHash, BlockTimestamp, BlockWork, CompactTarget, Header as CoreHeader, MerkleRoot, Target};
 
 use super::*;
 use crate::{
-    connection::{create_checksum, VersionMessage},
+    connection::{VersionMessage, create_checksum},
     msg::MAX_HEADERS_PER_MSG,
 };
 
@@ -71,7 +71,7 @@ fn build_chain(anchor: &Tip, count: u32, nbits_at: impl Fn(u32) -> u32) -> Vec<H
     let mut headers = Vec::with_capacity(count as usize);
     // Strictly after every timestamp already in the anchor's window, so
     // the first header always clears the median-time-past check.
-    let base_time = anchor.timestamps.iter().copied().max().unwrap_or(0) + 600;
+    let base_time = anchor.timestamps.newest().into_inner() + 600;
     for i in 0..count {
         let header = mine_header(prev, nbits_at(i), base_time + i * 600);
         prev = header.block_hash();
@@ -86,16 +86,53 @@ fn build_chain(anchor: &Tip, count: u32, nbits_at: impl Fn(u32) -> u32) -> Vec<H
 fn synthetic_anchor(height: u32, nbits: u32) -> Tip {
     let target_triplet = expand_target(CompactTarget::new(nbits));
     let chainwork = target_triplet.block_work() * (height + 1);
-    let ordered_run = (height as u64).min(WINDOW_MAX_INDEX as u64);
     Tip::new(
         BlockHash::new([0xAB; 32]),
         height,
         chainwork,
-        [2_000_000_000u32; WINDOW_SIZE],
-        ordered_run,
+        WindowState::from_height([BlockTimestamp::new(2_000_000_000); WINDOW_SIZE], height),
         2_000_000_000,
         target_triplet,
     )
+}
+
+#[test]
+fn cold_to_warm_transition_is_batch_split_invariant() {
+    for height in 0..WINDOW_SIZE as u32 - 1 {
+        let anchor = synthetic_anchor(height, TRIVIAL_NBITS_A);
+        let headers = build_chain(&anchor, 25, |_| TRIVIAL_NBITS_A);
+        let mut expected = anchor.clone();
+        let connected = connect_headers::<Mainnet>(&mut expected, &headers);
+        assert_eq!(connected.len(), headers.len());
+        assert!(matches!(expected.timestamps, WindowState::Warm(_)));
+        let expected_medians: Vec<_> = connected.iter().map(|header| header.median_time_past).collect();
+        for split in 0..=headers.len() {
+            let mut tip = anchor.clone();
+            let mut connected = connect_headers::<Mainnet>(&mut tip, &headers[..split]);
+            connected.extend(connect_headers::<Mainnet>(&mut tip, &headers[split..]));
+            assert_eq!(connected.len(), headers.len());
+            assert_eq!(
+                connected.iter().map(|header| header.median_time_past).collect::<Vec<_>>(),
+                expected_medians
+            );
+            assert_eq!(tip.hash, expected.hash);
+            assert_eq!(tip.height, expected.height);
+            assert_eq!(tip.chainwork, expected.chainwork);
+            assert_eq!(tip.timestamps, expected.timestamps);
+        }
+        for rejected in [0, WINDOW_SIZE - 2 - height as usize, WINDOW_SIZE - 1 - height as usize] {
+            let mut expected = anchor.clone();
+            connect_headers::<Mainnet>(&mut expected, &headers[..rejected]);
+            let mut invalid = headers.clone();
+            invalid[rejected].inner.prev_blockhash = BlockHash::new([0; 32]);
+            let mut tip = anchor.clone();
+            assert_eq!(connect_headers::<Mainnet>(&mut tip, &invalid).len(), rejected);
+            assert_eq!(tip.hash, expected.hash);
+            assert_eq!(tip.height, expected.height);
+            assert_eq!(tip.chainwork, expected.chainwork);
+            assert_eq!(tip.timestamps, expected.timestamps);
+        }
+    }
 }
 
 #[test]
@@ -193,9 +230,8 @@ fn median_time_past_matches_hand_computed_values_through_a_wrap() {
     let base = 2_000_000_000u32;
     let target_triplet = expand_target(CompactTarget::new(TRIVIAL_NBITS_A));
     let chainwork = target_triplet.block_work() * 1u32;
-    let mut timestamps = [0u32; WINDOW_SIZE];
-    timestamps[0] = base;
-    let mut anchor = Tip::new(BlockHash::new([0xCD; 32]), 0, chainwork, timestamps, 0, base, target_triplet);
+    let timestamps = WindowState::Cold(Window::<Cold>::new(BlockTimestamp::new(base)));
+    let mut anchor = Tip::new(BlockHash::new([0xCD; 32]), 0, chainwork, timestamps, base, target_triplet);
 
     // 1-second increments so the expected medians are easy to check by hand.
     let mut prev = anchor.hash;
@@ -225,7 +261,6 @@ fn median_time_past_matches_hand_computed_values_through_a_wrap() {
     for (i, ch) in connected.iter().enumerate() {
         let height = i as u64 + 1;
         assert_eq!(ch.median_time_past, expected_mtp(height), "height {height}: median_time_past");
-        assert_eq!(ch.ordered_timestamp_run, height, "height {height}: ordered timestamp run");
     }
 
     // Height 12 is the first candidate after slot 0 was overwritten by
@@ -246,20 +281,23 @@ fn connect_headers_resets_ordered_timestamp_run_on_timestamp_regression() {
         BlockHash::new([0xEF; 32]),
         10,
         chainwork,
-        [
-            base,
-            base + 1,
-            base + 2,
-            base + 3,
-            base + 4,
-            base + 5,
-            base + 6,
-            base + 7,
-            base + 8,
-            base + 9,
-            base + 10,
-        ],
-        10,
+        WindowState::from_height(
+            [
+                base,
+                base + 1,
+                base + 2,
+                base + 3,
+                base + 4,
+                base + 5,
+                base + 6,
+                base + 7,
+                base + 8,
+                base + 9,
+                base + 10,
+            ]
+            .map(BlockTimestamp::new),
+            10,
+        ),
         base,
         target_triplet,
     );
@@ -268,7 +306,7 @@ fn connect_headers_resets_ordered_timestamp_run_on_timestamp_regression() {
     let connected = connect_headers::<Mainnet>(&mut anchor, std::slice::from_ref(&regressing_header));
 
     assert_eq!(connected.len(), 1);
-    assert_eq!(connected[0].ordered_timestamp_run, 0);
+    assert!(anchor.timestamps.requires_median_hint());
     assert_eq!(connected[0].median_time_past, base + 5);
 }
 
@@ -281,20 +319,23 @@ fn ordered_window_uses_ring_median_without_changing_result() {
         BlockHash::new([0x9A; 32]),
         10,
         chainwork,
-        [
-            base,
-            base + 1,
-            base + 2,
-            base + 3,
-            base + 4,
-            base + 5,
-            base + 6,
-            base + 7,
-            base + 8,
-            base + 9,
-            base + 10,
-        ],
-        10,
+        WindowState::from_height(
+            [
+                base,
+                base + 1,
+                base + 2,
+                base + 3,
+                base + 4,
+                base + 5,
+                base + 6,
+                base + 7,
+                base + 8,
+                base + 9,
+                base + 10,
+            ]
+            .map(BlockTimestamp::new),
+            10,
+        ),
         base,
         target_triplet,
     );
@@ -303,6 +344,42 @@ fn ordered_window_uses_ring_median_without_changing_result() {
     let connected = connect_headers::<Mainnet>(&mut anchor, std::slice::from_ref(&header));
     assert_eq!(connected.len(), 1);
     assert_eq!(connected[0].median_time_past, base + 5);
+}
+
+#[test]
+fn invalid_headers_leave_the_accepted_prefix_unchanged() {
+    let anchor = synthetic_anchor(100, TRIVIAL_NBITS_A);
+    let headers = build_chain(&anchor, 3, |_| TRIVIAL_NBITS_A);
+    let mut expected = anchor.clone();
+    connect_headers::<Mainnet>(&mut expected, &headers[..1]);
+    let mut wrong_parent = headers[1].clone();
+    wrong_parent.inner.prev_blockhash = BlockHash::new([0; 32]);
+    let mut wrong_target = headers[1].clone();
+    wrong_target.inner.compact_target = CompactTarget::new(TRIVIAL_NBITS_B);
+    let wrong_pow = (0..)
+        .map(|nonce| {
+            let mut header = headers[1].clone();
+            header.inner.nonce = nonce;
+            header
+        })
+        .find(|header| !check_proof_of_work(header.block_hash(), &expected.target_triplet.target()))
+        .unwrap();
+    let WindowState::Warm(window) = expected.timestamps else {
+        panic!()
+    };
+    let too_old = mine_header(expected.hash, TRIVIAL_NBITS_A, window.median_by_sort().into_inner());
+    for invalid in [wrong_parent, wrong_target, wrong_pow, too_old] {
+        let mut tip = anchor.clone();
+        let connected = connect_headers::<Mainnet>(&mut tip, &[headers[0].clone(), invalid, headers[2].clone()]);
+        assert_eq!(connected.len(), 1);
+        assert_eq!(connected[0].block_hash(), headers[0].block_hash());
+        assert_eq!(tip.hash, expected.hash);
+        assert_eq!(tip.height, expected.height);
+        assert_eq!(tip.chainwork, expected.chainwork);
+        assert_eq!(tip.target_triplet, expected.target_triplet);
+        assert_eq!(tip.epoch_timestamp, expected.epoch_timestamp);
+        assert_eq!(tip.timestamps, expected.timestamps);
+    }
 }
 
 #[test]

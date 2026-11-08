@@ -1,21 +1,6 @@
 use sha256_const::double;
 use zkpow_types::{BlockHash, BlockWork, ChainWork, CompactTarget, Header, Target};
 
-/// Number of previous block timestamps kept for median-time-past and ordered-window checks.
-///
-/// Identical on every Bitcoin network, and kept out of [`ConsensusParams`] because it sizes
-/// arrays: stable Rust cannot use an associated const as a generic array length.
-pub const WINDOW_SIZE: usize = 11;
-
-/// Half the window, rounded down; the number of timestamps that may sit below the median.
-pub const WINDOW_SMALL_HALF_SIZE: usize = WINDOW_SIZE / 2;
-
-/// Half the window, rounded up; the number of timestamps that may sit above the median.
-pub const WINDOW_LARGE_HALF_SIZE: usize = WINDOW_SIZE.div_ceil(2);
-
-/// Maximum index in the sliding window.
-pub const WINDOW_MAX_INDEX: usize = WINDOW_SIZE - 1;
-
 /// The parameters that define a network.
 ///
 /// Only independent values are fields. Anything derivable is a `const fn`, so there is exactly one

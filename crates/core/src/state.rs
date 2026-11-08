@@ -1,13 +1,13 @@
 #[cfg(not(target_endian = "little"))]
 compile_error!("zkpow wire types require a little-endian target");
 
-use zkpow_mtp::{self as mtp, errors::NotMedian, Cold, Warm};
+use zkpow_mtp::{self as mtp, errors::NotMedian};
 use zkpow_params::Consensus;
 use zkpow_types::{BlockHash, BlockTimestamp, ChainWork, CompactTarget, Target, TargetTriplet};
 
 use crate::{
-    block_work_from_target, calculate_next_work_required, check_proof_of_work_words, hash_header_input,
-    target_from_bits, ApplyError, HeaderInput,
+    ApplyError, HeaderInput, block_work_from_target, calculate_next_work_required, check_proof_of_work_words,
+    hash_header_input, target_from_bits,
 };
 
 /// The canonical chain state the prover attests to and each batch of transitions starts
@@ -34,19 +34,18 @@ impl State {
     #[must_use]
     pub fn anchor<C: Consensus>() -> Self {
         let anchor = C::PARAMS.genesis;
-        let mut timestamps = mtp::Window::<Cold>::new_values();
-        timestamps[0] = anchor.timestamp;
+        let timestamps = mtp::Window::<mtp::Cold>::new(anchor.timestamp);
         let target = target_from_bits(anchor.compact_target);
         let block_work = block_work_from_target(&target);
 
         State {
-            chain_work: ChainWork::new(block_work.into_inner()),
-            genesis_hash: C::GENESIS_HASH,
-            block_hash: C::GENESIS_HASH,
-            height: 0,
-            current_nbits: anchor.compact_target,
+            chain_work:      ChainWork::new(block_work.into_inner()),
+            genesis_hash:    C::GENESIS_HASH,
+            block_hash:      C::GENESIS_HASH,
+            height:          0,
+            current_nbits:   anchor.compact_target,
             epoch_timestamp: anchor.timestamp,
-            timestamps,
+            timestamps:      timestamps.values(),
         }
     }
 
@@ -90,15 +89,12 @@ impl State {
 
     // Applies the first headers of the chain, before the MTP window has been filled. This lets the
     // warm path assume it always has a full window.
-    fn apply_cold_batch<C: Consensus>(&mut self, headers: &[HeaderInput]) -> Result<mtp::Window<Warm>, ApplyError> {
+    fn apply_cold_batch<C: Consensus>(&mut self, headers: &[HeaderInput]) -> Result<mtp::Window, ApplyError> {
         let start_height = self.height;
         let mut mtp = self.cold_mtp_ring();
         let mut prev_hash_words = zkpow_sha256::hash_to_state(self.block_hash.as_inner());
         for new_header in headers {
-            let median = mtp
-                .median()
-                .or_else(|| mtp.median_by_sort())
-                .expect("the cold batch starts from a genesis timestamp");
+            let median = mtp.median(self.height + 1);
             if let Err(e) = self.seal_header::<C>(
                 C::PARAMS.compact_target(),
                 &C::PARAMS.genesis_target,
@@ -117,7 +113,7 @@ impl State {
         self.store_timestamps(&mtp);
         self.chain_work += C::PARAMS.genesis_work * headers.len() as u32;
 
-        Ok(mtp.warm().expect("the cold batch did not fill the MTP window"))
+        Ok(mtp.warm().expect("the cold batch fills the timestamp window"))
     }
 
     /// Apply headers while assuming the MTP window is full. The caller is responsible for only
@@ -138,7 +134,7 @@ impl State {
         &mut self,
         headers: &[HeaderInput],
         median_hints: &[BlockTimestamp],
-        mut mtp: mtp::Window<Warm>,
+        mut mtp: mtp::Window,
     ) -> Result<(), ApplyError> {
         let mut header_iter = headers.iter();
         let mut hint_iter = median_hints.iter();
@@ -155,28 +151,11 @@ impl State {
                 let state = &mut context.state;
                 let (active_nbits, active_target, _) = context.target_triplet.components();
 
-                let claimed_median = match mtp.median() {
-                    Some(median) => median,
-                    None => {
-                        let Some(claimed_median) = hint_iter.next() else {
-                            crate::invalid_hint!("median_hint not available for application");
-                        };
-                        match mtp.is_value_median(*claimed_median) {
-                            Ok(()) => {},
-                            Err(NotMedian::TooNew) => {
-                                crate::invalid_hint!(
-                                    "claimed_median is newer than half of the known window: {claimed_median}"
-                                );
-                            },
-                            Err(NotMedian::TooOld) => {
-                                crate::invalid_hint!(
-                                    "claimed_median is older than half of the known window: {claimed_median}"
-                                );
-                            },
-                        }
-                        *claimed_median
-                    },
-                };
+                let claimed_median = mtp.median_with_hint(&mut hint_iter).unwrap_or_else(|error| match error {
+                    NotMedian::MissingHint => crate::invalid_hint!("median_hint not available for application"),
+                    NotMedian::TooNew => crate::invalid_hint!("claimed_median is newer than half of the known window"),
+                    NotMedian::TooOld => crate::invalid_hint!("claimed_median is older than half of the known window"),
+                });
 
                 if let Err(e) = state.seal_header::<C>(
                     active_nbits,
@@ -208,14 +187,12 @@ impl State {
         self.timestamps = window.values();
     }
 
-    fn cold_mtp_ring(&self) -> mtp::Window<Cold> {
-        mtp::Window::<Cold>::from_height(self.timestamps, self.height)
-            .expect("apply_headers_from_genesis requires a cold MTP window")
+    fn cold_mtp_ring(&self) -> mtp::Window<mtp::Cold> {
+        mtp::Window::<mtp::Cold>::from_height(self.timestamps, self.height)
     }
 
-    fn warm_mtp_ring(&self) -> mtp::Window<Warm> {
-        mtp::Window::<Warm>::from_height(self.timestamps, self.height)
-            .expect("apply_headers requires a full MTP window")
+    fn warm_mtp_ring(&self) -> mtp::Window {
+        mtp::Window::<mtp::Warm>::from_height(self.timestamps, self.height)
     }
 
     fn seal_header<C: Consensus>(

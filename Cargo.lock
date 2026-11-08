@@ -6469,7 +6469,6 @@ dependencies = [
 name = "zkpow-mtp"
 version = "0.1.0"
 dependencies = [
- "zkpow-params",
  "zkpow-types",
 ]
 

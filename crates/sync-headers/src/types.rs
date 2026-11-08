@@ -2,7 +2,7 @@
 
 use strum_macros::{Display, EnumCount, EnumString};
 use zkpow_core::{block_work_from_target, target_from_bits};
-use zkpow_mtp::WINDOW_SIZE;
+use zkpow_mtp::{Cold, Window, WindowState};
 use zkpow_params::Consensus;
 use zkpow_types::{BlockHash, ChainWork, CompactTarget, Header as CoreHeader, TargetTriplet};
 
@@ -25,16 +25,11 @@ impl Network {
 /// The tip of the best known chain.
 #[derive(Debug, Clone)]
 pub struct Tip {
-    pub hash:                  BlockHash,
-    pub height:                u32,
-    pub chainwork:             ChainWork,
-    /// Ring buffer of the last (up to `WINDOW_SIZE`) block timestamps, slot
-    /// `height % WINDOW_SIZE`, mirroring `zkpow_core::State::timestamps`.
-    pub timestamps:            [u32; WINDOW_SIZE],
-    /// Count of consecutive nondecreasing timestamp links ending at this tip.
-    /// Genesis has no predecessor, so its run is 0.
-    pub ordered_timestamp_run: u64,
-    pub epoch_timestamp:       u32,
+    pub hash:            BlockHash,
+    pub height:          u32,
+    pub chainwork:       ChainWork,
+    pub timestamps:      WindowState,
+    pub epoch_timestamp: u32,
 
     /// Difficulty bits/target/block work active at `height`, cached by the sync path.
     /// Updated only at a retarget boundary (`height % EPOCH_LENGTH == 0`) and
@@ -49,8 +44,7 @@ impl Tip {
         hash: BlockHash,
         height: u32,
         chainwork: ChainWork,
-        timestamps: [u32; WINDOW_SIZE],
-        ordered_timestamp_run: u64,
+        timestamps: WindowState,
         epoch_timestamp: u32,
         target_triplet: TargetTriplet,
     ) -> Self {
@@ -59,7 +53,6 @@ impl Tip {
             height,
             chainwork,
             timestamps,
-            ordered_timestamp_run,
             epoch_timestamp,
             target_triplet,
         }
@@ -68,15 +61,13 @@ impl Tip {
     pub fn genesis<C: Consensus>(hash: BlockHash) -> Self {
         let genesis = C::PARAMS.genesis;
         let epoch_timestamp = genesis.timestamp.into_inner();
-        let mut timestamps = [0u32; WINDOW_SIZE];
-        timestamps[0] = epoch_timestamp;
+        let timestamps = WindowState::Cold(Window::<Cold>::new(genesis.timestamp));
         let target_triplet = expand_target(genesis.compact_target);
         Self {
             hash,
             height: 0,
             chainwork: ChainWork::new(target_triplet.block_work().into_inner()),
             timestamps,
-            ordered_timestamp_run: 0,
             epoch_timestamp,
             target_triplet,
         }
@@ -113,12 +104,11 @@ impl Header {
 /// A header linked onto the chain, with the chain values derived at its height.
 #[derive(Debug, Clone)]
 pub struct ConnectedHeader {
-    pub header:                Header,
-    pub block_hash:            BlockHash,
-    pub chainwork:             ChainWork,
-    pub ordered_timestamp_run: u64,
-    pub height:                u32,
-    pub median_time_past:      u32,
+    pub header:           Header,
+    pub block_hash:       BlockHash,
+    pub chainwork:        ChainWork,
+    pub height:           u32,
+    pub median_time_past: u32,
 }
 
 impl ConnectedHeader {
@@ -128,7 +118,6 @@ impl ConnectedHeader {
         height: u32,
         chainwork: ChainWork,
         median_time_past: u32,
-        ordered_timestamp_run: u64,
     ) -> Self {
         Self {
             header,
@@ -136,7 +125,6 @@ impl ConnectedHeader {
             height,
             chainwork,
             median_time_past,
-            ordered_timestamp_run,
         }
     }
 
