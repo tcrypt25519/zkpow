@@ -21,9 +21,8 @@ pub fn connect_headers<'a, C: Consensus>(
     let mut headers = headers.into_iter();
     let mut ring = match tip.timestamps {
         WindowState::Cold(mut ring) => {
-            let cold_headers = ring.take_cold_headers(tip.height, headers.by_ref());
-            if !connect_batch::<C, _>(tip, &mut ring, cold_headers, &mut connected, |ring, height| ring.median(height))
-            {
+            let cold_headers = ring.take_cold_headers(headers.by_ref());
+            if !connect_batch::<C, _>(tip, &mut ring, cold_headers, &mut connected, |ring| ring.median()) {
                 tip.timestamps = WindowState::Cold(ring);
                 return connected;
             }
@@ -35,7 +34,7 @@ pub fn connect_headers<'a, C: Consensus>(
         },
         WindowState::Warm(ring) => ring,
     };
-    connect_batch::<C, _>(tip, &mut ring, headers, &mut connected, |ring, _| ring.median_by_sort());
+    connect_batch::<C, _>(tip, &mut ring, headers, &mut connected, |ring| ring.median_by_sort());
     tip.timestamps = WindowState::Warm(ring);
     connected
 }
@@ -45,12 +44,10 @@ fn connect_batch<'a, C: Consensus, F>(
     ring: &mut Window<F>,
     headers: impl Iterator<Item = &'a Header>,
     connected: &mut Vec<ConnectedHeader>,
-    median: impl Fn(&Window<F>, u32) -> BlockTimestamp,
+    median: impl Fn(&Window<F>) -> BlockTimestamp,
 ) -> bool {
     for header in headers {
-        let Ok((hash, target_triplet, mtp)) =
-            validate_header::<C>(tip, header, ring.newest(), || median(ring, tip.height + 1))
-        else {
+        let Ok((hash, target_triplet, mtp)) = validate_header::<C>(tip, header, ring.newest(), || median(ring)) else {
             return false;
         };
         ring.push(header.inner.timestamp);

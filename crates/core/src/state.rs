@@ -94,7 +94,7 @@ impl State {
         let mut mtp = self.cold_mtp_ring();
         let mut prev_hash_words = zkpow_sha256::hash_to_state(self.block_hash.as_inner());
         for new_header in headers {
-            let median = mtp.median(self.height + 1);
+            let median = mtp.median();
             if let Err(e) = self.seal_header::<C>(
                 C::PARAMS.compact_target(),
                 &C::PARAMS.genesis_target,

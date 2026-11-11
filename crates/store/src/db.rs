@@ -365,7 +365,7 @@ impl HeaderStore {
         };
         let mut timestamps = match timestamps {
             WindowState::Cold(mut cold) => {
-                for row in cold.take_cold_headers(start_height.saturating_sub(1) as u32, rows.by_ref()) {
+                for row in cold.take_cold_headers(rows.by_ref()) {
                     let (h, _) = row?;
                     cold.push(h.timestamp);
                     witness.headers.push(h);

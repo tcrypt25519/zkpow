@@ -92,14 +92,27 @@ impl<const N: usize> Ring<N, Cold> {
     }
 
     #[must_use]
-    pub fn median(&self, next_height: u32) -> BlockTimestamp {
-        let mut sorted = self.values;
-        sorted[..next_height as usize].sort_unstable();
-        sorted[next_height as usize / 2]
+    pub fn len(&self) -> usize {
+        if self.next == 0 { N } else { self.next }
     }
 
-    pub fn take_cold_headers<I: Iterator>(&self, height: u32, headers: I) -> core::iter::Take<I> {
-        headers.take(N - 1 - height as usize)
+    #[must_use]
+    pub fn median(&self) -> BlockTimestamp {
+        let count = self.len();
+        let mut sorted = self.values;
+        sorted[..count].sort_unstable();
+        sorted[count / 2]
+    }
+
+    /// Number of additional headers required to fill the window. At genesis
+    /// `next` is 1 and this is `N-1`. After reaching `N` slots filled the ring wraps and
+    /// `next` becomes 0 which indicates that the warmup period is over.
+    pub fn remaining(&self) -> usize {
+        if self.next == 0 { 0 } else { N - self.next }
+    }
+
+    pub fn take_cold_headers<I: Iterator>(&self, headers: I) -> core::iter::Take<I> {
+        headers.take(self.remaining())
     }
 
     pub fn warm(self) -> Option<Ring<N, Warm>> {

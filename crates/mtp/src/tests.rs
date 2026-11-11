@@ -32,14 +32,14 @@ fn cold_window_sorts_the_height_derived_prefix() {
         let values = core::array::from_fn::<_, 4, _>(|i| (encoded / 3usize.pow(i as u32) % 3) as u32);
         for count in 1..=values.len() {
             let ring = cold_ring::<5>(&values[..count]);
-            assert_eq!(ring.median(count as u32), naive_median(&values[..count]));
+            assert_eq!(ring.median(), naive_median(&values[..count]));
             assert!(ring.warm().is_none());
             let mut slots = [BlockTimestamp::new(u32::MAX); 5];
             for (slot, value) in slots.iter_mut().zip(&values[..count]) {
                 *slot = BlockTimestamp::new(*value);
             }
             let restored = Ring::<5, Cold>::from_height(slots, count as u32 - 1);
-            assert_eq!(restored.median(count as u32), naive_median(&values[..count]));
+            assert_eq!(restored.median(), naive_median(&values[..count]));
         }
     }
 }
@@ -53,7 +53,7 @@ fn ordered_median_matches_naive_across_the_cold_transition_and_wraps() {
             cold.push(BlockTimestamp::new(height as u32));
             held[height] = height as u32;
         }
-        assert_eq!(cold.median(height as u32 + 1), naive_median(&held[..=height]));
+        assert_eq!(cold.median(), naive_median(&held[..=height]));
         assert_eq!(cold.warm().is_some(), height == WINDOW_SIZE - 1);
     }
     let mut ring = cold.warm().unwrap();
@@ -119,7 +119,7 @@ fn unordered_windows_check_hints_by_rank() {
 #[test]
 fn unordered_cold_history_requires_hints_immediately_after_warming() {
     let cold = cold_ring::<5>(&[2, 0, 2, 3, 2]);
-    assert_eq!(cold.median(5), BlockTimestamp::new(2));
+    assert_eq!(cold.median(), BlockTimestamp::new(2));
     let warm = cold.warm().unwrap();
     assert!(warm.requires_median_hint());
     assert_eq!(warm.median_with_hint(&mut [].iter()), Err(NotMedian::MissingHint));
@@ -131,7 +131,7 @@ fn unordered_cold_history_requires_hints_immediately_after_warming() {
 
 #[test]
 fn zero_is_a_value_instead_of_an_empty_slot_sentinel() {
-    assert_eq!(cold_ring::<5>(&[0, 10, 20]).median(3), BlockTimestamp::new(10));
+    assert_eq!(cold_ring::<5>(&[0, 10, 20]).median(), BlockTimestamp::new(10));
     assert_eq!(ring::<5>(&[0, 0, 0, 0, 0]).median(), Some(BlockTimestamp::new(0)));
 }
 
