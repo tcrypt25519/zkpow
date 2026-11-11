@@ -43,6 +43,12 @@ pub enum ConnectionError {
 
     #[error("peer sent invalid headers: accepted {valid} of {total}")]
     InvalidHeaders { valid: usize, total: usize },
+
+    #[error("unknown command")]
+    UnknownCommand,
+
+    #[error("utf8 error in command")]
+    InvalidCommandUtf8(#[from] std::str::Utf8Error),
 }
 
 impl From<bitcoin::io::Error> for ConnectionError {

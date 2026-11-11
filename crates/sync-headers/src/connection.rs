@@ -67,13 +67,11 @@ impl Command {
     }
 
     // TODO: This should handle unknown commands by returning a Result or Option  Not a sentinel value.
-    fn from_wire(buf: &[u8; msg::COMMAND_SIZE]) -> Self {
+    fn from_wire(buf: &[u8; msg::COMMAND_SIZE]) -> Result<Self, ConnectionError> {
         let len = buf.iter().position(|&b| b == 0).unwrap_or(msg::COMMAND_SIZE);
-        let Ok(name) = std::str::from_utf8(&buf[..len]) else {
-            return Command::Unknown;
-        };
+        let name = std::str::from_utf8(&buf[..len])?;
 
-        match name {
+        Ok(match name {
             "addr" => Command::Addr,
             "ping" => Command::Ping,
             "pong" => Command::Pong,
@@ -86,27 +84,27 @@ impl Command {
             "getheaders" => Command::GetHeaders,
             "sendaddrv2" => Command::SendAddrV2,
             "sendheaders" => Command::SendHeaders,
-            _ => Command::Unknown,
-        }
+            _ => return Err(ConnectionError::UnknownCommand),
+        })
     }
 }
 
 /// Simplified version message structure.
 #[derive(Debug)]
 pub struct VersionMessage {
-    pub version: i32,
+    pub version:           i32,
     #[allow(dead_code)]
-    pub services: u64,
+    pub services:          u64,
     #[allow(dead_code)]
-    pub timestamp: i64,
+    pub timestamp:         i64,
     #[allow(dead_code)]
     pub receiver_services: u64,
     #[allow(dead_code)]
-    pub sender_services: u64,
+    pub sender_services:   u64,
     #[allow(dead_code)]
-    pub nonce: u64,
-    pub user_agent: String,
-    pub starting_height: i32,
+    pub nonce:             u64,
+    pub user_agent:        String,
+    pub starting_height:   i32,
 }
 
 impl VersionMessage {
@@ -133,7 +131,7 @@ impl VersionMessage {
         if ua_len.0 > msg::MAX_USER_AGENT_SIZE {
             return Err(ConnectionError::UserAgentTooLong {
                 length: ua_len.0,
-                limit: msg::MAX_USER_AGENT_SIZE,
+                limit:  msg::MAX_USER_AGENT_SIZE,
             });
         }
         let mut ua_buf = vec![0u8; ua_len.0 as usize];
@@ -166,7 +164,7 @@ impl VersionMessage {
 
 /// A P2P connection to a Bitcoin peer.
 pub struct PeerConnection {
-    stream: TcpStream,
+    stream:        TcpStream,
     network_magic: [u8; 4],
 }
 
@@ -321,7 +319,7 @@ impl PeerConnection {
 
         let mut cmd_buf = [0u8; msg::COMMAND_SIZE];
         self.stream.read_exact(&mut cmd_buf)?;
-        let command = Command::from_wire(&cmd_buf);
+        let command = Command::from_wire(&cmd_buf)?;
 
         let mut len_buf = [0u8; 4];
         self.stream.read_exact(&mut len_buf)?;
@@ -329,7 +327,7 @@ impl PeerConnection {
         if payload_len > msg::MAX_MESSAGE_SIZE {
             return Err(ConnectionError::MessageTooLarge {
                 length: payload_len,
-                limit: msg::MAX_MESSAGE_SIZE,
+                limit:  msg::MAX_MESSAGE_SIZE,
             });
         }
 
@@ -366,11 +364,11 @@ pub fn create_checksum(data: &[u8]) -> [u8; 4] {
 /// Convert a bitcoin-crate header (decoded from wire) to our core type.
 fn bitcoin_to_core(bh: BitcoinHeader) -> CoreHeader {
     CoreHeader {
-        version: bh.version.to_consensus() as u32,
+        version:        bh.version.to_consensus() as u32,
         prev_blockhash: BlockHash::new(bh.prev_blockhash.to_raw_hash().to_byte_array()),
-        merkle_root: MerkleRoot::new(bh.merkle_root.to_raw_hash().to_byte_array()),
-        timestamp: BlockTimestamp::new(bh.time),
+        merkle_root:    MerkleRoot::new(bh.merkle_root.to_raw_hash().to_byte_array()),
+        timestamp:      BlockTimestamp::new(bh.time),
         compact_target: CompactTarget::new(bh.bits.to_consensus()),
-        nonce: bh.nonce,
+        nonce:          bh.nonce,
     }
 }

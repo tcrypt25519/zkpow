@@ -1,6 +1,8 @@
-use crate::Network;
 use std::time::Duration;
+
 use strum::EnumCount;
+
+use crate::Network;
 
 /// Magic bytes for Bitcoin mainnet.
 pub(crate) const MAGIC: [[u8; 4]; Network::COUNT] = [
@@ -8,6 +10,7 @@ pub(crate) const MAGIC: [[u8; 4]; Network::COUNT] = [
     [0x0B, 0x11, 0x09, 0x07], // testnet
     [0xFA, 0xBF, 0xB5, 0xDA], // regtest
 ];
+
 /// Bitcoin P2P protocol version.
 pub(crate) const VERSION: u32 = 70015;
 

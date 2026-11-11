@@ -8,24 +8,23 @@ use std::{
 };
 
 use rand::seq::IndexedRandom;
+use strum_macros::EnumString;
 
 /// Known Bitcoin mainnet DNS seeds.
 const DNS_SEEDS: &[&str] = &[
-    "seed.bitcoin.sipa.be",
-    "dnsseed.bluematt.me",
-    "dnsseed.bitcoin.dashjr.org",
-    "seed.bitcoinstats.com",
-    "seed.bitcoin.jonasschnelli.ch",
-    "seed.btc.petertodd.org",
-    "seed.bitcoin.sprovoost.nl",
-    "dnsseed.emzy.de",
+    "seed.bitcoin.sipa.be:8333",
+    "dnsseed.bluematt.me:8333",
+    "dnsseed.bitcoin.dashjr.org:8333",
+    "seed.bitcoinstats.com:8333",
+    "seed.bitcoin.jonasschnelli.ch:8333",
+    "seed.btc.petertodd.org:8333",
+    "seed.bitcoin.sprovoost.nl:8333",
+    "dnsseed.emzy.de:8333",
 ];
 
-/// Default P2P port for Bitcoin mainnet.
-const DEFAULT_PORT: u16 = 8333;
-
 /// Lifecycle status of a known peer address.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumString)]
+#[strum(ascii_case_insensitive, serialize_all = "lowercase")]
 pub enum PeerStatus {
     /// Discovered from a DNS seed but never contacted.
     Unknown,
@@ -41,13 +40,7 @@ pub enum PeerStatus {
 
 impl fmt::Display for PeerStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            PeerStatus::Unknown => write!(f, "unknown"),
-            PeerStatus::Connected => write!(f, "connected"),
-            PeerStatus::Unreachable => write!(f, "unreachable"),
-            PeerStatus::Disconnected => write!(f, "disconnected"),
-            PeerStatus::TooSlow => write!(f, "too_slow"),
-        }
+        write!(f, "{}", self.to_string())
     }
 }
 
@@ -89,8 +82,7 @@ impl PeerStore {
             .iter()
             .filter_map(|s| {
                 // Compute the addresses fort this seed; drop the seed if the resolution fails.
-                let seeds = format!("{}:{}", s, DEFAULT_PORT).to_socket_addrs();
-                let Ok(addrs) = seeds else {
+                let Ok(addrs) = s.to_socket_addrs() else {
                     tracing::warn!(seed = %s, error = %seeds.unwrap_err(), "Failed to resolve DNS seed");
                     return None;
                 };
@@ -116,16 +108,13 @@ impl PeerStore {
 
     /// Pick a random peer with `Unknown` or `Disconnected` status.
     pub fn pick_candidate(&mut self, rng: &mut impl rand::Rng) -> Option<SocketAddr> {
-        let candidates: Vec<usize> = self
-            .entries
+        self.entries
             .iter()
-            .enumerate()
-            .filter(|(_, e)| matches!(e.status, PeerStatus::Unknown | PeerStatus::Disconnected))
-            .map(|(i, _)| i)
-            .collect();
-
-        let idx = *candidates.choose(rng)?;
-        Some(self.entries[idx].addr)
+            .filter(|e| matches!(e.status, PeerStatus::Unknown | PeerStatus::Disconnected))
+            .map(|e| e.addr)
+            .collect::<Vec<_>>()
+            .choose(rng)
+            .copied()
     }
 
     pub fn add_peer(&mut self, addr: SocketAddr) {
@@ -144,14 +133,6 @@ impl PeerStore {
 
     pub fn mark_unreachable(&mut self, addr: &SocketAddr) {
         self.mark_status(addr, PeerStatus::Unreachable);
-    }
-
-    pub fn mark_disconnected(&mut self, addr: &SocketAddr) {
-        self.mark_status(addr, PeerStatus::Disconnected);
-    }
-
-    pub fn mark_too_slow(&mut self, addr: &SocketAddr) {
-        self.mark_status(addr, PeerStatus::TooSlow);
     }
 
     pub fn len(&self) -> usize {
