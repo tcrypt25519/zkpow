@@ -25,8 +25,7 @@ pub const ENV_ZKPOW_USE_CUDA: &str = "ZKPOW_USE_CUDA";
 #[cfg(not(feature = "memory-diagnostics"))]
 pub(crate) const ENV_ZKPOW_MEMORY_LOGGING: &str = "ZKPOW_MEMORY_LOGGING";
 
-// TODO: This is an invalid run ID now
-const DEFAULT_RUN_ID: &str = "dev";
+const DEFAULT_RUN_ID: &str = "develop_";
 const DEFAULT_PROOF_STORE_DIR: &str = "proof_store";
 const DEFAULT_BATCH_COUNT: u32 = 2016;
 
