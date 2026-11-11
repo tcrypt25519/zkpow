@@ -14,7 +14,7 @@ mod jobs;
 #[cfg(test)]
 mod tests;
 
-pub use config::{WorkerConfig, SHARD_PROVER_PERMITS_ENV};
+pub use config::{DEFAULT_SHARD_PROVER_PERMITS, WorkerConfig};
 pub use jobs::{execute, prove_compressed};
 use sp1_sdk::{CpuProver, ProverClient};
 

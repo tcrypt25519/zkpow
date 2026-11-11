@@ -5,9 +5,13 @@ use std::path::PathBuf;
 use sp1_sdk::{prelude::*, SP1Proof};
 use zkpow_core::{State, VerifierKeyDigest};
 use zkpow_params::Consensus;
-use zkpow_store::ENV_ZKPOW_DB_PATH;
 
 use crate::pipeline::{BoxError, ProofGenerationConfig, ProverBackend};
+
+pub const ENV_ZKPOW_DB_PATH: &str = "ZKPOW_DB_PATH";
+pub const DEFAULT_DB_FILE_NAME: &str = "headers.db";
+pub const ENV_SHARD_PROVER_PERMITS: &str = "SHARD_PROVER_PERMITS";
+const WORKSPACE_ROOT_RELATIVE_TO_HOST: &str = "../..";
 
 pub const ENV_ZKPOW_RUN_ID: &str = "ZKPOW_RUN_ID";
 pub const ENV_ZKPOW_BATCH_SIZE: &str = "ZKPOW_BATCH_SIZE";
@@ -100,10 +104,28 @@ pub fn config_from_env<C: Consensus>() -> Result<ProofGenerationConfig, BoxError
         run_id: std::env::var(ENV_ZKPOW_RUN_ID).unwrap_or_else(|_| DEFAULT_RUN_ID.to_string()),
         local_batch_size,
         batch_count,
-        db_path: parse_path_env(ENV_ZKPOW_DB_PATH).unwrap_or_else(zkpow_store::db_path),
+        db_path: default_db_path(),
         execute_only,
         prover_backend,
     })
+}
+
+pub fn default_db_path() -> PathBuf {
+    parse_path_env(ENV_ZKPOW_DB_PATH).unwrap_or_else(|| {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join(WORKSPACE_ROOT_RELATIVE_TO_HOST)
+            .join(DEFAULT_DB_FILE_NAME)
+    })
+}
+
+pub fn worker_config_from_env() -> zkpow_worker::WorkerConfig {
+    let permits = parse_u32_env(ENV_SHARD_PROVER_PERMITS)
+        .ok()
+        .flatten()
+        .filter(|&p| p > 0)
+        .map(|p| p as usize)
+        .unwrap_or(zkpow_worker::DEFAULT_SHARD_PROVER_PERMITS);
+    zkpow_worker::WorkerConfig::new(permits)
 }
 
 pub fn proof_store_dir_from_env() -> PathBuf {

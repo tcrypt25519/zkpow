@@ -1,16 +1,7 @@
-use crate::config::parse_shard_prover_permits;
+use crate::config::{WorkerConfig, DEFAULT_SHARD_PROVER_PERMITS};
 
 #[test]
-fn parses_shard_prover_permits() {
-    for (input, expected) in [
-        (None, 4),
-        (Some(""), 4),
-        (Some("0"), 4),
-        (Some("not-a-number"), 4),
-        (Some("-1"), 4),
-        (Some("16"), 16),
-        (Some("1"), 1),
-    ] {
-        assert_eq!(parse_shard_prover_permits(input), expected, "{input:?}");
-    }
+fn default_worker_config() {
+    assert_eq!(WorkerConfig::default().shard_prover_permits, DEFAULT_SHARD_PROVER_PERMITS);
+    assert_eq!(WorkerConfig::new(8).shard_prover_permits, 8);
 }

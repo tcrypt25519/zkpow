@@ -124,7 +124,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         memory_monitor::log_point("stress_session_end", "Stress session memory snapshot");
     }
 
-    zkpow_store::HeaderStore::open(zkpow_store::db_path())?.delete_run(&run_id)?;
+    zkpow_store::HeaderStore::open(zkpow_host::pipeline::input::default_db_path())?.delete_run(&run_id)?;
     tracing::info!("SP1 stress test complete");
     Ok(())
 }

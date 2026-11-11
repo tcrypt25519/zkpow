@@ -83,7 +83,7 @@ pub(crate) async fn get_prepared_prover(prover_backend: ProverBackend) -> Result
             EnvProver::Mock(prover)
         },
         ProverBackend::Cpu => {
-            let worker_config = zkpow_worker::WorkerConfig::from_env();
+            let worker_config = crate::pipeline::input::worker_config_from_env();
             let prover = timed_async("build_cpu_prover", || async {
                 Ok::<_, BoxError>(zkpow_worker::build_cpu_worker(&worker_config).await)
             })

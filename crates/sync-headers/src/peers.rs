@@ -2,13 +2,12 @@
 
 use std::{
     collections::{HashMap, HashSet},
-    fmt,
     net::{IpAddr, SocketAddr, ToSocketAddrs},
     time::SystemTime,
 };
 
 use rand::seq::IndexedRandom;
-use strum_macros::EnumString;
+use strum_macros::{Display, EnumString};
 
 /// Known Bitcoin mainnet DNS seeds.
 const DNS_SEEDS: &[&str] = &[
@@ -23,8 +22,8 @@ const DNS_SEEDS: &[&str] = &[
 ];
 
 /// Lifecycle status of a known peer address.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumString)]
-#[strum(ascii_case_insensitive, serialize_all = "lowercase")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Display, EnumString)]
+#[strum(ascii_case_insensitive, serialize_all = "snake_case")]
 pub enum PeerStatus {
     /// Discovered from a DNS seed but never contacted.
     Unknown,
@@ -36,12 +35,6 @@ pub enum PeerStatus {
     Disconnected,
     /// Was connected but we disconnected due to excessive latency.
     TooSlow,
-}
-
-impl fmt::Display for PeerStatus {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.to_string())
-    }
 }
 
 /// A known peer address with its current status and a timestamp.
@@ -81,10 +74,13 @@ impl PeerStore {
         let entries: Vec<PeerEntry> = DNS_SEEDS
             .iter()
             .filter_map(|s| {
-                // Compute the addresses fort this seed; drop the seed if the resolution fails.
-                let Ok(addrs) = s.to_socket_addrs() else {
-                    tracing::warn!(seed = %s, error = %seeds.unwrap_err(), "Failed to resolve DNS seed");
-                    return None;
+                // Compute the addresses for this seed; drop the seed if the resolution fails.
+                let addrs = match s.to_socket_addrs() {
+                    Ok(addrs) => addrs,
+                    Err(error) => {
+                        tracing::warn!(seed = %s, %error, "Failed to resolve DNS seed");
+                        return None;
+                    },
                 };
 
                 // Filter out loopback, private, link-local addresses, and duplicates.

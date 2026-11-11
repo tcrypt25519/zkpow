@@ -5,8 +5,10 @@ use sync_headers::{
     ConnectedHeader, ConnectionError, Header, Network, PeerConnection, PeerStore, Tip, connect_headers,
 };
 use zkpow_params::{Consensus, Mainnet};
-use zkpow_store::{DEFAULT_DB_FILE_NAME, HeaderStore};
+use zkpow_store::HeaderStore;
 use zkpow_types::{BlockHash, ChainWork};
+
+const DEFAULT_DB_FILE_NAME: &str = "headers.db";
 
 #[derive(Parser, Debug)]
 #[command(name = "zkpow-cli")]
