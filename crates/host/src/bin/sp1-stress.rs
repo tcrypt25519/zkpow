@@ -15,32 +15,24 @@
 //! is inside SP1. If RSS is flat, the leak is in application-level state
 //! retained between batches.
 
-use std::{
-    env::{set_var, var},
-    error::Error,
-    path::PathBuf,
-};
+use std::{error::Error, path::PathBuf};
 
 use zkpow_host::{
     memory_monitor, observability,
-    pipeline::input::{
-        ENV_ZKPOW_BATCH_COUNT, ENV_ZKPOW_BATCH_SIZE, ENV_ZKPOW_EXECUTE_ONLY, ENV_ZKPOW_PROOF_STORE_DIR,
-        ENV_ZKPOW_RUN_ID,
-    },
+    pipeline::{input::config_from_env, run_batch_session_with_store, ProverBackend},
 };
+use zkpow_store::HeaderStore;
 
-const ENV_ITERATIONS: &str = "ITERATIONS";
+const DEFAULT_ITERATIONS: u32 = 5;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
-    observability::init();
+    observability::init_from_env();
 
-    let iterations: u32 = var(ENV_ITERATIONS).ok().and_then(|s| s.parse().ok()).unwrap_or(5);
-    let num_headers: u32 = var(ENV_ZKPOW_BATCH_SIZE).ok().and_then(|s| s.parse().ok()).unwrap_or(1);
-    let execute_only = var(ENV_ZKPOW_EXECUTE_ONLY)
+    let iterations: u32 = std::env::var("ITERATIONS")
         .ok()
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(true);
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(DEFAULT_ITERATIONS);
 
     std::fs::create_dir_all("logs").ok();
 
@@ -51,21 +43,25 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let scratch = PathBuf::from(format!("profiling/sp1/stress/{timestamp}"));
     std::fs::create_dir_all(&scratch).ok();
 
-    // The stress loop runs one batch per session iteration against a
-    // throwaway run: artifacts under the scratch dir, in-process controller,
-    // mock/CPU prover cached across iterations. The run's ledger row is
-    // deleted again at the end.
+    // Base config loaded once from environment, then tuned for the stress test
+    let mut config = config_from_env::<zkpow_params::Mainnet>()?;
     let run_id = format!("stress-{timestamp}");
-    // SAFETY: single-threaded at this point; no other env readers yet.
-    unsafe {
-        set_var(ENV_ZKPOW_RUN_ID, &run_id);
-        set_var(ENV_ZKPOW_PROOF_STORE_DIR, scratch.join("artifacts"));
-        set_var(ENV_ZKPOW_BATCH_COUNT, "1");
-        set_var(ENV_ZKPOW_BATCH_SIZE, num_headers.to_string());
-        set_var(ENV_ZKPOW_EXECUTE_ONLY, if execute_only { "1" } else { "0" });
+    config.run_id = run_id.clone();
+    config.proof_store_dir = scratch.join("artifacts");
+    config.batch_count = 1;
+
+    // Default to execute-only for this stress test unless explicitly configured
+    if std::env::var("ZKPOW_EXECUTE_ONLY").is_err() {
+        config.execute_only = true;
+        config.prover_backend = ProverBackend::Mock;
     }
 
-    tracing::info!(iterations, num_headers, execute_only, "SP1 stress test starting");
+    tracing::info!(
+        iterations,
+        num_headers = config.local_batch_size,
+        execute_only = config.execute_only,
+        "SP1 stress test starting"
+    );
     memory_monitor::log_point("stress_session_start", "Stress session memory snapshot");
 
     let mut baseline_rss_kb: Option<u64> = None;
@@ -76,7 +72,8 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         let start_mem = memory_monitor::sample();
 
         let iter_start = std::time::Instant::now();
-        let completed = zkpow_host::pipeline::run_batch_session::<zkpow_params::Mainnet>().await?;
+        let db = HeaderStore::open(&config.db_path).map_err(|err| format!("failed to open database: {err}"))?;
+        let completed = run_batch_session_with_store::<zkpow_params::Mainnet>(db, config.clone()).await?;
         if completed != 1 {
             return Err(format!("stress iteration {i} completed {completed} batches").into());
         }
@@ -124,7 +121,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         memory_monitor::log_point("stress_session_end", "Stress session memory snapshot");
     }
 
-    zkpow_store::HeaderStore::open(zkpow_host::pipeline::input::default_db_path())?.delete_run(&run_id)?;
+    HeaderStore::open(&config.db_path)?.delete_run(&run_id)?;
     tracing::info!("SP1 stress test complete");
     Ok(())
 }

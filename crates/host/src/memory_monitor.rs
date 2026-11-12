@@ -7,8 +7,9 @@ use std::process::{self, Command};
 #[cfg(any(target_os = "macos", test))]
 use std::str::from_utf8;
 
-#[cfg(not(feature = "memory-diagnostics"))]
-use crate::pipeline::input::ENV_ZKPOW_MEMORY_LOGGING;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+static LOGGING_ENABLED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct StageSample {
@@ -103,15 +104,18 @@ pub fn log_delta(
     }
 }
 
+/// Initialize the memory logging setting.
+pub fn init(enabled: bool) {
+    LOGGING_ENABLED.store(enabled, Ordering::Relaxed);
+}
+
 pub fn logging_enabled() -> bool {
     #[cfg(feature = "memory-diagnostics")]
     {
-        return true;
+        true
     }
     #[cfg(not(feature = "memory-diagnostics"))]
     {
-        std::env::var_os(ENV_ZKPOW_MEMORY_LOGGING)
-            .map(|val| val == "1" || val == "true" || val == "on")
-            .unwrap_or(false)
+        LOGGING_ENABLED.load(Ordering::Relaxed)
     }
 }

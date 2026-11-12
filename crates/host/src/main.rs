@@ -9,7 +9,7 @@
 //!   # Controller runs in-process against the local headers.db
 //!   cargo run --release -p zkpow-host --bin zkpow-host
 //!
-//!   # Name the IVC chain (default: "dev")
+//!   # Name the IVC chain (default: "develop_")
 //!   ZKPOW_RUN_ID=mainnet-01 cargo run --release -p zkpow-host --bin zkpow-host
 //!
 //!   # Run multiple batches in one process
@@ -21,7 +21,7 @@ use zkpow_params::Mainnet;
 #[tokio::main]
 async fn main() {
     println!("Host script started. For detailed tracing, set RUST_LOG=info.");
-    observability::init();
+    observability::init_from_env();
 
     if let Err(e) = run_batch_session::<Mainnet>().await {
         tracing::error!("proof generation pipeline failed: {e}");

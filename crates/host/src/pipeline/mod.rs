@@ -60,6 +60,8 @@ pub struct ProofGenerationConfig {
     pub batch_count:      u32,
     /// The SQLite header database holding the run ledger and header content.
     pub db_path:          std::path::PathBuf,
+    /// The root directory for proof artifact storage.
+    pub proof_store_dir:  std::path::PathBuf,
     pub execute_only:     bool,
     pub prover_backend:   ProverBackend,
 }
@@ -103,9 +105,9 @@ fn build_local_controller<C: Consensus>(
     config: &ProofGenerationConfig,
     prepared: &PreparedProver,
 ) -> Result<ControllerRuntime<C>, BoxError> {
-    let root = input::proof_store_dir_from_env();
+    let root = &config.proof_store_dir;
     tracing::info!(root = %root.display(), "Using local artifact storage");
-    let storage: Box<dyn ArtifactStore> = Box::new(LocalArtifactStore::new(root));
+    let storage: Box<dyn ArtifactStore> = Box::new(LocalArtifactStore::new(root.clone()));
 
     // The in-process controller cryptographically verifies uploaded proofs
     // with the same prepared prover the host proves with.

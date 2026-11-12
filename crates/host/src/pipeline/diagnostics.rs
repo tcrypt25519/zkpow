@@ -1,6 +1,9 @@
 use std::{
     collections::BTreeSet,
-    sync::{Mutex, OnceLock},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Mutex, OnceLock,
+    },
     time::{Duration, Instant},
 };
 
@@ -13,22 +16,26 @@ use tracing_subscriber::{
 
 use crate::{memory_monitor, pipeline::BoxError};
 
-const ENV_ELEMENT_THRESHOLD: &str = "ELEMENT_THRESHOLD";
-const ENV_ZKPOW_GAS_PER_SHARD: &str = "ZKPOW_GAS_PER_SHARD";
-
 static PHASE_TIMINGS: OnceLock<Mutex<Vec<(String, Duration)>>> = OnceLock::new();
 static SHARD_AREAS: Mutex<Vec<ShardArea>> = Mutex::new(Vec::new());
 static CONFLICTING_CHIPS: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
 
 /// Prover gas at which a core shard reaches SP1's `ELEMENT_THRESHOLD` trace area. Gas is
 /// `(3 * trace_area + complexity) / 191`, so the crossing point moves with the workload's
-/// complexity-to-area ratio; this is calibrated for the SHA-heavy header mix. Set
-/// `ZKPOW_GAS_PER_SHARD` to recalibrate against an observed count.
+/// complexity-to-area ratio; this is calibrated for the SHA-heavy header mix.
 const DEFAULT_GAS_PER_SHARD: u64 = 7_800_000;
 
 /// Trace cells at which SP1 starts a new core shard, mirroring
-/// `sp1_core_executor::ELEMENT_THRESHOLD` and its `ELEMENT_THRESHOLD` override.
+/// `sp1_core_executor::ELEMENT_THRESHOLD`.
 const DEFAULT_SHARD_AREA: u64 = (1 << 28) + (1 << 27);
+
+static ELEMENT_THRESHOLD: AtomicU64 = AtomicU64::new(DEFAULT_SHARD_AREA);
+static GAS_PER_SHARD: AtomicU64 = AtomicU64::new(DEFAULT_GAS_PER_SHARD);
+
+pub(crate) fn set_calibration(element_threshold: u64, gas_per_shard: u64) {
+    ELEMENT_THRESHOLD.store(element_threshold, Ordering::Relaxed);
+    GAS_PER_SHARD.store(gas_per_shard, Ordering::Relaxed);
+}
 
 /// Every chip a recursion machine has, one per `RecursionAir` variant, with `Poseidon2Wide` listed
 /// under both names it takes by degree. The RISC-V machine's chips are open-ended and share no name
@@ -61,13 +68,6 @@ pub struct PhaseTiming {
     pub invocations:         u32,
 }
 
-fn env_u64(name: &str, fallback: u64) -> u64 {
-    std::env::var(name)
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(fallback)
-}
 
 /// Which machine proved a shard, as far as its chip list says.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -209,7 +209,7 @@ pub(crate) fn log_shard_areas() {
         return;
     }
     let of_kind = |kind| areas.iter().filter(move |area| area.kind == kind);
-    let budget = env_u64(ENV_ELEMENT_THRESHOLD, DEFAULT_SHARD_AREA);
+    let budget = ELEMENT_THRESHOLD.load(Ordering::Relaxed);
 
     tracing::info!("Core shards proved: {} (fullest first)", of_kind(ShardKind::Core).count());
     for area in of_kind(ShardKind::Core) {
@@ -293,7 +293,7 @@ pub fn log_execution_report(report: &ExecutionReport, total_proving_time_secs: f
     tracing::info!("  prover gas: {}", prover_gas);
 
     if prover_gas > 0 {
-        let budget = env_u64(ENV_ZKPOW_GAS_PER_SHARD, DEFAULT_GAS_PER_SHARD);
+        let budget = GAS_PER_SHARD.load(Ordering::Relaxed);
         tracing::info!(
             "  estimated shard fill: {:.1}% of one shard ({} of {} gas), estimated shards: {}",
             (prover_gas as f64 * 100.0) / budget as f64,
