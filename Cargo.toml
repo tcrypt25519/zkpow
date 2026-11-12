@@ -12,7 +12,6 @@ members = [
   "crates/params",
   "crates/types",
   "crates/sha256_const",
-  "crates/worker",
   "crates/wiretype",
   "crates/wiretype_macro",
 ]
@@ -31,7 +30,6 @@ zkpow-store = { path = "crates/store" }
 zkpow-sync-headers = { path = "crates/sync-headers" }
 zkpow-params = { path = "crates/params" }
 zkpow-types = { path = "crates/types" }
-zkpow-worker = { path = "crates/worker" }
 zkpow-mtp = { path = "crates/mtp" }
 wiretype = { path = "crates/wiretype" }
 wiretype-macro = { path = "crates/wiretype_macro" }

@@ -15,7 +15,9 @@ where
     P::Error: std::fmt::Display + Send + Sync + 'static,
 {
     timed_async("prove_compressed", || async {
-        zkpow_worker::prove_compressed(prover, proving_key, stdin)
+        prover
+            .prove(proving_key, stdin)
+            .compressed()
             .await
             .map_err(|err| -> BoxError { err.to_string().into() })
     })

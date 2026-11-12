@@ -5,10 +5,10 @@
 use std::path::Path;
 
 use bytemuck::PodCastError;
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{params, Connection, OptionalExtension};
 use sync_headers::{ConnectedHeader, Tip};
 use zkpow_core::{HeaderInput, State, VerifierKeyDigest};
-use zkpow_mtp::{Cold, WINDOW_SIZE, Window, WindowState};
+use zkpow_mtp::{Cold, Window, WindowState, WINDOW_SIZE};
 use zkpow_params::Consensus;
 use zkpow_types::{BlockHash, BlockTimestamp, ChainWork, CompactTarget, Header, MerkleRoot};
 
@@ -36,7 +36,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub type ResultOpt<T> = Result<Option<T>>;
 
 pub(crate) fn hash_to_bytes(hash: &BlockHash) -> [u8; BlockHash::SIZE] {
-    *hash.as_inner()
+    hash.to_le_bytes()
 }
 
 /// Big-endian byte encoding of chainwork as stored in `headers.db`'s `chainwork`

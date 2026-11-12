@@ -9,9 +9,12 @@ where
     P: Prover,
 {
     timed_async("execute_program", || async {
-        zkpow_worker::execute(prover, ELF, stdin)
+        let (public_values, report) = prover
+            .execute(ELF, stdin)
+            .deferred_proof_verification(false)
             .await
-            .map_err(|err| -> BoxError { err.into() })
+            .map_err(|err| -> BoxError { err.to_string().into() })?;
+        Ok::<_, BoxError>((public_values.to_vec(), report))
     })
     .await
 }
