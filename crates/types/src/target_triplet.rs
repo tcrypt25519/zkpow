@@ -1,5 +1,8 @@
 use crate::{BlockWork, CompactTarget, Target};
 
+/// A target, its compact form, and the block work it represents in a single struct. These values all are different
+/// forms of the same information, so they're generated at the same time and often used near each other. Binding them
+/// together helps protect against unnecessary recalculation and ensures they have the same lifecycle.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TargetTriplet {
     compact_target: CompactTarget,
