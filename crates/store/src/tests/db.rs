@@ -234,13 +234,11 @@ fn hint_selection_uses_the_window_instead_of_stored_run_metadata() {
         store.load_header_batch_witness(17, 9).unwrap().median_time_past_hints,
         expected[5..]
     );
-    assert!(
-        store
-            .load_header_batch_witness(22, 4)
-            .unwrap()
-            .median_time_past_hints
-            .is_empty()
-    );
+    assert!(store
+        .load_header_batch_witness(22, 4)
+        .unwrap()
+        .median_time_past_hints
+        .is_empty());
     let tip = store.get_best_tip::<Mainnet>().unwrap().unwrap();
     let state = store.state_at_height::<Mainnet>(25, Mainnet::GENESIS_HASH).unwrap().unwrap();
     assert_eq!(

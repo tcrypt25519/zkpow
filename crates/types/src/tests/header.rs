@@ -39,7 +39,11 @@ fn header_parse_rejects_invalid_slices() {
     slop.push(0x00);
 
     for bytes in [&wire[..79], &[], &slop[..]] {
-        assert!(matches!(Header::parse(bytes), Err(PodCastError::SizeMismatch)), "{} bytes", bytes.len());
+        assert!(
+            matches!(Header::parse(bytes), Err(PodCastError::SizeMismatch)),
+            "{} bytes",
+            bytes.len()
+        );
     }
 }
 

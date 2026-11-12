@@ -3,7 +3,7 @@ use alloc::{vec, vec::Vec};
 use zkpow_types::ChainWork;
 use zkvm_test::zkvm_test;
 
-use crate::{ApplyError, ErrorCode, HeaderInput, block_work_from_target, tests::*};
+use crate::{block_work_from_target, tests::*, ApplyError, ErrorCode, HeaderInput};
 
 #[zkvm_test]
 fn cold_start_rejects_fewer_than_ten_headers() {

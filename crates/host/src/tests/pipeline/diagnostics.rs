@@ -3,7 +3,7 @@ use std::sync::{Mutex, OnceLock};
 use tracing_subscriber::prelude::*;
 
 use crate::pipeline::diagnostics::{
-    RECURSION_CHIPS, ShardAreas, ShardKind, chip_name, clear_shard_areas, conflicting_chips, shard_area, shard_areas,
+    chip_name, clear_shard_areas, conflicting_chips, shard_area, shard_areas, ShardAreas, ShardKind, RECURSION_CHIPS,
 };
 
 fn _shard_area_test_mutex() -> &'static Mutex<()> {

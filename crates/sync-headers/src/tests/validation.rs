@@ -4,15 +4,15 @@ use std::{
     thread,
 };
 
-use bitcoin::consensus::{Encodable, encode};
+use bitcoin::consensus::{encode, Encodable};
 use zkpow_core::{calculate_next_work_required, check_proof_of_work, target_from_bits};
-use zkpow_mtp::{Cold, WINDOW_SIZE, Window, WindowState};
+use zkpow_mtp::{Cold, Window, WindowState, WINDOW_SIZE};
 use zkpow_params::{Consensus, ConsensusParams, Mainnet};
 use zkpow_types::{BlockHash, BlockTimestamp, BlockWork, CompactTarget, Header as CoreHeader, MerkleRoot, Target};
 
 use super::*;
 use crate::{
-    connection::{VersionMessage, create_checksum},
+    connection::{create_checksum, VersionMessage},
     msg::MAX_HEADERS_PER_MSG,
 };
 

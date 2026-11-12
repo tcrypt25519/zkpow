@@ -20,7 +20,7 @@ struct PreparedProverConfig {
 
 #[derive(Clone)]
 pub(crate) struct PreparedProver {
-    prover: EnvProver,
+    prover:      EnvProver,
     proving_key: EnvProvingKey,
 }
 
@@ -110,10 +110,7 @@ pub(crate) async fn get_prepared_prover(prover_backend: ProverBackend) -> Result
     };
 
     let proving_key = timed_async("setup_vkey", || async {
-        prover
-            .setup(ELF)
-            .await
-            .map_err(|err| -> BoxError { err.to_string().into() })
+        prover.setup(ELF).await.map_err(|err| -> BoxError { err.to_string().into() })
     })
     .await?;
 

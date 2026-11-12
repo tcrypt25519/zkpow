@@ -6,7 +6,6 @@ use std::fs;
 use std::process::{self, Command};
 #[cfg(any(target_os = "macos", test))]
 use std::str::from_utf8;
-
 use std::sync::atomic::{AtomicBool, Ordering};
 
 static LOGGING_ENABLED: AtomicBool = AtomicBool::new(false);

@@ -50,7 +50,12 @@ impl Drop for SessionScratch {
     }
 }
 
-fn test_config(run_id: String, local_batch_size: u32, batch_count: u32, proof_store_dir: PathBuf) -> ProofGenerationConfig {
+fn test_config(
+    run_id: String,
+    local_batch_size: u32,
+    batch_count: u32,
+    proof_store_dir: PathBuf,
+) -> ProofGenerationConfig {
     ProofGenerationConfig {
         run_id,
         local_batch_size,
@@ -68,7 +73,9 @@ async fn stops_after_reaching_configured_batch_count() {
     let store = zkpow_store::test_utils::create_test_fixture_store();
     let config = test_config("test-batch-count".to_string(), 1, 0, scratch.artifacts_dir());
 
-    let completed = run_batch_session_with_store::<Mainnet>(store, config).await.expect("session should exit cleanly");
+    let completed = run_batch_session_with_store::<Mainnet>(store, config)
+        .await
+        .expect("session should exit cleanly");
     assert_eq!(completed, 0);
 }
 
@@ -93,10 +100,14 @@ async fn execute_only_session_is_separate_from_run_progress() {
     let store = zkpow_store::test_utils::create_test_fixture_store();
     let config = test_config(run_id.clone(), 10, 2, scratch.artifacts_dir());
 
-    let completed = run_execution_session::<Mainnet>(&store, config.clone()).await.expect("first session should complete");
+    let completed = run_execution_session::<Mainnet>(&store, config.clone())
+        .await
+        .expect("first session should complete");
     assert_eq!(completed, 2);
 
-    let completed = run_execution_session::<Mainnet>(&store, config).await.expect("second session should complete");
+    let completed = run_execution_session::<Mainnet>(&store, config)
+        .await
+        .expect("second session should complete");
     assert_eq!(completed, 2);
 
     assert!(store.load_run(&run_id).unwrap().is_none());

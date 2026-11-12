@@ -16,11 +16,11 @@ pub struct Warm;
 /// nondecreasing run ending at the newest value, capped at `N`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Ring<const N: usize, F = Warm> {
-    values: RingValues<N>,
-    next: usize,
+    values:      RingValues<N>,
+    next:        usize,
     ordered_run: usize,
-    last_value: BlockTimestamp,
-    fill: PhantomData<F>,
+    last_value:  BlockTimestamp,
+    fill:        PhantomData<F>,
 }
 
 impl<const N: usize, F> Ring<N, F> {
@@ -117,11 +117,11 @@ impl<const N: usize> Ring<N, Cold> {
 
     pub fn warm(self) -> Option<Ring<N, Warm>> {
         (self.next == 0).then_some(Ring {
-            values: self.values,
-            next: self.next,
+            values:      self.values,
+            next:        self.next,
             ordered_run: self.ordered_run,
-            last_value: self.last_value,
-            fill: PhantomData,
+            last_value:  self.last_value,
+            fill:        PhantomData,
         })
     }
 }
@@ -203,8 +203,8 @@ impl<const N: usize> Ring<N, Warm> {
 // until it's emitted the value just before the starting slot.
 struct RingValuesIter<'a, const N: usize> {
     values: &'a RingValues<N>,
-    index: usize,
-    start: usize,
+    index:  usize,
+    start:  usize,
 }
 
 impl<'a, const N: usize> RingValuesIter<'a, N> {

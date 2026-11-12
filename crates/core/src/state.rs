@@ -6,8 +6,8 @@ use zkpow_params::Consensus;
 use zkpow_types::{BlockHash, BlockTimestamp, ChainWork, CompactTarget, Target, TargetTriplet};
 
 use crate::{
-    ApplyError, HeaderInput, block_work_from_target, calculate_next_work_required, check_proof_of_work_words,
-    hash_header_input, target_from_bits,
+    block_work_from_target, calculate_next_work_required, check_proof_of_work_words, hash_header_input,
+    target_from_bits, ApplyError, HeaderInput,
 };
 
 /// The canonical chain state the prover attests to and each batch of transitions starts

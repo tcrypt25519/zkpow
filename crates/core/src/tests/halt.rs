@@ -1,6 +1,5 @@
-use zkvm_test::zkvm_test;
-
 use zkpow_types::{BlockTimestamp, CompactTarget};
+use zkvm_test::zkvm_test;
 
 use crate::{assert_hint, assert_hint_eq, assert_hint_ne, invalid_hint};
 

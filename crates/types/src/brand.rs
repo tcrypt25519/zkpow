@@ -1,6 +1,8 @@
-use crate::bigint::{u256, NonMaxU256};
 use core::fmt;
+
 use wiretype::wiretype;
+
+use crate::bigint::{u256, NonMaxU256};
 
 macro_rules! define_newtype {
     (

@@ -1,7 +1,6 @@
 use zkpow_types::BlockTimestamp;
 
-use crate::window::WINDOW_SIZE;
-use crate::{Cold, Ring, Warm, Window, WindowState, errors::NotMedian, split_off_cold_headers};
+use crate::{Cold, Ring, Warm, Window, WindowState, errors::NotMedian, split_off_cold_headers, window::WINDOW_SIZE};
 
 fn cold_ring<const N: usize>(values: &[u32]) -> Ring<N, Cold> {
     let mut ring = Ring::<N, Cold>::new(BlockTimestamp::new(values[0]));

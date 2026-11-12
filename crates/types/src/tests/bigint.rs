@@ -40,7 +40,11 @@ fn u256_addition_carries_and_wraps() {
         ([u64::MAX, u64::MAX, u64::MAX, 0], [0, 0, 0, 1]),
         ([u64::MAX; 4], [0; 4]),
     ] {
-        assert_eq!(u256::from_limbs(a) + u256::from_limbs([1, 0, 0, 0]), u256::from_limbs(expected), "{a:?}");
+        assert_eq!(
+            u256::from_limbs(a) + u256::from_limbs([1, 0, 0, 0]),
+            u256::from_limbs(expected),
+            "{a:?}"
+        );
     }
 }
 

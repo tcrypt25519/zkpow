@@ -12,10 +12,10 @@ use std::{
 };
 
 use tokio::sync::Notify;
+use wiretype::WireType;
 use zkpow_core::{PublicValues, ReturnCode, State, VerifierKeyDigest};
 use zkpow_params::Consensus;
 use zkpow_store::{HeaderStore, RunRecord};
-use wiretype::WireType;
 use zkpow_types::{BlockHash, RunId};
 
 use crate::{

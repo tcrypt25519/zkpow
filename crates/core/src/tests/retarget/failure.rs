@@ -1,6 +1,5 @@
-use zkvm_test::zkvm_test;
-
 use zkpow_types::{CompactTarget, Target};
+use zkvm_test::zkvm_test;
 
 use crate::{calculate_next_work_required, tests::*};
 

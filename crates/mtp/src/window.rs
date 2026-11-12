@@ -1,5 +1,6 @@
-use crate::{Cold, Ring, RingValues, Warm};
 use zkpow_types::BlockTimestamp;
+
+use crate::{Cold, Ring, RingValues, Warm};
 
 /// Number of previous block timestamps kept for median-time-past and ordered-window checks.
 pub const WINDOW_SIZE: usize = 11;

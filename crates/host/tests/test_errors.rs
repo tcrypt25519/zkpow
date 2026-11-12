@@ -3,12 +3,12 @@
 //! Each test crafts specific inputs that should trigger a particular error code or success,
 //! then runs the zkVM program via `client.execute()` and checks public values.
 
-use sp1_sdk::{Elf, Prover, ProverClient, SP1Stdin, prelude::*};
+use sp1_sdk::{prelude::*, Elf, Prover, ProverClient, SP1Stdin};
 use wiretype::WireType;
 use zkpow_controller::{compute_final_state_cold, compute_final_state_warm};
 use zkpow_core::{HeaderInput, PublicValues, State, VerifierKeyDigest};
 use zkpow_params::{Consensus, Mainnet};
-use zkpow_store::{HeaderStore, genesis_state_from_record};
+use zkpow_store::{genesis_state_from_record, HeaderStore};
 use zkpow_types::{BlockHash, BlockTimestamp, ChainWork, CompactTarget};
 
 const ELF: Elf = include_elf!("zkpow-guest");

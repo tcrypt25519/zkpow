@@ -6,9 +6,8 @@
 
 use core::mem::size_of;
 
-use zkvm_test::zkvm_test;
-
 use zkpow_types::BlockTimestamp;
+use zkvm_test::zkvm_test;
 
 use crate::{tests::*, HeaderInput, State};
 

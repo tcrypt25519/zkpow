@@ -145,8 +145,9 @@ pub fn config_from_env<C: Consensus>() -> Result<ProofGenerationConfig, BoxError
 pub fn observability_config_from_env() -> ObservabilityConfig {
     ObservabilityConfig {
         show_compressed_proof_spans: parse_bool_env_or(ENV_ZKPOW_SHOW_COMPRESSED_PROOF_SPANS, false).unwrap_or(false),
-        enable_tokio_console: parse_bool_env_or(ENV_SP1_ENABLE_TOKIO_CONSOLE, false).unwrap_or(false),
-        tokio_console_bind: std::env::var(ENV_TOKIO_CONSOLE_BIND).unwrap_or_else(|_| "127.0.0.1:6669".to_string()),
+        enable_tokio_console:        parse_bool_env_or(ENV_SP1_ENABLE_TOKIO_CONSOLE, false).unwrap_or(false),
+        tokio_console_bind:          std::env::var(ENV_TOKIO_CONSOLE_BIND)
+            .unwrap_or_else(|_| "127.0.0.1:6669".to_string()),
     }
 }
 

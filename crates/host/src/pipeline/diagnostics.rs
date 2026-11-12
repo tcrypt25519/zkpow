@@ -68,7 +68,6 @@ pub struct PhaseTiming {
     pub invocations:         u32,
 }
 
-
 /// Which machine proved a shard, as far as its chip list says.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ShardKind {

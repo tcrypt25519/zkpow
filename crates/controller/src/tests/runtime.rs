@@ -1,7 +1,7 @@
 use std::{
     sync::{
-        Arc, Mutex,
         atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc, Mutex,
     },
     time::Duration,
 };
@@ -115,10 +115,7 @@ impl Harness {
     }
 
     fn upload_expected(&self, run: &str, batch: &Batch) {
-        let state = self
-            .runtime
-            .state_at(batch.end_height)
-            .expect("state at height");
+        let state = self.runtime.state_at(batch.end_height).expect("state at height");
         let public_values = PublicValues::new(state, batch.verifier_key, ReturnCode::SUCCESS);
         let path = &batch.proof_upload;
         std::fs::write(path, public_values.to_bytes()).unwrap();

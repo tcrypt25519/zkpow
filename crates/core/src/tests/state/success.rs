@@ -4,7 +4,7 @@ use core::mem::align_of;
 use zkpow_types::{BlockHash, BlockWork, ChainWork, CompactTarget};
 use zkvm_test::zkvm_test;
 
-use crate::{HeaderInput, State, block_work_from_target, target_from_bits, tests::*};
+use crate::{block_work_from_target, target_from_bits, tests::*, HeaderInput, State};
 
 #[zkvm_test(max_cycles = 100_000)]
 fn state_and_header_fixed_sizes_match_protocol() {
@@ -39,13 +39,11 @@ fn state_and_header_input_layout_and_offsets() {
     assert_eq!(&bytes[96..100], &42u32.to_le_bytes());
     assert_eq!(&bytes[100..104], &0x1d00ffffu32.to_le_bytes());
     assert_eq!(&bytes[104..108], &1000u32.to_le_bytes());
-    assert!(
-        bytes[108..]
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .all(|timestamp| *timestamp == 2000u32.to_le_bytes())
-    );
+    assert!(bytes[108..]
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .all(|timestamp| *timestamp == 2000u32.to_le_bytes()));
     // State's borrowed wire parser requires an eight-byte-aligned input.
     let mut words = [0u64; State::SIZE / 8];
     let aligned_bytes = bytemuck::cast_slice_mut(&mut words);

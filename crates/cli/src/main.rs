@@ -2,7 +2,7 @@ use std::{net::SocketAddr, thread, time::Duration};
 
 use clap::{Args, Parser, Subcommand};
 use sync_headers::{
-    ConnectedHeader, ConnectionError, Header, Network, PeerConnection, PeerStore, Tip, connect_headers,
+    connect_headers, ConnectedHeader, ConnectionError, Header, Network, PeerConnection, PeerStore, Tip,
 };
 use zkpow_params::{Consensus, Mainnet};
 use zkpow_store::HeaderStore;

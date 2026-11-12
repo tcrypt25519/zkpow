@@ -24,16 +24,16 @@ static mut LOG_GUARD: Option<WorkerGuard> = None;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ObservabilityConfig {
     pub show_compressed_proof_spans: bool,
-    pub enable_tokio_console: bool,
-    pub tokio_console_bind: String,
+    pub enable_tokio_console:        bool,
+    pub tokio_console_bind:          String,
 }
 
 impl Default for ObservabilityConfig {
     fn default() -> Self {
         Self {
             show_compressed_proof_spans: false,
-            enable_tokio_console: false,
-            tokio_console_bind: "127.0.0.1:6669".to_string(),
+            enable_tokio_console:        false,
+            tokio_console_bind:          "127.0.0.1:6669".to_string(),
         }
     }
 }
@@ -76,7 +76,11 @@ pub fn init(config: &ObservabilityConfig) {
         // SAFETY: written once inside Once::call_once, never read until process exit.
         unsafe { LOG_GUARD = Some(guard) };
 
-        let json_level = if config.show_compressed_proof_spans { "debug" } else { "info" };
+        let json_level = if config.show_compressed_proof_spans {
+            "debug"
+        } else {
+            "info"
+        };
 
         let json_filter = quiet(EnvFilter::new(json_level));
 

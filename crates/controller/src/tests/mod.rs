@@ -1,6 +1,6 @@
 use zkpow_mtp::WindowState;
 use zkpow_params::Mainnet;
-use zkpow_store::{HeaderStore, genesis_state_from_record};
+use zkpow_store::{genesis_state_from_record, HeaderStore};
 use zkpow_types::BlockHash;
 
 use super::*;
