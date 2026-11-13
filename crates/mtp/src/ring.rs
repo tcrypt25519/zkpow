@@ -82,13 +82,13 @@ impl<const N: usize> Ring<N, Cold> {
         assert!(N > 0, "a timestamp ring must have nonzero capacity");
         let mut values = [BlockTimestamp::new(0); N];
         values[0] = genesis;
-        Self::from_height(values, 0)
-    }
-
-    pub fn from_height(values: RingValues<N>, height: u32) -> Self {
-        assert!(N > 0, "a timestamp ring must have nonzero capacity");
-        assert!((height as usize) < N, "a cold ring requires a cold height");
-        Self::rebuild(values, height as usize, height as usize + 1)
+        Self {
+            values,
+            next: if N == 1 { 0 } else { 1 },
+            ordered_run: 1,
+            last_value: genesis,
+            fill: PhantomData,
+        }
     }
 
     /// The Cold ring always initializes with at least one value (genesis), and it always terminates

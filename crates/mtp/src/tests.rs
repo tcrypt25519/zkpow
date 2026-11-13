@@ -33,12 +33,6 @@ fn cold_window_sorts_the_height_derived_prefix() {
             let ring = cold_ring::<5>(&values[..count]);
             assert_eq!(ring.median(), naive_median(&values[..count]));
             assert!(ring.warm().is_none());
-            let mut slots = [BlockTimestamp::new(u32::MAX); 5];
-            for (slot, value) in slots.iter_mut().zip(&values[..count]) {
-                *slot = BlockTimestamp::new(*value);
-            }
-            let restored = Ring::<5, Cold>::from_height(slots, count as u32 - 1);
-            assert_eq!(restored.median(), naive_median(&values[..count]));
         }
     }
 }

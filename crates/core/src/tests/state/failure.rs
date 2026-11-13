@@ -38,6 +38,21 @@ fn warm_apply_rejects_a_cold_state() {
     let _ = state.apply_headers::<TestConsensus>(&[header], &[]);
 }
 
+#[cfg(not(target_os = "zkvm"))]
+#[test]
+#[should_panic(expected = "apply_headers_from_genesis can only be called from genesis (height 0)")]
+fn apply_headers_from_genesis_rejects_non_genesis_state() {
+    let mut state = test_state();
+    state.height = 1;
+    let header = HeaderInput {
+        version:     1,
+        merkle_root: MerkleRoot::new([0; 32]),
+        timestamp:   ts(100),
+        nonce:       0,
+    };
+    let _ = state.apply_headers_from_genesis::<TestConsensus>(&[header; 10], &[]);
+}
+
 #[zkvm_test]
 fn apply_headers_flushes_deferred_chain_work_before_failure() {
     let _hash_guard = set_hash_success();

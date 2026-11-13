@@ -81,6 +81,10 @@ impl State {
         headers: &[HeaderInput],
         median_hints: &[BlockTimestamp],
     ) -> Result<(), ApplyError> {
+        assert_eq!(
+            self.height, 0,
+            "apply_headers_from_genesis can only be called from genesis (height 0)"
+        );
         // Requires at least `window_size - 1` headers.
         let (cold_headers, warm_headers) = mtp::split_off_cold_headers(headers)?;
         let mtp = self.apply_cold_batch::<C>(cold_headers)?;
@@ -90,8 +94,7 @@ impl State {
     // Applies the first headers of the chain, before the MTP window has been filled. This lets the
     // warm path assume it always has a full window.
     fn apply_cold_batch<C: Consensus>(&mut self, headers: &[HeaderInput]) -> Result<mtp::Window, ApplyError> {
-        let start_height = self.height;
-        let mut mtp = self.cold_mtp_ring();
+        let mut mtp = mtp::Window::<mtp::Cold>::new(self.epoch_timestamp);
         let mut prev_hash_words = zkpow_sha256::hash_to_state(self.block_hash.as_inner());
         for new_header in headers {
             let median = mtp.median();
@@ -104,7 +107,7 @@ impl State {
             ) {
                 self.block_hash = BlockHash::new(zkpow_sha256::state_to_hash(&prev_hash_words));
                 self.store_timestamps(&mtp);
-                self.chain_work += C::PARAMS.genesis_work * (self.height - start_height);
+                self.chain_work += C::PARAMS.genesis_work * self.height;
                 return Err(e);
             }
             mtp.push(new_header.timestamp);
@@ -185,10 +188,6 @@ impl State {
 
     fn store_timestamps<F>(&mut self, window: &mtp::Window<F>) {
         self.timestamps = window.values();
-    }
-
-    fn cold_mtp_ring(&self) -> mtp::Window<mtp::Cold> {
-        mtp::Window::<mtp::Cold>::from_height(self.timestamps, self.height)
     }
 
     fn warm_mtp_ring(&self) -> mtp::Window {
