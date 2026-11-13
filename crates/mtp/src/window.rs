@@ -18,7 +18,11 @@ pub enum WindowState {
 impl crate::WindowState {
     pub fn from_height(values: WindowValues, height: u32) -> Self {
         if height < (WINDOW_SIZE - 1) as u32 {
-            Self::Cold(Window::<Cold>::from_height(values, height))
+            let mut cold = Window::<Cold>::new(values[0]);
+            for &val in &values[1..=height as usize] {
+                cold.push(val);
+            }
+            Self::Cold(cold)
         } else {
             Self::Warm(Window::<Warm>::from_height(values, height))
         }

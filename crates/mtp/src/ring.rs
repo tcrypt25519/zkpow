@@ -103,9 +103,13 @@ impl<const N: usize> Ring<N, Cold> {
     #[must_use]
     pub fn median(&self) -> BlockTimestamp {
         let count = self.len();
-        let mut sorted = self.values;
-        sorted[..count].sort_unstable();
-        sorted[count / 2]
+        if self.ordered_run >= count {
+            self.values[count / 2]
+        } else {
+            let mut sorted = self.values;
+            sorted[..count].sort_unstable();
+            sorted[count / 2]
+        }
     }
 
     pub fn take_cold_headers<I: Iterator>(&self, headers: I) -> core::iter::Take<I> {
