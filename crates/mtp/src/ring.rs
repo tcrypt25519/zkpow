@@ -91,8 +91,12 @@ impl<const N: usize> Ring<N, Cold> {
         Self::rebuild(values, height as usize, height as usize + 1)
     }
 
+    /// The Cold ring always initializes with at least one value (genesis), and it always terminates
+    /// at the end of the first cycle through the ring, so it's always the case that 0 < `next` < `N`
+    /// while the ring is warming. A `next` value of 0 indicates that the cycle has been completed,
+    /// the ring has wrapped around, and is ready to transition to the Warm state.
     #[must_use]
-    pub fn len(&self) -> usize {
+    fn len(&self) -> usize {
         if self.next == 0 { N } else { self.next }
     }
 
@@ -104,15 +108,8 @@ impl<const N: usize> Ring<N, Cold> {
         sorted[count / 2]
     }
 
-    /// Number of additional headers required to fill the window. At genesis
-    /// `next` is 1 and this is `N-1`. After reaching `N` slots filled the ring wraps and
-    /// `next` becomes 0 which indicates that the warmup period is over.
-    pub fn remaining(&self) -> usize {
-        if self.next == 0 { 0 } else { N - self.next }
-    }
-
     pub fn take_cold_headers<I: Iterator>(&self, headers: I) -> core::iter::Take<I> {
-        headers.take(self.remaining())
+        headers.take(N - self.len())
     }
 
     pub fn warm(self) -> Option<Ring<N, Warm>> {
