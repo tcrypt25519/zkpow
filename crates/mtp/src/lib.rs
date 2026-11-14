@@ -72,14 +72,18 @@ mod window;
 
 use errors::InsufficientColdHeaders;
 pub use ring::{Cold, Ring, RingValues, Warm};
-pub use window::{WINDOW_SIZE, Window, WindowState, WindowValues};
+
+mod window_access;
+#[allow(unused_imports)]
+pub(crate) use window_access::local::*;
+pub use window_access::public::*;
 
 #[cfg(test)]
 mod tests;
 
 /// Splits headers into the prefix that fills an empty consensus window and the warm remainder.
 pub fn split_off_cold_headers<T>(headers: &[T]) -> Result<(&[T], &[T]), InsufficientColdHeaders> {
-    let required = window::WINDOW_SIZE - 1;
+    let required = WINDOW_SIZE - 1;
     if headers.len() < required {
         return Err(InsufficientColdHeaders::new(headers.len()));
     }
